@@ -74,7 +74,14 @@ def test_executorch_realtime_support_is_evidence_backed():
         ("pidnet", "semantic"),
         ("resnet", "classify"),
         ("rtdetr", "detect"),
+        ("rtdetrv2", "detect"),
+        ("rtdetrv4", "detect"),
         ("rfdetr", "detect"),
+        ("yolo1", "detect"),
+        ("yolo2", "detect"),
+        ("yolo3", "detect"),
+        ("yolo4", "detect"),
+        ("yolo7", "detect"),
         ("yolo9", "detect"),
         ("yolo9_e2e", "detect"),
         ("yolox", "detect"),
@@ -83,9 +90,13 @@ def test_executorch_realtime_support_is_evidence_backed():
         assert get_support(family, task, "executorch").tier == "validated"
 
     assert get_support("rtmdet", "detect", "executorch").tier == "blocked"
+    assert get_support("dfine", "detect", "executorch").tier == "blocked"
+    assert get_support("deim", "detect", "executorch").tier == "blocked"
     assert get_support("deimv2", "detect", "executorch").tier == "blocked"
     assert get_support("teed", "edge", "executorch").tier == "experimental"
     assert get_support("dexined", "edge", "executorch").tier == "experimental"
+    assert get_support("yolonas", "detect", "executorch").tier == "experimental"
+    assert get_support("yolo9_p2", "detect", "executorch").tier == "experimental"
 
 
 def test_tflite_support_keys_use_canonical_tasks():

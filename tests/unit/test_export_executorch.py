@@ -10,7 +10,10 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-from libreyolo.export.executorch import _commit_artifact_pair
+from libreyolo.export.executorch import (
+    _capture_compatibility,
+    _commit_artifact_pair,
+)
 from libreyolo.export.exporter import ExecuTorchExporter
 
 pytestmark = pytest.mark.unit
@@ -67,6 +70,15 @@ def test_executorch_metadata_is_fixed_fp32_contract():
     assert metadata["dynamic"] is False
     assert metadata["task"] == "detect"
     assert metadata["imgsz_h"] == metadata["imgsz_w"] == 64
+
+
+def test_rtdetrv4_capture_compatibility_restores_module_flag():
+    from libreyolo.models.dfine import ms_deform
+
+    assert ms_deform._FORCE_MANUAL_GRID_SAMPLE_EXPORT is False
+    with _capture_compatibility({"model_family": "rtdetrv4"}):
+        assert ms_deform._FORCE_MANUAL_GRID_SAMPLE_EXPORT is True
+    assert ms_deform._FORCE_MANUAL_GRID_SAMPLE_EXPORT is False
 
 
 def test_artifact_pair_writes_program_and_sidecar(tmp_path):

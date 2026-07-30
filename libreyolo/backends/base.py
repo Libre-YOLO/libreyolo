@@ -488,6 +488,17 @@ class BaseBackend(ABC):
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, ratio
+        elif self.model_family == "yolo1":
+            from ..models.darknet.preprocess import (
+                preprocess_image_stretch as _v1_pre,
+            )
+
+            sz = (
+                effective_imgsz
+                if isinstance(effective_imgsz, int)
+                else max(effective_imgsz)
+            )
+            return _v1_pre(image, input_size=sz, color_format=color_format)
         elif self.model_family in ("yolo2", "yolo3", "yolo4"):
             from ..models.darknet.preprocess import preprocess_image as _dk_pre
 
@@ -1296,10 +1307,14 @@ class BaseBackend(ABC):
             return boxes, max_scores, class_ids
 
         input_h, input_w = _imgsz_hw(effective_imgsz)
-        ratio = min(input_h / orig_h, input_w / orig_w)
-        boxes[:, :4] /= ratio
-        if keypoints is not None:
-            keypoints[..., :2] /= ratio
+        if self.model_family == "yolo1":
+            boxes[:, [0, 2]] *= orig_w / input_w
+            boxes[:, [1, 3]] *= orig_h / input_h
+        else:
+            ratio = min(input_h / orig_h, input_w / orig_w)
+            boxes[:, :4] /= ratio
+            if keypoints is not None:
+                keypoints[..., :2] /= ratio
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
         if keypoints is not None:

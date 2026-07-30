@@ -12,12 +12,12 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | clip | classify | ✓ |  |  |  |  |  |  |  | ✓ |
 | clip | embed |  |  |  |  |  |  |  |  |  |
 | convnext | classify | ✓ | ✓ | exp | exp | exp | ✓ | ✓ |  | ✓ |
-| deim | detect | exp | ✓ | exp | exp | exp |  |  |  | ✓ |
+| deim | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
 | depth_anything | depth | ✓ | ✓ | exp | exp | exp |  |  |  | ✓ |
 | depth_anything3 | depth |  |  |  |  |  |  |  |  |  |
 | dexined | edge | ✓ |  | exp |  |  |  |  |  |  |
-| dfine | detect | ✓ | ✓ | exp | exp | exp |  |  |  | ✓ |
+| dfine | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ |  | exp | exp |  |  |  |  |
 | dinov2 | classify | ✓ |  |  |  |  |  |  |  | exp |
@@ -60,8 +60,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | rfdetr | pose | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | rfdetr | obb | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | rtdetr | detect | ✓ | ✓ | ✓ | exp | exp |  |  | exp | ✓ |
-| rtdetrv2 | detect | exp | ✓ | exp | exp | exp |  |  |  | ✓ |
-| rtdetrv4 | detect | exp | ✓ | exp | exp | exp |  |  |  | ✓ |
+| rtdetrv2 | detect | exp | ✓ | ✓ | exp | exp |  |  |  | ✓ |
+| rtdetrv4 | detect | exp | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | rtmdet | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | rtmdet | segment |  |  |  |  |  |  |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |  |  |
@@ -74,11 +74,11 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
 | swinir | restore | exp | exp | exp | exp | exp | exp |  |  |  |
 | teed | edge | ✓ |  | exp |  |  |  |  |  |  |
-| yolo1 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
-| yolo2 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
-| yolo3 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
-| yolo4 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
-| yolo7 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| yolo1 | detect | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| yolo2 | detect | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| yolo3 | detect | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| yolo4 | detect | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| yolo7 | detect | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
 | yolo9_e2e | detect | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | yolo9_p2 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
@@ -158,17 +158,24 @@ A check mark applies only under any constraint listed here.
 - `rfdetr` / `obb` / `torchscript`: fixed task-native input resolution
 - `rtdetr` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `rtdetr` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `rtdetrv2` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `rtdetrv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `rtdetrv4` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `rtdetrv4` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `rtmdet` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `siglip2` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `siglip2` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `teed` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
+- `yolo1` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo1` / `detect` / `ncnn`: fixed 448x448 input
 - `yolo1` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo2` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo2` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo3` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo3` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo4` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo4` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo7` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo7` / `detect` / `coreai`: fixed 640x640 export canvas; trained LibreYOLO7b weights are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; the export decoder uses direct arange grids because Core AI 0.4.1 mislowers the equivalent cumulative-sum expression
 - `yolo9` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo9` / `detect` / `coreai`: fixed export canvas; trained LibreYOLO9t weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
@@ -206,6 +213,7 @@ A check mark applies only under any constraint listed here.
 - `clip` / `embed` / `coreml`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `clip` / `embed` / `coreai`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `convnext` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `deim` / `detect` / `executorch`: The trained nano model captures, lowers, and serializes, but ExecuTorch 1.2 runtime execution fails with an invalid delegated tensor dimension order.
 - `deim` / `detect` / `ncnn`: NCNN export is not supported for DEIM: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deim` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deim` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -232,6 +240,7 @@ A check mark applies only under any constraint listed here.
 - `dexined` / `edge` / `tflite`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `dexined` / `edge` / `coreml`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `dexined` / `edge` / `coreai`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
+- `dfine` / `detect` / `executorch`: Strict capture reaches an unsupported ContextVar read in deformable attention. Forcing the manual exported grid-sample path permits serialization, but ExecuTorch 1.2 runtime execution still fails with an invalid delegated tensor dimension order.
 - `dfine` / `detect` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dfine` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `dfine` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.

@@ -202,6 +202,26 @@ class _SemanticExportWrapper(torch.nn.Module):
         return output
 
 
+class _YOLONASExportWrapper(torch.nn.Module):
+    """Expose decoded YOLO-NAS tensors without training-only auxiliaries."""
+
+    def __init__(self, model: torch.nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        output = self.model(x)
+        # Eager and torch.export capture return ``(decoded, raw)``. ONNX
+        # tracing already returns ``decoded`` directly, so accept both forms.
+        if (
+            isinstance(output, tuple)
+            and len(output) == 2
+            and isinstance(output[0], tuple)
+        ):
+            return output[0]
+        return output
+
+
 # =============================================================================
 # BaseExporter ABC
 # =============================================================================
@@ -804,6 +824,10 @@ class BaseExporter(ABC):
             from ..models.yolo7.export import YOLO7ExportWrapper
 
             nn_model = YOLO7ExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "yolonas":
+            nn_model = _YOLONASExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
         elif family in {"rtdetr", "rtdetrv2", "rtdetrv4"}:

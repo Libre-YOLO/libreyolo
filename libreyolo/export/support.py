@@ -87,7 +87,20 @@ _add(
 )
 _add(
     "validated",
-    ("ec", "picodet", "rtdetr", "yolo9_e2e", "yolox"),
+    (
+        "ec",
+        "picodet",
+        "rtdetr",
+        "rtdetrv2",
+        "rtdetrv4",
+        "yolo1",
+        "yolo2",
+        "yolo3",
+        "yolo4",
+        "yolo7",
+        "yolo9_e2e",
+        "yolox",
+    ),
     ("detect",),
     ("executorch",),
     reason=(
@@ -98,6 +111,29 @@ _add(
     since="1.3",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "blocked",
+    ("dfine",),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "Strict capture reaches an unsupported ContextVar read in deformable "
+        "attention. Forcing the manual exported grid-sample path permits "
+        "serialization, but ExecuTorch 1.2 runtime execution still fails with "
+        "an invalid delegated tensor dimension order."
+    ),
+)
+_add(
+    "blocked",
+    ("deim",),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "The trained nano model captures, lowers, and serializes, but "
+        "ExecuTorch 1.2 runtime execution fails with an invalid delegated "
+        "tensor dimension order."
     ),
 )
 _add(
@@ -118,6 +154,20 @@ _add(
     reason=(
         "The trained atto model captures, lowers, and serializes, but the "
         "ExecuTorch 1.2 runtime process terminates while executing forward."
+    ),
+)
+_add(
+    "experimental",
+    ("yolo9_p2", "yolonas"),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "and deterministic random-weight raw parity are covered. A permissive "
+        "trained-checkpoint detection parity record is not available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(

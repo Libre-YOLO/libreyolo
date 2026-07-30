@@ -186,6 +186,80 @@ def test_edge_map_runtime_parity(
     assert float(np.max(np.abs(actual - changed))) > 1e-4
 
 
+@pytest.mark.experimental_backend
+@pytest.mark.parametrize("family", ["yolonas", "yolo9_p2"])
+def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
+    """Cover detector families lacking redistributable trained parity data."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO, LibreYOLO9P2, LibreYOLONAS
+    from libreyolo.export.exporter import ExecuTorchExporter
+
+    torch.manual_seed(11)
+    if family == "yolonas":
+        model = LibreYOLONAS(None, size="s", nb_classes=2, device="cpu")
+    else:
+        model = LibreYOLO9P2(
+            None, size="t", nb_classes=2, device="cpu"
+        )
+
+    first = torch.from_numpy(
+        np.random.default_rng(11).standard_normal(
+            (1, 3, 64, 64), dtype=np.float32
+        )
+    )
+    second = (
+        torch.full_like(first, 100.0)
+        if family == "yolo9_p2"
+        else torch.from_numpy(
+            np.random.default_rng(12).standard_normal(
+                (1, 3, 64, 64), dtype=np.float32
+            )
+        )
+    )
+    exporter = ExecuTorchExporter(model)
+    with exporter._model_context(
+        torch.device("cpu"), False, False, 1, (64, 64)
+    ) as (prepared, _), torch.no_grad():
+        expected = prepared(first)
+    if isinstance(expected, torch.Tensor):
+        expected = (expected,)
+
+    artifact = model.export(
+        "executorch",
+        output_path=str(tmp_path / f"{family}.pte"),
+        imgsz=64,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+    actual = runtime._run_inference(first.numpy())
+    changed = runtime._run_inference(second.numpy())
+
+    assert len(expected) == len(actual)
+    parity_error = 0.0
+    for expected_output, actual_output in zip(expected, actual):
+        expected_array = expected_output.detach().cpu().numpy()
+        np.testing.assert_allclose(
+            actual_output, expected_array, rtol=1e-3, atol=2e-4
+        )
+        parity_error = max(
+            parity_error,
+            float(np.max(np.abs(actual_output - expected_array))),
+        )
+    sensitivity = max(
+        float(np.max(np.abs(first_output - second_output)))
+        for first_output, second_output in zip(actual, changed)
+    )
+    assert sensitivity > max(parity_error * 100, 1e-4)
+
+    image = np.random.default_rng(13).integers(
+        0, 256, (64, 64, 3), dtype=np.uint8
+    )
+    result = runtime.predict(image, conf=0.0, max_det=20)
+    assert result.boxes is not None
+
+
 @pytest.mark.external_data
 @pytest.mark.flagship_nightly
 @pytest.mark.parametrize(
@@ -198,6 +272,13 @@ def test_edge_map_runtime_parity(
         ("yolo9_e2e", "LIBREYOLO_EXECUTORCH_YOLO9_E2E_WEIGHTS", 640),
         ("ec", "LIBREYOLO_EXECUTORCH_EC_WEIGHTS", 640),
         ("rtdetr", "LIBREYOLO_EXECUTORCH_RTDETR_WEIGHTS", 640),
+        ("rtdetrv2", "LIBREYOLO_EXECUTORCH_RTDETRV2_WEIGHTS", 640),
+        ("rtdetrv4", "LIBREYOLO_EXECUTORCH_RTDETRV4_WEIGHTS", 640),
+        ("yolo1", "LIBREYOLO_EXECUTORCH_YOLO1_WEIGHTS", 448),
+        ("yolo2", "LIBREYOLO_EXECUTORCH_YOLO2_WEIGHTS", 416),
+        ("yolo3", "LIBREYOLO_EXECUTORCH_YOLO3_WEIGHTS", 416),
+        ("yolo4", "LIBREYOLO_EXECUTORCH_YOLO4_WEIGHTS", 416),
+        ("yolo7", "LIBREYOLO_EXECUTORCH_YOLO7_WEIGHTS", 640),
     ],
 )
 def test_trained_detection_parity(

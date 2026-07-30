@@ -10,9 +10,28 @@ import importlib.metadata
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import torch
+
+
+@contextmanager
+def _capture_compatibility(metadata: dict):
+    """Temporarily select family-local decompositions for strict capture."""
+    module = None
+    previous = None
+    if metadata.get("model_family") == "rtdetrv4":
+        from ..models.dfine import ms_deform
+
+        module = ms_deform
+        previous = module._FORCE_MANUAL_GRID_SAMPLE_EXPORT
+        module._FORCE_MANUAL_GRID_SAMPLE_EXPORT = True
+    try:
+        yield
+    finally:
+        if module is not None:
+            module._FORCE_MANUAL_GRID_SAMPLE_EXPORT = previous
 
 
 def check_executorch_available() -> None:
@@ -136,7 +155,8 @@ def export_executorch(
     )
     from executorch.exir import to_edge_transform_and_lower
 
-    exported = torch.export.export(model, (example_input,), strict=True)
+    with _capture_compatibility(metadata):
+        exported = torch.export.export(model, (example_input,), strict=True)
     try:
         edge_program = to_edge_transform_and_lower(
             exported,
