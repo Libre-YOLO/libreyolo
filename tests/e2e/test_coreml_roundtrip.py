@@ -1631,8 +1631,17 @@ def test_coreml_owlv2_frozen_vocabulary_raw_and_public_path(
         postprocess_owlv2_coreml_outputs,
         preprocess_owlv2_coreml_image,
     )
+    from libreyolo.export.support import get_support
 
     labels = ["person", "dog", "remote control"]
+    requested_compute_units = (
+        "validated"
+        if (
+            alias == "owlv2-b16"
+            and get_support("owlv2", "detect", "coreml").tier == "validated"
+        )
+        else "cpu_only"
+    )
     model = LibreOpenVocab(alias, device="cpu")
     model.set_classes(labels)
     adapter = build_owlv2_frozen_coreml_adapter(
@@ -1671,7 +1680,7 @@ def test_coreml_owlv2_frozen_vocabulary_raw_and_public_path(
         format="coreml",
         half=False,
         output_path=str(tmp_path / f"{alias}.mlpackage"),
-        compute_units="cpu_only",
+        compute_units=requested_compute_units,
     )
     runtime, contract, names = _load_artifact(artifact)
     assert names == ["pred_logits", "pred_boxes"]
@@ -1694,7 +1703,10 @@ def test_coreml_owlv2_frozen_vocabulary_raw_and_public_path(
         max_det=20,
         verbose=False,
     )
-    deployed_model = LibreYOLO(artifact)
+    deployed_model = LibreYOLO(
+        artifact,
+        compute_units=requested_compute_units,
+    )
     deployed = deployed_model.predict(
         source,
         conf=0.001,

@@ -17,6 +17,7 @@ from libreyolo.export.coreml_owlv2 import (
     Owlv2FrozenCoreMLAdapter,
     _owlv2_dims_from_config,
     expected_owlv2_coreml_shapes,
+    export_owlv2_coreml,
     freeze_owlv2_text_embeddings,
     owlv2_coreml_input_contract,
     owlv2_coreml_metadata,
@@ -438,6 +439,16 @@ def test_direct_export_preparation_pins_native_canvas_and_metadata(
     from libreyolo.export.exporter import CoreMLExporter
 
     calls = []
+    profile_calls = []
+
+    def fake_profile_resolver(compute_units, **kwargs):
+        profile_calls.append((compute_units, kwargs))
+        return "cpu_only", None
+
+    monkeypatch.setattr(
+        "libreyolo.export.coreml_profiles.resolve_coreml_export_compute_units",
+        fake_profile_resolver,
+    )
     monkeypatch.setattr(
         CoreMLExporter,
         "_validate",
@@ -485,6 +496,8 @@ def test_direct_export_preparation_pins_native_canvas_and_metadata(
     assert metadata["owlv2_vocabulary_sha256"] == (
         owlv2_coreml_vocabulary_hash(model.names)
     )
+    assert profile_calls[0][0] == "cpu_only"
+    assert profile_calls[0][1]["defer_source_validation"] is True
     assert calls == [
         {
             "half": False,
@@ -497,6 +510,45 @@ def test_direct_export_preparation_pins_native_canvas_and_metadata(
             "max_det": 300,
         }
     ]
+
+
+def test_direct_export_preserves_requested_compute_units(monkeypatch):
+    wrapper = SimpleNamespace(
+        model=object(),
+        processor=object(),
+        size="b16",
+        names={0: "cat"},
+    )
+    monkeypatch.setattr(
+        "libreyolo.export.coreml_owlv2.prepare_owlv2_coreml_export",
+        lambda model, kwargs: (
+            960,
+            "frozen.mlpackage",
+            {"model_family": "owlv2"},
+            "fp32",
+            "cpu_only",
+        ),
+    )
+    monkeypatch.setattr(
+        "libreyolo.export.coreml_owlv2.build_owlv2_frozen_coreml_adapter",
+        lambda *args, **kwargs: torch.nn.Identity(),
+    )
+    calls = []
+
+    def fake_export(*args, **kwargs):
+        calls.append(kwargs)
+        return "frozen.mlpackage"
+
+    monkeypatch.setattr(
+        "libreyolo.export.coreml.export_coreml",
+        fake_export,
+    )
+    assert export_owlv2_coreml(
+        wrapper,
+        {"compute_units": "validated"},
+    ) == "frozen.mlpackage"
+    assert calls[0]["compute_units"] == "cpu_only"
+    assert calls[0]["_requested_compute_units"] == "validated"
 
 
 @pytest.mark.parametrize(

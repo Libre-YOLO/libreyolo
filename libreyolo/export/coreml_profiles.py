@@ -637,6 +637,19 @@ _PROFILES = (
         "b16",
         960,
         "LibreOWLv2b16",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "ac4b8386690cc335810cb2a8ca05ccae"
+            "ccc9fb1d350d98d0ee85f236b9071e10"
+        ),
+        deployment_abi_sha256=(
+            "67b0f52de6ddd53675c75b9fd7992e02"
+            "346e093849d7fc689229bd5a51d669d8"
+        ),
+        evidence_sha256=(
+            "a0b80023d8d29a647fac58d3b856b479"
+            "0ae37ec8b88c84045b82f7b3cc7ff644"
+        ),
         runtime_all=True,
         class_count=3,
     ),

@@ -676,10 +676,14 @@ def prepare_owlv2_coreml_export(
         raise RuntimeError(
             "OWLv2 class metadata is inconsistent: nb_classes must match names."
         )
-    from .coreml_profiles import resolve_coreml_export_compute_units
+    from .coreml_profiles import (
+        normalize_coreml_compute_units,
+        resolve_coreml_export_compute_units,
+    )
 
+    requested_compute_units = normalize_coreml_compute_units(compute_units)
     compute_units, _ = resolve_coreml_export_compute_units(
-        compute_units,
+        requested_compute_units,
         family="owlv2",
         task="detect",
         size=size,
@@ -687,6 +691,7 @@ def prepare_owlv2_coreml_export(
         precision="fp32",
         nms=False,
         class_count=len(labels),
+        defer_source_validation=True,
     )
 
     exporter = CoreMLExporter(model)
@@ -732,6 +737,11 @@ def export_owlv2_coreml(
     kwargs: Mapping[str, Any],
 ) -> str:
     """Export the current OWLv2 class vocabulary as an image-only package."""
+    from .coreml_profiles import normalize_coreml_compute_units
+
+    requested_compute_units = normalize_coreml_compute_units(
+        kwargs.get("compute_units", "cpu_only")
+    )
     (
         image_size,
         output_path,
@@ -760,6 +770,7 @@ def export_owlv2_coreml(
         model_family="owlv2",
         model_task="detect",
         model_size=model.size,
+        _requested_compute_units=requested_compute_units,
     )
 
 
