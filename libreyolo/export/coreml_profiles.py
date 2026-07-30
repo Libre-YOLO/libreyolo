@@ -488,6 +488,19 @@ _PROFILES = (
         "s",
         512,
         "LibreLingBotVisions-sem",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "ee09c9a85ca8a109962ccebf0ec23e5e"
+            "9402f107aaec1ce2a25e36c26682bbae"
+        ),
+        deployment_abi_sha256=(
+            "b1a83e6d896013ad2c6927810daee61a"
+            "96a0f069d994424f17172d7f1c6272bd"
+        ),
+        evidence_sha256=(
+            "74c063be117f7f01216baaa313fbc0f9"
+            "29506c2f8ce9fb6e783e2138e320510b"
+        ),
         class_count=150,
     ),
     _profile(
