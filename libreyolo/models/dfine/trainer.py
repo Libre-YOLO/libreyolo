@@ -36,7 +36,6 @@ from typing import Dict, Optional, Tuple, Type
 import logging
 
 import torch
-from torch.amp import autocast
 from tqdm import tqdm
 
 from ...data import (
@@ -596,7 +595,7 @@ class DFINETrainer(BaseTrainer):
             targets = targets.to(self.device, non_blocking=True)
 
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._autocast_context():
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     loss = outputs["total_loss"]
                 self.optimizer.zero_grad()
@@ -715,7 +714,7 @@ class DFINETrainer(BaseTrainer):
                 actual_window = min(accum, len(self.train_loader) - batch_idx)
 
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._autocast_context():
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     loss = outputs["total_loss"] / actual_window
                 self.scaler.scale(loss).backward()

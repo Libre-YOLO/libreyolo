@@ -14,6 +14,7 @@ import libreyolo.export.onnx as onnx_module
 from libreyolo.export.exporter import (
     BaseExporter,
     CoreMLExporter,
+    ExecuTorchExporter,
     NcnnExporter,
     OnnxExporter,
     OpenVINOExporter,
@@ -127,6 +128,7 @@ class TestExporterFormats:
     def test_expected_keys(self):
         assert "onnx" in BaseExporter._registry
         assert "torchscript" in BaseExporter._registry
+        assert "executorch" in BaseExporter._registry
         assert "tensorrt" in BaseExporter._registry
         assert "openvino" in BaseExporter._registry
         assert "ncnn" in BaseExporter._registry
@@ -144,6 +146,9 @@ class TestExporterFormats:
         assert TensorRTExporter.requires_onnx is True
         assert TorchScriptExporter.apply_model_half is True
         assert TorchScriptExporter.supports_embedded_nms is False
+        assert ExecuTorchExporter.suffix == ".pte"
+        assert ExecuTorchExporter.supports_fp16 is False
+        assert ExecuTorchExporter.supports_int8 is False
         assert NcnnExporter.supports_int8 is False
         assert TFLiteExporter.requires_onnx is True
         assert TFLiteExporter.supports_fp16 is False

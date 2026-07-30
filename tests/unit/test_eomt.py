@@ -892,6 +892,7 @@ def test_val_segment_routes_to_base_val(fake_eomt_seg_net, monkeypatch):
         data="coco.yaml",
         imgsz=640,
         half=True,
+        amp_dtype="bf16",
         save_dir="runs/val/exp",
         save_plots=True,
     )
@@ -902,6 +903,7 @@ def test_val_segment_routes_to_base_val(fake_eomt_seg_net, monkeypatch):
     # half/save_dir/save_plots must reach BaseModel.val(), not be silently
     # swallowed by the outer LibreEoMT.val() signature.
     assert kwargs.get("half") is True
+    assert kwargs.get("amp_dtype") == "bfloat16"
     assert kwargs.get("save_dir") == "runs/val/exp"
     assert kwargs.get("save_plots") is True
 

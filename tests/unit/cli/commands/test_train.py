@@ -96,6 +96,9 @@ def test_train_dry_run_uses_rfdetr_defaults():
     assert cfg["warmup_epochs"] == 0
     assert cfg["lr_drop"] == 100
     assert cfg["ema_decay"] == 0.993
+    assert cfg["amp_dtype"] == "float16"
+    assert cfg["max_det"] == 300
+    assert "eval_max_det" not in cfg
     from libreyolo.models.rfdetr.config import RFDETRConfig
 
     assert RFDETRConfig().ema_tau == 100
@@ -114,6 +117,9 @@ def test_train_dry_run_rfdetr_user_override_wins():
             "batch=2",
             "lr0=0.001",
             "lr_drop=7",
+            "amp_dtype=bf16",
+            "max_det=500",
+            "eval_max_det=500",
             "--dry-run",
             "--json",
         ],
@@ -126,6 +132,47 @@ def test_train_dry_run_rfdetr_user_override_wins():
     assert cfg["batch"] == 2
     assert cfg["lr0"] == 0.001
     assert cfg["lr_drop"] == 7
+    assert cfg["amp_dtype"] == "bfloat16"
+    assert cfg["max_det"] == 500
+    assert cfg["eval_max_det"] == 500
+
+
+def test_train_dry_run_rejects_invalid_max_det():
+    app = _make_app()
+    result = runner.invoke(
+        app,
+        [
+            "data=coco8.yaml",
+            "model=LibreYOLO9t.pt",
+            "max_det=0",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_type_error"
+    assert "max_det must be >= 1" in data["message"]
+
+
+def test_train_dry_run_rejects_invalid_eval_max_det():
+    app = _make_app()
+    result = runner.invoke(
+        app,
+        [
+            "data=coco8.yaml",
+            "model=LibreYOLO9t.pt",
+            "eval_max_det=0",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_type_error"
+    assert "eval_max_det must be >= 1" in data["message"]
 
 
 def test_train_dry_run_rfdetr_lora_flag_is_visible():
@@ -300,6 +347,9 @@ def test_train_rfdetr_actual_call_uses_reported_defaults(monkeypatch, tmp_path):
     assert kwargs["lr_drop"] == 100
     assert kwargs["use_ema"] is True
     assert kwargs["ema_decay"] == 0.993
+    assert kwargs["amp_dtype"] == "float16"
+    assert kwargs["max_det"] == 300
+    assert kwargs["eval_max_det"] is None
     assert kwargs["save_plots"] is True
     assert kwargs["early_stopping"] is False
 

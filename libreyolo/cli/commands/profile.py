@@ -203,7 +203,12 @@ def infer_cmd(
     size: str = typer.Option("t", "--size", help="Model size variant"),
     batch: int = typer.Option(1, "--batch", help="Images per forward pass"),
     imgsz: int = typer.Option(640, "--imgsz"),
-    half: bool = typer.Option(False, "--half/--no-half", help="Autocast fp16 forward (CUDA only)"),
+    half: bool = typer.Option(False, "--half/--no-half", help="Autocast forward (CUDA only)"),
+    amp_dtype: str = typer.Option(
+        "float16",
+        "--amp-dtype",
+        help="CUDA autocast dtype: float16 or bfloat16",
+    ),
     warmup: int = typer.Option(20, "--warmup", help="Warmup iterations before measuring"),
     runs: int = typer.Option(100, "--runs", help="Measured iterations"),
     repeat: int = typer.Option(1, "--repeat", help="Repeat N times for mean +/- stdev throughput (needed for a significant compare)"),
@@ -235,7 +240,8 @@ def infer_cmd(
         save_dir = Path(project) / name
         prof = InferenceProfiler(
             model, warmup=warmup, runs=runs, batch=batch, imgsz=imgsz,
-            half=half, trace=trace, save_dir=save_dir, meta={"model": weights},
+            half=half, amp_dtype=amp_dtype, trace=trace, save_dir=save_dir,
+            meta={"model": weights},
         )
         a = prof.run(images, conf=conf, iou=iou, max_det=max_det)
         last = (a, save_dir)

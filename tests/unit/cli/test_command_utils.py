@@ -360,6 +360,97 @@ def test_val_runtime_error_includes_stage_context(failing_app):
     assert data["message"] == "Validation failed: disk full"
 
 
+def test_val_forwards_protocol_cap_and_amp_dtype(monkeypatch):
+    app = _make_app([("val", val.val_cmd), ("info", special.info_cmd)])
+    captured = {}
+
+    class _DetectModel:
+        FAMILY = "yolo9"
+        task = "detect"
+        size = "t"
+        device = "cuda:0"
+
+        def val(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "metrics/mAP50": 0.5,
+                "metrics/mAP50-95": 0.25,
+                "metrics/precision": 0.4,
+                "metrics/recall": 0.3,
+            }
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.val.resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.val.load_model_or_exit",
+        lambda out, model, model_path, device: _DetectModel(),
+    )
+    monkeypatch.setattr(
+        "libreyolo.utils.general.increment_path",
+        lambda path, exist_ok=False, mkdir=False: Path(path),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "val",
+            "data=rf100vl.yaml",
+            "model=LibreYOLO9t.pt",
+            "half=true",
+            "amp_dtype=bf16",
+            "max_det=500",
+            "eval_max_det=500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["half"] is True
+    assert captured["amp_dtype"] == "bfloat16"
+    assert captured["max_det"] == 500
+    assert captured["eval_max_det"] == 500
+
+
+def test_val_rejects_invalid_max_det():
+    app = _make_app([("val", val.val_cmd), ("info", special.info_cmd)])
+    result = runner.invoke(
+        app,
+        [
+            "val",
+            "data=rf100vl.yaml",
+            "model=LibreYOLO9t.pt",
+            "max_det=0",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_type_error"
+    assert "max_det must be >= 1" in data["message"]
+
+
+def test_val_rejects_invalid_eval_max_det():
+    app = _make_app([("val", val.val_cmd), ("info", special.info_cmd)])
+    result = runner.invoke(
+        app,
+        [
+            "val",
+            "data=rf100vl.yaml",
+            "model=LibreYOLO9t.pt",
+            "eval_max_det=0",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_type_error"
+    assert "eval_max_det must be >= 1" in data["message"]
+
+
 def test_val_json_reports_segmentation_metric_groups(monkeypatch):
     app = _make_app([("val", val.val_cmd), ("info", special.info_cmd)])
 

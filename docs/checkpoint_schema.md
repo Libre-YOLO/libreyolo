@@ -199,6 +199,19 @@ bit-identical:
 - `interpolation`: resize filter, `"bilinear"` or `"bicubic"`. Readers default
   to `"bilinear"` when the key is absent.
 
+ExecuTorch exports write the flat metadata to a required
+`<program>.pte.json` sidecar. The v1 contract is CPU, FP32, batch 1, and a
+fixed input canvas. It additionally requires:
+
+- `executorch_version`: installed ExecuTorch package version used to export.
+- `executorch_delegate`: `"xnnpack"`.
+- `executorch_delegate_partitions`: positive number of XNNPACK delegate calls
+  retained in the lowered edge program.
+
+The loader rejects a sidecar that claims another delegate, dynamic shapes, or
+non-FP32 precision. A `.pte` is backend-specific and is not a native PyTorch
+checkpoint.
+
 For ONNX YOLO9 detection exports with `nms=true`, output `0` / `output` is the
 standalone post-NMS tensor using the export-time `nms_conf`, `nms_iou`, and
 `max_det` values. When `nms_raw_output=true`, output `1` / `raw` is reserved for

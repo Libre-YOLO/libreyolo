@@ -46,6 +46,11 @@ onnx = [
     "onnxsim>=0.4.0",
     "onnxruntime>=1.16.0",
 ]
+executorch = [
+    # Fixed-shape FP32 .pte export and Python runtime validation. Kept out of
+    # aggregate extras because ExecuTorch constrains the compatible Torch pair.
+    "executorch",
+]
 coreai = [
     # Core AI (.aimodel) export, macOS only: the toolchain neither converts
     # nor runs elsewhere. Kept out of every aggregate extra on purpose,
@@ -352,6 +357,7 @@ markers = [
     "experimental_backend: tests covering an experimental backend",
     "onnx: tests covering ONNX export or inference",
     "torchscript: tests covering TorchScript export or inference",
+    "executorch: tests requiring the optional ExecuTorch exporter/runtime",
     "smoke: fast end-to-end pipeline checks on tiny synthetic data (CPU, <60s)",
     "tensorrt: tests requiring TensorRT",
     "trt: alias for TensorRT tests requiring TensorRT",

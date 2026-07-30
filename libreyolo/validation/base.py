@@ -13,6 +13,8 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from libreyolo.utils.amp import torch_amp_dtype
+
 from .config import ValidationConfig
 
 logger = logging.getLogger(__name__)
@@ -182,7 +184,9 @@ class BaseValidator(ABC):
 
     def _autocast_context(self):
         if self.config.half and self.device.type == "cuda":
-            return torch.amp.autocast("cuda")
+            return torch.amp.autocast(
+                "cuda", dtype=torch_amp_dtype(self.config.amp_dtype)
+            )
         return nullcontext()
 
     def _warmup_model(self, n_warmup: int = 3) -> None:
