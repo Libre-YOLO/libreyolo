@@ -2205,6 +2205,59 @@ class BaseBackend(ABC):
         )
         return depth_t[0, 0]
 
+    @staticmethod
+    def _parse_depth_anything3_output(
+        all_outputs, original_size: Tuple[int, int]
+    ) -> torch.Tensor:
+        if len(all_outputs) != 2:
+            raise ValueError(
+                "Depth Anything 3 backend output must contain depth and sky maps."
+            )
+        depth = torch.from_numpy(
+            np.ascontiguousarray(np.asarray(all_outputs[0], dtype=np.float32))
+        )
+        sky = torch.from_numpy(
+            np.ascontiguousarray(np.asarray(all_outputs[1], dtype=np.float32))
+        )
+        if depth.ndim != 4 or sky.shape != depth.shape or depth.shape[1] != 1:
+            raise ValueError(
+                "Depth Anything 3 backend depth and sky outputs must both have "
+                f"shape [B, 1, H, W], got {tuple(depth.shape)} and "
+                f"{tuple(sky.shape)}."
+            )
+
+        corrected = depth
+        for index in range(depth.shape[0]):
+            non_sky = sky[index] < 0.3
+            if non_sky.sum() <= 10 or (~non_sky).sum() <= 10:
+                continue
+            non_sky_depth = depth[index][non_sky]
+            if non_sky_depth.numel() > 100_000:
+                sample_indices = torch.randint(
+                    0,
+                    non_sky_depth.numel(),
+                    (100_000,),
+                )
+                non_sky_depth = non_sky_depth[sample_indices]
+            far_depth = torch.quantile(non_sky_depth, 0.99)
+            if corrected is depth:
+                corrected = depth.clone()
+            corrected[index] = torch.where(
+                non_sky, depth[index], far_depth
+            )
+
+        inverse_depth = torch.reciprocal(corrected.clamp_min(1e-6))
+        return BaseBackend._parse_depth_output(
+            [inverse_depth.numpy()], original_size
+        )
+
+    def _parse_depth_outputs(
+        self, all_outputs, original_size: Tuple[int, int]
+    ) -> torch.Tensor:
+        if self.model_family == "depth_anything3":
+            return self._parse_depth_anything3_output(all_outputs, original_size)
+        return self._parse_depth_output(all_outputs, original_size)
+
     def _build_depth_result(
         self,
         all_outputs,
@@ -2213,7 +2266,7 @@ class BaseBackend(ABC):
         original_size: Tuple[int, int],
         image_path,
     ) -> Results:
-        depth = self._parse_depth_output(all_outputs, original_size)
+        depth = self._parse_depth_outputs(all_outputs, original_size)
         return Results(
             boxes=None,
             depth_map=DepthMap(depth, orig_shape),
@@ -2869,7 +2922,7 @@ class BaseBackend(ABC):
                 restored = restored[:, :, :orig_h, :orig_w]
             return {"restored": torch.from_numpy(restored).float().clamp(0.0, 1.0)}
         if self.task == "depth":
-            return {"depth": self._parse_depth_output(outputs, original_size)}
+            return {"depth": self._parse_depth_outputs(outputs, original_size)}
         if self.task == "normal":
             return {"normal": self._parse_normal_output(outputs, original_size)}
         if self.task == "edge":

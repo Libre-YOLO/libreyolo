@@ -99,7 +99,7 @@ def test_executorch_realtime_support_is_evidence_backed():
     for family, task in validated:
         assert get_support(family, task, "executorch").tier == "validated"
 
-    assert get_support("rtmdet", "detect", "executorch").tier == "blocked"
+    assert get_support("rtmdet", "detect", "executorch").tier == "experimental"
     assert get_support("dfine", "detect", "executorch").tier == "blocked"
     assert get_support("deim", "detect", "executorch").tier == "blocked"
     assert get_support("deimv2", "detect", "executorch").tier == "blocked"
@@ -115,6 +115,7 @@ def test_executorch_realtime_support_is_evidence_backed():
     assert get_support("dinov2", "semantic", "executorch").tier == "experimental"
     assert get_support("dinov2", "classify", "executorch").tier == "experimental"
     assert get_support("dinov2", "embed", "executorch").tier == "experimental"
+    assert get_support("depth_anything3", "depth", "executorch").tier == "experimental"
     assert get_support("l2cs", "gaze", "executorch").tier == "experimental"
     assert get_support("segformer", "semantic", "executorch").tier == "experimental"
     assert get_support("eomt", "semantic", "executorch").tier == "blocked"

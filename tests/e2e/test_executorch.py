@@ -370,16 +370,18 @@ def test_dinov2_embedding_runtime_parity(tmp_path, monkeypatch):
 
 
 @pytest.mark.experimental_backend
-@pytest.mark.parametrize("family", ["yolonas", "yolo9_p2"])
+@pytest.mark.parametrize("family", ["rtmdet", "yolonas", "yolo9_p2"])
 def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     """Cover detector families lacking redistributable trained parity data."""
     _require_executorch(monkeypatch)
 
-    from libreyolo import LibreYOLO, LibreYOLO9P2, LibreYOLONAS
+    from libreyolo import LibreRTMDet, LibreYOLO, LibreYOLO9P2, LibreYOLONAS
     from libreyolo.export.exporter import ExecuTorchExporter
 
     torch.manual_seed(11)
-    if family == "yolonas":
+    if family == "rtmdet":
+        model = LibreRTMDet(None, size="t", nb_classes=2, device="cpu")
+    elif family == "yolonas":
         model = LibreYOLONAS(None, size="s", nb_classes=2, device="cpu")
     else:
         model = LibreYOLO9P2(
@@ -393,7 +395,7 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     )
     second = (
         torch.full_like(first, 100.0)
-        if family == "yolo9_p2"
+        if family in {"rtmdet", "yolo9_p2"}
         else torch.from_numpy(
             np.random.default_rng(12).standard_normal(
                 (1, 3, 64, 64), dtype=np.float32
@@ -434,7 +436,8 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
         float(np.max(np.abs(first_output - second_output)))
         for first_output, second_output in zip(actual, changed)
     )
-    assert sensitivity > max(parity_error * 100, 1e-4)
+    sensitivity_floor = 1e-8 if family == "rtmdet" else 1e-4
+    assert sensitivity > max(parity_error * 100, sensitivity_floor)
 
     image = np.random.default_rng(13).integers(
         0, 256, (64, 64, 3), dtype=np.uint8
@@ -448,6 +451,7 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     ("case", "imgsz"),
     [
         ("convnext_classify", 64),
+        ("depth_anything3_depth", 56),
         ("nafnet_restore", 64),
         ("ec_pose", 64),
         ("ec_segment", 128),
@@ -465,6 +469,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
 
     from libreyolo import (
         LibreConvNeXt,
+        LibreDepthAnything3,
         LibreEC,
         LibreFOMO,
         LibreL2CS,
@@ -480,6 +485,9 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
     constructors = {
         "convnext_classify": lambda: LibreConvNeXt(
             None, size="t", nb_classes=3, device="cpu"
+        ),
+        "depth_anything3_depth": lambda: LibreDepthAnything3(
+            None, size="l", device="cpu"
         ),
         "nafnet_restore": lambda: LibreNAFNet(None, size="s", device="cpu"),
         "ec_pose": lambda: LibreEC(None, size="s", task="pose", device="cpu"),
@@ -556,6 +564,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
     result = runtime.predict(image, conf=0.0, max_det=10)
     expected_attribute = {
         "convnext_classify": "probs",
+        "depth_anything3_depth": "depth_map",
         "nafnet_restore": "restored",
         "ec_pose": "keypoints",
         "ec_segment": "masks",

@@ -15,7 +15,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | deim | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
 | depth_anything | depth | ✓ | ✓ | ✓ | exp | exp |  |  |  | ✓ |
-| depth_anything3 | depth |  |  |  |  |  |  |  |  |  |
+| depth_anything3 | depth |  |  | exp |  |  |  |  |  |  |
 | dexined | edge | ✓ |  | exp |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
@@ -62,7 +62,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | rtdetr | detect | ✓ | ✓ | ✓ | exp | exp |  |  | exp | ✓ |
 | rtdetrv2 | detect | exp | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | rtdetrv4 | detect | exp | ✓ | ✓ | exp | exp |  |  |  | ✓ |
-| rtmdet | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
+| rtmdet | detect | ✓ | ✓ | exp | exp | exp |  |  |  | ✓ |
 | rtmdet | segment |  |  |  |  |  |  |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |  |  |
@@ -235,15 +235,14 @@ A check mark applies only under any constraint listed here.
 - `depth_anything` / `depth` / `ncnn`: PNNX 20260526 reports unsupported batch-index reshapes in the DINOv2 transformer graph; the produced NCNN artifact fails numeric parity.
 - `depth_anything` / `depth` / `tflite`: onnx2tf 2.4.x converts the DINOv2 depth graph, but LiteRT rejects a generated FILL node because its dimensions are invalid.
 - `depth_anything` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `depth_anything3` / `depth` / `onnx`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `torchscript`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `executorch`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `tensorrt`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `openvino`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `ncnn`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `tflite`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `coreml`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `coreai`: The model raises NotImplementedError for every format: depth export is out of scope per ADR 0006, the depth task contract. Depth Anything V2 exports and validates at 5.2e-06, so this is specific to the V3 family and not a Core AI limitation.
+- `depth_anything3` / `depth` / `onnx`: Depth Anything 3 export currently supports ExecuTorch only.
+- `depth_anything3` / `depth` / `torchscript`: Depth Anything 3 export currently supports ExecuTorch only.
+- `depth_anything3` / `depth` / `tensorrt`: Depth Anything 3 export currently supports ExecuTorch only.
+- `depth_anything3` / `depth` / `openvino`: Depth Anything 3 export currently supports ExecuTorch only.
+- `depth_anything3` / `depth` / `ncnn`: Depth Anything 3 export currently supports ExecuTorch only.
+- `depth_anything3` / `depth` / `tflite`: Depth Anything 3 export currently supports ExecuTorch only.
+- `depth_anything3` / `depth` / `coreml`: Depth Anything 3 export currently supports ExecuTorch only.
+- `depth_anything3` / `depth` / `coreai`: Depth Anything 3 export currently supports ExecuTorch only.
 - `dexined` / `edge` / `torchscript`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `dexined` / `edge` / `tensorrt`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `dexined` / `edge` / `openvino`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
@@ -499,7 +498,6 @@ A check mark applies only under any constraint listed here.
 - `rtdetrv4` / `detect` / `ncnn`: NCNN export is not supported for RT-DETRv4: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rtdetrv4` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtdetrv4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `rtmdet` / `detect` / `executorch`: ExecuTorch 1.2 XNNPACK lowering fails in FuseBatchNormPass because the generated graph has a duplicate fused parameter name.
 - `rtmdet` / `detect` / `ncnn`: PNNX 20260526 reports an unregistered nn.Conv2d layer and leaves the RTMDet NCNN graph without usable input blobs.
 - `rtmdet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtmdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.

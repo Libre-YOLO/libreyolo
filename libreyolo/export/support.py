@@ -137,13 +137,18 @@ _add(
     ),
 )
 _add(
-    "blocked",
+    "experimental",
     ("rtmdet",),
     ("detect",),
     ("executorch",),
     reason=(
-        "ExecuTorch 1.2 XNNPACK lowering fails in FuseBatchNormPass because "
-        "the generated graph has a duplicate fused parameter name."
+        "The export-only graph unshares RTMDet's cross-level head convolutions "
+        "to avoid duplicate XNNPACK batch-norm fusion parameter names. Full "
+        "conversion, runtime execution, input sensitivity, deterministic "
+        "random-weight raw parity, and detection parsing are covered."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(
@@ -356,6 +361,22 @@ _add(
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape "
         "divisible by 32"
+    ),
+)
+_add(
+    "experimental",
+    ("depth_anything3",),
+    ("depth",),
+    ("executorch",),
+    reason=(
+        "The fixed-canvas graph exports raw depth and sky maps so LibreYOLO's "
+        "runtime can apply the tensor-dependent sky correction and inverse-depth "
+        "contract outside the portable graph. Conversion, runtime execution, "
+        "raw-map parity, input sensitivity, and depth result parsing are covered."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape "
+        "divisible by 14"
     ),
 )
 _add(
@@ -1480,13 +1501,8 @@ _add(
     "blocked",
     ("depth_anything3",),
     ("depth",),
-    ("coreai",),
-    reason=(
-        "The model raises NotImplementedError for every format: depth export "
-        "is out of scope per ADR 0006, the depth task contract. Depth Anything "
-        "V2 exports and validates at 5.2e-06, so this is specific to the V3 "
-        "family and not a Core AI limitation."
-    ),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "executorch"),
+    reason="Depth Anything 3 export currently supports ExecuTorch only.",
 )
 
 
@@ -1519,10 +1535,6 @@ _TASK_BLOCKS = {
 }
 
 _FAMILY_BLOCKS = {
-    "depth_anything3": (
-        "Depth Anything 3 currently rejects export for every format; its "
-        "depth graph has not been added to the exported-runtime contract."
-    ),
     "eomt": "EoMT instance and panoptic export do not yet have runtime parsing.",
     "l2cs": (
         "The v1 L2CS gaze export contract supports ONNX and ExecuTorch only."
