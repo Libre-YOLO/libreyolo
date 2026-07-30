@@ -258,6 +258,14 @@ def train_cmd(
     amp_dtype: str = typer.Option(
         "float16", help="CUDA AMP dtype: float16 or bfloat16"
     ),
+    cuda_graph: bool = typer.Option(
+        False,
+        "--cuda-graph",
+        help=(
+            "Capture the training forward/backward into CUDA graphs "
+            "(single-GPU, supported families only; others run eager)"
+        ),
+    ),
     pretrained: bool = typer.Option(True, help="Use pretrained weights"),
     lora: bool = typer.Option(
         False,
@@ -495,6 +503,7 @@ def train_cmd(
         "resume": resume_val,
         "amp": amp,
         "amp_dtype": amp_dtype,
+        "cuda_graph": cuda_graph,
         "lora": lora,
         "freeze": freeze_val,
         "optimizer": optimizer,

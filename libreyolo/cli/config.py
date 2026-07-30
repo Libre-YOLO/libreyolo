@@ -434,6 +434,7 @@ def _build_rfdetr_train_kwargs(
         "flip_prob": "flip_prob",
         "amp": "amp",
         "amp_dtype": "amp_dtype",
+        "cuda_graph": "cuda_graph",
         "max_det": "max_det",
         "eval_max_det": "eval_max_det",
         "lora": "lora",

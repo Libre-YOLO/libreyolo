@@ -118,3 +118,37 @@ class YOLO9Trainer(BaseTrainer):
 
     def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
         return self.model(imgs, targets=targets)
+
+    def cuda_graph_train_spec(self):
+        """Capture spec: graph the network, keep the DFL/TAL loss eager.
+
+        The split reuses the model's own boundary: a train-mode forward
+        without targets returns the concatenated head maps, and
+        ``assemble`` replays exactly the loss path ``LibreYOLO9Model.
+        forward`` takes with targets (anchors tracking the input size,
+        then the head's loss over the raw maps). Restricted to the plain
+        detect head: subclasses with derived heads (e2e dual assignment)
+        or other tasks compute loss at a different boundary and run eager.
+        """
+        from libreyolo.training.cuda_graph import (
+            CudaGraphTrainSpec,
+            GraphableNetwork,
+        )
+        from .nn import DDetect, LibreYOLO9Model
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            return None
+        if not isinstance(self.model, LibreYOLO9Model):
+            return None
+        if type(self.model.head) is not DDetect:
+            return None
+
+        network = GraphableNetwork(self.model)
+
+        def assemble(flat, imgs, targets, polygons=None):
+            loss_fn = self.model.head._get_loss_fn(imgs.device)
+            loss_fn.update_anchors([imgs.shape[3], imgs.shape[2]])
+            return loss_fn(network.rebuild(flat), targets)
+
+        return CudaGraphTrainSpec(network=network, assemble=assemble)

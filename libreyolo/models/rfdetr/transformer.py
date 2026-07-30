@@ -286,8 +286,16 @@ class MSDeformAttn(nn.Module):
             # under strict torch.export capture.
             expected_len_in = sum(h * w for h, w in input_spatial_shapes_hw)
             assert expected_len_in == len_input, error_msg
-        elif not torch.jit.is_tracing() and not isinstance(
-            input_spatial_shapes, torch.fx.Proxy
+        # The int() readback below is a host sync, which CUDA graph capture
+        # forbids; the same values were already validated during the graph
+        # warm-up iterations, so the check is skipped only while capturing.
+        elif (
+            not torch.jit.is_tracing()
+            and not isinstance(input_spatial_shapes, torch.fx.Proxy)
+            and not (
+                input_spatial_shapes.is_cuda
+                and torch.cuda.is_current_stream_capturing()
+            )
         ):
             try:
                 expected_len_in = int(
@@ -481,21 +489,47 @@ class Transformer(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
+    def _cached_spatial_shapes(
+        self, spatial_shapes_hw: "list[tuple[int, int]]", device
+    ) -> torch.Tensor:
+        """Constant (n_levels, 2) level-shape tensor, cached per shape set.
+
+        Writing Python ints element-wise into a CUDA tensor issues one tiny
+        unpinned host-to-device copy per level on every forward, which is
+        wasted work eagerly and illegal inside CUDA graph capture. The
+        values only depend on the input resolution, so build the tensor
+        once per (shapes, device) and reuse it; the cached tensor is
+        read-only downstream.
+        """
+        key = (tuple(spatial_shapes_hw), str(device))
+        cached = getattr(self, "_spatial_shapes_cache", None)
+        if cached is None or cached[0] != key:
+            tensor = torch.tensor(
+                spatial_shapes_hw, device=device, dtype=torch.long
+            )
+            self._spatial_shapes_cache = (key, tensor)
+        return self._spatial_shapes_cache[1]
+
     def forward(self, srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None):
         src_flatten = []
         mask_flatten = [] if masks is not None else None
         lvl_pos_embed_flatten = []
-        # Build spatial_shapes as a tensor directly so that the ONNX tracer
-        # can track h/w symbolically instead of baking them in as constants.
-        spatial_shapes = torch.empty((len(srcs), 2), device=srcs[0].device, dtype=torch.long)
+        # Under tracing, build spatial_shapes as a tensor directly so that
+        # the ONNX tracer can track h/w symbolically instead of baking them
+        # in as constants. Outside tracing the tensor is a per-resolution
+        # constant and comes from _cached_spatial_shapes after the loop.
+        tracing = torch.jit.is_tracing()
+        if tracing:
+            spatial_shapes = torch.empty((len(srcs), 2), device=srcs[0].device, dtype=torch.long)
         # Keep Python int pairs for gen_encoder_output_proposals — its loop uses h/w
         # as slice indices and linspace steps, which require Python ints, not tensors.
         spatial_shapes_hw: list[tuple[int, int]] = []
         valid_ratios = [] if masks is not None else None
         for lvl, (src, pos_embed) in enumerate(zip(srcs, pos_embeds)):
             _, c, h, w = src.shape
-            spatial_shapes[lvl, 0] = h
-            spatial_shapes[lvl, 1] = w
+            if tracing:
+                spatial_shapes[lvl, 0] = h
+                spatial_shapes[lvl, 1] = w
             spatial_shapes_hw.append((h, w))
 
             src = src.flatten(2).transpose(1, 2)  # bs, hw, c
@@ -505,6 +539,10 @@ class Transformer(nn.Module):
             if masks is not None:
                 mask = masks[lvl].flatten(1)  # bs, hw
                 mask_flatten.append(mask)
+        if not tracing:
+            spatial_shapes = self._cached_spatial_shapes(
+                spatial_shapes_hw, srcs[0].device
+            )
         memory = torch.cat(src_flatten, 1)  # bs, \sum{hxw}, c
         if masks is not None:
             mask_flatten = torch.cat(mask_flatten, 1)  # bs, \sum{hxw}

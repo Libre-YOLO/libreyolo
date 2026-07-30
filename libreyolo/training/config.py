@@ -126,6 +126,13 @@ class TrainConfig:
     # CUDA autocast dtype when AMP is enabled. The explicit default preserves
     # historical amp=True behavior while allowing reproducible BF16 training.
     amp_dtype: str = "float16"
+    # Capture the network's training forward/backward into CUDA graphs to
+    # cut kernel-launch overhead on launch-bound (small-model) runs. Opt-in
+    # and single-GPU only; families without capture support, distributed
+    # runs and distillation runs fall back to eager training with a warning.
+    # Numerics are identical either way; batches whose shape differs from
+    # the captured shape (multi-scale, last partial batch) run eager.
+    cuda_graph: bool = False
     # Layer freezing. An int freezes the first N family-defined freeze groups;
     # a list freezes explicit group indices or module-name selectors; a string
     # freezes matching module/parameter names.
