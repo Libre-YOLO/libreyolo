@@ -1,0 +1,157 @@
+---
+name: run-rf100vl-benchmark
+description: >-
+  Run the RF100-VL (Roboflow 100-VL) detection benchmark on LibreYOLO models
+  end to end: dataset download with version locking, per-dataset fine-tuning,
+  protocol-conformant pycocotools evaluation at maxDets 500, artifact
+  publishing, and multi-GPU execution on vast.ai (the default compute). Use
+  when someone wants to "run RF100-VL", "benchmark on Roboflow 100",
+  reproduce or extend published RF100-VL numbers, or add a model family to
+  the campaign. Training and eval run in the vision-analysis-benchmark
+  harness; this skill holds the protocol, the locked decisions, and the
+  compute playbook.
+---
+
+# Run the RF100-VL benchmark
+
+RF100-VL: 100 real-world detection datasets from Roboflow Universe (164,149
+images, 564 classes, 7 domains), paper arXiv 2505.20612 (NeurIPS 2025
+Datasets and Benchmarks). Each dataset ships fixed `train`/`valid`/`test`
+splits in COCO JSON. There is no official runner; the harness referenced
+below is the runner.
+
+## Protocol (locked decisions)
+
+| Decision | Value | Authority |
+|---|---|---|
+| Scoring | pycocotools, `maxDets=500`, per-dataset `test` split | paper |
+| Headline metric | AP 0.50:0.95, unweighted mean over the 100 datasets | paper |
+| Per-domain means | published alongside (7 domains) | our addition |
+| Split discipline | train on `train`, select on `valid`, report on `test` | Roboflow reference code |
+| Selection | validate every epoch, EMA weights, keep best AP50:95 | Roboflow reference code |
+| Epoch budget | cap 100, early stopping patience 20 | LibreYOLO policy (reference runs a fixed 100; disclosed deviation) |
+| Effective batch | 16 (physical batch x gradient accumulation) | Roboflow reference code |
+| Precision | fp32; bf16 only via explicit `amp_dtype`; never fp16 autocast | LibreYOLO policy |
+| Eval thresholds | conf 0.001; NMS IoU 0.65 for NMS families, identical at selection and final eval; DETR families are NMS-free top-k | LibreYOLO policy |
+| Seed | 0 | LibreYOLO policy |
+| Recipes | one pinned JSON per family in the harness (`va_bench/recipes/rf100vl/`), sha recorded in every run, same recipe for all 100 datasets | LibreYOLO policy |
+
+Never report toolkit-native trapezoidal mAP; it inflates up to 2.7 AP on
+RF100-VL versus pycocotools (paper, App B). LibreYOLO validation is
+pycocotools-based already; the 500 cap is the opt-in `eval_max_det` kwarg
+(`model.val(data=..., split="test", eval_max_det=500)`). Defaults for normal
+users are unchanged (AP at maxDets 100) and test-locked.
+
+## Where the work happens
+
+Repo `LibreYOLO/vision-analysis-benchmark` (the harness). Two verbs:
+
+```bash
+# per-dataset fine-tuning: one worker per GPU, subprocess children,
+# atomic status files, resume, timeouts, dense-dataset OOM fallback
+va-bench rf100vl-train --data-dir ./rf100-vl --weights-root ./rf100vl-weights --gpus 0,1,2,3,4,5,6,7
+
+# per-dataset test-split eval: cached and resumable, emits one
+# va.submission.v1 JSON with a per-dataset rf100vl block
+va-bench rf100vl --all --data-dir ./rf100-vl --weights-root ./rf100vl-weights
+```
+
+- Dataset download: add `--download` (wraps the `rf100vl` pip package; needs
+  a free `ROBOFLOW_API_KEY` in the env; about 40 GB). The harness writes a
+  version lock and replays recorded versions; it never re-resolves latest.
+- Weights contract: training places `best.pt` at
+  `<weights_root>/<dataset>/<weight_file>`; eval resolves exactly that path.
+- A capability guard aborts training on any libreyolo build without
+  `eval_max_det`/`amp_dtype` support, so a wrong install cannot silently
+  produce off-protocol numbers.
+- Exact flags and current behavior: the harness README (RF100-VL section)
+  and `--help` are authoritative; do not trust this skill for flag lists.
+
+## Decisions to take per campaign
+
+1. Model list and sizes. Flagships deep (yolo9 and rfdetr, all or most
+   sizes); every other family starts with its one or two smallest variants.
+2. Pilot first: run the `rf20vl` subset end to end. A family graduates to
+   the full 100 only if all 20 datasets complete, a kill-and-resume drill
+   reproduces the uninterrupted result within noise, and its AP ordering is
+   sane.
+3. Budget and waves: price the run from current marketplace offers (below),
+   publish after the flagships land, append families as they finish.
+4. Recipe deviations: any change lives in the recipe JSON, is hash-recorded
+   in every run, and is disclosed with the results. No silent knobs.
+
+## Artifacts and publishing
+
+Keep, per model: per-dataset eval JSONs, per-dataset raw predictions (COCO
+detections), per-run `stats.json` (recipe sha, best epoch, seed, dataset
+version, wall time), the recipe JSON, the dataset version lock, and the
+final submission JSON.
+
+- Upload the per-model artifact folder to a Hugging Face dataset repo under
+  the LibreYOLO org (one folder per model). Anyone can then rescore from the
+  JSONs with pycocotools, no GPU needed; that is the reproducibility story.
+- The leaderboard submission goes to the `vision-analysis` repo through its
+  `submit-benchmark-results` flow (validate, rebuild, PR, deploy). See the
+  `benchmark-on-visionanalysis` skill for the handoff.
+- Never hand-edit result JSONs. Regenerate them.
+
+## Compute: vast.ai (default)
+
+Account setup, 2FA, launch, exec, tail, pull, guard, and destroy discipline:
+follow `skills/launch-serverless-gpu-job` (Vast section). This section adds
+only the RF100-VL specifics.
+
+- Workload shape: independent single-GPU jobs, batch 16 at 640 px, under 12
+  GB VRAM for most families. No interconnect requirement, so interruptible
+  consumer boxes dominate datacenter cards on price per GPU-hour.
+- Primary target: one 8x RTX 5090 interruptible box. Fallback: several 1-4x
+  RTX 5090 or RTX 4090 boxes; the orchestrator takes any GPU count and
+  multi-box runs split the dataset list.
+- Offer filter: verified host, reliability above 0.99, at least 8 vCPU per
+  GPU, at least 300 GB disk, at least 500 Mbps down, download cost under
+  0.01 USD per GB, host driver CUDA capability 12.8 or newer. Bid 20 to 30
+  percent above the current minimum to reduce outbid churn.
+- Prices move within hours: re-check offers immediately before every wave
+  and archive the query plus results with the run records.
+- Interruptible semantics: being outbid pauses the box; its disk persists
+  (and bills) while the instance exists; destroy deletes it. The harness
+  resumes at dataset level (status files) and epoch level (`last.pt`). Sync
+  `weights_root` and results off-box at milestones (HF), and always `pull`
+  before `destroy`.
+- Local-first rule: the whole flow must pass on a local GPU (one dataset,
+  then the rf20vl pilot) before renting anything. Credits are for the
+  campaign, not for debugging.
+- Rough sizing: 0.5 to 1 consumer-GPU-hour per dataset for YOLO-family
+  models, 1 to 2.5 for DETR-family; a full 100-dataset pass per family lands
+  roughly between 30 and 200 GPU-hours depending on family.
+
+## Traps
+
+- Stock pycocotools `summarize()` breaks with a non-default maxDets list
+  (headline AP becomes -1). LibreYOLO and the harness compute the stats
+  directly; never call stock summarize with a modified list.
+- Only use the `rf100vl` package download. Raw website exports carry a dummy
+  class 0 with shifted category ids; mixing cleaned ground truth with
+  uncleaned predictions scores near zero.
+- One dataset is literally named `-grccs`: write `--datasets=-grccs` (the
+  space form is eaten by argparse).
+- Never resume a checkpoint after changing physical batch or accumulation.
+  The harness refuses via run signatures; do not override it.
+- Dense datasets can OOM rfdetr; the harness picks a grad-accum fallback at
+  dataset start and restarts from epoch 0 on a mid-run OOM. Expected.
+- The ec family trains with its AdamW no-mosaic recipe (mosaic triggers a
+  degenerate-box assertion).
+- The largest datasets take hours per run. Per-dataset timeouts plus the
+  rerun list handle the tail; raise the timeout for slow families, never
+  remove it.
+- Differences under 0.5 mAP on the 100-dataset mean are noise. Replicate
+  before claiming a win.
+- `ROBOFLOW_API_KEY` and vast credentials live in env or local config only.
+  Never commit keys; upstream reference repos did, and it cost them.
+
+## Published numbers to beat (fully supervised, AP 0.50:0.95)
+
+RF-DETR N/S/M/L/XL/2XL: 57.7 / 60.2 / 61.2 / 62.2 / 62.9 / 63.2. LW-DETR
+T to X: 57.1 to 62.1. D-FINE N to X: 58.2 to 62.2. YOLO11 N to X: 55.3 to
+56.5. YOLO26 N to X: 52.0 to 60.0. Sources: the rf-detr repo README
+(develop) and paper v4 tables. No YOLO9-lineage numbers exist anywhere yet.
