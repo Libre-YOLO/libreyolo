@@ -38,9 +38,9 @@ Capture-time contracts (enforced by the trainer, documented here):
 - ``make_graphed_callables`` warm-up runs a few forward/backward passes on
   the capture batch. Gradients produced by that warm-up are garbage and are
   cleared by the train loop's own ``zero_grad`` before the first real
-  backward; BatchNorm running stats absorb a few extra updates from one
-  real batch, which is equivalent to a handful of extra steps on that
-  batch.
+  backward; stateful buffers (BatchNorm running stats) are snapshotted
+  before capture and restored in place afterwards, so the buffer
+  trajectory matches eager training exactly.
 - Under AMP, capture and replay must run with autocast caching disabled;
   the trainer's autocast context handles this when a manager is active.
 - Distributed training, distillation and non-detect tasks are not captured
@@ -263,9 +263,35 @@ class TrainGraphManager:
             return None
         return self._capture_and_run(spec, imgs)
 
+    @staticmethod
+    def _snapshot_buffers(
+        network: nn.Module,
+    ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+        """Clone every module buffer so warm-up side effects can be undone.
+
+        ``make_graphed_callables`` warm-up runs a few extra forward passes
+        on the live model, advancing stateful buffers (BatchNorm running
+        mean/var, ``num_batches_tracked``) beyond what one eager step
+        performs. Restoring the snapshot afterwards keeps the buffer
+        trajectory exactly eager-equivalent, so validation, EMA and
+        checkpoints see the same statistics either way. Restoration is
+        ``copy_`` in place: the captured kernels record buffer addresses,
+        and those must not change.
+        """
+        return [(buf, buf.detach().clone()) for buf in network.buffers()]
+
+    @staticmethod
+    def _restore_buffers(
+        snapshot: List[Tuple[torch.Tensor, torch.Tensor]],
+    ) -> None:
+        with torch.no_grad():
+            for buf, saved in snapshot:
+                buf.copy_(saved)
+
     def _capture_and_run(
         self, spec: CudaGraphTrainSpec, imgs: torch.Tensor
     ) -> Optional[Tuple[torch.Tensor, ...]]:
+        buffer_snapshot = self._snapshot_buffers(spec.network)
         try:
             # The sample clone becomes the graph's static input buffer; the
             # live batch tensor must stay caller-owned. allow_unused_input
@@ -298,7 +324,13 @@ class TrainGraphManager:
                 torch.cuda.synchronize()
             except Exception:
                 pass
+            self._restore_buffers(buffer_snapshot)
             return None
+
+        # Undo warm-up buffer drift before the first replay: the replay
+        # below then performs this batch's single BatchNorm update, exactly
+        # as the eager step would have.
+        self._restore_buffers(buffer_snapshot)
 
         self._graphed = graphed
         self._graph_key = self._key_for(imgs)

@@ -405,6 +405,16 @@ class TestCudaParityYolo9:
             model_e.named_parameters(), model_g.named_parameters()
         ):
             assert torch.equal(pe, pg), name
+        # Buffers too: capture warm-up must not leave extra BatchNorm
+        # running-stat updates behind (the manager snapshots and restores
+        # them), or validation, EMA and checkpoints would drift from eager.
+        buffer_names = 0
+        for (name, be), (_, bg) in zip(
+            model_e.named_buffers(), model_g.named_buffers()
+        ):
+            assert torch.equal(be, bg), name
+            buffer_names += 1
+        assert buffer_names > 0, "expected BatchNorm buffers to compare"
 
 
 @requires_cuda
