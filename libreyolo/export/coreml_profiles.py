@@ -615,6 +615,90 @@ _PROFILES = (
         class_count=1,
     ),
     _profile(
+        "l2cs",
+        "gaze",
+        "r34",
+        448,
+        "deterministic generated 90-bin L2CS-R34 fixture",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "6298afb6baa865d1c148ed094835727d"
+            "0e94a20e74e78261a346a3a0f7606be2"
+        ),
+        deployment_abi_sha256=(
+            "af6de367f04a2302e51b7b46806f48a1"
+            "bae30388275b834f96bb79b4962d8d56"
+        ),
+        evidence_sha256=(
+            "e6976d1a6e6275f5be27fcb4d7203b0a"
+            "f8575d7f321ab5e7875ddfbca3694ca6"
+        ),
+        class_count=1,
+    ),
+    _profile(
+        "l2cs",
+        "gaze",
+        "r50",
+        448,
+        "deterministic generated 90-bin L2CS-R50 fixture",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "fb925ad4ca38cfe81b250c55e9239059"
+            "920505ad5d04b8e71d3e933288007bb2"
+        ),
+        deployment_abi_sha256=(
+            "0b29d4ccfa3db9e893b9154937e787b2"
+            "634d7bb05aa9904fa1c21a4785a9afd7"
+        ),
+        evidence_sha256=(
+            "0d1a336ebbd1ad1c48f782a12160abc5"
+            "90efeb47e4f37dca0660a6a27e15729e"
+        ),
+        class_count=1,
+    ),
+    _profile(
+        "l2cs",
+        "gaze",
+        "r101",
+        448,
+        "deterministic generated 90-bin L2CS-R101 fixture",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "8407eb875fefca6313e6f1f51da95f69"
+            "475fa40c31df6702f024cdfcae0d9fde"
+        ),
+        deployment_abi_sha256=(
+            "6fd2ef358bb00897bbf471d601c9d9cd"
+            "26a9619c4b8eddd0805bf0bdde7c7759"
+        ),
+        evidence_sha256=(
+            "4da45a5feda868e574b1049de49f67fb"
+            "21c55fcd79195b7fd5f2a62db49b7d01"
+        ),
+        class_count=1,
+    ),
+    _profile(
+        "l2cs",
+        "gaze",
+        "r152",
+        448,
+        "deterministic generated 90-bin L2CS-R152 fixture",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "07215ded4bc81ec4a101ba5f808eb7d4"
+            "e7caef31454fe873ec5c1742012b2921"
+        ),
+        deployment_abi_sha256=(
+            "758094f61f2f816a96595d545676af56"
+            "43532f697aabf33e9ca7e54d82b0aec9"
+        ),
+        evidence_sha256=(
+            "b24c886277333eeebade4e6687aed7cf"
+            "5f79cdc254214c5d3abefd8a2a43d942"
+        ),
+        class_count=1,
+    ),
+    _profile(
         "mobilenetv4",
         "classify",
         "s",
