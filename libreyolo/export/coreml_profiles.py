@@ -614,6 +614,19 @@ _PROFILES = (
         "l",
         256,
         "LibreNAFNetl-restore-sidd",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "703232d94d9866b5168e0cbdecce7e57"
+            "d700a4da20d5bddab5a94f4962e003a1"
+        ),
+        deployment_abi_sha256=(
+            "6c08319b9fb422ff146743fbe5edb8e7"
+            "5d3d761df1d1c2e43f7adb75ba29d55c"
+        ),
+        evidence_sha256=(
+            "5122f8f52ae374cb763709097a19b377"
+            "ac62946eb8458fffc08e43aab199892d"
+        ),
         runtime_all=True,
         conversion_pass_profile="nafnet_preserve_elementwise_affine_v1",
         disabled_passes=("common::fuse_elementwise_to_batchnorm",),
