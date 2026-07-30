@@ -85,7 +85,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  | ✓ | ✓ |
 | yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  | ✓ |  |
 | yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | ✓ | ✓ |
-| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  | exp | ✓ |
+| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  | ✓ | ✓ |
 
 ## Core ML validation scope
 
@@ -241,6 +241,7 @@ A check mark applies only under any constraint listed here.
 - `zipdepth` / `depth` / `onnx`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `torchscript`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `ncnn`: fixed-resolution export canvas
+- `zipdepth` / `depth` / `coreml`: The trained LibreZipDepthb-depth package passed saved raw-output and public depth/repeat parity on Apple M4. FP32 CPU_ONLY prepared-graph parity covers LibreZipDepthb-depth at its fixed 384 canvas with 1.46e-5 maximum relative error, 0.628 relative input sensitivity, and a 43,237x sensitivity-to-error margin. The public path reloaded a pristine checkpoint after export, independently reproduced the OpenCV stretch oracle, and preserved square and odd 173x257 sources within 2.40e-6 relative error with bit-exact repeats. This proves conversion and fixed-stretch host geometry for the `b` checkpoint, not metric depth, model accuracy, other sizes or checkpoints, Neural Engine placement, or device performance.
 - `zipdepth` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 
 ## Experimental constraints
@@ -273,7 +274,6 @@ Experimental rows may be narrower than the family-wide size surface.
 - `segformer` / `semantic` / `coreml`: All b0-b5 eval graphs pass fixed-canvas two-probe TorchScript trace parity. Apple runtime evidence covers b0 at a fixed 512 canvas with the 3e-4 raw gate and public map agreement. The architecture/source is permissive, but published ADE20K weights remain restricted to research or evaluation.
 - `smolvlm2` / `detect` / `coreml`: Apple-M4 parity supports the default CPU_ONLY compatibility path. Execution-profile v2 promotion remains pending a fresh source identity and final deployment-ABI evidence record. Only the exact Apache-2.0 500M snapshot and reviewed 2K/4K context profiles are supported. CPU_ONLY M4 parity measured 0.0258% worst vision error, exact token embeddings, and 0.0586% worst recurrent decoder error against PyTorch, with meaningful input sensitivity. Repeated chat and detection-result paths passed with fresh state. Vision and decoder compute use FP32; token embedding, public function I/O, and KV state use FP16. The host owns pinned tokenization, fixed 2048x2048 RGB stretch into 17 crops, image-token merging, causal controls, greedy decoding, repetition penalty, detokenization, and parsing. No execution-profile-v2 identity is registered, so explicit compute_units='cpu_only' remains required. The portable .coremlvlm bundle requires iOS 18 or macOS 15; 8K is rejected pending peak-memory proof.
 - `swinir` / `restore` / `coreml`: Apple-M4 parity supports the default CPU_ONLY compatibility path. Execution-profile v2 promotion remains pending a fresh source identity and final deployment-ABI evidence record. Sizes `s`, `m`, and `l` are enabled at their native 64x64 canvas. Every full graph has bit-exact two-probe TorchScript parity and Core ML Tools 9 ML Program conversion evidence. Apple runtime evidence covers the trained `s`, `m`, and `l` FP32 graphs at the exact 64x64 source canvas under the 3e-4 raw gate and public restore/repeat gate. FP16 and non-native canvases remain unproven.
-- `zipdepth` / `depth` / `coreml`: Apple-M4 parity supports the default CPU_ONLY compatibility path. Execution-profile v2 promotion remains pending a fresh source identity and final deployment-ABI evidence record. FP32 CPU_ONLY prepared-graph parity covers LibreZipDepthb-depth at its fixed 384 canvas with 1.46e-5 maximum relative error, 0.628 relative input sensitivity, and a 43,237x sensitivity-to-error margin. The public path reloaded a pristine checkpoint after export, independently reproduced the OpenCV stretch oracle, and preserved square and odd 173x257 sources within 2.40e-6 relative error with bit-exact repeats. This proves conversion and fixed-stretch host geometry for the `b` checkpoint, not metric depth, model accuracy, other sizes or checkpoints, Neural Engine placement, or device performance.
 
 ## Checkpoint and artifact gates
 

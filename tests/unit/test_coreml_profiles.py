@@ -252,6 +252,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("yolonas", "detect", "s"),
         ("yolonas", "pose", "n"),
         ("yolox", "detect", "n"),
+        ("zipdepth", "depth", "b"),
     }
     assert all(
         profile.evidence_complete

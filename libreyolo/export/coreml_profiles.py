@@ -1157,6 +1157,19 @@ _PROFILES = (
         "b",
         384,
         "LibreZipDepthb-depth",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "d27d2704aa03153f0b36bb7a362dc321"
+            "2252522d6b3f083953b07d9bfcfb45e0"
+        ),
+        deployment_abi_sha256=(
+            "4b839906e714dd94b4415f79563d3e33"
+            "ad8a6e0cbfcaf098dcc57148259ee163"
+        ),
+        evidence_sha256=(
+            "a0dad29fa6757385f205e853f97ec969"
+            "f21b545588776dc829080b4434b7c563"
+        ),
         runtime_all=True,
         class_count=1,
     ),
