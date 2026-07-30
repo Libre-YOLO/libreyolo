@@ -57,7 +57,9 @@ def gen_sineembed_for_position(pos_tensor, dim=128):
     # sineembed_tensor = torch.zeros(n_query, bs, 256)
     scale = 2 * math.pi
     dim = int(dim)
-    dim_t = pos_tensor.new_ones((dim,), dtype=pos_tensor.dtype).cumsum(0) - 1
+    # Core ML Tools 9 does not lower aten::new_ones. Seed the fixed sequence
+    # from an existing tensor without changing its device, dtype, or values.
+    dim_t = torch.ones_like(pos_tensor[0, 0, :1]).expand(dim).cumsum(0) - 1
     dim_t = 10000 ** (2 * torch.div(dim_t, 2, rounding_mode="floor") / dim)
     x_embed = pos_tensor[:, :, 0] * scale
     y_embed = pos_tensor[:, :, 1] * scale
@@ -107,8 +109,14 @@ def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shape
             valid_height = torch.zeros_like(memory[:, 0, 0]).long() + height
             valid_width = torch.zeros_like(memory[:, 0, 0]).long() + width
 
-        grid_y = memory.new_ones((height, width), dtype=torch.float32).cumsum(0) - 1
-        grid_x = memory.new_ones((height, width), dtype=torch.float32).cumsum(1) - 1
+        # Core ML Tools 9 does not lower aten::new_ones. This seed is exactly
+        # the same all-ones grid but is expressed with supported operations.
+        grid_seed = torch.ones_like(
+            memory[0, _cur : (_cur + height * width), 0],
+            dtype=torch.float32,
+        ).reshape(height, width)
+        grid_y = grid_seed.cumsum(0) - 1
+        grid_x = grid_seed.cumsum(1) - 1
         grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # height, width, 2
 
         # reshape(-1, ...) and unsqueeze(0) broadcasting avoid hardcoding N_ in ONNX
@@ -152,11 +160,12 @@ def ms_deform_attn_core_pytorch(
     value_spatial_shapes: torch.Tensor,
     sampling_locations: torch.Tensor,
     attention_weights: torch.Tensor,
+    num_points: int,
     value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
 ) -> torch.Tensor:
     """Pure-PyTorch fallback for the deformable-attention core."""
     batch_size, n_heads, head_dim, _ = value.shape
-    _, len_query, n_heads, num_levels, num_points, _ = sampling_locations.shape
+    _, len_query, n_heads, _, _ = sampling_locations.shape
     # Use Python int pairs when available (required for torch.export compatibility,
     # since iterating over a tensor and using scalar elements as split/view sizes
     # fails during FakeTensor tracing).
@@ -166,11 +175,16 @@ def ms_deform_attn_core_pytorch(
     sampling_value_list = []
     for level_index, (height, width) in enumerate(shapes):
         value_l_ = value_list[level_index].view(batch_size * n_heads, head_dim, height, width)
-        sampling_grid_l_ = sampling_grids[:, :, :, level_index].transpose(1, 2).flatten(0, 1)
+        point_start = level_index * num_points
+        sampling_grid_l_ = (
+            sampling_grids[:, :, :, point_start : point_start + num_points]
+            .transpose(1, 2)
+            .flatten(0, 1)
+        )
         sampling_value_l_ = _bilinear_grid_sample(value_l_, sampling_grid_l_, padding_mode="zeros", align_corners=False)
         sampling_value_list.append(sampling_value_l_)
     attention_weights = attention_weights.transpose(1, 2).reshape(
-        batch_size * n_heads, 1, len_query, num_levels * num_points
+        batch_size * n_heads, 1, len_query, attention_weights.shape[-1]
     )
     sampling_value_list = torch.stack(sampling_value_list, dim=-2).flatten(-2)
     output = (sampling_value_list * attention_weights).sum(-1).view(batch_size, n_heads * head_dim, len_query)
@@ -300,23 +314,44 @@ class MSDeformAttn(nn.Module):
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
 
+        # Level and point are bookkeeping axes. Flatten them so no Core ML
+        # intermediate exceeds the runtime's rank-five tensor limit.
+        num_locations = self.n_levels * self.n_points
         sampling_offsets = self.sampling_offsets(query).view(
-            batch_size, len_query, self.n_heads, self.n_levels, self.n_points, 2
+            batch_size, len_query, self.n_heads, num_locations, 2
         )
         attention_weights = self.attention_weights(query).view(
-            batch_size, len_query, self.n_heads, self.n_levels * self.n_points
+            batch_size, len_query, self.n_heads, num_locations
         )
 
+        reference_locations = (
+            reference_points[:, :, :, None, :]
+            .expand(-1, -1, -1, self.n_points, -1)
+            .reshape(
+                batch_size,
+                len_query,
+                num_locations,
+                reference_points.shape[-1],
+            )
+        )
         if reference_points.shape[-1] == 2:
             offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
+            offset_normalizer = (
+                offset_normalizer[:, None, :]
+                .expand(-1, self.n_points, -1)
+                .reshape(num_locations, 2)
+            )
             sampling_locations = (
-                reference_points[:, :, None, :, None, :]
-                + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+                reference_locations[:, :, None, :, :]
+                + sampling_offsets / offset_normalizer[None, None, None, :, :]
             )
         elif reference_points.shape[-1] == 4:
             sampling_locations = (
-                reference_points[:, :, None, :, None, :2]
-                + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+                reference_locations[:, :, None, :, :2]
+                + sampling_offsets
+                / self.n_points
+                * reference_locations[:, :, None, :, 2:]
+                * 0.5
             )
         else:
             raise ValueError(
@@ -332,6 +367,7 @@ class MSDeformAttn(nn.Module):
             input_spatial_shapes,
             sampling_locations,
             attention_weights,
+            self.n_points,
             value_spatial_shapes_hw=input_spatial_shapes_hw,
         )
         output = self.output_proj(output)
@@ -458,6 +494,7 @@ class Transformer(nn.Module):
         self.bbox_reparam = bbox_reparam
 
         self._export = False
+        self._coreml_stable_proposal_order = False
 
     def export(self):
         self._export = True
@@ -546,7 +583,48 @@ class Transformer(nn.Module):
                     )  # (bs, \sum{hw}, 4) unsigmoid
 
                 topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
-                topk_proposals_gidx = torch.topk(enc_outputs_class_unselected_gidx.max(-1)[0], topk, dim=1)[1]  # bs, nq
+                proposal_scores = enc_outputs_class_unselected_gidx.max(-1)[0]
+                _, topk_proposals_gidx = torch.topk(
+                    proposal_scores,
+                    topk,
+                    dim=1,
+                    sorted=True,
+                )
+                if self._coreml_stable_proposal_order:
+                    # Core ML returns the correct top-k set but does not keep
+                    # its indices paired with PyTorch's score-ranked order.
+                    # Rebuild ranks without trusting sort/top-k permutation
+                    # outputs. The tiny index term resolves sub-1e-4 FP32 ties.
+                    selected_proposal_scores = torch.gather(
+                        proposal_scores,
+                        1,
+                        topk_proposals_gidx,
+                    )
+                    ranking_scores = selected_proposal_scores - (
+                        topk_proposals_gidx.to(
+                            selected_proposal_scores.dtype
+                        )
+                        * 1.0e-7
+                    )
+                    score_i = ranking_scores.unsqueeze(2)
+                    score_j = ranking_scores.unsqueeze(1)
+                    precedes = score_j > score_i
+                    proposal_ranks = precedes.sum(dim=2)
+                    rank_axis = (
+                        torch.ones_like(topk_proposals_gidx[0])
+                        .cumsum(0)
+                        .sub(1)
+                        .view(1, 1, topk)
+                    )
+                    rank_placement = (
+                        proposal_ranks.unsqueeze(2) == rank_axis
+                    ).to(proposal_scores.dtype)
+                    topk_proposals_gidx = (
+                        rank_placement
+                        * topk_proposals_gidx.to(
+                            proposal_scores.dtype
+                        ).unsqueeze(2)
+                    ).sum(dim=1).to(topk_proposals_gidx.dtype)
 
                 refpoint_embed_gidx_undetach = torch.gather(
                     enc_outputs_coord_unselected_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, 4)

@@ -45,6 +45,10 @@ CASES = [
     ("LibreYOLO9t.pt", "yolo9", 640),
     ("LibreDFINEn.pt", "dfine", 640),
     ("LibreRFDETRn.pt", "rfdetr", 384),
+    ("LibreRFDETRn-seg.pt", "rfdetr", 312),
+    # Pose currently has one published checkpoint; x is therefore the
+    # smallest trained variant available for a real runtime-parity probe.
+    ("LibreRFDETRx-pose.pt", "rfdetr", 576),
     ("LibreYOLOXn.pt", "yolox", 416),
     ("LibreDEIMn.pt", "deim", 640),
     ("LibreDEIMv2atto.pt", "deimv2", 320),
@@ -189,6 +193,10 @@ def _assert_parity(output_names, ref1, ref2, got1, got2):
         )
         sensitivity = float(np.abs(expected2 - expected1).max()) / scale
         margin = float("inf") if error == 0 else sensitivity / error
+        print(
+            f"out[{index}] ({output_names[index]}): error={error:.9e}, "
+            f"sensitivity={sensitivity:.9e}, margin={margin:.3f}x"
+        )
         assert error <= REL_TOL, (
             f"out[{index}] ({output_names[index]}) relative error "
             f"{error:.3e} exceeds {REL_TOL:.0e}"

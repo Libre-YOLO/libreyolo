@@ -14,6 +14,7 @@ Family conventions, mapped by the wrapper:
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from typing import Any
 
 import torch
@@ -39,6 +40,67 @@ _NMS_FREE_FAMILIES = {
     "deimv2": "DEIMv2",
     "ec": "EC",
 }
+
+
+@contextmanager
+def _prepare_rfdetr_coreml_graph(
+    nn_model: nn.Module,
+    dummy: torch.Tensor,
+    family: str,
+    task: str,
+):
+    """Apply RF-DETR's export-only Apple graph preparation transactionally."""
+    targets = []
+    if family == "rfdetr" and task == "segment":
+        targets = [
+            module
+            for module in nn_model.modules()
+            if hasattr(module, "_coreml_stable_proposal_order")
+        ]
+    previous = [
+        bool(module._coreml_stable_proposal_order)
+        for module in targets
+    ]
+    try:
+        for module in targets:
+            module._coreml_stable_proposal_order = True
+        if family == "rfdetr":
+            from .coreai import _prepare_coreai_graph
+
+            with _prepare_coreai_graph(nn_model, dummy, family):
+                yield nn_model
+        else:
+            yield nn_model
+    finally:
+        for module, value in zip(targets, previous):
+            module._coreml_stable_proposal_order = value
+
+
+def _rfdetr_output_names(task: str) -> list[str]:
+    names = ["pred_boxes", "pred_logits"]
+    task_output = {
+        "segment": "pred_masks",
+        "pose": "pred_keypoints",
+        "obb": "pred_angles",
+    }.get(task)
+    if task_output is not None:
+        names.append(task_output)
+    return names
+
+
+def _canonical_trace_probe(dummy: torch.Tensor) -> torch.Tensor:
+    """Build a deterministic, chromatic, non-constant RGB probe in [0, 1]."""
+    height, width = int(dummy.shape[-2]), int(dummy.shape[-1])
+    ys = torch.linspace(
+        0.05, 0.95, height, dtype=torch.float32, device=dummy.device
+    ).view(1, 1, height, 1)
+    xs = torch.linspace(
+        0.1, 0.9, width, dtype=torch.float32, device=dummy.device
+    ).view(1, 1, 1, width)
+    red = xs.expand(1, 1, height, width)
+    green = ys.expand(1, 1, height, width)
+    blue = (0.65 * red + 0.35 * green).clamp(0.0, 1.0)
+    return torch.cat((red, green, blue), dim=1).contiguous()
 
 
 class _YoloxPreprocess(nn.Module):
@@ -258,6 +320,7 @@ def export_coreml(
     conf: float = 0.25,
     metadata: dict | None = None,
     model_family: str | None = None,
+    model_task: str | None = None,
 ) -> str:
     """Export a PyTorch model to CoreML (.mlpackage / ML Program format).
 
@@ -279,6 +342,7 @@ def export_coreml(
         metadata: Dict of metadata to embed under user_defined_metadata.
         model_family: Family string (yolox | yolo9 | rtdetr | rfdetr) — selects
             the preprocess wrapper.
+        model_task: Task string. RF-DETR supports detect, segment, and pose.
 
     Returns:
         ``output_path`` on success.
@@ -286,12 +350,18 @@ def export_coreml(
     import coremltools as ct
 
     family = (model_family or "").lower()
+    task = str(model_task or (metadata or {}).get("task") or "detect").lower()
     if family not in _SUPPORTED_FAMILIES:
         raise NotImplementedError(
             f"CoreML export is not supported for model family {family!r}. "
             f"Supported: {sorted(_SUPPORTED_FAMILIES)}. "
             "Other families have not been validated end-to-end; "
             "use ONNX or TorchScript instead."
+        )
+    if family == "rfdetr" and task not in {"detect", "segment", "pose"}:
+        raise NotImplementedError(
+            "RF-DETR CoreML export supports detect, segment, and pose; "
+            f"got task={task!r}."
         )
     if nms and family in _NMS_FREE_FAMILIES:
         raise NotImplementedError(
@@ -315,31 +385,48 @@ def export_coreml(
         wrapped = _NMSOutputAdapter(wrapped, model_family).eval()
 
     # Always feed the wrapper canonical RGB float in [0, 1], on the model's device.
-    canonical_dummy = torch.zeros(
-        dummy.shape[0], 3, dummy.shape[2], dummy.shape[3],
-        dtype=torch.float32, device=dummy.device,
-    )
+    canonical_dummy = _canonical_trace_probe(dummy)
+    check_probe = 1.0 - canonical_dummy
     if nms and canonical_dummy.shape[0] != 1:
         raise RuntimeError("CoreML embedded NMS export currently requires batch=1")
     try:
-        traced = torch.jit.trace(wrapped, canonical_dummy)
+        with _prepare_rfdetr_coreml_graph(
+            wrapped,
+            canonical_dummy,
+            family,
+            task,
+        ):
+            traced = torch.jit.trace(
+                wrapped,
+                canonical_dummy,
+                check_trace=True,
+                check_inputs=[(check_probe,)],
+            )
     finally:
         if yolo9_restore is not None:
             yolo9_restore()
 
-    image_input = ct.ImageType(
-        name="image",
-        shape=tuple(canonical_dummy.shape),
-        scale=1.0 / 255.0,
-        bias=[0.0, 0.0, 0.0],
-        color_layout=ct.colorlayout.RGB,
-    )
+    if family == "rfdetr" and task == "pose":
+        coreml_input = ct.TensorType(
+            name="image",
+            shape=tuple(canonical_dummy.shape),
+        )
+        coreml_input_kind = "tensor"
+    else:
+        coreml_input = ct.ImageType(
+            name="image",
+            shape=tuple(canonical_dummy.shape),
+            scale=1.0 / 255.0,
+            bias=[0.0, 0.0, 0.0],
+            color_layout=ct.colorlayout.RGB,
+        )
+        coreml_input_kind = "image"
     compute_precision = (
         ct.precision.FLOAT16 if precision == "fp16" else ct.precision.FLOAT32
     )
 
     convert_kwargs = {
-        "inputs": [image_input],
+        "inputs": [coreml_input],
         "convert_to": "mlprogram",
         "compute_precision": compute_precision,
         "minimum_deployment_target": ct.target.iOS15,
@@ -349,6 +436,18 @@ def export_coreml(
             ct.TensorType(name="confidence"),
             ct.TensorType(name="coordinates"),
         ]
+    elif family == "rfdetr":
+        convert_kwargs["outputs"] = [
+            ct.TensorType(name=name)
+            for name in _rfdetr_output_names(task)
+        ]
+
+    if family == "rfdetr" and task == "pose":
+        # Preserving source divisions avoids measurable pose-box drift from
+        # Core ML Tools' divide-to-multiply rewrite on Apple CPU execution.
+        pass_pipeline = ct.PassPipeline()
+        pass_pipeline.remove_passes({"common::divide_to_multiply"})
+        convert_kwargs["pass_pipeline"] = pass_pipeline
 
     mlmodel = ct.convert(traced, **convert_kwargs)
 
@@ -359,6 +458,13 @@ def export_coreml(
         if metadata is None:
             metadata = {}
         metadata = {**metadata, "nms": True, "nms_iou": iou, "nms_conf": conf}
+
+    if family == "rfdetr":
+        metadata = {
+            **(metadata or {}),
+            "coreml_input_kind": coreml_input_kind,
+            "coreml_output_names": _rfdetr_output_names(task),
+        }
 
     if metadata:
         mlmodel.user_defined_metadata.update(_stringify_metadata(metadata))

@@ -9,7 +9,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
+import torch
+from PIL import Image
 
 pytestmark = [pytest.mark.coreml, pytest.mark.e2e]
 
@@ -151,3 +154,150 @@ def test_rfdetr_nms_true_raises(tmp_path):
             output_path=str(tmp_path / "rfdetr.mlpackage"),
             nms=True,
         )
+
+
+RFDETR_CASES = [
+    ("LibreRFDETRn.pt", "detect", 384),
+    ("LibreRFDETRn-seg.pt", "segment", 312),
+    # Pose currently has one published checkpoint; x is the smallest real case.
+    ("LibreRFDETRx-pose.pt", "pose", 576),
+]
+
+
+def _rfdetr_byte_probes(imgsz: int) -> tuple[np.ndarray, np.ndarray]:
+    yy, xx = np.mgrid[:imgsz, :imgsz]
+    first = np.stack(
+        (
+            (3 * xx + 5 * yy + 17) % 256,
+            (11 * xx + 7 * yy + 53) % 256,
+            (13 * xx + 19 * yy + 101) % 256,
+        ),
+        axis=-1,
+    ).astype(np.uint8)
+    second = np.stack(
+        (
+            (23 * xx + 2 * yy + 211) % 256,
+            (5 * xx + 29 * yy + 37) % 256,
+            (17 * xx + 31 * yy + 149) % 256,
+        ),
+        axis=-1,
+    ).astype(np.uint8)
+    return first, second
+
+
+def _rfdetr_tensor(image: np.ndarray) -> torch.Tensor:
+    value = torch.from_numpy(image.copy()).permute(2, 0, 1).unsqueeze(0)
+    return value.float().div_(255.0)
+
+
+def _rfdetr_flatten(value) -> list[torch.Tensor]:
+    if torch.is_tensor(value):
+        return [value]
+    if isinstance(value, (tuple, list)) and all(
+        torch.is_tensor(item) for item in value
+    ):
+        return list(value)
+    raise TypeError(f"Unexpected RF-DETR export output: {type(value).__name__}")
+
+
+def _rfdetr_prepared_reference(model, task: str, imgsz: int, probes):
+    from libreyolo.export.coreml import (
+        _prepare_rfdetr_coreml_graph,
+        _wrap_for_family,
+    )
+    from libreyolo.export.exporter import CoreMLExporter
+
+    tensors = tuple(_rfdetr_tensor(probe) for probe in probes)
+    exporter = CoreMLExporter(model)
+    with exporter._model_context(
+        torch.device("cpu"),
+        False,
+        False,
+        1,
+        (imgsz, imgsz),
+    ) as (nn_model, _):
+        wrapped = _wrap_for_family(nn_model, "rfdetr").eval()
+        with _prepare_rfdetr_coreml_graph(
+            wrapped,
+            tensors[0],
+            "rfdetr",
+            task,
+        ), torch.no_grad():
+            return [
+                [
+                    tensor.detach().cpu().numpy()
+                    for tensor in _rfdetr_flatten(wrapped(probe))
+                ]
+                for probe in tensors
+            ]
+
+
+def _rfdetr_artifact_outputs(artifact, probes):
+    import coremltools as ct
+
+    runtime = ct.models.MLModel(
+        str(artifact),
+        compute_units=ct.ComputeUnit.CPU_ONLY,
+    )
+    spec = runtime.get_spec()
+    names = [feature.name for feature in spec.description.output]
+    input_feature = next(iter(spec.description.input))
+    input_kind = input_feature.type.WhichOneof("Type")
+    outputs = []
+    for probe in probes:
+        if input_kind == "imageType":
+            runtime_input = Image.fromarray(probe, mode="RGB")
+        else:
+            assert input_kind == "multiArrayType"
+            runtime_input = np.ascontiguousarray(
+                probe.astype(np.float32).transpose(2, 0, 1)[None] / 255.0
+            )
+        result = runtime.predict({input_feature.name: runtime_input})
+        outputs.append([np.asarray(result[name]) for name in names])
+    return names, outputs
+
+
+def _assert_rfdetr_raw_parity(names, reference, actual):
+    for index, (expected1, expected2, got1, got2) in enumerate(
+        zip(reference[0], reference[1], actual[0], actual[1])
+    ):
+        assert got1.shape == expected1.shape
+        assert got2.shape == expected2.shape
+        scale = max(
+            float(np.abs(expected1).max()),
+            float(np.abs(expected2).max()),
+            1e-12,
+        )
+        error = max(
+            float(np.abs(got1 - expected1).max()),
+            float(np.abs(got2 - expected2).max()),
+        ) / scale
+        sensitivity = float(np.abs(expected2 - expected1).max()) / scale
+        margin = float("inf") if error == 0 else sensitivity / error
+        print(
+            f"out[{index}] ({names[index]}): error={error:.9e}, "
+            f"sensitivity={sensitivity:.9e}, margin={margin:.3f}x"
+        )
+        assert error <= 3e-4
+        assert sensitivity >= 1e-6
+        assert margin >= 100.0
+
+
+@pytest.mark.parametrize("weights,task,imgsz", RFDETR_CASES)
+def test_rfdetr_coreml_raw_runtime_parity(weights, task, imgsz, tmp_path):
+    from libreyolo import LibreYOLO
+    from libreyolo.export.coreml import _rfdetr_output_names
+
+    model = LibreYOLO(weights, device="cpu")
+    assert model.task == task
+    artifact = model.export(
+        format="coreml",
+        imgsz=imgsz,
+        output_path=str(tmp_path / f"rfdetr-{task}.mlpackage"),
+        compute_units="cpu_only",
+    )
+    probes = _rfdetr_byte_probes(imgsz)
+    reference = _rfdetr_prepared_reference(model, task, imgsz, probes)
+    names, actual = _rfdetr_artifact_outputs(artifact, probes)
+    assert names == _rfdetr_output_names(task)
+    _assert_rfdetr_raw_parity(names, reference, actual)

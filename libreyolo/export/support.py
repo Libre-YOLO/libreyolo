@@ -224,6 +224,16 @@ _add(
 )
 _add(
     "experimental",
+    ("rfdetr",),
+    ("segment", "pose"),
+    ("coreml",),
+    reason=(
+        "Fixed-canvas batch-one conversion and Apple runtime parity are "
+        "implemented; broader checkpoint and image-distribution coverage is pending."
+    ),
+)
+_add(
+    "experimental",
     ("dinov2", "eomt", "pidnet", "lingbotvision"),
     ("semantic",),
     ("tensorrt", "openvino"),
@@ -946,6 +956,16 @@ _add(
         "model checks torch.onnx.is_in_onnx_export). Which artifact is right "
         "is an ONNX question and is not settled here, but ONNX cannot be used "
         "as the reference for this family at a non-native canvas."
+    ),
+)
+_add(
+    "experimental",
+    ("rfdetr",),
+    ("segment", "pose"),
+    ("coreai",),
+    reason=(
+        "Fixed-canvas trained-checkpoint conversion and Apple runtime parity "
+        "are implemented; broader checkpoint coverage is pending."
     ),
 )
 _add(

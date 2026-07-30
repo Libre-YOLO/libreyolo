@@ -104,6 +104,20 @@ class CoreMLBackend(BaseBackend):
             str(path), compute_units=_to_compute_unit(compute_units)
         )
         spec = self.model.get_spec()
+        spec_inputs = list(getattr(spec.description, "input", ()))
+        if len(spec_inputs) > 1:
+            raise RuntimeError(
+                "CoreMLBackend supports exactly one model input; "
+                f"got {len(spec_inputs)}."
+            )
+        if spec_inputs:
+            self.input_name = spec_inputs[0].name
+            self._input_kind = spec_inputs[0].type.WhichOneof("Type")
+        else:
+            # Legacy unit fixtures and old LibreYOLO packages use the
+            # original image boundary without an explicit input contract.
+            self.input_name = "image"
+            self._input_kind = "imageType"
         self.output_names = [out.name for out in spec.description.output]
 
         meta = (
@@ -282,6 +296,27 @@ class CoreMLBackend(BaseBackend):
             padded = Image.new("RGB", (input_w, input_h), (114, 114, 114))
             padded.paste(resized, (0, 0))
             chw = np.array(padded).transpose(2, 0, 1).astype(np.float32)
+        elif family == "rfdetr" and self.task == "pose":
+            # GroupPose's native path resizes an RGB float tensor with
+            # antialiased bilinear interpolation. Preserve those fractional
+            # pixels for the exported TensorType boundary.
+            import torch.nn.functional as F
+
+            rgb = np.ascontiguousarray(np.asarray(img, dtype=np.float32))
+            tensor = (
+                torch.from_numpy(rgb)
+                .permute(2, 0, 1)
+                .unsqueeze(0)
+                .div(255.0)
+            )
+            resized = F.interpolate(
+                tensor,
+                size=(input_h, input_w),
+                mode="bilinear",
+                align_corners=False,
+                antialias=True,
+            )
+            return resized.mul(255.0), original_img, original_size, 1.0
         else:
             # yolo9, rtdetr, rfdetr: plain resize to the exported input.
             ratio = 1.0
@@ -366,9 +401,14 @@ class CoreMLBackend(BaseBackend):
                 f"CoreMLBackend expects (1, C, H, W) blob; got {blob.shape}"
             )
 
-        hwc = np.transpose(blob[0], (1, 2, 0))
-        uint8 = np.ascontiguousarray(np.clip(hwc, 0, 255).astype(np.uint8))
-        pil = Image.fromarray(uint8)
+        if self._input_kind == "multiArrayType":
+            runtime_input = np.ascontiguousarray(
+                blob.astype(np.float32) / 255.0
+            )
+        else:
+            hwc = np.transpose(blob[0], (1, 2, 0))
+            uint8 = np.ascontiguousarray(np.clip(hwc, 0, 255).astype(np.uint8))
+            runtime_input = Image.fromarray(uint8)
 
-        out = self.model.predict({"image": pil})
+        out = self.model.predict({self.input_name: runtime_input})
         return [np.asarray(out[name]) for name in self.output_names if name in out]

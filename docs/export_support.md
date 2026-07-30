@@ -56,8 +56,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | exp | exp | ✓ |
-| rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |  |
-| rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |  |
+| rfdetr | segment | ✓ | ✓ | exp | exp |  |  | exp | exp |
+| rfdetr | pose | ✓ | ✓ | exp | exp |  |  | exp | exp |
 | rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |  |
 | rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp | ✓ |
 | rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
@@ -427,12 +427,8 @@ A check mark applies only under any constraint listed here.
 - `rfdetr` / `detect` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `segment` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `segment` / `tflite`: onnx2tf 2.4.x assigns an invalid NHWC layout to the segmentation-head Einsum (78 channels versus the required 256), so conversion fails.
-- `rfdetr` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `rfdetr` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
 - `rfdetr` / `pose` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `pose` / `tflite`: RF-DETR pose-x TFLite conversion exceeded the CPU timebox and 8 GB working memory without producing an artifact on this toolchain.
-- `rfdetr` / `pose` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `rfdetr` / `pose` / `coreai`: This family and task have not been validated for Core AI export.
 - `rfdetr` / `obb` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `obb` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rfdetr` / `obb` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.

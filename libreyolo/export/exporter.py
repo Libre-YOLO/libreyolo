@@ -1662,4 +1662,5 @@ class CoreMLExporter(BaseExporter):
             conf=conf,
             metadata=metadata,
             model_family=self.model._get_model_name(),
+            model_task=getattr(self.model, "task", "detect"),
         )
