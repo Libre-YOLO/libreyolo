@@ -220,6 +220,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("deim", "detect", "n"),
         ("deimv2", "detect", "atto"),
         ("depth_anything", "depth", "s"),
+        ("depth_anything3", "depth", "l"),
         ("dfine", "detect", "n"),
         ("dfine", "segment", "n"),
         ("ec", "detect", "s"),

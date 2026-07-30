@@ -313,6 +313,27 @@ _PROFILES = (
         class_count=1,
     ),
     _profile(
+        "depth_anything3",
+        "depth",
+        "l",
+        504,
+        "LibreDepthAnything3l-depth",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "3628fcf3fef7ad6968ec42d047d84434"
+            "60de903d80b557139d0fc42d256aa68d"
+        ),
+        deployment_abi_sha256=(
+            "fc923e65f54355dbd213f4a12de69ffe"
+            "b1d21e981f069afaa5472e550b85ff3d"
+        ),
+        evidence_sha256=(
+            "4abd6649e19df566f4ad9fd9f76546ea"
+            "91409f80c151d57123ceda477acc348a"
+        ),
+        class_count=1,
+    ),
+    _profile(
         "dfine",
         "detect",
         "n",

@@ -1563,6 +1563,13 @@ def test_coreml_depth_anything3_trained_raw_and_public_depth_path(tmp_path):
     """Validate DA3's converted raw component and host sky/inverse contract."""
     from libreyolo import LibreYOLO
 
+    from libreyolo.export.support import get_support
+
+    requested_compute_units = (
+        "validated"
+        if get_support("depth_anything3", "depth", "coreml").tier == "validated"
+        else "cpu_only"
+    )
     model = LibreYOLO("LibreDepthAnything3l-depth.pt", device="cpu")
     artifact = _assert_model_artifact_parity(
         model,
@@ -1571,6 +1578,7 @@ def test_coreml_depth_anything3_trained_raw_and_public_depth_path(tmp_path):
         504,
         tmp_path,
         half=False,
+        compute_units=requested_compute_units,
     )
     del model
     gc.collect()
@@ -1586,7 +1594,10 @@ def test_coreml_depth_anything3_trained_raw_and_public_depth_path(tmp_path):
     gc.collect()
     torch.manual_seed(9182)
     native_result = model.predict(source, verbose=False)
-    deployed_model = LibreYOLO(artifact)
+    deployed_model = LibreYOLO(
+        artifact,
+        compute_units=requested_compute_units,
+    )
     torch.manual_seed(9182)
     deployed_result = deployed_model.predict(source, verbose=False)
     torch.manual_seed(9182)
