@@ -831,11 +831,17 @@ class LibreDINOv2(BaseModel):
 
     def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
         if self.task == "embed":
-            if format.lower() == "executorch":
+            if format.lower() in {
+                "onnx",
+                "torchscript",
+                "executorch",
+                "tensorrt",
+                "openvino",
+            }:
                 return super().export(format=format, opset=opset, **kwargs)
             raise NotImplementedError(
-                "LibreDINOv2 task='embed' export currently supports "
-                "ExecuTorch only."
+                "LibreDINOv2 task='embed' export currently supports ONNX, "
+                "TorchScript, ExecuTorch, TensorRT, and OpenVINO only."
             )
         if self.task == "classify" and format.lower() in {
             "onnx",

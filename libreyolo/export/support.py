@@ -388,6 +388,23 @@ _add(
     ),
 )
 _add(
+    "validated",
+    ("depth_anything3",),
+    ("depth",),
+    ("onnx", "torchscript", "openvino", "tensorrt"),
+    reason=(
+        "A deterministic input-sensitive fixture covers opset-17 conversion, "
+        "artifact reload, two-image raw depth/sky parity with a 20x "
+        "signal/error guard, metadata, and public depth-map parity above "
+        "40 dB PSNR."
+    ),
+    since="1.6",
+    constraint=(
+        "FP32, batch 1, fixed square input divisible by 14; TensorRT evidence "
+        "uses TensorRT 10.16 and OpenVINO evidence uses OpenVINO 2026.2"
+    ),
+)
+_add(
     "blocked",
     ("eomt",),
     ("semantic",),
@@ -409,6 +426,27 @@ _add(
     since="1.4",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("moge2",),
+    ("normal",),
+    ("ncnn",),
+    reason=(
+        "PNNX/NCNN 20260526 exports, reloads, and runs, but the measured "
+        "two-image raw signal is only 4.5x conversion error; validation "
+        "requires more than 20x."
+    ),
+)
+_add(
+    "blocked",
+    ("moge2",),
+    ("normal",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.6.7 flatbuffer-direct lowering cannot lower the encoder's "
+        "cubic Resize because its input C/H/W signature remains dynamic."
     ),
 )
 _add(
@@ -658,11 +696,44 @@ _add(
     ),
 )
 _add(
+    "validated",
+    ("dinov2",),
+    ("embed",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The pretrained Apache-2.0 backbone covers artifact reload, two-input "
+        "raw embedding parity with a 20x signal/error guard, metadata, "
+        "normalization, and public embedding parity."
+    ),
+    since="1.6",
+    constraint="FP32, batch 1, fixed 224x224 input",
+)
+_add(
+    "experimental",
+    ("dinov2",),
+    ("embed",),
+    ("openvino",),
+    reason=(
+        "OpenVINO 2026.2 exports, reloads, and predicts, but 11.2% of embedding "
+        "elements miss strict tolerance with maximum error 0.0124."
+    ),
+)
+_add(
+    "experimental",
+    ("dinov2",),
+    ("embed",),
+    ("tensorrt",),
+    reason=(
+        "TensorRT 10.16 exports, reloads, and predicts, but 0.52% of embedding "
+        "elements miss strict tolerance with maximum error 0.00782."
+    ),
+)
+_add(
     "blocked",
     ("dinov2",),
     ("embed",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "executorch"),
-    reason="LibreDINOv2 embedding export currently supports ExecuTorch only.",
+    ("ncnn", "tflite", "coreml", "coreai"),
+    reason="No parity-valid embedding artifact is available for this runtime.",
 )
 _add(
     "blocked",

@@ -150,10 +150,23 @@ class LibreDepthAnything3(BaseModel):
             "weights/convert_depth_anything3_weights.py."
         )
 
-    def export(self, format: str = "onnx", **kwargs) -> str:
-        if format.lower() != "executorch":
+    def export(
+        self,
+        format: str = "onnx",
+        *,
+        opset: int = 17,
+        **kwargs,
+    ) -> str:
+        if format.lower() not in {
+            "onnx",
+            "torchscript",
+            "executorch",
+            "tensorrt",
+            "openvino",
+        }:
             raise NotImplementedError(
                 f"Export to {format!r} is not implemented for Depth Anything 3; "
-                "ExecuTorch is currently the only supported export format."
+                "supported formats are ONNX, TorchScript, ExecuTorch, "
+                "TensorRT, and OpenVINO."
             )
-        return super().export(format=format, **kwargs)
+        return super().export(format=format, opset=opset, **kwargs)

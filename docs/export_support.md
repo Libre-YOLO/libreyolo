@@ -15,13 +15,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | deim | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
 | depth_anything | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
-| depth_anything3 | depth |  |  | ✓ |  |  |  |  |  |  |
+| depth_anything3 | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | dexined | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | dfine | detect | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ |  | exp | ✓ |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | dinov2 | classify | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | exp |
-| dinov2 | embed |  |  | exp |  |  |  |  |  |  |
+| dinov2 | embed | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | ec | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |
@@ -43,7 +43,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | locateanything | point |  |  |  |  |  |  |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |
-| moge2 | normal | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
+| moge2 | normal | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  |  |
 | nafnet | restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |  |
@@ -116,7 +116,11 @@ A check mark applies only under any constraint listed here.
 - `depth_anything` / `depth` / `tensorrt`: FP32 with a fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `openvino`: fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `depth_anything3` / `depth` / `onnx`: FP32, batch 1, fixed square input divisible by 14; TensorRT evidence uses TensorRT 10.16 and OpenVINO evidence uses OpenVINO 2026.2
+- `depth_anything3` / `depth` / `torchscript`: FP32, batch 1, fixed square input divisible by 14; TensorRT evidence uses TensorRT 10.16 and OpenVINO evidence uses OpenVINO 2026.2
 - `depth_anything3` / `depth` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape divisible by 14
+- `depth_anything3` / `depth` / `tensorrt`: FP32, batch 1, fixed square input divisible by 14; TensorRT evidence uses TensorRT 10.16 and OpenVINO evidence uses OpenVINO 2026.2
+- `depth_anything3` / `depth` / `openvino`: FP32, batch 1, fixed square input divisible by 14; TensorRT evidence uses TensorRT 10.16 and OpenVINO evidence uses OpenVINO 2026.2
 - `dexined` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
 - `dexined` / `edge` / `torchscript`: TorchScript CPU FP32, batch 1, fixed input shape
 - `dexined` / `edge` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
@@ -135,6 +139,8 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `classify` / `torchscript`: fixed 224x224 input
 - `dinov2` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `dinov2` / `classify` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed 224x224 input
+- `dinov2` / `embed` / `onnx`: FP32, batch 1, fixed 224x224 input
+- `dinov2` / `embed` / `torchscript`: FP32, batch 1, fixed 224x224 input
 - `ec` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `ec` / `detect` / `openvino`: fixed export canvas
 - `ec` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
@@ -341,10 +347,6 @@ A check mark applies only under any constraint listed here.
 - `depth_anything` / `depth` / `ncnn`: PNNX 20260526 reports unsupported batch-index reshapes in the DINOv2 transformer graph; the produced NCNN artifact fails numeric parity.
 - `depth_anything` / `depth` / `tflite`: onnx2tf 2.6.7 converts the DINOv2 depth graph, but LiteRT 2.1.2 cannot broadcast [1,3,3,32] and [1,72,72,32] in a generated ADD.
 - `depth_anything` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `depth_anything3` / `depth` / `onnx`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `torchscript`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `tensorrt`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `openvino`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `ncnn`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `tflite`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `coreml`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
@@ -368,14 +370,10 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export is not implemented for this format.
-- `dinov2` / `embed` / `onnx`: LibreDINOv2 embedding export currently supports ExecuTorch only.
-- `dinov2` / `embed` / `torchscript`: LibreDINOv2 embedding export currently supports ExecuTorch only.
-- `dinov2` / `embed` / `tensorrt`: LibreDINOv2 embedding export currently supports ExecuTorch only.
-- `dinov2` / `embed` / `openvino`: LibreDINOv2 embedding export currently supports ExecuTorch only.
-- `dinov2` / `embed` / `ncnn`: LibreDINOv2 embedding export currently supports ExecuTorch only.
-- `dinov2` / `embed` / `tflite`: LibreDINOv2 embedding export currently supports ExecuTorch only.
-- `dinov2` / `embed` / `coreml`: LibreDINOv2 embedding export currently supports ExecuTorch only.
-- `dinov2` / `embed` / `coreai`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `ncnn`: No parity-valid embedding artifact is available for this runtime.
+- `dinov2` / `embed` / `tflite`: No parity-valid embedding artifact is available for this runtime.
+- `dinov2` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
+- `dinov2` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
 - `ec` / `detect` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_LAYERNORMALIZATION custom operation that LiteRT 2.1.2 cannot prepare.
 - `ec` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -508,8 +506,7 @@ A check mark applies only under any constraint listed here.
 - `mobilesam` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
-- `moge2` / `normal` / `ncnn`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
-- `moge2` / `normal` / `tflite`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
+- `moge2` / `normal` / `tflite`: onnx2tf 2.6.7 flatbuffer-direct lowering cannot lower the encoder's cubic Resize because its input C/H/W signature remains dynamic.
 - `moge2` / `normal` / `coreml`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `coreai`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `nafnet` / `restore` / `tflite`: onnx2tf 2.6.7 converts the fixed-canvas graph, but LiteRT 2.1.2 fails at invoke time because input tensor 4539 lacks data.

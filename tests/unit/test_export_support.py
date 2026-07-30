@@ -429,6 +429,24 @@ def test_round23_promotes_nine_normal_semantic_depth_and_edge_cells():
     assert "detection parsing" in hold.reason
 
 
+def test_round24_promotes_six_embedding_and_depth_cells():
+    validated = {
+        ("dinov2", "embed", "onnx"),
+        ("dinov2", "embed", "torchscript"),
+        ("depth_anything3", "depth", "onnx"),
+        ("depth_anything3", "depth", "torchscript"),
+        ("depth_anything3", "depth", "openvino"),
+        ("depth_anything3", "depth", "tensorrt"),
+    }
+    for family, task, format in validated:
+        assert get_support(family, task, format).tier == "validated"
+
+    assert get_support("dinov2", "embed", "openvino").tier == "experimental"
+    assert get_support("dinov2", "embed", "tensorrt").tier == "experimental"
+    assert get_support("moge2", "normal", "ncnn").tier == "experimental"
+    assert get_support("moge2", "normal", "tflite").tier == "blocked"
+
+
 def test_round13_records_ten_measured_tflite_holds():
     measured_holds = {
         ("yolo1", "detect"): "ONNX_EINSUM",
@@ -538,6 +556,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
     assert validated == {
         ("convnext", "classify"),
         ("depth_anything", "depth"),
+        ("depth_anything3", "depth"),
         ("dexined", "edge"),
         ("dfine", "detect"),
         ("dfine", "segment"),

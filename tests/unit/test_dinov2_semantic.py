@@ -382,7 +382,8 @@ class TestDINOv2Embed:
         assert model.embed([image_a, image_b]).shape == (2, 6)
         assert not hasattr(model, "embed_text")
 
-    def test_train_val_and_export_are_explicitly_out_of_scope(self):
+    def test_train_val_are_out_of_scope_and_embed_export_routes(self, monkeypatch):
+        from libreyolo.models.base.model import BaseModel
         from libreyolo.models.dinov2.model import LibreDINOv2
 
         model = object.__new__(LibreDINOv2)
@@ -392,8 +393,16 @@ class TestDINOv2Embed:
             model.train(data="unused")
         with pytest.raises(NotImplementedError, match="retrieval validation"):
             model.val(data="unused")
-        with pytest.raises(NotImplementedError, match="embed.*export"):
-            model.export(format="onnx")
+
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return f"dinov2-embed.{format}"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+        assert model.export(format="onnx", dynamic=False) == "dinov2-embed.onnx"
+        assert captured == {"format": "onnx", "opset": 17, "dynamic": False}
 
     def test_classify_unsupported_export_keeps_classify_error(self):
         from libreyolo.models.dinov2.model import LibreDINOv2
