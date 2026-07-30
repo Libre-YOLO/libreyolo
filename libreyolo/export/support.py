@@ -122,8 +122,8 @@ _add(
     ("detect",),
     ("tflite",),
     reason=(
-        "onnx2tf leaves an unresolved ONNX_CONCAT custom operation; LiteRT "
-        "cannot allocate the converted detector."
+        "onnx2tf 2.6.7 emits an ONNX_EINSUM custom operation that LiteRT "
+        "2.1.2 cannot prepare at the native 448x448 canvas."
     ),
 )
 _add(
@@ -132,8 +132,8 @@ _add(
     ("detect",),
     ("tflite",),
     reason=(
-        "LiteRT rejects the converted detector's CONV_2D channel layout "
-        "(32 input channels versus a zero filter-channel dimension)."
+        "onnx2tf 2.6.7 exports a runnable artifact, but public top-k class "
+        "membership changes after LiteRT 2.1.2 conversion."
     ),
 )
 _add(
@@ -142,8 +142,9 @@ _add(
     ("detect",),
     ("tflite",),
     reason=(
-        "LiteRT rejects the converted detector's CONV_2D channel layout "
-        "(96 input channels versus a zero filter-channel dimension)."
+        "onnx2tf 2.6.7 exports, reloads, and preserves raw output parity, but "
+        "at the native 640x640 canvas public boxes fall to 0.911 IoU with "
+        "29.9 px coordinate drift."
     ),
 )
 _add(
@@ -152,8 +153,8 @@ _add(
     ("detect",),
     ("tflite",),
     reason=(
-        "The converted graph allocates, but LiteRT returns a null output "
-        "tensor after invoke."
+        "LiteRT 2.1.2 cannot prepare the onnx2tf 2.6.7 artifact because a "
+        "RESHAPE maps 19,200 input elements to 9,600 output elements."
     ),
 )
 _add(
@@ -172,8 +173,8 @@ _add(
     ("detect",),
     ("tflite",),
     reason=(
-        "onnx2tf flatbuffer-direct lowering overflows an int32 while building "
-        "a Slice operation."
+        "onnx2tf 2.6.7 emits an ONNX_LAYERNORMALIZATION custom operation that "
+        "LiteRT 2.1.2 cannot prepare."
     ),
 )
 _add(
@@ -182,8 +183,8 @@ _add(
     ("detect",),
     ("tflite",),
     reason=(
-        "LiteRT rejects a converted MUL with incompatible [1,300,1] and "
-        "[0,0,0] shapes."
+        "LiteRT 2.1.2 rejects the onnx2tf 2.6.7 graph because a CONCATENATION "
+        "receives incompatible 256 and 1 dimensions."
     ),
 )
 _add(
@@ -430,8 +431,8 @@ _add(
     ("restore",),
     ("tflite",),
     reason=(
-        "onnx2tf 2.4.x converts the fixed-canvas graph, but LiteRT fails at "
-        "invoke time because an internal input tensor lacks data."
+        "onnx2tf 2.6.7 converts the fixed-canvas graph, but LiteRT 2.1.2 fails "
+        "at invoke time because input tensor 4539 lacks data."
     ),
 )
 _add(
@@ -472,8 +473,8 @@ _add(
     ("depth",),
     ("tflite",),
     reason=(
-        "onnx2tf 2.4.x converts the DINOv2 depth graph, but LiteRT rejects "
-        "a generated FILL node because its dimensions are invalid."
+        "onnx2tf 2.6.7 converts the DINOv2 depth graph, but LiteRT 2.1.2 "
+        "cannot broadcast [1,3,3,32] and [1,72,72,32] in a generated ADD."
     ),
 )
 _add(
@@ -579,7 +580,7 @@ _add(
     ("depth",),
     ("tflite",),
     reason=(
-        "onnx2tf 2.4.x flatbuffer-direct conversion does not support the "
+        "onnx2tf 2.6.7 flatbuffer-direct conversion does not support the "
         "edge-mode Pad operation in ZipDepth's convex upsampler."
     ),
 )
@@ -815,12 +816,22 @@ _add(
 )
 _add(
     "blocked",
-    ("yolo2", "yolo3"),
+    ("yolo2",),
     ("detect",),
     ("tflite",),
     reason=(
-        "onnx2tf 2.4.x leaves an unresolved ONNX_CONCAT custom operation; "
-        "LiteRT cannot prepare the converted detector graph."
+        "LiteRT 2.1.2 cannot prepare the onnx2tf 2.6.7 artifact because a "
+        "RESHAPE maps 4,225 input elements to one output element."
+    ),
+)
+_add(
+    "blocked",
+    ("yolo3",),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "A public-domain trained checkpoint exports, reloads, and preserves "
+        "normalized raw parity, but public top-k class membership changes."
     ),
 )
 _add(
@@ -829,8 +840,8 @@ _add(
     ("detect",),
     ("tflite",),
     reason=(
-        "onnx2tf 2.4.x produces an invalid CONV_2D channel layout for YOLO4; "
-        "LiteRT fails while allocating tensors."
+        "onnx2tf 2.6.7 exports and runs, but public boxes fall to 0 IoU with "
+        "176 px coordinate drift on the deterministic full model."
     ),
 )
 _add(
@@ -1181,8 +1192,8 @@ _add(
     ("semantic",),
     ("tflite",),
     reason=(
-        "onnx2tf emits a flatbuffer, but LiteRT cannot prepare its attention "
-        "reshape (1024 input elements versus 256 output elements)."
+        "onnx2tf 2.6.7 emits a flatbuffer, but LiteRT 2.1.2 cannot prepare its "
+        "attention reshape (1024 input elements versus 256 output elements)."
     ),
 )
 _add(
@@ -1280,8 +1291,8 @@ _add(
     ("point",),
     ("tflite",),
     reason=(
-        "onnx2tf 2.4.x produces an invalid depthwise-convolution graph for the "
-        "static SAME-padded FOMO backbone on this toolchain."
+        "LiteRT 2.1.2 cannot invoke the onnx2tf 2.6.7 graph because a "
+        "DEPTHWISE_CONV_2D reports 16 filter channels versus zero input channels."
     ),
 )
 _add(

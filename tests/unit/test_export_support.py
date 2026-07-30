@@ -113,21 +113,21 @@ def test_observed_cpu_toolchain_blocks_are_explicit():
     depth_ncnn = get_support("depth_anything", "depth", "ncnn")
     fomo_tflite = get_support("fomo", "point", "tflite")
     assert depth_ncnn.tier == "blocked" and "reshape" in depth_ncnn.reason
-    assert fomo_tflite.tier == "blocked" and "depthwise" in fomo_tflite.reason
+    assert fomo_tflite.tier == "blocked" and "DEPTHWISE" in fomo_tflite.reason
 
 
 @pytest.mark.parametrize(
     ("family", "task", "reason_fragment"),
     [
-        ("yolo1", "detect", "ONNX_CONCAT"),
-        ("yolo9_e2e", "detect", "zero filter-channel"),
-        ("yolo9_p2", "detect", "zero filter-channel"),
+        ("yolo1", "detect", "ONNX_EINSUM"),
+        ("yolo9_e2e", "detect", "top-k"),
+        ("yolo9_p2", "detect", "top-k"),
         ("yolonas", "pose", "CONCATENATION"),
-        ("rtmdet", "detect", "96 input channels"),
-        ("picodet", "detect", "null output"),
+        ("rtmdet", "detect", "0.911 IoU"),
+        ("picodet", "detect", "19,200"),
         ("dfine", "detect", "GatherElements"),
-        ("ec", "detect", "Slice"),
-        ("rtdetr", "detect", "[0,0,0]"),
+        ("ec", "detect", "ONNX_LAYERNORMALIZATION"),
+        ("rtdetr", "detect", "CONCATENATION"),
     ],
 )
 def test_round6_tflite_blocks_are_measured(family, task, reason_fragment):
@@ -250,6 +250,44 @@ def test_round12_records_ten_measured_tensorrt_holds():
     for (family, task), reason_fragment in measured_holds.items():
         entry = get_support(family, task, "tensorrt")
         assert entry.tier == "experimental"
+        assert reason_fragment in entry.reason
+
+
+def test_round13_records_ten_measured_tflite_holds():
+    measured_holds = {
+        ("yolo1", "detect"): "ONNX_EINSUM",
+        ("yolo9_e2e", "detect"): "top-k class membership",
+        ("yolo9_p2", "detect"): "top-k class membership",
+        ("rtmdet", "detect"): "0.911 IoU",
+        ("picodet", "detect"): "19,200",
+        ("dfine", "detect"): "GatherElements",
+        ("ec", "detect"): "ONNX_LAYERNORMALIZATION",
+        ("rtdetr", "detect"): "CONCATENATION",
+        ("yolonas", "pose"): "CONCATENATION",
+        ("dfine", "segment"): "GatherElements",
+    }
+    for (family, task), reason_fragment in measured_holds.items():
+        entry = get_support(family, task, "tflite")
+        assert entry.tier == "blocked"
+        assert reason_fragment in entry.reason
+
+
+def test_round14_records_ten_measured_tflite_holds():
+    measured_holds = {
+        ("yolo2", "detect"): "4,225",
+        ("yolo3", "detect"): "public-domain trained checkpoint",
+        ("yolo4", "detect"): "0 IoU",
+        ("fomo", "point"): "16 filter channels",
+        ("nafnet", "restore"): "4539",
+        ("depth_anything", "depth"): "[1,3,3,32]",
+        ("segformer", "semantic"): "1024 input elements",
+        ("zipdepth", "depth"): "edge-mode Pad",
+        ("rfdetr", "detect"): "STRIDED_SLICE",
+        ("rtdetrv4", "detect"): "640x640",
+    }
+    for (family, task), reason_fragment in measured_holds.items():
+        entry = get_support(family, task, "tflite")
+        assert entry.tier == "blocked"
         assert reason_fragment in entry.reason
 
 
