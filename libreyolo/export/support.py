@@ -11,6 +11,7 @@ Tier = Literal["validated", "experimental", "blocked"]
 EXPORT_FORMATS = (
     "onnx",
     "torchscript",
+    "executorch",
     "tensorrt",
     "openvino",
     "ncnn",
@@ -67,6 +68,18 @@ _add(
     ("detect",),
     ("onnx", "torchscript", "ncnn", "tflite"),
     since="1.3",
+)
+_add(
+    "experimental",
+    ("yolo9", "rfdetr"),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "Fixed-shape batch-1 FP32 export, XNNPACK runtime execution, random-weight "
+        "raw parity, and predict plumbing are covered. A trained-checkpoint "
+        "matched-detection parity record is still required for validated status."
+    ),
+    constraint="ExecuTorch 1.3, XNNPACK, CPU, FP32, batch 1, fixed input shape",
 )
 _add(
     "validated",

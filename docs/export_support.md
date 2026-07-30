@@ -6,86 +6,86 @@ Do not edit the matrix by hand.
 `✓` means parity-validated, `exp` means conversion is available without a
 numeric parity guarantee, and an empty cell is blocked in preflight.
 
-| Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml | coreai |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| birefnet | matte | exp | ✓ | exp | exp |  |  |  |  |
-| clip | classify | ✓ |  |  |  |  |  |  | ✓ |
-| clip | embed |  |  |  |  |  |  |  |  |
-| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
-| deim | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
-| deimv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
-| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  | ✓ |
-| depth_anything3 | depth |  |  |  |  |  |  |  |  |
-| dexined | edge | ✓ |  |  |  |  |  |  |  |
-| dfine | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
-| dfine | segment | ✓ | ✓ | exp | exp |  |  |  |  |
-| dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
-| dinov2 | classify | ✓ |  |  |  |  |  |  | exp |
-| dinov2 | embed |  |  |  |  |  |  |  |  |
-| ec | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
-| ec | pose | ✓ | ✓ | exp | exp |  |  |  |  |
-| ec | segment | ✓ | ✓ | exp | exp |  |  |  |  |
-| edgetam | segment |  |  |  |  |  |  |  |  |
-| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
-| eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
-| eomt | segment |  |  |  |  |  |  |  |  |
-| eomt | panoptic |  |  |  |  |  |  |  |  |
-| feynobg | matte | exp | ✓ | exp | exp |  |  |  |  |
-| florence2 | detect |  |  |  |  |  |  |  |  |
-| fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| grounding_dino | detect |  |  |  |  |  |  |  |  |
-| internvl3 | detect |  |  |  |  |  |  |  |  |
-| kosmos2 | detect |  |  |  |  |  |  |  |  |
-| l2cs | gaze | ✓ |  |  |  |  |  |  |  |
-| lfm2vl | detect |  |  |  |  |  |  |  |  |
-| lingbotvision | semantic | ✓ | ✓ | exp | exp |  |  |  | ✓ |
-| locateanything | detect |  |  |  |  |  |  |  |  |
-| locateanything | point |  |  |  |  |  |  |  |  |
-| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
-| mobilesam | segment |  |  |  |  |  |  |  |  |
-| moge2 | normal | ✓ |  |  |  |  |  |  |  |
-| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| omdet_turbo | detect |  |  |  |  |  |  |  |  |
-| ov_deim | detect |  |  |  |  |  |  |  |  |
-| owlv2 | detect |  |  |  |  |  |  |  |  |
-| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| picosam3 | segment | ✓ |  |  |  |  |  |  |  |
-| pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
-| ppocr | ocr |  |  |  |  |  |  |  |  |
-| qwen3vl | detect |  |  |  |  |  |  |  |  |
-| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
-| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
-| rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | exp | exp | ✓ |
-| rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |  |
-| rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |  |
-| rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |  |
-| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp | ✓ |
-| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
-| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
-| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
-| rtmdet | segment |  |  |  |  |  |  |  |  |
-| sam | segment |  |  |  |  |  |  |  |  |
-| sam2 | segment |  |  |  |  |  |  |  |  |
-| sam3 | segment |  |  |  |  |  |  |  |  |
-| sam3dbody | mesh |  |  |  |  |  |  |  |  |
-| segformer | semantic |  |  |  |  |  |  |  |  |
-| siglip2 | classify | ✓ |  |  |  |  |  |  | ✓ |
-| siglip2 | embed |  |  |  |  |  |  |  |  |
-| smolvlm2 | detect |  |  |  |  |  |  |  |  |
-| swinir | restore | exp | exp | exp | exp | exp |  |  |  |
-| teed | edge | ✓ |  |  |  |  |  |  |  |
-| yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| yolo3 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
-| yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
-| yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  |  |  |
-| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp | ✓ |
-| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| Family | Task | onnx | torchscript | executorch | tensorrt | openvino | ncnn | tflite | coreml | coreai |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| birefnet | matte | exp | ✓ | exp | exp | exp |  |  |  |  |
+| clip | classify | ✓ |  |  |  |  |  |  |  | ✓ |
+| clip | embed |  |  |  |  |  |  |  |  |  |
+| convnext | classify | ✓ | ✓ | exp | exp | exp | ✓ | ✓ |  | ✓ |
+| deim | detect | exp | ✓ | exp | exp | exp |  |  |  | ✓ |
+| deimv2 | detect | exp | ✓ | exp | exp | exp |  |  |  | ✓ |
+| depth_anything | depth | ✓ | ✓ | exp | exp | exp |  |  |  | ✓ |
+| depth_anything3 | depth |  |  |  |  |  |  |  |  |  |
+| dexined | edge | ✓ |  |  |  |  |  |  |  |  |
+| dfine | detect | ✓ | ✓ | exp | exp | exp |  |  |  | ✓ |
+| dfine | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| dinov2 | semantic | ✓ | ✓ |  | exp | exp |  |  |  |  |
+| dinov2 | classify | ✓ |  |  |  |  |  |  |  | exp |
+| dinov2 | embed |  |  |  |  |  |  |  |  |  |
+| ec | detect | ✓ | ✓ | exp | exp | exp |  |  |  | ✓ |
+| ec | pose | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| ec | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| edgetam | segment |  |  |  |  |  |  |  |  |  |
+| efficientnetv2 | classify | ✓ | ✓ | exp | exp | exp | ✓ | ✓ |  | ✓ |
+| eomt | semantic | ✓ | ✓ |  | exp | exp |  |  |  |  |
+| eomt | segment |  |  |  |  |  |  |  |  |  |
+| eomt | panoptic |  |  |  |  |  |  |  |  |  |
+| feynobg | matte | exp | ✓ | exp | exp | exp |  |  |  |  |
+| florence2 | detect |  |  |  |  |  |  |  |  |  |
+| fomo | point | ✓ | ✓ |  | exp | exp | ✓ |  |  | ✓ |
+| grounding_dino | detect |  |  |  |  |  |  |  |  |  |
+| internvl3 | detect |  |  |  |  |  |  |  |  |  |
+| kosmos2 | detect |  |  |  |  |  |  |  |  |  |
+| l2cs | gaze | ✓ |  |  |  |  |  |  |  |  |
+| lfm2vl | detect |  |  |  |  |  |  |  |  |  |
+| lingbotvision | semantic | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
+| locateanything | detect |  |  |  |  |  |  |  |  |  |
+| locateanything | point |  |  |  |  |  |  |  |  |  |
+| mobilenetv4 | classify | ✓ | ✓ | exp | exp | exp | ✓ | ✓ |  | ✓ |
+| mobilesam | segment |  |  |  |  |  |  |  |  |  |
+| moge2 | normal | ✓ |  |  |  |  |  |  |  |  |
+| nafnet | restore | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| omdet_turbo | detect |  |  |  |  |  |  |  |  |  |
+| ov_deim | detect |  |  |  |  |  |  |  |  |  |
+| owlv2 | detect |  |  |  |  |  |  |  |  |  |
+| picodet | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| picosam3 | segment | ✓ |  |  |  |  |  |  |  |  |
+| pidnet | semantic | ✓ | ✓ |  | exp | exp | ✓ | ✓ |  | ✓ |
+| ppocr | ocr |  |  |  |  |  |  |  |  |  |
+| qwen3vl | detect |  |  |  |  |  |  |  |  |  |
+| realesrgan | restore | ✓ | ✓ | exp | exp | exp | ✓ | ✓ |  | ✓ |
+| resnet | classify | ✓ | ✓ | exp | exp | exp | ✓ | ✓ |  | ✓ |
+| rfdetr | detect | ✓ | ✓ | exp | ✓ | ✓ |  | exp | exp | ✓ |
+| rfdetr | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| rfdetr | pose | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| rfdetr | obb | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| rtdetr | detect | ✓ | ✓ | exp | exp | exp |  |  | exp | ✓ |
+| rtdetrv2 | detect | exp | ✓ | exp | exp | exp |  |  |  | ✓ |
+| rtdetrv4 | detect | exp | ✓ | exp | exp | exp |  |  |  | ✓ |
+| rtmdet | detect | ✓ | ✓ | exp | exp | exp |  |  |  | ✓ |
+| rtmdet | segment |  |  |  |  |  |  |  |  |  |
+| sam | segment |  |  |  |  |  |  |  |  |  |
+| sam2 | segment |  |  |  |  |  |  |  |  |  |
+| sam3 | segment |  |  |  |  |  |  |  |  |  |
+| sam3dbody | mesh |  |  |  |  |  |  |  |  |  |
+| segformer | semantic |  |  |  |  |  |  |  |  |  |
+| siglip2 | classify | ✓ |  |  |  |  |  |  |  | ✓ |
+| siglip2 | embed |  |  |  |  |  |  |  |  |  |
+| smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
+| swinir | restore | exp | exp | exp | exp | exp | exp |  |  |  |
+| teed | edge | ✓ |  |  |  |  |  |  |  |  |
+| yolo1 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| yolo2 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| yolo3 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| yolo4 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| yolo7 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| yolo9 | detect | ✓ | ✓ | exp | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
+| yolo9_e2e | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| yolo9_p2 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| yolonas | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| yolonas | pose | ✓ | ✓ | exp | exp | exp | ✓ |  |  |  |
+| yolox | detect | ✓ | ✓ | exp | exp | exp | ✓ | ✓ | exp | ✓ |
+| zipdepth | depth | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
 
 ## Parity thresholds
 
@@ -179,6 +179,7 @@ A check mark applies only under any constraint listed here.
 - `birefnet` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `birefnet` / `matte` / `coreai`: The decoder needs torchvision deform_conv2d, which the Core AI converter cannot lower ('unable to handle call function op: deform_conv2d.default'). The same operator already blocks the NCNN path. An encoder-only contract is the realistic route, matching the seam the CUDA graph work used.
 - `clip` / `classify` / `torchscript`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `clip` / `classify` / `executorch`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `clip` / `classify` / `tensorrt`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `clip` / `classify` / `openvino`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `clip` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
@@ -186,6 +187,7 @@ A check mark applies only under any constraint listed here.
 - `clip` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `clip` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `clip` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `clip` / `embed` / `executorch`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `clip` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `clip` / `embed` / `openvino`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `clip` / `embed` / `ncnn`: Embedding export is not implemented in v1; use the native predict()/embed() API.
@@ -204,6 +206,7 @@ A check mark applies only under any constraint listed here.
 - `depth_anything` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `depth_anything3` / `depth` / `onnx`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `torchscript`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
+- `depth_anything3` / `depth` / `executorch`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `tensorrt`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `openvino`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `ncnn`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
@@ -211,6 +214,7 @@ A check mark applies only under any constraint listed here.
 - `depth_anything3` / `depth` / `coreml`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `coreai`: The model raises NotImplementedError for every format: depth export is out of scope per ADR 0006, the depth task contract. Depth Anything V2 exports and validates at 5.2e-06, so this is specific to the V3 family and not a Core AI limitation.
 - `dexined` / `edge` / `torchscript`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
+- `dexined` / `edge` / `executorch`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `dexined` / `edge` / `tensorrt`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `dexined` / `edge` / `openvino`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `dexined` / `edge` / `ncnn`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
@@ -224,11 +228,13 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `segment` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `dfine` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
+- `dinov2` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `dinov2` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `dinov2` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `dinov2` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `dinov2` / `classify` / `torchscript`: LibreDINOv2 classify export currently supports ONNX only.
+- `dinov2` / `classify` / `executorch`: LibreDINOv2 classify export currently supports ONNX only.
 - `dinov2` / `classify` / `tensorrt`: LibreDINOv2 classify export currently supports ONNX only.
 - `dinov2` / `classify` / `openvino`: LibreDINOv2 classify export currently supports ONNX only.
 - `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export currently supports ONNX only.
@@ -236,6 +242,7 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export currently supports ONNX only.
 - `dinov2` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `dinov2` / `embed` / `executorch`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `openvino`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `ncnn`: Embedding export is not implemented in v1; use the native predict()/embed() API.
@@ -255,6 +262,7 @@ A check mark applies only under any constraint listed here.
 - `ec` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
 - `edgetam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
+- `edgetam` / `segment` / `executorch`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
@@ -262,12 +270,14 @@ A check mark applies only under any constraint listed here.
 - `edgetam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `efficientnetv2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `eomt` / `semantic` / `executorch`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `eomt` / `semantic` / `coreai`: torch.export refuses the graph: GuardOnDataDependentSymNode, 'Could not guard on data-dependent expression Eq(u0, 1)'. Something in the mask path reads a value off a tensor and branches on it, which becomes an unbacked symbol with no hint the tracer can resolve. This is a real capture failure, not a missing operator and not the task gate: it was measured with the gate open. Fixing it means finding the host read and making the shape static for a fixed export canvas, the same shape of fix as the rfdetr torch._assert.
 - `eomt` / `segment` / `onnx`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `segment` / `torchscript`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `segment` / `executorch`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `segment` / `tensorrt`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `segment` / `openvino`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `segment` / `ncnn`: EoMT instance and panoptic export do not yet have runtime parsing.
@@ -276,6 +286,7 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `segment` / `coreai`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `onnx`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `torchscript`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `panoptic` / `executorch`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `tensorrt`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `openvino`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `ncnn`: EoMT instance and panoptic export do not yet have runtime parsing.
@@ -288,16 +299,19 @@ A check mark applies only under any constraint listed here.
 - `feynobg` / `matte` / `coreai`: This family and task have not been validated for Core AI export.
 - `florence2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `florence2` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `fomo` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `fomo` / `point` / `tflite`: onnx2tf 2.4.x produces an invalid depthwise-convolution graph for the static SAME-padded FOMO backbone on this toolchain.
 - `fomo` / `point` / `coreml`: The CoreML wrapper does not implement the raw point-heatmap contract.
 - `grounding_dino` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
+- `grounding_dino` / `detect` / `executorch`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `openvino`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
@@ -306,6 +320,7 @@ A check mark applies only under any constraint listed here.
 - `grounding_dino` / `detect` / `coreai`: Open-vocabulary runtime export is out of scope for v1.
 - `internvl3` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `internvl3` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
@@ -314,6 +329,7 @@ A check mark applies only under any constraint listed here.
 - `internvl3` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `kosmos2` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
@@ -321,6 +337,7 @@ A check mark applies only under any constraint listed here.
 - `kosmos2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `l2cs` / `gaze` / `torchscript`: The v1 L2CS gaze export contract supports ONNX only.
+- `l2cs` / `gaze` / `executorch`: The v1 L2CS gaze export contract supports ONNX only.
 - `l2cs` / `gaze` / `tensorrt`: The v1 L2CS gaze export contract supports ONNX only.
 - `l2cs` / `gaze` / `openvino`: The v1 L2CS gaze export contract supports ONNX only.
 - `l2cs` / `gaze` / `ncnn`: The v1 L2CS gaze export contract supports ONNX only.
@@ -329,17 +346,20 @@ A check mark applies only under any constraint listed here.
 - `l2cs` / `gaze` / `coreai`: The model itself refuses: 'LibreL2CS export to coreai is not implemented. The v1 gaze export contract supports ONNX only.' That is a model-side decision, unchanged by opening the support gate, so nothing about Core AI is being tested here. Wiring the gaze contract beyond ONNX comes first.
 - `lfm2vl` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `lfm2vl` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `lingbotvision` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `lingbotvision` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `lingbotvision` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `lingbotvision` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `locateanything` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `locateanything` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
@@ -348,6 +368,7 @@ A check mark applies only under any constraint listed here.
 - `locateanything` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `onnx`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `torchscript`: Generative VLM export is out of scope for v1.
+- `locateanything` / `point` / `executorch`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `openvino`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `ncnn`: Generative VLM export is out of scope for v1.
@@ -357,6 +378,7 @@ A check mark applies only under any constraint listed here.
 - `mobilenetv4` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `mobilesam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
+- `mobilesam` / `segment` / `executorch`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
@@ -364,6 +386,7 @@ A check mark applies only under any constraint listed here.
 - `mobilesam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `moge2` / `normal` / `torchscript`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
+- `moge2` / `normal` / `executorch`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `tensorrt`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `openvino`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `ncnn`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
@@ -374,6 +397,7 @@ A check mark applies only under any constraint listed here.
 - `nafnet` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `omdet_turbo` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
+- `omdet_turbo` / `detect` / `executorch`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `openvino`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
@@ -382,6 +406,7 @@ A check mark applies only under any constraint listed here.
 - `omdet_turbo` / `detect` / `coreai`: Open-vocabulary runtime export is out of scope for v1.
 - `ov_deim` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `ov_deim` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
+- `ov_deim` / `detect` / `executorch`: Open-vocabulary runtime export is out of scope for v1.
 - `ov_deim` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
 - `ov_deim` / `detect` / `openvino`: Open-vocabulary runtime export is out of scope for v1.
 - `ov_deim` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
@@ -390,6 +415,7 @@ A check mark applies only under any constraint listed here.
 - `ov_deim` / `detect` / `coreai`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
+- `owlv2` / `detect` / `executorch`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `openvino`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
@@ -399,15 +425,18 @@ A check mark applies only under any constraint listed here.
 - `picodet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `picodet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `picosam3` / `segment` / `torchscript`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
+- `picosam3` / `segment` / `executorch`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `tensorrt`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `openvino`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `ncnn`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `tflite`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `coreml`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `coreai`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
+- `pidnet` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `pidnet` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `ppocr` / `ocr` / `onnx`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `torchscript`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
+- `ppocr` / `ocr` / `executorch`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `tensorrt`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `openvino`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `ncnn`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
@@ -416,6 +445,7 @@ A check mark applies only under any constraint listed here.
 - `ppocr` / `ocr` / `coreai`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `qwen3vl` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `qwen3vl` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
@@ -450,6 +480,7 @@ A check mark applies only under any constraint listed here.
 - `rtmdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rtmdet` / `segment` / `onnx`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `rtmdet` / `segment` / `torchscript`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
+- `rtmdet` / `segment` / `executorch`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `rtmdet` / `segment` / `tensorrt`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `rtmdet` / `segment` / `openvino`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `rtmdet` / `segment` / `ncnn`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
@@ -458,6 +489,7 @@ A check mark applies only under any constraint listed here.
 - `rtmdet` / `segment` / `coreai`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `sam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam` / `segment` / `executorch`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
@@ -466,6 +498,7 @@ A check mark applies only under any constraint listed here.
 - `sam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam2` / `segment` / `executorch`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
@@ -474,6 +507,7 @@ A check mark applies only under any constraint listed here.
 - `sam2` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam3` / `segment` / `executorch`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
@@ -482,6 +516,7 @@ A check mark applies only under any constraint listed here.
 - `sam3` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3dbody` / `mesh` / `onnx`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `torchscript`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
+- `sam3dbody` / `mesh` / `executorch`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `tensorrt`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `openvino`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `ncnn`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
@@ -490,6 +525,7 @@ A check mark applies only under any constraint listed here.
 - `sam3dbody` / `mesh` / `coreai`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `segformer` / `semantic` / `onnx`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `torchscript`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `segformer` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `tensorrt`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `openvino`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `ncnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
@@ -497,6 +533,7 @@ A check mark applies only under any constraint listed here.
 - `segformer` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `coreai`: LibreSegformer implements no export path at all ('Export is not implemented for LibreSegformer yet'), so this is not a Core AI limitation. Note its weights are non-commercial regardless.
 - `siglip2` / `classify` / `torchscript`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `siglip2` / `classify` / `executorch`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `tensorrt`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `openvino`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
@@ -504,6 +541,7 @@ A check mark applies only under any constraint listed here.
 - `siglip2` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `siglip2` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `siglip2` / `embed` / `executorch`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `siglip2` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `siglip2` / `embed` / `openvino`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `siglip2` / `embed` / `ncnn`: Embedding export is not implemented in v1; use the native predict()/embed() API.
@@ -512,6 +550,7 @@ A check mark applies only under any constraint listed here.
 - `siglip2` / `embed` / `coreai`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `smolvlm2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `smolvlm2` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
@@ -522,6 +561,7 @@ A check mark applies only under any constraint listed here.
 - `swinir` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `swinir` / `restore` / `coreai`: The export process DIES rather than hangs, and the kill point moves between runs, which is the signature of memory exhaustion rather than a stuck loop. One run reached 'Step 3/3: Optimizing and writing the asset' before stopping; a later run of the same graph at the same 128 canvas died inside to_coreai() before returning, in both cases with a leaked-semaphore warning and no traceback. Window attention unrolls into a very large number of small ops, so the converter's peak memory is the prime suspect on a 16 GB machine. Next steps: watch RSS during conversion, try the smallest available size at a 64 canvas, and check the system log for a memory kill. Do NOT assume optimize() is at fault; an earlier note said so on the strength of a single run and the second run contradicted it.
 - `teed` / `edge` / `torchscript`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
+- `teed` / `edge` / `executorch`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `teed` / `edge` / `tensorrt`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `teed` / `edge` / `openvino`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `teed` / `edge` / `ncnn`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.

@@ -1311,6 +1311,74 @@ class TorchScriptExporter(BaseExporter):
         )
 
 
+class ExecuTorchExporter(BaseExporter):
+    """Fixed-shape, batch-1, FP32 ExecuTorch export with XNNPACK delegation."""
+
+    format_name = "executorch"
+    suffix = ".pte"
+    requires_onnx = False
+    supports_int8 = False
+    supports_fp16 = False
+    apply_model_half = False
+
+    def _resolve_params(self, output_path, imgsz, device, half, int8):
+        if device is not None and str(device).lower() not in {"auto", "cpu"}:
+            raise ValueError("ExecuTorch XNNPACK export requires device='cpu'.")
+        return super()._resolve_params(
+            output_path, imgsz, torch.device("cpu"), half, int8
+        )
+
+    def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
+        delegate = str(kwargs.get("delegate", "xnnpack")).lower()
+        if delegate != "xnnpack":
+            raise ValueError(
+                "ExecuTorch v1 supports delegate='xnnpack' only, "
+                f"got {delegate!r}."
+            )
+        super()._preflight(half=half, int8=int8, data=data, **kwargs)
+        from .executorch import check_executorch_available
+
+        check_executorch_available()
+
+    def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
+        meta = super()._build_metadata(
+            precision, False, onnx_path, imgsz=imgsz
+        )
+        crop_pct = getattr(self.model, "crop_pct", None)
+        interpolation = getattr(self.model, "interpolation", None)
+        if crop_pct is not None:
+            meta["crop_pct"] = float(crop_pct)
+        if interpolation is not None:
+            meta["interpolation"] = str(interpolation)
+        return meta
+
+    def _export(
+        self,
+        nn_model,
+        dummy,
+        *,
+        output_path,
+        metadata,
+        dynamic,
+        delegate="xnnpack",
+        **kwargs,
+    ):
+        if dummy.shape[0] != 1:
+            raise ValueError(
+                f"ExecuTorch v1 requires batch=1, got batch={dummy.shape[0]}."
+            )
+        if dynamic:
+            raise ValueError("ExecuTorch v1 requires dynamic=False.")
+        from .executorch import export_executorch
+
+        return export_executorch(
+            nn_model,
+            dummy,
+            output_path=output_path,
+            metadata=metadata,
+        )
+
+
 class TensorRTExporter(BaseExporter):
     format_name = "tensorrt"
     suffix = ".engine"

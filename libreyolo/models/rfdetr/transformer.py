@@ -279,7 +279,14 @@ class MSDeformAttn(nn.Module):
         # Eq(u0, 1)"). The check is a developer sanity check over spatial
         # shapes that are constant for a fixed export canvas, so evaluate it
         # in Python when the shapes are concrete and skip the tensor path.
-        if not torch.jit.is_tracing() and not isinstance(
+        if self._export and input_spatial_shapes_hw is not None:
+            # Export callers already carry the fixed canvas geometry as Python
+            # integer pairs. Validate against those values instead of reading
+            # back from input_spatial_shapes, which creates an unbacked symbol
+            # under strict torch.export capture.
+            expected_len_in = sum(h * w for h, w in input_spatial_shapes_hw)
+            assert expected_len_in == len_input, error_msg
+        elif not torch.jit.is_tracing() and not isinstance(
             input_spatial_shapes, torch.fx.Proxy
         ):
             try:
@@ -290,11 +297,6 @@ class MSDeformAttn(nn.Module):
                 expected_len_in = None
             if expected_len_in is not None and not isinstance(len_input, torch.Tensor):
                 assert expected_len_in == len_input, error_msg
-        elif self._export:
-            expected_len_in = (
-                input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]
-            ).sum()
-            torch._assert(expected_len_in == len_input, error_msg)
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:
