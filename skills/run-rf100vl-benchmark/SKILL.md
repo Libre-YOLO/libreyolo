@@ -83,9 +83,15 @@ va-bench rf100vl --all --data-dir ./rf100-vl --weights-root ./rf100vl-weights
   needs a free `ROBOFLOW_API_KEY`; about 40 GB. Use it to REBUILD the HF copy,
   to verify it, or if the HF copy is unavailable. The harness writes a version
   lock and replays recorded versions; it never re-resolves latest.
-  The HF copy is a temporary redistribution (all 100 datasets are MIT, checked
-  individually and cross-validated against the READMEs inside the exports); if
-  it ever disappears, this path still works unchanged.
+  We host the HF copy; it is not a hedge or a stopgap. Licensing is recorded in
+  `va_bench/data/rf100vl_licenses.json`, which deliberately keeps BOTH upstream
+  statements rather than resolving them silently: the benchmark repository
+  claims Apache-2.0 as a blanket licence over the datasets, while all 100
+  Universe projects individually report MIT (checked per project and
+  cross-validated against the `License:` line inside downloaded exports). Both
+  permit redistribution and derivatives with notice retention, so the
+  disagreement changes nothing operationally; we rely on the per-project field
+  and preserve every dataset's own README.dataset.txt inside its archive.
 - Weights contract: training places `best.pt` at
   `<weights_root>/<dataset>/<weight_file>`; eval resolves exactly that path.
 - A capability guard aborts training on any libreyolo build without
@@ -164,9 +170,13 @@ only the RF100-VL specifics.
 - Stock pycocotools `summarize()` breaks with a non-default maxDets list
   (headline AP becomes -1). LibreYOLO and the harness compute the stats
   directly; never call stock summarize with a modified list.
-- Only use the `rf100vl` package download. Raw website exports carry a dummy
-  class 0 with shifted category ids; mixing cleaned ground truth with
-  uncleaned predictions scores near zero.
+- Use package-cleaned data only, from either source above. The `rf100vl` package
+  rewrites category numbering on download (dummy class 0 removed, ids shifted to
+  0-based contiguous, annotation ids from 1), and the HF copy was produced by
+  running exactly that code, so both are equivalent and version-pinned. **Never
+  a raw export from the Universe website**: those keep the dummy class and the
+  original numbering, and scoring them against the benchmark ground truth gives
+  close to zero mAP.
 - One dataset is literally named `-grccs`: write `--datasets=-grccs` (the
   space form is eaten by argparse).
 - Never resume a checkpoint after changing physical batch or accumulation.
