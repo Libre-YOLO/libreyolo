@@ -420,7 +420,7 @@ def test_partial_exporters_are_custom_not_blocked():
     assert inventory["picosam3"]["export_override"] == "custom"
     assert inventory["mobilesam"]["export_override"] == "custom"
     assert get_support("picosam3", "segment", "onnx").tier == "validated"
-    assert get_support("mobilesam", "segment", "coreml").tier == "experimental"
+    assert get_support("mobilesam", "segment", "coreml").tier == "validated"
 
     for family, metadata in inventory.items():
         if metadata["export_override"] != "blocked":

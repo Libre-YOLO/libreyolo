@@ -529,6 +529,27 @@ _PROFILES = (
         classification_activation="softmax",
     ),
     _profile(
+        "eomt",
+        "semantic",
+        "l",
+        512,
+        "LibreEoMTl-sem",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "1f19c8c4a2a3ad5da51a087466b2e3fc"
+            "fb8a368790af37746d7d8f7654eba115"
+        ),
+        deployment_abi_sha256=(
+            "0823bd8bdab071a1d29e52ada2453d9b"
+            "2bf3c113ff6fe5369385c16780d70302"
+        ),
+        evidence_sha256=(
+            "c7710b95364c8e22395908178f7b5b35"
+            "b2d28fa98bfa72f6b6f3cf71e43f501d"
+        ),
+        class_count=150,
+    ),
+    _profile(
         "facerec",
         "embed",
         "l",

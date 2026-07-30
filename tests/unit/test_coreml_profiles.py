@@ -230,6 +230,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("ec", "segment", "s"),
         ("edgetam", "segment", "edge"),
         ("efficientnetv2", "classify", "b0"),
+        ("eomt", "semantic", "l"),
         ("facerec", "embed", "l"),
         ("fomo", "point", "s"),
         ("l2cs", "gaze", "r101"),
