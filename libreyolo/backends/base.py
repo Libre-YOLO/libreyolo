@@ -567,11 +567,33 @@ class BaseBackend(ABC):
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
+        transform_kwargs = {
+            "crop_pct": getattr(self, "crop_pct", 0.875),
+            "interpolation": getattr(self, "interpolation", "bilinear"),
+        }
+        if self.model_family == "clip":
+            from ..models.clip.model import CLIP_MEAN, CLIP_STD
+
+            transform_kwargs.update(
+                mean=CLIP_MEAN,
+                std=CLIP_STD,
+                crop_pct=1.0,
+                interpolation="bicubic",
+            )
+        elif self.model_family == "siglip2":
+            from ..models.siglip2.model import SIGLIP_MEAN, SIGLIP_STD
+
+            transform_kwargs.update(
+                mean=SIGLIP_MEAN,
+                std=SIGLIP_STD,
+                crop_pct=1.0,
+                interpolation="bilinear",
+                square_resize=True,
+            )
         transform = build_classify_transforms(
             h,
             augment=False,
-            crop_pct=getattr(self, "crop_pct", 0.875),
-            interpolation=getattr(self, "interpolation", "bilinear"),
+            **transform_kwargs,
         )
         img_tensor = transform(img).unsqueeze(0)
         return img_tensor, img, original_size, 1.0

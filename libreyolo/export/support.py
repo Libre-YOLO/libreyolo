@@ -686,14 +686,27 @@ _add(
     ),
 )
 _add(
+    "validated",
+    ("clip", "siglip2"),
+    ("embed",),
+    ("onnx", "torchscript", "openvino", "tensorrt", "executorch"),
+    reason=(
+        "Deterministic input-sensitive image-tower fixtures cover artifact "
+        "reload, two-input raw embedding parity with a 20x signal/error guard, "
+        "metadata, normalization, and public embedding parity."
+    ),
+    since="1.6",
+    constraint=(
+        "FP32, batch 1, fixed family-native square input; ExecuTorch uses "
+        "1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2"
+    ),
+)
+_add(
     "blocked",
     ("clip", "siglip2"),
     ("embed",),
-    EXPORT_FORMATS,
-    reason=(
-        "Embedding export is not implemented in v1; use the native "
-        "predict()/embed() API."
-    ),
+    ("ncnn", "tflite", "coreml", "coreai"),
+    reason="No parity-valid embedding artifact is available for this runtime.",
 )
 _add(
     "validated",

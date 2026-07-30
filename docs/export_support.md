@@ -10,7 +10,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | birefnet | matte | exp | ✓ |  |  |  |  |  |  |  |
 | clip | classify | ✓ |  |  |  |  |  |  |  | ✓ |
-| clip | embed |  |  |  |  |  |  |  |  |  |
+| clip | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | deim | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
@@ -70,7 +70,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |  |
 | segformer | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  |  | ✓ |
-| siglip2 | embed |  |  |  |  |  |  |  |  |  |
+| siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
 | swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
@@ -104,6 +104,11 @@ A check mark applies only under any constraint listed here.
 - `birefnet` / `matte` / `torchscript`: fixed 1024x1024 input
 - `clip` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `clip` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `clip` / `embed` / `onnx`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
+- `clip` / `embed` / `torchscript`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
+- `clip` / `embed` / `executorch`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
+- `clip` / `embed` / `tensorrt`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
+- `clip` / `embed` / `openvino`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
 - `convnext` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `convnext` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `convnext` / `classify` / `openvino`: fixed family-native input resolution
@@ -247,6 +252,11 @@ A check mark applies only under any constraint listed here.
 - `segformer` / `semantic` / `openvino`: fixed square input divisible by 32
 - `siglip2` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `siglip2` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `siglip2` / `embed` / `onnx`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
+- `siglip2` / `embed` / `torchscript`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
+- `siglip2` / `embed` / `executorch`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
+- `siglip2` / `embed` / `tensorrt`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
+- `siglip2` / `embed` / `openvino`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
 - `swinir` / `restore` / `onnx`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `torchscript`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `tensorrt`: FP32 with a fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas.
@@ -326,15 +336,10 @@ A check mark applies only under any constraint listed here.
 - `clip` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `clip` / `classify` / `tflite`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `clip` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `clip` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `clip` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `clip` / `embed` / `executorch`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `clip` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `clip` / `embed` / `openvino`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `clip` / `embed` / `ncnn`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `clip` / `embed` / `tflite`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `clip` / `embed` / `coreml`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `clip` / `embed` / `coreai`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `clip` / `embed` / `ncnn`: No parity-valid embedding artifact is available for this runtime.
+- `clip` / `embed` / `tflite`: No parity-valid embedding artifact is available for this runtime.
+- `clip` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
+- `clip` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
 - `convnext` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `deim` / `detect` / `executorch`: The trained nano model captures, lowers, and serializes, but ExecuTorch 1.2 runtime execution fails with an invalid delegated tensor dimension order.
 - `deim` / `detect` / `ncnn`: NCNN export is not supported for DEIM: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
@@ -650,15 +655,10 @@ A check mark applies only under any constraint listed here.
 - `siglip2` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `tflite`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `siglip2` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `siglip2` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `siglip2` / `embed` / `executorch`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `siglip2` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `siglip2` / `embed` / `openvino`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `siglip2` / `embed` / `ncnn`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `siglip2` / `embed` / `tflite`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `siglip2` / `embed` / `coreml`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `siglip2` / `embed` / `coreai`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `siglip2` / `embed` / `ncnn`: No parity-valid embedding artifact is available for this runtime.
+- `siglip2` / `embed` / `tflite`: No parity-valid embedding artifact is available for this runtime.
+- `siglip2` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
+- `siglip2` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
 - `smolvlm2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `executorch`: Generative VLM export is out of scope for v1.

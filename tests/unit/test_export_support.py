@@ -67,6 +67,7 @@ def test_experimental_export_warns_in_preflight():
 
 def test_executorch_realtime_support_is_evidence_backed():
     validated = {
+        ("clip", "embed"),
         ("convnext", "classify"),
         ("depth_anything", "depth"),
         ("depth_anything3", "depth"),
@@ -91,6 +92,7 @@ def test_executorch_realtime_support_is_evidence_backed():
         ("rtdetrv2", "detect"),
         ("rtdetrv4", "detect"),
         ("segformer", "semantic"),
+        ("siglip2", "embed"),
         ("rfdetr", "detect"),
         ("rfdetr", "obb"),
         ("rfdetr", "pose"),
@@ -554,6 +556,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         if fmt == "openvino" and entry.tier == "validated"
     }
     assert validated == {
+        ("clip", "embed"),
         ("convnext", "classify"),
         ("depth_anything", "depth"),
         ("depth_anything3", "depth"),
@@ -581,6 +584,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("rtdetr", "detect"),
             ("rtdetrv4", "detect"),
             ("segformer", "semantic"),
+            ("siglip2", "embed"),
             ("swinir", "restore"),
             ("teed", "edge"),
             ("yolo1", "detect"),

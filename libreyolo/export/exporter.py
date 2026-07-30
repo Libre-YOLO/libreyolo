@@ -140,6 +140,7 @@ def _pose_keypoint_shape_metadata(model) -> dict:
 
 
 _FIXED_SQUARE_EXPORT_FAMILIES = {
+    "clip",
     "dfine",
     "deim",
     "deimv2",
@@ -149,6 +150,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "rtdetrv2",
     "rtdetrv4",
     "rfdetr",
+    "siglip2",
 }
 _RECTANGULAR_EXPORT_FAMILIES = {
     "yolo9",
@@ -200,6 +202,17 @@ class _SemanticExportWrapper(torch.nn.Module):
         if isinstance(output, (list, tuple)):
             return output[-1]
         return output
+
+
+class _ImageEmbeddingExportWrapper(torch.nn.Module):
+    """Trace an image tower as a normalized whole-image embedding graph."""
+
+    def __init__(self, image_tower: torch.nn.Module):
+        super().__init__()
+        self.image_tower = image_tower
+
+    def forward(self, x):
+        return torch.nn.functional.normalize(self.image_tower(x).float(), dim=-1)
 
 
 class _YOLONASExportWrapper(torch.nn.Module):
@@ -878,6 +891,13 @@ class BaseExporter(ABC):
                 encoder.shape = (imgsz[0], imgsz[1])
                 encoder.export()
                 rfdetr_export_activated = True
+            dfine_wrapped = True
+        elif family in {"clip", "siglip2"} and task == "embed":
+            image_tower = (
+                nn_model.visual if family == "clip" else nn_model.vision_model
+            )
+            nn_model = _ImageEmbeddingExportWrapper(image_tower).to(device)
+            nn_model.eval()
             dfine_wrapped = True
         elif family == "rfdetr":
             from ..models.rfdetr.nn import RFDETRExportWrapper

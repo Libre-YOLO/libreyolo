@@ -367,6 +367,22 @@ class TestScope:
         with pytest.raises(NotImplementedError):
             tiny_siglip2.export(format="torchscript")
 
+    def test_embed_export_routes_to_shared_export(
+        self, tiny_siglip2_embed, monkeypatch
+    ):
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return f"siglip2-embed.{format}"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+        assert (
+            tiny_siglip2_embed.export("onnx", dynamic=False)
+            == "siglip2-embed.onnx"
+        )
+        assert captured == {"format": "onnx", "opset": 17, "dynamic": False}
+
     def test_frozen_onnx_roundtrip(self, tiny_siglip2, tmp_path):
         pytest.importorskip("onnx")
         ort = pytest.importorskip("onnxruntime")
