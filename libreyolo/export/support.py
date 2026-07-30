@@ -869,8 +869,20 @@ _add(
     "validated",
     ("picodet",),
     ("detect",),
-    ("onnx", "torchscript", "ncnn"),
+    ("onnx", "torchscript"),
     since="1.4",
+)
+_add(
+    "validated",
+    ("picodet",),
+    ("detect",),
+    ("ncnn",),
+    since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with a permissively licensed trained "
+        "checkpoint; two-input raw parity, factory reload, metadata, and "
+        "public predict parity"
+    ),
 )
 _add(
     "validated",
@@ -1102,10 +1114,26 @@ _add(
 )
 _add(
     "validated",
-    ("yolo2", "yolo3", "yolo4"),
+    ("yolo3", "yolo4"),
     ("detect",),
     ("ncnn",),
     since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with public-domain trained checkpoints; "
+        "two-input raw parity, factory reload, metadata, and public predict "
+        "parity"
+    ),
+)
+_add(
+    "experimental",
+    ("yolo2",),
+    ("detect",),
+    ("ncnn",),
+    reason=(
+        "The public-domain trained checkpoint exports through PNNX 20260526, "
+        "but NCNN 20260526 on Windows terminates the runtime with a native "
+        "integer divide-by-zero during output extraction."
+    ),
 )
 _add(
     "blocked",
@@ -1143,6 +1171,11 @@ _add(
     ("detect",),
     ("ncnn",),
     since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with a permissively licensed trained "
+        "checkpoint; two-input raw parity, factory reload, metadata, and "
+        "public predict parity"
+    ),
 )
 _add(
     "blocked",
@@ -1156,10 +1189,27 @@ _add(
 )
 _add(
     "validated",
-    ("yolo9_e2e", "yolo9_p2", "yolox"),
+    ("yolo9_e2e", "yolox"),
     ("detect",),
     ("ncnn",),
     since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with permissively licensed trained "
+        "checkpoints; two-input raw parity, factory reload, metadata, and "
+        "public predict parity"
+    ),
+)
+_add(
+    "experimental",
+    ("yolo9_p2",),
+    ("detect",),
+    ("ncnn",),
+    reason=(
+        "The SHA-pinned MIT YOLO9 transfer fixture exports, reloads, and "
+        "preserves raw NCNN parity, but changes near-noise public top-k "
+        "classes and produces no detections above 0.05 on the bundled real "
+        "image."
+    ),
 )
 _add(
     "validated",
@@ -1167,7 +1217,11 @@ _add(
     ("detect",),
     ("ncnn",),
     since="1.4",
-    constraint="fixed 448x448 input",
+    constraint=(
+        "fixed 448x448 input; PNNX/NCNN 20260526 CPU FP32 with a public-domain "
+        "trained checkpoint; two-input raw parity, factory reload, metadata, "
+        "and public predict parity"
+    ),
 )
 _add(
     "validated",
@@ -1175,6 +1229,12 @@ _add(
     ("detect", "pose"),
     ("ncnn",),
     since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with deterministic synthetic trained "
+        "fixtures; two-input raw parity, factory reload, metadata, and public "
+        "predict parity; pose additionally validates matched keypoints; this "
+        "validates conversion, not task accuracy"
+    ),
 )
 _add(
     "validated",

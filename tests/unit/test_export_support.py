@@ -273,6 +273,33 @@ def test_round17_records_ten_ncnn_cpu_fp32_parity_cells():
         assert "public predict parity" in entry.constraint
 
 
+def test_round18_records_nine_ncnn_parity_cells_and_two_holds():
+    validated = (
+        ("picodet", "detect"),
+        ("yolo1", "detect"),
+        ("yolo3", "detect"),
+        ("yolo4", "detect"),
+        ("yolo7", "detect"),
+        ("yolo9_e2e", "detect"),
+        ("yolox", "detect"),
+        ("yolonas", "detect"),
+        ("yolonas", "pose"),
+    )
+    for family, task in validated:
+        entry = get_support(family, task, "ncnn")
+        assert entry.tier == "validated"
+        assert "PNNX/NCNN 20260526 CPU FP32" in entry.constraint
+        assert "public predict parity" in entry.constraint
+
+    yolo2 = get_support("yolo2", "detect", "ncnn")
+    assert yolo2.tier == "experimental"
+    assert "integer divide-by-zero" in yolo2.reason
+
+    yolo9_p2 = get_support("yolo9_p2", "detect", "ncnn")
+    assert yolo9_p2.tier == "experimental"
+    assert "no detections above 0.05" in yolo9_p2.reason
+
+
 def test_round10_promotes_three_tensorrt_detectors():
     for family in ("yolo2", "yolo3", "yolo4"):
         entry = get_support(family, "detect", "tensorrt")
