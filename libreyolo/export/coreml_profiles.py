@@ -1135,6 +1135,48 @@ _PROFILES = (
         class_count=1,
     ),
     _profile(
+        "swinir",
+        "restore",
+        "m",
+        64,
+        "LibreSwinIRm-restore",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "123fdfed4955c9d9aff6c2158c04ad62"
+            "971992dc78a29d6165cc691ac95f39e0"
+        ),
+        deployment_abi_sha256=(
+            "77df043310807b2a766a116d36c92d3d"
+            "5f4d9b5d7e66014fa88135920a78b28c"
+        ),
+        evidence_sha256=(
+            "3421daeed98767056a16c21d81b474ac"
+            "c142c7513761b7c7b3d8ef3af26080ca"
+        ),
+        class_count=1,
+    ),
+    _profile(
+        "swinir",
+        "restore",
+        "l",
+        64,
+        "LibreSwinIRl-restore",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "5b597f2632115e04be6b7f06acd77838"
+            "d1022b654cef1100fe211c87bd8f241b"
+        ),
+        deployment_abi_sha256=(
+            "cdc4e15998dbdeb1b51cc683b34ec4fa"
+            "556c9016cc3e3f2992c019eb3f1ea0be"
+        ),
+        evidence_sha256=(
+            "d76553d9ed866623b21cf8ee677beec3"
+            "09703d8df06df95b8b74cab098fa71ed"
+        ),
+        class_count=1,
+    ),
+    _profile(
         "yolo1",
         "detect",
         "b",
