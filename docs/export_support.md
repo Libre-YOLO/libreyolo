@@ -11,10 +11,10 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | birefnet | matte | exp | ✓ | exp |  |  |  |  |  |
 | clip | classify | ✓ |  |  |  |  |  |  | ✓ |
 | clip | embed |  |  |  |  |  |  |  |  |
-| convnext | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
+| convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | deim | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
-| depth_anything | depth | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
+| depth_anything | depth | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | depth_anything3 | depth |  |  |  |  |  |  |  |  |
 | dexined | edge | ✓ |  |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
@@ -26,13 +26,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | ec | pose | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | exp | ✓ |  |  |  |  |
 | edgetam | segment |  |  |  |  |  |  |  |  |
-| efficientnetv2 | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
+| efficientnetv2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | eomt | semantic | ✓ | ✓ | exp | ✓ |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |
 | feynobg | matte | exp | ✓ | exp |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |
-| fomo | point | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
+| fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |
@@ -41,10 +41,10 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | lingbotvision | semantic | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |
-| mobilenetv4 | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
+| mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |
 | moge2 | normal | ✓ |  |  |  |  |  |  |  |
-| nafnet | restore | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
+| nafnet | restore | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |  |
@@ -53,8 +53,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | pidnet | semantic | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | ppocr | ocr |  |  |  |  |  |  |  |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |  |
-| realesrgan | restore | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
-| resnet | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
+| realesrgan | restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
+| resnet | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  |  | exp | ✓ |
 | rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |  |
@@ -72,7 +72,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | siglip2 | classify | ✓ |  |  |  |  |  |  | ✓ |
 | siglip2 | embed |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |
-| swinir | restore | ✓ | ✓ | exp | ✓ |  | ✓ |  |  |
+| swinir | restore | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ |  |  |  |  |  |  |  |
 | yolo1 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
@@ -104,10 +104,12 @@ A check mark applies only under any constraint listed here.
 - `birefnet` / `matte` / `torchscript`: fixed 1024x1024 input
 - `clip` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `clip` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `convnext` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `convnext` / `classify` / `openvino`: fixed family-native input resolution
 - `convnext` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `deim` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `deimv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `depth_anything` / `depth` / `tensorrt`: FP32 with a fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `openvino`: fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `dexined` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
@@ -126,12 +128,14 @@ A check mark applies only under any constraint listed here.
 - `ec` / `segment` / `onnx`: fixed 640x640 input
 - `ec` / `segment` / `torchscript`: fixed 640x640 input
 - `ec` / `segment` / `openvino`: fixed 640x640 input
+- `efficientnetv2` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `efficientnetv2` / `classify` / `openvino`: fixed family-native input resolution
 - `efficientnetv2` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `eomt` / `semantic` / `onnx`: fixed 512x512 input
 - `eomt` / `semantic` / `torchscript`: fixed 512x512 input
 - `eomt` / `semantic` / `openvino`: fixed family-native export canvas
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
+- `fomo` / `point` / `tensorrt`: FP32 with a fixed 96x96 input
 - `fomo` / `point` / `openvino`: fixed square input
 - `fomo` / `point` / `coreai`: native 96 canvas; a deterministic model state trained from scratch for eight steps on synthetic tensors is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion and the existing heatmap contract, not point-localization accuracy
 - `l2cs` / `gaze` / `onnx`: head-only contract: each input image is one face crop
@@ -140,11 +144,13 @@ A check mark applies only under any constraint listed here.
 - `lingbotvision` / `semantic` / `torchscript`: fixed 512x512 input
 - `lingbotvision` / `semantic` / `openvino`: fixed family-native export canvas
 - `lingbotvision` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
+- `mobilenetv4` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `mobilenetv4` / `classify` / `openvino`: fixed family-native input resolution
 - `mobilenetv4` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `moge2` / `normal` / `onnx`: fixed square batch-1 export canvas divisible by 14; exported inference rejects non-square sources rather than stretching image-plane geometry; the official MIT ViT-S/B/L normal checkpoints are covered by FP32 same-canvas native-versus-ONNX angular parity below 0.1 degree
 - `nafnet` / `restore` / `onnx`: fixed-resolution export canvas
 - `nafnet` / `restore` / `torchscript`: fixed-resolution export canvas
+- `nafnet` / `restore` / `tensorrt`: FP32 with a fixed-resolution export canvas
 - `nafnet` / `restore` / `openvino`: fixed-resolution export canvas
 - `nafnet` / `restore` / `ncnn`: fixed-resolution export canvas
 - `nafnet` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
@@ -155,10 +161,12 @@ A check mark applies only under any constraint listed here.
 - `pidnet` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
 - `realesrgan` / `restore` / `onnx`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
 - `realesrgan` / `restore` / `torchscript`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
+- `realesrgan` / `restore` / `tensorrt`: FP32 with a fixed-resolution export canvas
 - `realesrgan` / `restore` / `openvino`: fixed-resolution export canvas
 - `realesrgan` / `restore` / `ncnn`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
 - `realesrgan` / `restore` / `tflite`: fixed-resolution export canvas
 - `realesrgan` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `resnet` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `resnet` / `classify` / `openvino`: fixed family-native input resolution
 - `resnet` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `rfdetr` / `detect` / `coreai`: fixed export canvas; trained LibreRFDETRn weights are covered on macOS 27 against the graph the exporter itself prepares, using direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin. Conversion needed _rebake_rfdetr_pos_embed in export/coreai.py: the backbone bakes its position embedding for its configured 384 canvas, so exporting at any other size left an antialiased bicubic in the graph and the converter has no lowering for aten._upsample_bicubic2d_aa. The rebake re-runs the model's OWN baking path for the actual canvas, so the interpolation happens eagerly, outside the graph, computing exactly what it computed before. NOTE the reference. This family is verified against the exporter's prepared graph, not against ONNX, and the difference is not a detail: at a 640 canvas the rfdetr ONNX artifact disagrees with that same prepared graph by 9.3e-01. Core AI's rebake preserves the antialiased resize the eager model performs, whereas the ONNX path disables antialiasing (the model checks torch.onnx.is_in_onnx_export). Which artifact is right is an ONNX question and is not settled here, but ONNX cannot be used as the reference for this family at a non-native canvas.
@@ -182,6 +190,7 @@ A check mark applies only under any constraint listed here.
 - `siglip2` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `swinir` / `restore` / `onnx`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `torchscript`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
+- `swinir` / `restore` / `tensorrt`: FP32 with a fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas.
 - `swinir` / `restore` / `openvino`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `tflite`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `teed` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas

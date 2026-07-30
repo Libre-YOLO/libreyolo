@@ -147,6 +147,28 @@ def test_round7_swinir_fixed_canvas_exports_are_validated():
         assert "exactly match" in entry.constraint
 
 
+def test_round8_tensorrt_fp32_parity_promotes_nine_cells():
+    validated = {
+        ("mobilenetv4", "classify"),
+        ("convnext", "classify"),
+        ("efficientnetv2", "classify"),
+        ("resnet", "classify"),
+        ("fomo", "point"),
+        ("realesrgan", "restore"),
+        ("nafnet", "restore"),
+        ("swinir", "restore"),
+        ("depth_anything", "depth"),
+    }
+    for family, task in validated:
+        entry = get_support(family, task, "tensorrt")
+        assert entry.tier == "validated"
+        assert "FP32" in entry.constraint
+
+    pidnet = get_support("pidnet", "semantic", "tensorrt")
+    assert pidnet.tier == "experimental"
+    assert "0.9970" in pidnet.reason
+
+
 @pytest.mark.parametrize(
     ("family", "task", "format", "reason_fragment"),
     [

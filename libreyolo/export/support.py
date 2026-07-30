@@ -221,6 +221,14 @@ _add(
 )
 _add(
     "validated",
+    ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
+    ("classify",),
+    ("tensorrt",),
+    since="1.6",
+    constraint="FP32 with fixed family-native input resolution",
+)
+_add(
+    "validated",
     ("clip", "siglip2"),
     ("classify",),
     ("onnx",),
@@ -331,12 +339,22 @@ _add(
 )
 _add(
     "experimental",
-    ("dinov2", "eomt", "pidnet", "lingbotvision"),
+    ("dinov2", "eomt", "lingbotvision"),
     ("semantic",),
     ("tensorrt",),
     reason=(
         "The dense-logits contract is wired, but the project has not yet "
         "recorded TensorRT runtime parity for these families."
+    ),
+)
+_add(
+    "experimental",
+    ("pidnet",),
+    ("semantic",),
+    ("tensorrt",),
+    reason=(
+        "TensorRT 10.16 FP32 exports and runs, but repeated builds produced "
+        "raw-logit cosine as low as 0.9970, below the 0.999 promotion gate."
     ),
 )
 _add(
@@ -379,6 +397,14 @@ _add(
     constraint="fixed-resolution export canvas",
 )
 _add(
+    "validated",
+    ("nafnet",),
+    ("restore",),
+    ("tensorrt",),
+    since="1.6",
+    constraint="FP32 with a fixed-resolution export canvas",
+)
+_add(
     "blocked",
     ("nafnet",),
     ("restore",),
@@ -403,6 +429,14 @@ _add(
     ("openvino",),
     since="1.6",
     constraint="fixed-resolution export canvas",
+)
+_add(
+    "validated",
+    ("realesrgan",),
+    ("restore",),
+    ("tensorrt",),
+    since="1.6",
+    constraint="FP32 with a fixed-resolution export canvas",
 )
 _add(
     "validated",
@@ -459,14 +493,12 @@ _add(
     reason="PicoSAM3 currently exports its raw ROI CNN through ONNX only.",
 )
 _add(
-    "experimental",
+    "validated",
     ("fomo",),
     ("point",),
     ("tensorrt",),
-    reason=(
-        "The raw-heatmap contract is wired, but the project has not yet "
-        "recorded TensorRT runtime parity for FOMO."
-    ),
+    since="1.6",
+    constraint="FP32 with a fixed 96x96 input",
 )
 _add(
     "validated",
@@ -687,6 +719,17 @@ _add(
         "the source dimensions exactly match that canvas. Smaller sources are "
         "padded to the canvas before the exported transformer and can diverge "
         "from native variable-size inference."
+    ),
+)
+_add(
+    "validated",
+    ("swinir",),
+    ("restore",),
+    ("tensorrt",),
+    since="1.6",
+    constraint=(
+        "FP32 with a fixed export canvas; raw-output and predict parity are "
+        "validated when the source dimensions exactly match that canvas."
     ),
 )
 _add(
@@ -967,6 +1010,14 @@ _add(
     ("openvino",),
     since="1.6",
     constraint="fixed input resolution divisible by 14",
+)
+_add(
+    "validated",
+    ("depth_anything",),
+    ("depth",),
+    ("tensorrt",),
+    since="1.6",
+    constraint="FP32 with a fixed input resolution divisible by 14",
 )
 _add(
     "blocked",
