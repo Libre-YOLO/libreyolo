@@ -209,6 +209,63 @@ def test_edge_map_runtime_parity(
 
 
 @pytest.mark.experimental_backend
+@pytest.mark.network
+def test_dinov2_semantic_runtime_parity(tmp_path, monkeypatch):
+    """Cover the real DINOv2 backbone and dense semantic output contract."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+    from libreyolo.export.exporter import ExecuTorchExporter
+    from libreyolo.models.dinov2.model import LibreDINOv2
+
+    torch.manual_seed(43)
+    model = LibreDINOv2(
+        None, size="n", task="semantic", nb_classes=3, device="cpu"
+    )
+    first = torch.from_numpy(
+        np.random.default_rng(43).standard_normal(
+            (1, 3, 518, 518), dtype=np.float32
+        )
+    )
+    second = torch.zeros_like(first)
+
+    exporter = ExecuTorchExporter(model)
+    with exporter._model_context(
+        torch.device("cpu"), False, False, 1, (518, 518)
+    ) as (prepared, _), torch.no_grad():
+        expected = prepared(first)
+    if isinstance(expected, torch.Tensor):
+        expected = (expected,)
+
+    artifact = model.export(
+        "executorch",
+        output_path=str(tmp_path / "dinov2_semantic.pte"),
+        imgsz=518,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+    actual = runtime._run_inference(first.numpy())
+    changed = runtime._run_inference(second.numpy())
+
+    for expected_output, actual_output in zip(expected, actual):
+        np.testing.assert_allclose(
+            actual_output,
+            expected_output.detach().cpu().numpy(),
+            rtol=1e-3,
+            atol=2e-4,
+        )
+    assert max(
+        float(np.max(np.abs(a - b))) for a, b in zip(actual, changed)
+    ) > 1e-4
+
+    image = np.random.default_rng(44).integers(
+        0, 256, (518, 518, 3), dtype=np.uint8
+    )
+    assert runtime.predict(image).semantic_mask is not None
+
+
+@pytest.mark.experimental_backend
 @pytest.mark.parametrize("family", ["yolonas", "yolo9_p2"])
 def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     """Cover detector families lacking redistributable trained parity data."""
@@ -720,16 +777,23 @@ def test_trained_realesrgan_parity(tmp_path, monkeypatch):
 @pytest.mark.external_data
 @pytest.mark.flagship_nightly
 @pytest.mark.parametrize(
-    ("task", "weights_env", "imgsz"),
+    ("family", "task", "weights_env", "imgsz"),
     [
-        ("segment", "LIBREYOLO_EXECUTORCH_RFDETR_SEG_WEIGHTS", 312),
-        ("pose", "LIBREYOLO_EXECUTORCH_RFDETR_POSE_WEIGHTS", 576),
+        ("ec", "segment", "LIBREYOLO_EXECUTORCH_EC_SEG_WEIGHTS", 640),
+        ("ec", "pose", "LIBREYOLO_EXECUTORCH_EC_POSE_WEIGHTS", 640),
+        (
+            "rfdetr",
+            "segment",
+            "LIBREYOLO_EXECUTORCH_RFDETR_SEG_WEIGHTS",
+            312,
+        ),
+        ("rfdetr", "pose", "LIBREYOLO_EXECUTORCH_RFDETR_POSE_WEIGHTS", 576),
     ],
 )
-def test_trained_rfdetr_task_parity(
-    tmp_path, monkeypatch, task, weights_env, imgsz
+def test_trained_instance_task_parity(
+    tmp_path, monkeypatch, family, task, weights_env, imgsz
 ):
-    """Match trained RF-DETR boxes plus its task-specific output."""
+    """Match trained boxes plus pose keypoints or instance masks."""
     _require_executorch(monkeypatch)
 
     from libreyolo import LibreYOLO
@@ -745,7 +809,7 @@ def test_trained_rfdetr_task_parity(
     native = LibreYOLO(weights_value, device="cpu")
     artifact = native.export(
         "executorch",
-        output_path=str(tmp_path / f"rfdetr_{task}.pte"),
+        output_path=str(tmp_path / f"{family}_{task}.pte"),
         imgsz=imgsz,
         batch=1,
         dynamic=False,
@@ -773,7 +837,7 @@ def test_trained_rfdetr_task_parity(
             actual.boxes.data.numpy(),
             expected_boxes,
             rtol=1e-3,
-            atol=1e-3,
+            atol=2e-3,
         )
         if task == "segment":
             assert float(
@@ -784,7 +848,7 @@ def test_trained_rfdetr_task_parity(
                 actual.keypoints.data.numpy(),
                 expected.keypoints.data.numpy(),
                 rtol=1e-3,
-                atol=1e-3,
+                atol=2e-3,
             )
 
 

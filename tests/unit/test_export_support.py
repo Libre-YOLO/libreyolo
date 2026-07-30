@@ -68,6 +68,8 @@ def test_experimental_export_warns_in_preflight():
 def test_executorch_realtime_support_is_evidence_backed():
     validated = {
         ("ec", "detect"),
+        ("ec", "pose"),
+        ("ec", "segment"),
         ("convnext", "classify"),
         ("depth_anything", "depth"),
         ("efficientnetv2", "classify"),
@@ -105,13 +107,15 @@ def test_executorch_realtime_support_is_evidence_backed():
     assert get_support("dexined", "edge", "executorch").tier == "experimental"
     assert get_support("yolonas", "detect", "executorch").tier == "experimental"
     assert get_support("yolo9_p2", "detect", "executorch").tier == "experimental"
-    assert get_support("ec", "pose", "executorch").tier == "experimental"
-    assert get_support("ec", "segment", "executorch").tier == "experimental"
     assert get_support("yolonas", "pose", "executorch").tier == "experimental"
     assert get_support("nafnet", "restore", "executorch").tier == "experimental"
     assert get_support("fomo", "point", "executorch").tier == "experimental"
     assert get_support("rfdetr", "obb", "executorch").tier == "experimental"
     assert get_support("swinir", "restore", "executorch").tier == "blocked"
+    assert get_support("dinov2", "semantic", "executorch").tier == "experimental"
+    assert get_support("eomt", "semantic", "executorch").tier == "blocked"
+    assert get_support("birefnet", "matte", "executorch").tier == "blocked"
+    assert get_support("feynobg", "matte", "executorch").tier == "blocked"
 
 
 def test_tflite_support_keys_use_canonical_tasks():

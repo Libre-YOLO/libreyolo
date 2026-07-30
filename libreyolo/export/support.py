@@ -171,15 +171,16 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("ec",),
     ("pose", "segment"),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "deterministic random-weight raw parity, and task result parsing are "
-        "covered. Trained-checkpoint task parity is not yet available."
+        "Trained-checkpoint XNNPACK boxes and pose-keypoint or instance-mask "
+        "parity are covered by the external-data flagship test in "
+        "tests/e2e/test_executorch.py."
     ),
+    since="1.4",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; "
         "EC segmentation requires a canvas large enough for its top-300 query selection"
@@ -295,6 +296,41 @@ _add(
     since="1.4",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("dinov2",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "The real pretrained DINOv2 backbone has full XNNPACK conversion, "
+        "runtime execution, input sensitivity, deterministic random-head raw "
+        "parity, and semantic result parsing coverage. A permissive trained "
+        "LibreDINOv2 semantic checkpoint is not available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 518x518 input shape"
+    ),
+)
+_add(
+    "blocked",
+    ("eomt",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "Strict torch.export capture fails on a data-dependent symbolic "
+        "expression in the mask path before XNNPACK lowering."
+    ),
+)
+_add(
+    "blocked",
+    ("birefnet", "feynobg"),
+    ("matte",),
+    ("executorch",),
+    reason=(
+        "The fixed-shape matte graph captures and lowers, but ExecuTorch 1.2 "
+        "cannot serialize torchvision::deform_conv2d because it has no out variant."
     ),
 )
 _add(

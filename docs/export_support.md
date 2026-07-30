@@ -8,7 +8,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 
 | Family | Task | onnx | torchscript | executorch | tensorrt | openvino | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| birefnet | matte | exp | ✓ | exp | exp | exp |  |  |  |  |
+| birefnet | matte | exp | ✓ |  | exp | exp |  |  |  |  |
 | clip | classify | ✓ |  |  |  |  |  |  |  | ✓ |
 | clip | embed |  |  |  |  |  |  |  |  |  |
 | convnext | classify | ✓ | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
@@ -19,18 +19,18 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | dexined | edge | ✓ |  | exp |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
-| dinov2 | semantic | ✓ | ✓ |  | exp | exp |  |  |  |  |
+| dinov2 | semantic | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | dinov2 | classify | ✓ |  |  |  |  |  |  |  | exp |
 | dinov2 | embed |  |  |  |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | ✓ | exp | exp |  |  |  | ✓ |
-| ec | pose | ✓ | ✓ | exp | exp | exp |  |  |  |  |
-| ec | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
+| ec | segment | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
 | edgetam | segment |  |  |  |  |  |  |  |  |  |
 | efficientnetv2 | classify | ✓ | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | eomt | semantic | ✓ | ✓ |  | exp | exp |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |  |
-| feynobg | matte | exp | ✓ | exp | exp | exp |  |  |  |  |
+| feynobg | matte | exp | ✓ |  | exp | exp |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |
@@ -119,8 +119,10 @@ A check mark applies only under any constraint listed here.
 - `ec` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `ec` / `pose` / `onnx`: fixed 640x640 input
 - `ec` / `pose` / `torchscript`: fixed 640x640 input
+- `ec` / `pose` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; EC segmentation requires a canvas large enough for its top-300 query selection
 - `ec` / `segment` / `onnx`: fixed 640x640 input
 - `ec` / `segment` / `torchscript`: fixed 640x640 input
+- `ec` / `segment` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; EC segmentation requires a canvas large enough for its top-300 query selection
 - `efficientnetv2` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `efficientnetv2` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `eomt` / `semantic` / `onnx`: fixed 512x512 input
@@ -200,6 +202,7 @@ A check mark applies only under any constraint listed here.
 
 ## Blocked combinations
 
+- `birefnet` / `matte` / `executorch`: The fixed-shape matte graph captures and lowers, but ExecuTorch 1.2 cannot serialize torchvision::deform_conv2d because it has no out variant.
 - `birefnet` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
 - `birefnet` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `birefnet` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -256,7 +259,6 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `segment` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `dfine` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
-- `dinov2` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `dinov2` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `dinov2` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
@@ -298,7 +300,7 @@ A check mark applies only under any constraint listed here.
 - `edgetam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `efficientnetv2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `eomt` / `semantic` / `executorch`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `semantic` / `executorch`: Strict torch.export capture fails on a data-dependent symbolic expression in the mask path before XNNPACK lowering.
 - `eomt` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
@@ -321,6 +323,7 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `panoptic` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreml`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreai`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `feynobg` / `matte` / `executorch`: The fixed-shape matte graph captures and lowers, but ExecuTorch 1.2 cannot serialize torchvision::deform_conv2d because it has no out variant.
 - `feynobg` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
 - `feynobg` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `feynobg` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
