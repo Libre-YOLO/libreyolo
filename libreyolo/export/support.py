@@ -613,6 +613,58 @@ _add(
     "validated",
     ("yolo2", "yolo3", "yolo4"),
     ("detect",),
+    ("tensorrt",),
+    since="1.6",
+    constraint="FP32 with a fixed export canvas",
+)
+_add(
+    "experimental",
+    ("yolo1",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "TensorRT 10.16 FP32 exports, reloads, and clears strict two-input raw "
+        "parity, but near-tied synthetic predictions change the public top-k "
+        "class set. Trained-weight predict parity is still required."
+    ),
+)
+_add(
+    "experimental",
+    ("yolo7",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "TensorRT 10.16 FP32 exports, reloads, and clears the two-input raw "
+        "gate, but the synthetic public top-k class set drifts. Trained-weight "
+        "predict parity is still required."
+    ),
+)
+_add(
+    "experimental",
+    ("yolo9_e2e", "yolo9_p2"),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "TensorRT 10.16 FP32 exports and reloads, but a deliberately "
+        "image-sensitive synthetic head exposes raw numeric drift beyond the "
+        "detector parity tolerance."
+    ),
+)
+_add(
+    "experimental",
+    ("yolox", "picodet", "rtmdet"),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "TensorRT 10.16 FP32 exports and reloads, but the deterministic random "
+        "fixture is too input-insensitive to support a numeric promotion. A "
+        "permissively licensed trained-weight parity gate is required."
+    ),
+)
+_add(
+    "validated",
+    ("yolo2", "yolo3", "yolo4"),
+    ("detect",),
     ("ncnn",),
     since="1.4",
 )

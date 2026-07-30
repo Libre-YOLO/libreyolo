@@ -75,9 +75,9 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | swinir | restore | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ |  |  |  |  |  |  |  |
 | yolo1 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
-| yolo2 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
-| yolo3 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
-| yolo4 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
+| yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
+| yolo3 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
+| yolo4 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | yolo7 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
 | yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
 | yolo9_e2e | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
@@ -200,10 +200,13 @@ A check mark applies only under any constraint listed here.
 - `yolo1` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `ncnn`: fixed 448x448 input
 - `yolo1` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo2` / `detect` / `tensorrt`: FP32 with a fixed export canvas
 - `yolo2` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo2` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo3` / `detect` / `tensorrt`: FP32 with a fixed export canvas
 - `yolo3` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo3` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo4` / `detect` / `tensorrt`: FP32 with a fixed export canvas
 - `yolo4` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo4` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
 - `yolo7` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448

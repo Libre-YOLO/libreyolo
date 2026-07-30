@@ -206,6 +206,27 @@ def test_round9_promotes_three_parity_cells_and_records_seven_gaps():
         assert "ModulatedDeformConv2d" in entry.reason
 
 
+def test_round10_promotes_three_tensorrt_detectors_and_records_seven_holds():
+    for family in ("yolo2", "yolo3", "yolo4"):
+        entry = get_support(family, "detect", "tensorrt")
+        assert entry.tier == "validated"
+        assert "FP32" in entry.constraint
+
+    measured_holds = {
+        "yolo1": "top-k class set",
+        "yolo7": "top-k class set",
+        "yolo9_e2e": "raw numeric drift",
+        "yolo9_p2": "raw numeric drift",
+        "yolox": "trained-weight parity",
+        "picodet": "trained-weight parity",
+        "rtmdet": "trained-weight parity",
+    }
+    for family, reason_fragment in measured_holds.items():
+        entry = get_support(family, "detect", "tensorrt")
+        assert entry.tier == "experimental"
+        assert reason_fragment in entry.reason
+
+
 @pytest.mark.parametrize(
     ("family", "task", "format", "reason_fragment"),
     [
