@@ -14,7 +14,7 @@ from libreyolo.export.executorch import (
     _capture_compatibility,
     _commit_artifact_pair,
 )
-from libreyolo.export.exporter import ExecuTorchExporter
+from libreyolo.export.exporter import BaseExporter, ExecuTorchExporter
 
 pytestmark = pytest.mark.unit
 
@@ -59,6 +59,26 @@ def test_executorch_constraints_reject_unsupported_requests(monkeypatch):
             metadata={},
             dynamic=True,
         )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"batch": 2, "dynamic": False}, "batch=1"),
+        ({"batch": 1, "dynamic": True}, "dynamic=False"),
+    ],
+)
+def test_executorch_shape_constraints_reject_before_base_export(
+    monkeypatch, kwargs, message
+):
+    """Invalid requests must not reach BaseExporter's destructive LoRA merge."""
+    base_call = MagicMock(side_effect=AssertionError("base export entered"))
+    monkeypatch.setattr(BaseExporter, "__call__", base_call)
+
+    with pytest.raises(ValueError, match=message):
+        ExecuTorchExporter(_wrapper())(**kwargs)
+
+    base_call.assert_not_called()
 
 
 def test_executorch_metadata_is_fixed_fp32_contract():

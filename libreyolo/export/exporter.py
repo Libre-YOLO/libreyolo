@@ -1345,6 +1345,18 @@ class ExecuTorchExporter(BaseExporter):
     supports_fp16 = False
     apply_model_half = False
 
+    def __call__(
+        self, *, dynamic: bool = False, batch: int = 1, **kwargs
+    ) -> str:
+        """Reject unsupported shapes before the destructive LoRA merge."""
+        if batch != 1:
+            raise ValueError(
+                f"ExecuTorch v1 requires batch=1, got batch={batch}."
+            )
+        if dynamic:
+            raise ValueError("ExecuTorch v1 requires dynamic=False.")
+        return super().__call__(dynamic=False, batch=1, **kwargs)
+
     def _resolve_params(self, output_path, imgsz, device, half, int8):
         if device is not None and str(device).lower() not in {"auto", "cpu"}:
             raise ValueError("ExecuTorch XNNPACK export requires device='cpu'.")
