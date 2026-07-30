@@ -20,8 +20,6 @@ _DETR_CASES = (
 )
 _ONNX_PARITY_GAPS = {
     "LibreDEIMv2": "only 43.7% of aligned score values meet tolerance",
-    "LibreRTDETRv2": "only 41% of predict boxes match after top-100 selection",
-    "LibreRTDETRv4": "only 80% of predict boxes match after top-100 selection",
 }
 _OPENVINO_PARITY_GAPS = {
     "LibreDEIM": "exactly 95% of aligned boxes meet tolerance; validation requires more than 95%",

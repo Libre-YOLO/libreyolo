@@ -1095,23 +1095,15 @@ _add(
     ),
 )
 _add(
-    "experimental",
-    ("rtdetrv2",),
+    "validated",
+    ("rtdetrv2", "rtdetrv4"),
     ("detect",),
     ("onnx",),
-    reason=(
-        "Raw outputs pass after unordered-query alignment, but only 41% of "
-        "public predict() boxes match after top-100 selection."
-    ),
-)
-_add(
-    "experimental",
-    ("rtdetrv4",),
-    ("detect",),
-    ("onnx",),
-    reason=(
-        "Raw outputs pass after unordered-query alignment, but only 80% of "
-        "public predict() boxes match after top-100 selection."
+    since="1.6",
+    constraint=(
+        "fixed export canvas; same-device CPU raw parity after one shared "
+        "unordered-query permutation; published Apache-2.0 trained checkpoint "
+        "covered by non-square public predict parity"
     ),
 )
 _add(

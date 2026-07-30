@@ -60,8 +60,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |  |
 | rtdetr | detect | ✓ | ✓ | exp | ✓ |  |  | exp | ✓ |
-| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
-| rtdetrv4 | detect | exp | ✓ | exp | ✓ |  |  |  | ✓ |
+| rtdetrv2 | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
+| rtdetrv4 | detect | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | rtmdet | detect | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | rtmdet | segment |  |  |  |  |  |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |  |
@@ -182,7 +182,9 @@ A check mark applies only under any constraint listed here.
 - `rfdetr` / `obb` / `torchscript`: fixed task-native input resolution
 - `rtdetr` / `detect` / `openvino`: fixed export canvas
 - `rtdetr` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `rtdetrv2` / `detect` / `onnx`: fixed export canvas; same-device CPU raw parity after one shared unordered-query permutation; published Apache-2.0 trained checkpoint covered by non-square public predict parity
 - `rtdetrv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `rtdetrv4` / `detect` / `onnx`: fixed export canvas; same-device CPU raw parity after one shared unordered-query permutation; published Apache-2.0 trained checkpoint covered by non-square public predict parity
 - `rtdetrv4` / `detect` / `openvino`: fixed export canvas
 - `rtdetrv4` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `rtmdet` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448

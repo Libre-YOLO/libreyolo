@@ -192,8 +192,6 @@ def test_round9_promotes_three_parity_cells_and_records_seven_gaps():
 
     expected_gaps = {
         "deimv2": "43.7%",
-        "rtdetrv2": "41%",
-        "rtdetrv4": "80%",
     }
     for family, measured in expected_gaps.items():
         entry = get_support(family, "detect", "onnx")
@@ -204,6 +202,14 @@ def test_round9_promotes_three_parity_cells_and_records_seven_gaps():
         entry = get_support(family, "matte", "tensorrt")
         assert entry.tier == "blocked"
         assert "ModulatedDeformConv2d" in entry.reason
+
+
+def test_round16_promotes_rtdetrv2_and_rtdetrv4_onnx():
+    for family in ("rtdetrv2", "rtdetrv4"):
+        entry = get_support(family, "detect", "onnx")
+        assert entry.tier == "validated"
+        assert "published Apache-2.0 trained checkpoint" in entry.constraint
+        assert "non-square public predict parity" in entry.constraint
 
 
 def test_round10_promotes_three_tensorrt_detectors():

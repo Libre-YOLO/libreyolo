@@ -1528,8 +1528,6 @@ class BaseBackend(ABC):
 
         boxes[:, [0, 2]] *= orig_w
         boxes[:, [1, 3]] *= orig_h
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
 
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask].astype(np.int64)
@@ -2104,8 +2102,6 @@ class BaseBackend(ABC):
         boxes = boxes_xyxy[query_idx]
         boxes[:, [0, 2]] *= orig_w
         boxes[:, [1, 3]] *= orig_h
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
 
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask]

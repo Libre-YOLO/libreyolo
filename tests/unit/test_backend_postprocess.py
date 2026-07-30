@@ -678,6 +678,22 @@ def test_ec_segment_backend_does_not_clip_boxes():
     assert parsed_masks.shape == (1, 100, 200)
 
 
+@pytest.mark.parametrize("family", ("dfine", "rtdetrv4", "rtdetr", "rtdetrv2"))
+def test_detr_detection_backend_does_not_clip_boxes(family):
+    backend = _DummyBackend(family)
+    logits = np.array([[[10.0]]], dtype=np.float32)
+    boxes = np.array([[[0.05, 0.5, 0.3, 0.5]]], dtype=np.float32)
+
+    parsed_boxes, scores, classes, masks = backend._parse_outputs(
+        [logits, boxes], 64, (200, 100), conf=0.5
+    )
+
+    np.testing.assert_allclose(parsed_boxes, [[-20.0, 25.0, 40.0, 75.0]])
+    assert scores[0] > 0.99
+    np.testing.assert_array_equal(classes, [0])
+    assert masks is None
+
+
 def test_ec_segment_backend_honors_max_det():
     backend = _DummyBackend(
         "ec",
