@@ -737,6 +737,30 @@ _PROFILES = (
         class_count=1,
     ),
     _profile(
+        "sam2",
+        "segment",
+        "tiny",
+        1024,
+        "LibreSAM2 tiny",
+        source_kind="pytorch-captured-bundle-state-v1",
+        source_sha256=(
+            "c783bc5bc6dcb1b37162c28306fd2916"
+            "99f87455fd24512122cb900c2fde9991"
+        ),
+        deployment_abi_sha256=(
+            "fd4b84f22e864b854aec0cf59b6fd247"
+            "217750a7cb79c7af79fe57d9af0a2bc2"
+        ),
+        evidence_sha256=(
+            "105014fc9cf57fec46a0eec50cf27fea"
+            "06f230304c19821939ffda61255d0ad9"
+        ),
+        capture_decomposition_profile="sam2_where_scalarother_v1",
+        capture_decompositions=("aten.where.ScalarOther",),
+        prompt_max_points=4,
+        class_count=1,
+    ),
+    _profile(
         "rfdetr",
         "detect",
         "n",

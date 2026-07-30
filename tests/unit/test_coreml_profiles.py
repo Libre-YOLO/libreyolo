@@ -245,6 +245,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("rtmdet", "detect", "t"),
         ("rtmdet", "segment", "t"),
         ("sam", "segment", "base"),
+        ("sam2", "segment", "tiny"),
         ("siglip2", "classify", "b16"),
         ("yolo1", "detect", "b"),
         ("yolo2", "detect", "b"),
