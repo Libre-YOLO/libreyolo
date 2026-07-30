@@ -20,7 +20,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | dfine | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | exp | exp | exp |  |  |  |  |
-| dinov2 | classify | ✓ |  |  |  |  |  |  |  | exp |
+| dinov2 | classify | ✓ |  | exp |  |  |  |  |  | exp |
 | dinov2 | embed |  |  |  |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
@@ -36,7 +36,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |  |
-| l2cs | gaze | ✓ |  |  |  |  |  |  |  |  |
+| l2cs | gaze | ✓ |  | exp |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |  |  |
 | lingbotvision | semantic | ✓ | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |  |
@@ -263,13 +263,12 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `dinov2` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `dinov2` / `classify` / `torchscript`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `executorch`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `tensorrt`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `openvino`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export currently supports ONNX only.
+- `dinov2` / `classify` / `torchscript`: LibreDINOv2 classify export currently supports ONNX, Core AI, and ExecuTorch only.
+- `dinov2` / `classify` / `tensorrt`: LibreDINOv2 classify export currently supports ONNX, Core AI, and ExecuTorch only.
+- `dinov2` / `classify` / `openvino`: LibreDINOv2 classify export currently supports ONNX, Core AI, and ExecuTorch only.
+- `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export currently supports ONNX, Core AI, and ExecuTorch only.
+- `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export currently supports ONNX, Core AI, and ExecuTorch only.
+- `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export currently supports ONNX, Core AI, and ExecuTorch only.
 - `dinov2` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `executorch`: Embedding export is not implemented in v1; use the native predict()/embed() API.
@@ -366,14 +365,13 @@ A check mark applies only under any constraint listed here.
 - `kosmos2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
-- `l2cs` / `gaze` / `torchscript`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `executorch`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `tensorrt`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `openvino`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `ncnn`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `tflite`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `coreml`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `coreai`: The model itself refuses: 'LibreL2CS export to coreai is not implemented. The v1 gaze export contract supports ONNX only.' That is a model-side decision, unchanged by opening the support gate, so nothing about Core AI is being tested here. Wiring the gaze contract beyond ONNX comes first.
+- `l2cs` / `gaze` / `torchscript`: The v1 L2CS gaze export contract supports ONNX and ExecuTorch only.
+- `l2cs` / `gaze` / `tensorrt`: The v1 L2CS gaze export contract supports ONNX and ExecuTorch only.
+- `l2cs` / `gaze` / `openvino`: The v1 L2CS gaze export contract supports ONNX and ExecuTorch only.
+- `l2cs` / `gaze` / `ncnn`: The v1 L2CS gaze export contract supports ONNX and ExecuTorch only.
+- `l2cs` / `gaze` / `tflite`: The v1 L2CS gaze export contract supports ONNX and ExecuTorch only.
+- `l2cs` / `gaze` / `coreml`: The v1 L2CS gaze export contract supports ONNX and ExecuTorch only.
+- `l2cs` / `gaze` / `coreai`: The model itself refuses: 'LibreL2CS export to coreai is not implemented. The v1 gaze export contract supports ONNX and ExecuTorch only.' That is a model-side decision, unchanged by opening the support gate, so nothing about Core AI is being tested here. Wiring the gaze contract beyond ONNX and ExecuTorch comes first.
 - `lfm2vl` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `executorch`: Generative VLM export is out of scope for v1.

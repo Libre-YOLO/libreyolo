@@ -314,6 +314,35 @@ _add(
     ),
 )
 _add(
+    "experimental",
+    ("dinov2",),
+    ("classify",),
+    ("executorch",),
+    reason=(
+        "The real pretrained DINOv2 backbone has full XNNPACK conversion, "
+        "runtime execution, input sensitivity, deterministic random-head "
+        "logits parity, and classification result parsing coverage. A "
+        "permissive trained LibreDINOv2 classification checkpoint is unavailable."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 224x224 input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("l2cs",),
+    ("gaze",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, input sensitivity, "
+        "deterministic random-weight two-head logits parity, and gaze decoding "
+        "are covered. Published task weights cannot be redistributed."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 448x448 face crops"
+    ),
+)
+_add(
     "blocked",
     ("eomt",),
     ("semantic",),
@@ -495,8 +524,15 @@ _add(
     "blocked",
     ("dinov2",),
     ("classify",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreai"}),
-    reason="LibreDINOv2 classify export currently supports ONNX only.",
+    tuple(
+        fmt
+        for fmt in EXPORT_FORMATS
+        if fmt not in {"onnx", "coreai", "executorch"}
+    ),
+    reason=(
+        "LibreDINOv2 classify export currently supports ONNX, Core AI, "
+        "and ExecuTorch only."
+    ),
 )
 _add(
     "blocked",
@@ -1397,10 +1433,11 @@ _add(
     ("coreai",),
     reason=(
         "The model itself refuses: 'LibreL2CS export to coreai is not "
-        "implemented. The v1 gaze export contract supports ONNX only.' That "
+        "implemented. The v1 gaze export contract supports ONNX and "
+        "ExecuTorch only.' That "
         "is a model-side decision, unchanged by opening the support gate, so "
         "nothing about Core AI is being tested here. Wiring the gaze contract "
-        "beyond ONNX comes first."
+        "beyond ONNX and ExecuTorch comes first."
     ),
 )
 _add(
@@ -1451,7 +1488,9 @@ _FAMILY_BLOCKS = {
         "depth graph has not been added to the exported-runtime contract."
     ),
     "eomt": "EoMT instance and panoptic export do not yet have runtime parsing.",
-    "l2cs": "The v1 L2CS gaze export contract supports ONNX only.",
+    "l2cs": (
+        "The v1 L2CS gaze export contract supports ONNX and ExecuTorch only."
+    ),
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
     "edgetam": "Promptable model export is out of scope for the v1 runtime contract.",

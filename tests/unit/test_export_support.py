@@ -113,6 +113,8 @@ def test_executorch_realtime_support_is_evidence_backed():
     assert get_support("rfdetr", "obb", "executorch").tier == "experimental"
     assert get_support("swinir", "restore", "executorch").tier == "blocked"
     assert get_support("dinov2", "semantic", "executorch").tier == "experimental"
+    assert get_support("dinov2", "classify", "executorch").tier == "experimental"
+    assert get_support("l2cs", "gaze", "executorch").tier == "experimental"
     assert get_support("eomt", "semantic", "executorch").tier == "blocked"
     assert get_support("birefnet", "matte", "executorch").tier == "blocked"
     assert get_support("feynobg", "matte", "executorch").tier == "blocked"

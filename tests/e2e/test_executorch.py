@@ -266,6 +266,59 @@ def test_dinov2_semantic_runtime_parity(tmp_path, monkeypatch):
 
 
 @pytest.mark.experimental_backend
+@pytest.mark.network
+def test_dinov2_classification_runtime_parity(tmp_path, monkeypatch):
+    """Cover the real DINOv2 backbone and classification logits contract."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+    from libreyolo.export.exporter import ExecuTorchExporter
+    from libreyolo.models.dinov2.model import LibreDINOv2
+
+    torch.manual_seed(51)
+    model = LibreDINOv2(
+        None, size="n", task="classify", nb_classes=5, device="cpu"
+    )
+    first = torch.from_numpy(
+        np.random.default_rng(51).standard_normal(
+            (1, 3, 224, 224), dtype=np.float32
+        )
+    )
+    second = torch.zeros_like(first)
+
+    exporter = ExecuTorchExporter(model)
+    with exporter._model_context(
+        torch.device("cpu"), False, False, 1, (224, 224)
+    ) as (prepared, _), torch.no_grad():
+        expected = prepared(first)
+    if isinstance(expected, torch.Tensor):
+        expected = (expected,)
+
+    artifact = model.export(
+        "executorch",
+        output_path=str(tmp_path / "dinov2_classify.pte"),
+        imgsz=224,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+    actual = runtime._run_inference(first.numpy())
+    changed = runtime._run_inference(second.numpy())
+
+    for expected_output, actual_output in zip(expected, actual):
+        np.testing.assert_allclose(
+            actual_output,
+            expected_output.detach().cpu().numpy(),
+            rtol=1e-3,
+            atol=2e-4,
+        )
+    assert max(
+        float(np.max(np.abs(a - b))) for a, b in zip(actual, changed)
+    ) > 1e-4
+    assert runtime.predict(np.zeros((224, 224, 3), dtype=np.uint8)).probs is not None
+
+
+@pytest.mark.experimental_backend
 @pytest.mark.parametrize("family", ["yolonas", "yolo9_p2"])
 def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     """Cover detector families lacking redistributable trained parity data."""
@@ -348,6 +401,7 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
         ("ec_pose", 64),
         ("ec_segment", 128),
         ("fomo_point", 64),
+        ("l2cs_gaze", 448),
         ("realesrgan_restore", 32),
         ("rfdetr_obb", 384),
         ("yolonas_pose", 64),
@@ -361,6 +415,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         LibreConvNeXt,
         LibreEC,
         LibreFOMO,
+        LibreL2CS,
         LibreNAFNet,
         LibreRealESRGAN,
         LibreRFDETR,
@@ -381,6 +436,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         "fomo_point": lambda: LibreFOMO(
             None, size="s", nb_classes=2, device="cpu"
         ),
+        "l2cs_gaze": lambda: LibreL2CS(None, size="r18", device="cpu"),
         "realesrgan_restore": lambda: LibreRealESRGAN(
             None, size="x4t", device="cpu"
         ),
@@ -448,6 +504,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         "ec_pose": "keypoints",
         "ec_segment": "masks",
         "fomo_point": "points",
+        "l2cs_gaze": "gaze",
         "realesrgan_restore": "restored",
         "rfdetr_obb": "obb",
         "yolonas_pose": "keypoints",
