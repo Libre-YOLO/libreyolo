@@ -158,6 +158,23 @@ def _assert_point_parity(expected, actual):
 
 
 def _assert_public_task_parity(case, native, runtime, image, imgsz):
+    if case == "l2cs_gaze":
+        height, width = image.shape[:2]
+        expected = _scalar_result(
+            native.predict(
+                image,
+                face_boxes=[(0, 0, width, height)],
+            )
+        )
+        actual = _scalar_result(runtime.predict(image))
+        np.testing.assert_allclose(
+            actual.gaze.data.detach().float().cpu().numpy(),
+            expected.gaze.data.detach().float().cpu().numpy(),
+            rtol=1e-3,
+            atol=1e-4,
+        )
+        return
+
     confidence = 0.1 if case == "fomo_point" else 0.0
     expected = _scalar_result(
         native.predict(
@@ -175,7 +192,7 @@ def _assert_public_task_parity(case, native, runtime, image, imgsz):
         )
     )
 
-    if case == "convnext_classify":
+    if case in {"convnext_classify", "dinov2_classify"}:
         expected_probs = expected.probs.data.detach().float().cpu()
         actual_probs = actual.probs.data.detach().float().cpu()
         cosine = torch.nn.functional.cosine_similarity(
@@ -193,12 +210,59 @@ def _assert_public_task_parity(case, native, runtime, image, imgsz):
         assert _psnr(expected_rgb, actual_rgb, 255.0) > 40.0
         return
 
+    if case in {"depth_anything_depth", "zipdepth_depth"}:
+        expected_depth = expected.depth_map.data.detach().float().cpu().numpy()
+        actual_depth = actual.depth_map.data.detach().float().cpu().numpy()
+        assert actual_depth.shape == expected_depth.shape
+        peak = max(float(np.max(np.abs(expected_depth))), 1e-6)
+        assert _psnr(expected_depth, actual_depth, peak) > 40.0
+        return
+
     if case == "fomo_point":
         _assert_point_parity(expected, actual)
         return
 
+    if case == "rfdetr_obb":
+        expected_obb = expected.obb.data.detach().float().cpu().numpy()
+        actual_obb = actual.obb.data.detach().float().cpu().numpy()
+        assert len(expected_obb) == len(actual_obb)
+        expected_classes = expected_obb[:, 6].astype(np.int64)
+        actual_classes = actual_obb[:, 6].astype(np.int64)
+        assert sorted(expected_classes.tolist()) == sorted(actual_classes.tolist())
+        for class_id in np.unique(expected_classes):
+            expected_rows = expected_obb[expected_classes == class_id]
+            actual_rows = actual_obb[actual_classes == class_id]
+            cost = np.max(
+                np.abs(expected_rows[:, None, :2] - actual_rows[None, :, :2]),
+                axis=2,
+            )
+            expected_order, actual_order = linear_sum_assignment(cost)
+            np.testing.assert_allclose(
+                actual_rows[actual_order, :4],
+                expected_rows[expected_order, :4],
+                rtol=2e-3,
+                atol=2e-2,
+            )
+            for expected_row, actual_row in zip(
+                expected_rows[expected_order],
+                actual_rows[actual_order],
+            ):
+                square = abs(float(expected_row[2] - expected_row[3])) < 0.05
+                period = np.pi / 2.0 if square else np.pi
+                angle_error = (
+                    float(actual_row[4] - expected_row[4]) + period / 2.0
+                ) % period - period / 2.0
+                assert abs(angle_error) < 0.02
+            np.testing.assert_allclose(
+                actual_rows[actual_order, 5],
+                expected_rows[expected_order, 5],
+                rtol=2e-3,
+                atol=0.01,
+            )
+        return
+
     matches = _match_detection_rows(expected, actual)
-    if case in {"ec_pose", "yolonas_pose"}:
+    if case in {"ec_pose", "rfdetr_pose", "yolonas_pose"}:
         expected_keypoints = expected.keypoints.data.detach().float().cpu().numpy()
         actual_keypoints = actual.keypoints.data.detach().float().cpu().numpy()
         for expected_index, actual_index in matches:
@@ -218,7 +282,7 @@ def _assert_public_task_parity(case, native, runtime, image, imgsz):
                 assert float(confidence_error) < 0.02
         return
 
-    if case == "ec_segment":
+    if case in {"ec_segment", "rfdetr_segment"}:
         expected_masks = expected.masks.data.detach().float().cpu().numpy()
         actual_masks = actual.masks.data.detach().float().cpu().numpy()
         for expected_index, actual_index in matches:
@@ -228,7 +292,7 @@ def _assert_public_task_parity(case, native, runtime, image, imgsz):
             if union:
                 intersection = np.logical_and(expected_mask, actual_mask).sum()
                 assert float(intersection / union) > 0.95
-
+        return
 
 def _build_synthetic_yolonas_detect(imgsz: int):
     from libreyolo import LibreYOLONAS
@@ -292,6 +356,14 @@ def _strengthen_yolonas_pose_fixture(model) -> None:
             head.cls_pred.bias.zero_()
             head.pose_pred.weight.mul_(10.0)
             head.pose_pred.bias.zero_()
+
+
+def _strengthen_rfdetr_obb_fixture(model) -> None:
+    """Make the zero-initialized angle head input-sensitive for conversion parity."""
+    with torch.no_grad():
+        angle_head = model.model.model.angle_embed.layers[-1]
+        torch.nn.init.uniform_(angle_head.weight, -0.02, 0.02)
+        torch.nn.init.uniform_(angle_head.bias, -0.02, 0.02)
 
 
 @pytest.mark.parametrize(
@@ -533,11 +605,30 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     ("case", "imgsz"),
     [
         ("convnext_classify", 64),
+        ("dinov2_classify", 224),
+        ("l2cs_gaze", 448),
         ("nafnet_restore", 64),
+        pytest.param(
+            "depth_anything_depth",
+            56,
+            marks=pytest.mark.network,
+        ),
         ("ec_pose", 64),
         ("ec_segment", 128),
         ("fomo_point", 64),
         ("realesrgan_restore", 32),
+        pytest.param(
+            "rfdetr_segment",
+            312,
+            marks=pytest.mark.external_data,
+        ),
+        pytest.param(
+            "rfdetr_pose",
+            576,
+            marks=pytest.mark.external_data,
+        ),
+        ("rfdetr_obb", 384),
+        ("zipdepth_depth", 64),
         ("yolonas_pose", 64),
     ],
 )
@@ -547,12 +638,16 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
 
     from libreyolo import (
         LibreConvNeXt,
+        LibreDINOv2,
         LibreEC,
         LibreFOMO,
+        LibreL2CS,
         LibreNAFNet,
         LibreRealESRGAN,
+        LibreRFDETR,
         LibreYOLO,
         LibreYOLONAS,
+        LibreZipDepth,
     )
     from libreyolo.export.exporter import ExecuTorchExporter
 
@@ -560,7 +655,17 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         "convnext_classify": lambda: LibreConvNeXt(
             None, size="t", nb_classes=3, device="cpu"
         ),
+        "dinov2_classify": lambda: LibreDINOv2(
+            None, size="n", task="classify", nb_classes=3, device="cpu"
+        ),
+        "l2cs_gaze": lambda: LibreL2CS(
+            None, size="r18", num_bins=90, device="cpu"
+        ),
         "nafnet_restore": lambda: LibreNAFNet(None, size="s", device="cpu"),
+        "depth_anything_depth": lambda: LibreYOLO(
+            "weights/LibreDepthAnythingV2s-depth.pt",
+            device="cpu",
+        ),
         "ec_pose": lambda: LibreEC(None, size="s", task="pose", device="cpu"),
         "ec_segment": lambda: LibreEC(
             None, size="s", task="segment", nb_classes=2, device="cpu"
@@ -571,6 +676,24 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         "realesrgan_restore": lambda: LibreRealESRGAN(
             None, size="x4t", device="cpu"
         ),
+        "rfdetr_segment": lambda: LibreYOLO(
+            "weights/LibreRFDETRn-seg.pt",
+            device="cpu",
+        ),
+        "rfdetr_pose": lambda: LibreYOLO(
+            "weights/LibreRFDETRx-pose.pt",
+            device="cpu",
+        ),
+        "rfdetr_obb": lambda: LibreRFDETR(
+            {},
+            size="n",
+            task="obb",
+            nb_classes=2,
+            device="cpu",
+        ),
+        "zipdepth_depth": lambda: LibreZipDepth(
+            None, size="b", device="cpu"
+        ),
         "yolonas_pose": lambda: LibreYOLONAS(
             None, size="n", task="pose", device="cpu"
         ),
@@ -579,6 +702,8 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
     model = constructors[case]()
     if case == "yolonas_pose":
         _strengthen_yolonas_pose_fixture(model)
+    elif case == "rfdetr_obb":
+        _strengthen_rfdetr_obb_fixture(model)
     model.model.eval()
     first = torch.rand(
         1,
@@ -621,9 +746,16 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
     expected_changed_arrays = [
         output.detach().cpu().numpy() for output in expected_changed
     ]
-    if case == "ec_segment":
+    if case in {
+        "ec_segment",
+        "rfdetr_obb",
+        "rfdetr_pose",
+        "rfdetr_segment",
+    }:
         actual = _align_unordered_queries(expected_arrays, actual)
         changed = _align_unordered_queries(expected_changed_arrays, changed)
+    raw_rtol = 5e-3 if case.startswith("rfdetr_") else 1e-3
+    raw_atol = 2e-2 if case.startswith("rfdetr_") else 2e-4
     for (
         expected_array,
         expected_changed_array,
@@ -636,13 +768,13 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         changed,
     ):
         np.testing.assert_allclose(
-            actual_output, expected_array, rtol=1e-3, atol=2e-4
+            actual_output, expected_array, rtol=raw_rtol, atol=raw_atol
         )
         np.testing.assert_allclose(
             changed_output,
             expected_changed_array,
-            rtol=1e-3,
-            atol=2e-4,
+            rtol=raw_rtol,
+            atol=raw_atol,
         )
         parity_error = max(
             float(np.max(np.abs(actual_output - expected_array))),

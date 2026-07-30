@@ -8,19 +8,19 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 
 | Family | Task | onnx | torchscript | executorch | tensorrt | openvino | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| birefnet | matte | exp | ✓ | exp |  |  |  |  |  |  |
+| birefnet | matte | exp | ✓ |  |  |  |  |  |  |  |
 | clip | classify | ✓ |  |  |  |  |  |  |  | ✓ |
 | clip | embed |  |  |  |  |  |  |  |  |  |
 | convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | deim | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
-| depth_anything | depth | ✓ | ✓ | exp | ✓ | ✓ |  |  |  | ✓ |
+| depth_anything | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | depth_anything3 | depth |  |  |  |  |  |  |  |  |  |
 | dexined | edge | ✓ |  | ✓ |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
-| dfine | segment | ✓ | ✓ | exp | exp | ✓ |  |  |  |  |
+| dfine | segment | ✓ | ✓ |  | exp | ✓ |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
-| dinov2 | classify | ✓ | ✓ |  |  |  |  |  |  | exp |
+| dinov2 | classify | ✓ | ✓ | ✓ |  |  |  |  |  | exp |
 | dinov2 | embed |  |  |  |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
@@ -36,7 +36,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |  |
-| l2cs | gaze | ✓ | ✓ |  |  |  |  |  |  |  |
+| l2cs | gaze | ✓ | ✓ | ✓ |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |  |  |
 | lingbotvision | semantic | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |  |
@@ -56,9 +56,9 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | realesrgan | restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | resnet | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | exp | ✓ |
-| rfdetr | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
-| rfdetr | pose | ✓ | ✓ | exp | exp | exp |  |  |  |  |
-| rfdetr | obb | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| rfdetr | segment | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
+| rfdetr | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
+| rfdetr | obb | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
 | rtdetr | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  | exp | ✓ |
 | rtdetrv2 | detect | ✓ | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | rtdetrv4 | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
@@ -72,7 +72,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | siglip2 | classify | ✓ |  |  |  |  |  |  |  | ✓ |
 | siglip2 | embed |  |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
-| swinir | restore | ✓ | ✓ | exp | ✓ | ✓ |  | ✓ |  |  |
+| swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ |  | ✓ |  |  |  |  |  |  |
 | yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  | ✓ |
@@ -85,7 +85,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | yolonas | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | yolonas | pose | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  |  |
 | yolox | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ | ✓ | exp | ✓ |
-| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ | ✓ |  |  | ✓ |
+| zipdepth | depth | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
 
 ## Parity thresholds
 
@@ -112,6 +112,7 @@ A check mark applies only under any constraint listed here.
 - `deim` / `detect` / `onnx`: DETR query rows are aligned as an unordered set for parity
 - `deim` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `deimv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `depth_anything` / `depth` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; Depth Anything uses the Apache-2.0 Small checkpoint
 - `depth_anything` / `depth` / `tensorrt`: FP32 with a fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `openvino`: fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
@@ -126,6 +127,7 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `semantic` / `openvino`: fixed family-native export canvas
 - `dinov2` / `classify` / `onnx`: fixed 224x224 input
 - `dinov2` / `classify` / `torchscript`: fixed 224x224 input
+- `dinov2` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `ec` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `ec` / `detect` / `openvino`: fixed export canvas
 - `ec` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
@@ -153,6 +155,7 @@ A check mark applies only under any constraint listed here.
 - `fomo` / `point` / `coreai`: native 96 canvas; a deterministic model state trained from scratch for eight steps on synthetic tensors is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion and the existing heatmap contract, not point-localization accuracy
 - `l2cs` / `gaze` / `onnx`: head-only contract: each input image is one face crop
 - `l2cs` / `gaze` / `torchscript`: head-only contract: each input image is one face crop
+- `l2cs` / `gaze` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 448x448 face crop
 - `lingbotvision` / `semantic` / `onnx`: fixed 512x512 input
 - `lingbotvision` / `semantic` / `torchscript`: fixed 512x512 input
 - `lingbotvision` / `semantic` / `openvino`: fixed family-native export canvas
@@ -197,10 +200,13 @@ A check mark applies only under any constraint listed here.
 - `rfdetr` / `detect` / `coreai`: fixed export canvas; trained LibreRFDETRn weights are covered on macOS 27 against the graph the exporter itself prepares, using direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin. Conversion needed _rebake_rfdetr_pos_embed in export/coreai.py: the backbone bakes its position embedding for its configured 384 canvas, so exporting at any other size left an antialiased bicubic in the graph and the converter has no lowering for aten._upsample_bicubic2d_aa. The rebake re-runs the model's OWN baking path for the actual canvas, so the interpolation happens eagerly, outside the graph, computing exactly what it computed before. NOTE the reference. This family is verified against the exporter's prepared graph, not against ONNX, and the difference is not a detail: at a 640 canvas the rfdetr ONNX artifact disagrees with that same prepared graph by 9.3e-01. Core AI's rebake preserves the antialiased resize the eager model performs, whereas the ONNX path disables antialiasing (the model checks torch.onnx.is_in_onnx_export). Which artifact is right is an ONNX question and is not settled here, but ONNX cannot be used as the reference for this family at a non-native canvas.
 - `rfdetr` / `segment` / `onnx`: fixed task-native input resolution
 - `rfdetr` / `segment` / `torchscript`: fixed task-native input resolution
+- `rfdetr` / `segment` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed task-native input shape; segment and pose use Apache-2.0 trained checkpoints
 - `rfdetr` / `pose` / `onnx`: fixed task-native input resolution
 - `rfdetr` / `pose` / `torchscript`: fixed task-native input resolution
+- `rfdetr` / `pose` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed task-native input shape; segment and pose use Apache-2.0 trained checkpoints
 - `rfdetr` / `obb` / `onnx`: fixed task-native input resolution
 - `rfdetr` / `obb` / `torchscript`: fixed task-native input resolution
+- `rfdetr` / `obb` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed task-native input shape; segment and pose use Apache-2.0 trained checkpoints
 - `rtdetr` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `rtdetr` / `detect` / `openvino`: fixed export canvas
 - `rtdetr` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
@@ -273,12 +279,14 @@ A check mark applies only under any constraint listed here.
 - `yolox` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `zipdepth` / `depth` / `onnx`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `torchscript`: fixed-resolution export canvas
+- `zipdepth` / `depth` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; Depth Anything uses the Apache-2.0 Small checkpoint
 - `zipdepth` / `depth` / `openvino`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; two-input raw parity, factory reload, metadata, and public predict parity
 - `zipdepth` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 
 ## Blocked combinations
 
+- `birefnet` / `matte` / `executorch`: Strict capture succeeds at the fixed 1024x1024 canvas, but ExecuTorch 1.2 lowering has no out variant for torchvision::deform_conv2d.
 - `birefnet` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `birefnet` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `birefnet` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
@@ -333,6 +341,7 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `detect` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dfine` / `detect` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `dfine` / `segment` / `executorch`: Strict capture reaches the same untraceable deformable-attention ContextVar read as detection. Forcing the manual capture path permits serialization, but ExecuTorch 1.2 runtime execution fails with an invalid delegated tensor dimension order.
 - `dfine` / `segment` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dfine` / `segment` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -342,12 +351,11 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `dinov2` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `dinov2` / `classify` / `executorch`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
-- `dinov2` / `classify` / `tensorrt`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
-- `dinov2` / `classify` / `openvino`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
-- `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
-- `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
-- `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
+- `dinov2` / `classify` / `tensorrt`: LibreDINOv2 classify export is not implemented for this format.
+- `dinov2` / `classify` / `openvino`: LibreDINOv2 classify export is not implemented for this format.
+- `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export is not implemented for this format.
+- `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export is not implemented for this format.
+- `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `executorch`: Embedding export is not implemented in v1; use the native predict()/embed() API.
@@ -445,13 +453,12 @@ A check mark applies only under any constraint listed here.
 - `kosmos2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
-- `l2cs` / `gaze` / `executorch`: The L2CS gaze export contract supports ONNX and TorchScript only.
-- `l2cs` / `gaze` / `tensorrt`: The L2CS gaze export contract supports ONNX and TorchScript only.
-- `l2cs` / `gaze` / `openvino`: The L2CS gaze export contract supports ONNX and TorchScript only.
-- `l2cs` / `gaze` / `ncnn`: The L2CS gaze export contract supports ONNX and TorchScript only.
-- `l2cs` / `gaze` / `tflite`: The L2CS gaze export contract supports ONNX and TorchScript only.
-- `l2cs` / `gaze` / `coreml`: The L2CS gaze export contract supports ONNX and TorchScript only.
-- `l2cs` / `gaze` / `coreai`: The model itself refuses: 'LibreL2CS export to coreai is not implemented. The gaze export contract supports ONNX and TorchScript only.' That is a model-side decision, unchanged by opening the support gate, so nothing about Core AI is being tested here.
+- `l2cs` / `gaze` / `tensorrt`: The L2CS gaze export contract supports ONNX, TorchScript, and ExecuTorch only.
+- `l2cs` / `gaze` / `openvino`: The L2CS gaze export contract supports ONNX, TorchScript, and ExecuTorch only.
+- `l2cs` / `gaze` / `ncnn`: The L2CS gaze export contract supports ONNX, TorchScript, and ExecuTorch only.
+- `l2cs` / `gaze` / `tflite`: The L2CS gaze export contract supports ONNX, TorchScript, and ExecuTorch only.
+- `l2cs` / `gaze` / `coreml`: The L2CS gaze export contract supports ONNX, TorchScript, and ExecuTorch only.
+- `l2cs` / `gaze` / `coreai`: The model itself refuses: 'LibreL2CS export to coreai is not implemented. The gaze export contract supports ONNX, TorchScript, and ExecuTorch only.' That is a model-side decision, unchanged by opening the support gate, so nothing about Core AI is being tested here.
 - `lfm2vl` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
@@ -663,6 +670,7 @@ A check mark applies only under any constraint listed here.
 - `smolvlm2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `swinir` / `restore` / `executorch`: The fixed-canvas graph captures, lowers, serializes, and reloads, but ExecuTorch 1.2 runtime execution fails in aten::alias_copy.out because the source and destination tensors have different dimension orders.
 - `swinir` / `restore` / `ncnn`: PNNX writes NCNN artifacts after reporting unsupported 5-rank Permute operations, but the NCNN runtime process exits while loading or executing the resulting graph.
 - `swinir` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `swinir` / `restore` / `coreai`: The export process DIES rather than hangs, and the kill point moves between runs, which is the signature of memory exhaustion rather than a stuck loop. One run reached 'Step 3/3: Optimizing and writing the asset' before stopping; a later run of the same graph at the same 128 canvas died inside to_coreai() before returning, in both cases with a leaked-semaphore warning and no traceback. Window attention unrolls into a very large number of small ops, so the converter's peak memory is the prime suspect on a 16 GB machine. Next steps: watch RSS during conversion, try the smallest available size at a 64 canvas, and check the system log for a memory kill. Do NOT assume optimize() is at fault; an earlier note said so on the strength of a single run and the second run contradicted it.

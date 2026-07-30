@@ -837,6 +837,7 @@ class LibreDINOv2(BaseModel):
         if self.task == "classify" and format.lower() in {
             "onnx",
             "torchscript",
+            "executorch",
             "coreai",
         }:
             return super().export(format=format, opset=opset, **kwargs)
@@ -844,5 +845,5 @@ class LibreDINOv2(BaseModel):
             return super().export(format=format, opset=opset, **kwargs)
         raise NotImplementedError(
             "LibreDINOv2 classify export currently supports ONNX, TorchScript, "
-            "and Core AI only."
+            "ExecuTorch, and Core AI only."
         )

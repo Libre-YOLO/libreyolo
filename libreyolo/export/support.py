@@ -127,6 +127,18 @@ _add(
 )
 _add(
     "blocked",
+    ("dfine",),
+    ("segment",),
+    ("executorch",),
+    reason=(
+        "Strict capture reaches the same untraceable deformable-attention "
+        "ContextVar read as detection. Forcing the manual capture path permits "
+        "serialization, but ExecuTorch 1.2 runtime execution fails with an "
+        "invalid delegated tensor dimension order."
+    ),
+)
+_add(
+    "blocked",
     ("deim",),
     ("detect",),
     ("executorch",),
@@ -485,9 +497,26 @@ _add(
     ("dinov2",),
     ("classify",),
     tuple(
-        fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "torchscript", "coreai"}
+        fmt
+        for fmt in EXPORT_FORMATS
+        if fmt not in {"onnx", "torchscript", "executorch", "coreai"}
     ),
-    reason="LibreDINOv2 classify export currently supports ONNX and TorchScript only.",
+    reason="LibreDINOv2 classify export is not implemented for this format.",
+)
+_add(
+    "validated",
+    ("dinov2",),
+    ("classify",),
+    ("executorch",),
+    reason=(
+        "A deterministic input-sensitive fixture covers XNNPACK conversion, "
+        "runtime execution, raw-logit parity, metadata, and public probability "
+        "cosine plus top-1 parity."
+    ),
+    since="1.6",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
 )
 _add(
     "blocked",
@@ -507,6 +536,27 @@ _add(
     reason=(
         "BiRefNet's decoder requires torchvision deformable convolution, "
         "which PNNX/NCNN cannot lower to a runnable graph."
+    ),
+)
+_add(
+    "blocked",
+    ("birefnet",),
+    ("matte",),
+    ("executorch",),
+    reason=(
+        "Strict capture succeeds at the fixed 1024x1024 canvas, but ExecuTorch "
+        "1.2 lowering has no out variant for torchvision::deform_conv2d."
+    ),
+)
+_add(
+    "experimental",
+    ("feynobg",),
+    ("matte",),
+    ("executorch",),
+    reason=(
+        "The fixed 1024x1024 large graph exceeded the local conversion "
+        "timebox while its working set grew past 4.7 GB; no .pte artifact was "
+        "produced, so runtime parity remains untested."
     ),
 )
 
@@ -634,6 +684,54 @@ _add(
     ("onnx", "torchscript"),
     since="1.4",
     constraint="head-only contract: each input image is one face crop",
+)
+_add(
+    "validated",
+    ("l2cs",),
+    ("gaze",),
+    ("executorch",),
+    reason=(
+        "A deterministic input-sensitive fixture covers XNNPACK conversion, "
+        "runtime execution, two-head raw-logit parity, metadata, and public "
+        "pitch/yaw parity for the fixed face-crop contract."
+    ),
+    since="1.6",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 448x448 face crop"
+    ),
+)
+_add(
+    "validated",
+    ("depth_anything", "zipdepth"),
+    ("depth",),
+    ("executorch",),
+    reason=(
+        "Input-sensitive fixtures cover XNNPACK conversion, runtime execution, "
+        "raw-depth parity with a 100x signal/error margin, metadata, and public "
+        "depth-map parity above 40 dB PSNR."
+    ),
+    since="1.6",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; "
+        "Depth Anything uses the Apache-2.0 Small checkpoint"
+    ),
+)
+_add(
+    "validated",
+    ("rfdetr",),
+    ("segment", "pose", "obb"),
+    ("executorch",),
+    reason=(
+        "Input-sensitive fixtures cover XNNPACK conversion, runtime execution, "
+        "query-aligned raw-output parity with a 100x signal/error margin, "
+        "metadata, and task-aware public boxes plus masks, keypoints, or OBB "
+        "geometry parity."
+    ),
+    since="1.6",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed task-native input "
+        "shape; segment and pose use Apache-2.0 trained checkpoints"
+    ),
 )
 _add(
     "validated",
@@ -1356,6 +1454,17 @@ _add(
 )
 _add(
     "blocked",
+    ("swinir",),
+    ("restore",),
+    ("executorch",),
+    reason=(
+        "The fixed-canvas graph captures, lowers, serializes, and reloads, but "
+        "ExecuTorch 1.2 runtime execution fails in aten::alias_copy.out because "
+        "the source and destination tensors have different dimension orders."
+    ),
+)
+_add(
+    "blocked",
     ("birefnet", "feynobg"),
     ("matte",),
     ("openvino",),
@@ -2041,9 +2150,9 @@ _add(
     ("coreai",),
     reason=(
         "The model itself refuses: 'LibreL2CS export to coreai is not "
-        "implemented. The gaze export contract supports ONNX and TorchScript "
-        "only.' That is a model-side decision, unchanged by opening the support "
-        "gate, so nothing about Core AI is being tested here."
+        "implemented. The gaze export contract supports ONNX, TorchScript, and "
+        "ExecuTorch only.' That is a model-side decision, unchanged by opening "
+        "the support gate, so nothing about Core AI is being tested here."
     ),
 )
 _add(
@@ -2094,7 +2203,10 @@ _FAMILY_BLOCKS = {
         "depth graph has not been added to the exported-runtime contract."
     ),
     "eomt": "EoMT instance and panoptic export do not yet have runtime parsing.",
-    "l2cs": "The L2CS gaze export contract supports ONNX and TorchScript only.",
+    "l2cs": (
+        "The L2CS gaze export contract supports ONNX, TorchScript, and "
+        "ExecuTorch only."
+    ),
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
     "edgetam": "Promptable model export is out of scope for the v1 runtime contract.",

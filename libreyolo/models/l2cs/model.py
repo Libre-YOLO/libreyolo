@@ -365,9 +365,10 @@ class LibreL2CS(BaseModel):
         )
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        if format.lower() not in {"onnx", "torchscript"}:
+        if format.lower() not in {"onnx", "torchscript", "executorch"}:
             raise NotImplementedError(
                 f"LibreL2CS export to {format!r} is not implemented. "
-                "The gaze export contract supports ONNX and TorchScript only."
+                "The gaze export contract supports ONNX, TorchScript, and "
+                "ExecuTorch only."
             )
         return super().export(format=format, **kwargs)
