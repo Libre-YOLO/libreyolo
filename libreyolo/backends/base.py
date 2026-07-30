@@ -41,6 +41,7 @@ from ..utils.results import (
     Boxes,
     DepthMap,
     EdgeMap,
+    Embeddings,
     Gaze,
     Keypoints,
     Matte,
@@ -422,7 +423,7 @@ class BaseBackend(ABC):
             return self._preprocess_matte(image, effective_imgsz, color_format)
         if self.task == "gaze":
             return self._preprocess_gaze(image, effective_imgsz, color_format)
-        if self.task == "classify":
+        if self.task in {"classify", "embed"}:
             return self._preprocess_classify(image, effective_imgsz, color_format)
         if self.task == "point" and self.model_family == "fomo":
             from ..models.fomo.utils import preprocess_image as fomo_preprocess_image
@@ -2116,6 +2117,19 @@ class BaseBackend(ABC):
         return torch.softmax(logits_t, dim=1)[0]
 
     @staticmethod
+    def _parse_embeddings(all_outputs) -> torch.Tensor:
+        embeddings = np.asarray(all_outputs[0], dtype=np.float32)
+        if embeddings.ndim == 1:
+            embeddings = embeddings[None, :]
+        if embeddings.ndim != 2:
+            raise ValueError(
+                "Embedding backend output must have shape (batch, dimensions), "
+                f"got {tuple(embeddings.shape)}."
+            )
+        embeddings_t = torch.from_numpy(np.ascontiguousarray(embeddings))
+        return F.normalize(embeddings_t, dim=1)
+
+    @staticmethod
     def _parse_restore_output(
         all_outputs, original_size: Tuple[int, int], scale: int = 1
     ) -> np.ndarray:
@@ -2148,6 +2162,21 @@ class BaseBackend(ABC):
         return Results(
             boxes=None,
             probs=Probs(self._parse_classify_probs(all_outputs)),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
+    def _build_embedding_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        image_path,
+    ) -> Results:
+        return Results(
+            boxes=None,
+            embeddings=Embeddings(self._parse_embeddings(all_outputs), orig_shape),
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
@@ -2831,6 +2860,8 @@ class BaseBackend(ABC):
         outputs = self._as_numpy_outputs(output)
         if self.task == "classify":
             return {"probs": self._parse_classify_probs(outputs)}
+        if self.task == "embed":
+            return {"embeddings": self._parse_embeddings(outputs)}
         if self.task == "restore":
             restored = np.asarray(outputs[0])
             if restored.ndim == 4:
@@ -2982,6 +3013,10 @@ class BaseBackend(ABC):
         )
         if self.task == "classify":
             validator_cls = ClassifyValidator
+        elif self.task == "embed":
+            raise NotImplementedError(
+                "Exported embedding validation requires a retrieval dataset contract."
+            )
         elif self.task == "point":
             validator_cls = PointValidator
         elif self.task == "segment":
@@ -3060,6 +3095,12 @@ class BaseBackend(ABC):
                     output_path,
                 )
             return result
+        if self.task == "embed":
+            return self._build_embedding_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                image_path=image_path,
+            )
         if self.task == "restore":
             result = self._build_restore_result(
                 all_outputs,
@@ -3390,6 +3431,12 @@ class BaseBackend(ABC):
                     orig_shape=orig_shape,
                     image_path=image_path,
                 )
+            elif self.task == "embed":
+                result = self._build_embedding_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    image_path=image_path,
+                )
             elif self.task == "restore":
                 result = self._build_restore_result(
                     per_image,
@@ -3619,6 +3666,12 @@ class BaseBackend(ABC):
             orig_shape = (orig_h, orig_w)
             if self.task == "classify":
                 return self._build_classify_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    image_path=str(source),
+                )
+            if self.task == "embed":
+                return self._build_embedding_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     image_path=str(source),

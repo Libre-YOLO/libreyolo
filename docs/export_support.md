@@ -21,7 +21,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | dfine | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | dinov2 | classify | ✓ |  | exp |  |  |  |  |  | exp |
-| dinov2 | embed |  |  |  |  |  |  |  |  |  |
+| dinov2 | embed |  |  | exp |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
@@ -68,7 +68,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | sam2 | segment |  |  |  |  |  |  |  |  |  |
 | sam3 | segment |  |  |  |  |  |  |  |  |  |
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |  |
-| segformer | semantic |  |  |  |  |  |  |  |  |  |
+| segformer | semantic |  |  | exp |  |  |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  |  | ✓ |
 | siglip2 | embed |  |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
@@ -269,15 +269,14 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export currently supports ONNX, Core AI, and ExecuTorch only.
 - `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export currently supports ONNX, Core AI, and ExecuTorch only.
 - `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export currently supports ONNX, Core AI, and ExecuTorch only.
-- `dinov2` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `executorch`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `openvino`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `ncnn`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `tflite`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `coreml`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `coreai`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `dinov2` / `embed` / `onnx`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `torchscript`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `tensorrt`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `openvino`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `ncnn`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `tflite`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `coreml`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `coreai`: LibreDINOv2 embedding export currently supports ExecuTorch only.
 - `ec` / `detect` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `ec` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -549,15 +548,14 @@ A check mark applies only under any constraint listed here.
 - `sam3dbody` / `mesh` / `tflite`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `coreml`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `coreai`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
-- `segformer` / `semantic` / `onnx`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `torchscript`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `tensorrt`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `openvino`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `ncnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `tflite`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `coreai`: LibreSegformer implements no export path at all ('Export is not implemented for LibreSegformer yet'), so this is not a Core AI limitation. Note its weights are non-commercial regardless.
+- `segformer` / `semantic` / `onnx`: LibreSegformer export currently supports ExecuTorch only. Published pretrained weights remain non-commercial regardless of export format.
+- `segformer` / `semantic` / `torchscript`: LibreSegformer export currently supports ExecuTorch only. Published pretrained weights remain non-commercial regardless of export format.
+- `segformer` / `semantic` / `tensorrt`: LibreSegformer export currently supports ExecuTorch only. Published pretrained weights remain non-commercial regardless of export format.
+- `segformer` / `semantic` / `openvino`: LibreSegformer export currently supports ExecuTorch only. Published pretrained weights remain non-commercial regardless of export format.
+- `segformer` / `semantic` / `ncnn`: LibreSegformer export currently supports ExecuTorch only. Published pretrained weights remain non-commercial regardless of export format.
+- `segformer` / `semantic` / `tflite`: LibreSegformer export currently supports ExecuTorch only. Published pretrained weights remain non-commercial regardless of export format.
+- `segformer` / `semantic` / `coreml`: LibreSegformer export currently supports ExecuTorch only. Published pretrained weights remain non-commercial regardless of export format.
+- `segformer` / `semantic` / `coreai`: LibreSegformer export currently supports ExecuTorch only. Published pretrained weights remain non-commercial regardless of export format.
 - `siglip2` / `classify` / `torchscript`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `executorch`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `tensorrt`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.

@@ -330,6 +330,36 @@ _add(
 )
 _add(
     "experimental",
+    ("dinov2",),
+    ("embed",),
+    ("executorch",),
+    reason=(
+        "The real pretrained DINOv2 backbone has full XNNPACK conversion, "
+        "runtime execution, input sensitivity, embedding-vector parity, "
+        "normalization, and result parsing coverage."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 224x224 input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("segformer",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "The b0 graph has full XNNPACK conversion, runtime execution, input "
+        "sensitivity, deterministic random-weight logits parity, and semantic "
+        "result parsing coverage. Published pretrained weights are "
+        "non-commercial and are not used by this validation."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape "
+        "divisible by 32"
+    ),
+)
+_add(
+    "experimental",
     ("l2cs",),
     ("gaze",),
     ("executorch",),
@@ -536,13 +566,20 @@ _add(
 )
 _add(
     "blocked",
-    ("clip", "siglip2", "dinov2"),
+    ("clip", "siglip2"),
     ("embed",),
     EXPORT_FORMATS,
     reason=(
         "Embedding export is not implemented in v1; use the native "
         "predict()/embed() API."
     ),
+)
+_add(
+    "blocked",
+    ("dinov2",),
+    ("embed",),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "executorch"),
+    reason="LibreDINOv2 embedding export currently supports ExecuTorch only.",
 )
 _add(
     "blocked",
@@ -1389,11 +1426,10 @@ _add(
     "blocked",
     ("segformer",),
     ("semantic",),
-    ("coreai",),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "executorch"),
     reason=(
-        "LibreSegformer implements no export path at all ('Export is not "
-        "implemented for LibreSegformer yet'), so this is not a Core AI "
-        "limitation. Note its weights are non-commercial regardless."
+        "LibreSegformer export currently supports ExecuTorch only. Published "
+        "pretrained weights remain non-commercial regardless of export format."
     ),
 )
 _add(

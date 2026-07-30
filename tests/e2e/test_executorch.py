@@ -319,6 +319,57 @@ def test_dinov2_classification_runtime_parity(tmp_path, monkeypatch):
 
 
 @pytest.mark.experimental_backend
+@pytest.mark.network
+def test_dinov2_embedding_runtime_parity(tmp_path, monkeypatch):
+    """Cover the real DINOv2 backbone and normalized embedding contract."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+    from libreyolo.export.exporter import ExecuTorchExporter
+    from libreyolo.models.dinov2.model import LibreDINOv2
+
+    model = LibreDINOv2(None, size="n", task="embed", device="cpu")
+    first = torch.from_numpy(
+        np.random.default_rng(52).standard_normal(
+            (1, 3, 224, 224), dtype=np.float32
+        )
+    )
+    second = torch.zeros_like(first)
+
+    exporter = ExecuTorchExporter(model)
+    with exporter._model_context(
+        torch.device("cpu"), False, False, 1, (224, 224)
+    ) as (prepared, _), torch.no_grad():
+        expected = prepared(first)
+
+    artifact = model.export(
+        "executorch",
+        output_path=str(tmp_path / "dinov2_embed.pte"),
+        imgsz=224,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+    actual = runtime._run_inference(first.numpy())[0]
+    changed = runtime._run_inference(second.numpy())[0]
+
+    np.testing.assert_allclose(
+        actual,
+        expected.detach().cpu().numpy(),
+        rtol=1e-3,
+        atol=2e-4,
+    )
+    assert float(np.max(np.abs(actual - changed))) > 1e-4
+    result = runtime.predict(np.zeros((224, 224, 3), dtype=np.uint8))
+    assert result.embeddings is not None
+    np.testing.assert_allclose(
+        result.embeddings.data.norm(dim=1).numpy(),
+        np.ones(1, dtype=np.float32),
+        atol=1e-5,
+    )
+
+
+@pytest.mark.experimental_backend
 @pytest.mark.parametrize("family", ["yolonas", "yolo9_p2"])
 def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     """Cover detector families lacking redistributable trained parity data."""
@@ -404,6 +455,7 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
         ("l2cs_gaze", 448),
         ("realesrgan_restore", 32),
         ("rfdetr_obb", 384),
+        ("segformer_semantic", 64),
         ("yolonas_pose", 64),
     ],
 )
@@ -419,6 +471,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         LibreNAFNet,
         LibreRealESRGAN,
         LibreRFDETR,
+        LibreSegformer,
         LibreYOLO,
         LibreYOLONAS,
     )
@@ -442,6 +495,9 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         ),
         "rfdetr_obb": lambda: LibreRFDETR(
             {}, size="n", task="obb", nb_classes=2, device="cpu"
+        ),
+        "segformer_semantic": lambda: LibreSegformer(
+            None, size="b0", nb_classes=3, device="cpu"
         ),
         "yolonas_pose": lambda: LibreYOLONAS(
             None, size="n", task="pose", device="cpu"
@@ -507,6 +563,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         "l2cs_gaze": "gaze",
         "realesrgan_restore": "restored",
         "rfdetr_obb": "obb",
+        "segformer_semantic": "semantic_mask",
         "yolonas_pose": "keypoints",
     }[case]
     assert getattr(result, expected_attribute) is not None
