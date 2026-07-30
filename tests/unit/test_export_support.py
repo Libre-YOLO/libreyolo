@@ -97,6 +97,13 @@ def test_executorch_realtime_support_is_evidence_backed():
     assert get_support("dexined", "edge", "executorch").tier == "experimental"
     assert get_support("yolonas", "detect", "executorch").tier == "experimental"
     assert get_support("yolo9_p2", "detect", "executorch").tier == "experimental"
+    assert get_support("ec", "pose", "executorch").tier == "experimental"
+    assert get_support("ec", "segment", "executorch").tier == "experimental"
+    assert get_support("yolonas", "pose", "executorch").tier == "experimental"
+    assert get_support("convnext", "classify", "executorch").tier == "experimental"
+    assert get_support("nafnet", "restore", "executorch").tier == "experimental"
+    assert get_support("realesrgan", "restore", "executorch").tier == "experimental"
+    assert get_support("fomo", "point", "executorch").tier == "experimental"
 
 
 def test_tflite_support_keys_use_canonical_tasks():

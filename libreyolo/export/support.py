@@ -171,6 +171,78 @@ _add(
     ),
 )
 _add(
+    "experimental",
+    ("ec",),
+    ("pose", "segment"),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "deterministic random-weight raw parity, and task result parsing are "
+        "covered. Trained-checkpoint task parity is not yet available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; "
+        "EC segmentation requires a canvas large enough for its top-300 query selection"
+    ),
+)
+_add(
+    "experimental",
+    ("yolonas",),
+    ("pose",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "deterministic random-weight raw parity, and keypoint result parsing "
+        "are covered. Trained-checkpoint pose parity is not yet available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("convnext",),
+    ("classify",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "and deterministic random-weight logits parity are covered. "
+        "Trained-checkpoint classification parity is not yet available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("nafnet", "realesrgan"),
+    ("restore",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "deterministic random-weight image parity, and restored-image result "
+        "parsing are covered. Trained-checkpoint restoration parity is not "
+        "yet available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("fomo",),
+    ("point",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "deterministic random-weight heatmap parity, and point result parsing "
+        "are covered. Trained-checkpoint localization parity is not yet available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape"
+    ),
+)
+_add(
     "validated",
     ("efficientnetv2", "mobilenetv4", "resnet"),
     ("classify",),

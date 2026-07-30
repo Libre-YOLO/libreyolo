@@ -53,6 +53,28 @@ def _box_iou(first: np.ndarray, second: np.ndarray) -> float:
     return float(intersection / union) if union else 0.0
 
 
+def _align_unordered_queries(reference, candidate):
+    """Apply one logits-and-box assignment to every query-indexed output."""
+    from scipy.optimize import linear_sum_assignment
+
+    reference_parts = []
+    candidate_parts = []
+    for expected, actual in zip(reference[:2], candidate[:2]):
+        assert expected.ndim >= 3 and actual.ndim >= 3
+        scale = max(float(np.abs(expected).max()), 1e-12)
+        reference_parts.append(expected[0].reshape(expected.shape[1], -1) / scale)
+        candidate_parts.append(actual[0].reshape(actual.shape[1], -1) / scale)
+    reference_key = np.concatenate(reference_parts, axis=1)
+    candidate_key = np.concatenate(candidate_parts, axis=1)
+    cost = np.max(
+        np.abs(reference_key[:, None, :] - candidate_key[None, :, :]),
+        axis=2,
+    )
+    rows, columns = linear_sum_assignment(cost)
+    order = columns[np.argsort(rows)]
+    return [output[:, order, ...] for output in candidate]
+
+
 @pytest.mark.parametrize(
     ("family", "imgsz"),
     [("yolo9", 64), ("rfdetr", 384)],
@@ -258,6 +280,116 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     )
     result = runtime.predict(image, conf=0.0, max_det=20)
     assert result.boxes is not None
+
+
+@pytest.mark.experimental_backend
+@pytest.mark.parametrize(
+    ("case", "imgsz"),
+    [
+        ("convnext_classify", 64),
+        ("nafnet_restore", 64),
+        ("ec_pose", 64),
+        ("ec_segment", 128),
+        ("fomo_point", 64),
+        ("realesrgan_restore", 32),
+        ("yolonas_pose", 64),
+    ],
+)
+def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
+    """Cover fixed-shape task graphs without redistributable trained parity data."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import (
+        LibreConvNeXt,
+        LibreEC,
+        LibreFOMO,
+        LibreNAFNet,
+        LibreRealESRGAN,
+        LibreYOLO,
+        LibreYOLONAS,
+    )
+    from libreyolo.export.exporter import ExecuTorchExporter
+
+    constructors = {
+        "convnext_classify": lambda: LibreConvNeXt(
+            None, size="t", nb_classes=3, device="cpu"
+        ),
+        "nafnet_restore": lambda: LibreNAFNet(None, size="s", device="cpu"),
+        "ec_pose": lambda: LibreEC(None, size="s", task="pose", device="cpu"),
+        "ec_segment": lambda: LibreEC(
+            None, size="s", task="segment", nb_classes=2, device="cpu"
+        ),
+        "fomo_point": lambda: LibreFOMO(
+            None, size="s", nb_classes=2, device="cpu"
+        ),
+        "realesrgan_restore": lambda: LibreRealESRGAN(
+            None, size="x4t", device="cpu"
+        ),
+        "yolonas_pose": lambda: LibreYOLONAS(
+            None, size="n", task="pose", device="cpu"
+        ),
+    }
+    torch.manual_seed(21)
+    model = constructors[case]()
+    first = torch.from_numpy(
+        np.random.default_rng(21).standard_normal(
+            (1, 3, imgsz, imgsz), dtype=np.float32
+        )
+    )
+    second = torch.full_like(first, 100.0)
+
+    exporter = ExecuTorchExporter(model)
+    with exporter._model_context(
+        torch.device("cpu"), False, False, 1, (imgsz, imgsz)
+    ) as (prepared, _), torch.no_grad():
+        expected = prepared(first)
+    if isinstance(expected, torch.Tensor):
+        expected = (expected,)
+
+    artifact = model.export(
+        "executorch",
+        output_path=str(tmp_path / f"{case}.pte"),
+        imgsz=imgsz,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+    actual = runtime._run_inference(first.numpy())
+    changed = runtime._run_inference(second.numpy())
+
+    assert len(expected) == len(actual)
+    expected_arrays = [output.detach().cpu().numpy() for output in expected]
+    if case == "ec_segment":
+        actual = _align_unordered_queries(expected_arrays, actual)
+    parity_error = 0.0
+    for expected_array, actual_output in zip(expected_arrays, actual):
+        np.testing.assert_allclose(
+            actual_output, expected_array, rtol=1e-3, atol=2e-4
+        )
+        parity_error = max(
+            parity_error,
+            float(np.max(np.abs(actual_output - expected_array))),
+        )
+    sensitivity = max(
+        float(np.max(np.abs(first_output - second_output)))
+        for first_output, second_output in zip(actual, changed)
+    )
+    assert sensitivity > max(parity_error * 100, 1e-4)
+
+    image = np.random.default_rng(22).integers(
+        0, 256, (imgsz, imgsz, 3), dtype=np.uint8
+    )
+    result = runtime.predict(image, conf=0.0, max_det=10)
+    expected_attribute = {
+        "convnext_classify": "probs",
+        "nafnet_restore": "restored",
+        "ec_pose": "keypoints",
+        "ec_segment": "masks",
+        "fomo_point": "points",
+        "realesrgan_restore": "restored",
+        "yolonas_pose": "keypoints",
+    }[case]
+    assert getattr(result, expected_attribute) is not None
 
 
 @pytest.mark.external_data

@@ -32,7 +32,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | eomt | panoptic |  |  |  |  |  |  |  |  |  |
 | feynobg | matte | exp | ✓ | exp | exp | exp |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |  |
-| fomo | point | ✓ | ✓ |  | exp | exp | ✓ |  |  | ✓ |
+| fomo | point | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |  |
@@ -326,7 +326,6 @@ A check mark applies only under any constraint listed here.
 - `florence2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
-- `fomo` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `fomo` / `point` / `tflite`: onnx2tf 2.4.x produces an invalid depthwise-convolution graph for the static SAME-padded FOMO backbone on this toolchain.
 - `fomo` / `point` / `coreml`: The CoreML wrapper does not implement the raw point-heatmap contract.
 - `grounding_dino` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
