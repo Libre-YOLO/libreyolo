@@ -232,6 +232,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("efficientnetv2", "classify", "b0"),
         ("facerec", "embed", "l"),
         ("fomo", "point", "s"),
+        ("l2cs", "gaze", "r18"),
         ("lingbotvision", "semantic", "s"),
         ("mobilenetv4", "classify", "s"),
         ("mobilesam", "segment", "tiny"),

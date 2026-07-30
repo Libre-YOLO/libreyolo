@@ -2096,8 +2096,23 @@ def test_coreml_l2cs_gaze_parity_when_nonredistributable_weights_are_staged(
 def test_coreml_l2cs_generated_model_raw_and_public_parity(size, tmp_path):
     """Prove the gaze graph without using restricted Gaze360-derived weights."""
     from libreyolo import LibreL2CS, LibreYOLO
+    from libreyolo.export.coreml_profiles import (
+        match_coreml_execution_profile,
+    )
 
     torch.manual_seed(20260730)
+    profile = match_coreml_execution_profile(
+        "l2cs",
+        "gaze",
+        size,
+        448,
+        class_count=1,
+    )
+    requested_compute_units = (
+        "validated"
+        if profile is not None and profile.evidence_complete
+        else "cpu_only"
+    )
     model = LibreL2CS(
         None,
         size=size,
@@ -2113,11 +2128,15 @@ def test_coreml_l2cs_generated_model_raw_and_public_parity(size, tmp_path):
         "gaze",
         448,
         tmp_path,
+        compute_units=requested_compute_units,
     )
     del model
     gc.collect()
 
-    deployed_model = LibreYOLO(artifact)
+    deployed_model = LibreYOLO(
+        artifact,
+        compute_units=requested_compute_units,
+    )
     deployed = deployed_model.predict(
         source,
         verbose=False,

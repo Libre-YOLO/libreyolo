@@ -594,6 +594,27 @@ _PROFILES = (
         class_count=150,
     ),
     _profile(
+        "l2cs",
+        "gaze",
+        "r18",
+        448,
+        "deterministic generated 90-bin L2CS-R18 fixture",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "1a35496311690cd3ea3bf7a245ce650e"
+            "b16b3404fd4c4a7972b58b14d4aa0475"
+        ),
+        deployment_abi_sha256=(
+            "abc6834b5fc73825886a46156ea1fd61"
+            "e9887636dd56739542c1281b78456846"
+        ),
+        evidence_sha256=(
+            "a5ca145f7da24c368e97e609a4a1a984"
+            "f1c5b0e4bf9a3aeee10bee4159faca3d"
+        ),
+        class_count=1,
+    ),
+    _profile(
         "mobilenetv4",
         "classify",
         "s",
