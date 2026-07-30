@@ -224,6 +224,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("dfine", "detect", "n"),
         ("dfine", "segment", "n"),
         ("dinov2", "classify", "n"),
+        ("dinov2", "semantic", "n"),
         ("ec", "detect", "s"),
         ("ec", "pose", "s"),
         ("ec", "segment", "s"),
