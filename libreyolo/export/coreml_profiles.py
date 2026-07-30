@@ -491,6 +491,19 @@ _PROFILES = (
         "l",
         112,
         "librefacerec-l",
+        source_kind="facerec-onnx-source-manifest-v1",
+        source_sha256=(
+            "4c1d0408db7590c6a472295b1f7e1c05"
+            "a3a4b2837987cfded52a405e1408f871"
+        ),
+        deployment_abi_sha256=(
+            "668a1fce56c93aa2ea0a320a016969d4"
+            "879d886112efef707b453b86af927c54"
+        ),
+        evidence_sha256=(
+            "f3c4aa620ce3001658bcebb0e10ab092"
+            "5e24c807c417a0496c50bc35828f5738"
+        ),
         class_count=1,
         embedding_dim=512,
     ),

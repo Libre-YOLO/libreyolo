@@ -148,7 +148,7 @@ def _face_candidate():
         class_count=1,
         embedding_dim=512,
     )
-    assert profile is not None and not profile.evidence_complete
+    assert profile is not None and profile.evidence_complete
     return profile
 
 
@@ -228,6 +228,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("ec", "segment", "s"),
         ("edgetam", "segment", "edge"),
         ("efficientnetv2", "classify", "b0"),
+        ("facerec", "embed", "l"),
         ("fomo", "point", "s"),
         ("lingbotvision", "semantic", "s"),
         ("mobilenetv4", "classify", "s"),
@@ -295,8 +296,8 @@ def test_unpromoted_recipe_fails_validated_and_allows_explicit_campaign():
     assert (units, profile) == ("cpu_only", None)
 
 
-def test_promoted_export_requires_exact_source_identity(monkeypatch):
-    profile = _promote_for_test(monkeypatch, _face_candidate())
+def test_promoted_export_requires_exact_source_identity():
+    profile = _face_candidate()
     common = {
         "family": "facerec",
         "task": "embed",
@@ -476,10 +477,8 @@ def test_unpromoted_candidate_cannot_emit_validated_metadata():
         )
 
 
-def test_finalizer_rejects_validated_abi_mismatch_and_demotes_explicit(
-    monkeypatch,
-):
-    profile = _promote_for_test(monkeypatch, _face_candidate())
+def test_finalizer_rejects_validated_abi_mismatch_and_demotes_explicit():
+    profile = _face_candidate()
     metadata = _base_metadata(profile)
     metadata.update(
         {
@@ -511,8 +510,8 @@ def test_finalizer_rejects_validated_abi_mismatch_and_demotes_explicit(
     assert "coreml_execution_profile" not in finalized
 
 
-def test_face_v2_metadata_round_trips_and_routes_before_proxy(monkeypatch):
-    profile = _promote_for_test(monkeypatch, _face_candidate())
+def test_face_v2_metadata_round_trips_and_routes_before_proxy():
+    profile = _face_candidate()
     metadata = _face_metadata(profile)
     assert validate_coreml_execution_profile_metadata(metadata) is profile
     assert (
@@ -543,11 +542,10 @@ def test_face_v2_metadata_round_trips_and_routes_before_proxy(monkeypatch):
     ],
 )
 def test_tampered_v2_profile_metadata_fails_closed(
-    monkeypatch,
     key,
     value,
 ):
-    profile = _promote_for_test(monkeypatch, _face_candidate())
+    profile = _face_candidate()
     metadata = _face_metadata(profile)
     metadata[key] = value
     with pytest.raises(ValueError):

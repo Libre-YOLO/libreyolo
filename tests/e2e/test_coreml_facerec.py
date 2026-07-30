@@ -48,8 +48,14 @@ def _aligned_probes() -> tuple[np.ndarray, np.ndarray]:
 
 def test_facerec_official_coreml_raw_public_and_gallery_parity(tmp_path):
     from libreyolo import FaceGallery, LibreFaceEmbedder, LibreYOLO
+    from libreyolo.export.support import get_support
     from libreyolo.models.facerec.preprocess import preprocess_aligned
 
+    requested_compute_units = (
+        "validated"
+        if get_support("facerec", "embed", "coreml").tier == "validated"
+        else "cpu_only"
+    )
     source = LibreYOLO("librefacerec-l", device="cpu")
     probes = _aligned_probes()
     blobs = [preprocess_aligned(probe, source.cfg) for probe in probes]
@@ -66,11 +72,14 @@ def test_facerec_official_coreml_raw_public_and_gallery_parity(tmp_path):
         format="coreml",
         half=False,
         output_path=tmp_path / "librefacerec-l.mlpackage",
-        compute_units="cpu_only",
+        compute_units=requested_compute_units,
     )
     del source
     gc.collect()
-    deployed = LibreYOLO(artifact, compute_units="cpu_only")
+    deployed = LibreYOLO(
+        artifact,
+        compute_units=requested_compute_units,
+    )
     assert isinstance(deployed, LibreFaceEmbedder)
     actual_raw = [
         np.asarray(

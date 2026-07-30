@@ -283,7 +283,7 @@ def _promoted_official_metadata(monkeypatch):
         class_count=1,
         embedding_dim=512,
     )
-    assert candidate is not None and not candidate.evidence_complete
+    assert candidate is not None and candidate.evidence_complete
     source = _official_manifest_metadata()
     profile = replace(
         candidate,
@@ -736,34 +736,34 @@ def test_metadata_contract_round_trips_stringified_values():
     assert parsed["embedding_dim"] == 512
 
 
-def test_official_metadata_awaits_fresh_deployment_v2_evidence():
-    with pytest.raises(NotImplementedError, match="not yet been promoted"):
+def test_official_metadata_resolves_exact_deployment_v2_profile():
+    metadata, compute_units, profile = _apply_coreml_execution_profile(
+        _official_manifest_metadata(),
+        size="l",
+        canvas=112,
+        precision="fp32",
+        compute_units="validated",
+        embedding_dim=512,
+    )
+    validate_facerec_coreml_metadata(metadata)
+    assert compute_units == "cpu_only"
+    assert profile is not None and profile.evidence_complete
+    assert metadata["coreml_profile_source_kind"] == profile.source_kind
+    assert metadata["coreml_profile_source_sha256"] == profile.source_sha256
+
+    explicit_metadata, explicit_compute_units, explicit_profile = (
         _apply_coreml_execution_profile(
             _official_manifest_metadata(),
             size="l",
             canvas=112,
             precision="fp32",
-            compute_units="validated",
+            compute_units="cpu_only",
             embedding_dim=512,
         )
-
-    with pytest.warns(RuntimeWarning, match="awaiting"):
-        metadata, compute_units, profile = (
-            _apply_coreml_execution_profile(
-                _official_manifest_metadata(),
-                size="l",
-                canvas=112,
-                precision="fp32",
-                compute_units="cpu_only",
-                embedding_dim=512,
-            )
-        )
-    validate_facerec_coreml_metadata(metadata)
-    assert compute_units == "cpu_only"
-    assert profile is None
-    assert metadata["coreml_profile_source_kind"] == (
-        "facerec-onnx-source-manifest-v1"
     )
+    validate_facerec_coreml_metadata(explicit_metadata)
+    assert explicit_compute_units == "cpu_only"
+    assert explicit_profile is profile
 
 
 @pytest.mark.parametrize(
