@@ -151,7 +151,9 @@ class LibreDepthAnything3(BaseModel):
         )
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        raise NotImplementedError(
-            "Export is not implemented for Depth Anything 3 yet (depth export "
-            "is out of scope per ADR 0006: depth task contract)."
-        )
+        if format.lower() != "executorch":
+            raise NotImplementedError(
+                f"Export to {format!r} is not implemented for Depth Anything 3; "
+                "ExecuTorch is currently the only supported export format."
+            )
+        return super().export(format=format, **kwargs)

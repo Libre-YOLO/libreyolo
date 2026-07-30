@@ -77,6 +77,40 @@ def test_gaze_backend_decodes_head_logits_for_full_crop():
     assert float(result.gaze.yaw_deg[0]) == pytest.approx(140.0, abs=1e-4)
 
 
+def test_embedding_backend_normalizes_vectors_and_builds_results():
+    backend = _DummyBackend(
+        "dinov2",
+        task="embed",
+        supported_tasks=("embed",),
+        imgsz=224,
+    )
+    result = backend._build_embedding_result(
+        [np.array([[3.0, 4.0]], dtype=np.float32)],
+        orig_shape=(80, 120),
+        image_path=None,
+    )
+
+    assert result.boxes is None
+    assert result.embeddings.data.shape == (1, 2)
+    torch.testing.assert_close(
+        result.embeddings.data,
+        torch.tensor([[0.6, 0.8]], dtype=torch.float32),
+    )
+
+
+def test_depth_anything3_backend_applies_sky_correction_and_inverse_depth():
+    depth = np.full((1, 1, 8, 8), 2.0, dtype=np.float32)
+    sky = np.zeros_like(depth)
+    depth[..., :4, :] = 100.0
+    sky[..., :4, :] = 1.0
+
+    parsed = BaseBackend._parse_depth_anything3_output(
+        [depth, sky], original_size=(8, 8)
+    )
+
+    torch.testing.assert_close(parsed, torch.full((8, 8), 0.5))
+
+
 def test_removed_family_export_is_rejected():
     """A removed-family (DAMO-YOLO) exported artifact must fail loudly instead of
     silently falling through to YOLO9 preprocessing/parsing."""

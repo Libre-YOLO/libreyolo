@@ -120,3 +120,20 @@ def test_backend_rejects_missing_or_wrong_sidecar(tmp_path, monkeypatch):
     )
     with pytest.raises(ValueError, match="XNNPACK"):
         ExecuTorchBackend(str(path))
+
+
+def test_realesrgan_uses_fixed_canvas_preprocessing():
+    backend = object.__new__(ExecuTorchBackend)
+    backend.task = "restore"
+    backend.model_family = "realesrgan"
+
+    tensor, _, original_size, _ = backend._preprocess(
+        np.zeros((40, 48, 3), dtype=np.uint8), 64, "RGB"
+    )
+
+    assert tuple(tensor.shape) == (1, 3, 64, 64)
+    assert original_size == (48, 40)
+    with pytest.raises(ValueError, match="fixed-resolution"):
+        backend._preprocess(
+            np.zeros((65, 64, 3), dtype=np.uint8), 64, "RGB"
+        )

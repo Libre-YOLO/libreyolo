@@ -834,12 +834,35 @@ class BaseExporter(ABC):
             nn_model = _RTDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
-        elif family == "dinov2" and getattr(self.model, "task", None) == "classify":
-            # Classification (now in the LibreDINOv2 family) has no detection
-            # decoder; trace the backbone + linear classifier directly (it
-            # returns logits). The detection export wrapper forwards through
-            # ``model.model``, which is None for classification.
-            nn_model = nn_model.classifier.to(device)
+        elif family == "rtmdet":
+            # RTMDet intentionally aliases the head convolution weights across
+            # feature levels while keeping one batch norm per level. XNNPACK's
+            # batch-norm fusion assigns the shared parameters duplicate names,
+            # so give the export-only copy independent modules with identical
+            # weights. The user's live model and its sharing contract stay
+            # untouched.
+            nn_model = copy.deepcopy(nn_model)
+            for tower_name in ("cls_convs", "reg_convs"):
+                tower = getattr(nn_model.head, tower_name)
+                for level in range(1, len(tower)):
+                    for layer_index, layer in enumerate(tower[level]):
+                        layer.conv = copy.deepcopy(tower[0][layer_index].conv)
+            nn_model.to(device)
+            nn_model.eval()
+        elif family == "depth_anything3":
+            nn_model = copy.deepcopy(nn_model)
+            nn_model.export = True
+            nn_model.to(device)
+            nn_model.eval()
+        elif family == "dinov2" and getattr(self.model, "task", None) in {
+            "classify",
+            "embed",
+        }:
+            # Classification and embedding have no detection decoder. Trace
+            # their task-specific backbone path directly and bake the fixed
+            # DINOv2 positional encoding before capture.
+            if getattr(self.model, "task", None) == "classify":
+                nn_model = nn_model.classifier.to(device)
             nn_model.eval()
             # Precompute static DINOv2 positional encodings for the fixed export
             # resolution; otherwise the dynamic bicubic-antialias interpolation

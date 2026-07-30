@@ -209,16 +209,179 @@ def test_edge_map_runtime_parity(
 
 
 @pytest.mark.experimental_backend
-@pytest.mark.parametrize("family", ["yolonas", "yolo9_p2"])
+@pytest.mark.network
+def test_dinov2_semantic_runtime_parity(tmp_path, monkeypatch):
+    """Cover the real DINOv2 backbone and dense semantic output contract."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+    from libreyolo.export.exporter import ExecuTorchExporter
+    from libreyolo.models.dinov2.model import LibreDINOv2
+
+    torch.manual_seed(43)
+    model = LibreDINOv2(
+        None, size="n", task="semantic", nb_classes=3, device="cpu"
+    )
+    first = torch.from_numpy(
+        np.random.default_rng(43).standard_normal(
+            (1, 3, 518, 518), dtype=np.float32
+        )
+    )
+    second = torch.zeros_like(first)
+
+    exporter = ExecuTorchExporter(model)
+    with exporter._model_context(
+        torch.device("cpu"), False, False, 1, (518, 518)
+    ) as (prepared, _), torch.no_grad():
+        expected = prepared(first)
+    if isinstance(expected, torch.Tensor):
+        expected = (expected,)
+
+    artifact = model.export(
+        "executorch",
+        output_path=str(tmp_path / "dinov2_semantic.pte"),
+        imgsz=518,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+    actual = runtime._run_inference(first.numpy())
+    changed = runtime._run_inference(second.numpy())
+
+    for expected_output, actual_output in zip(expected, actual):
+        np.testing.assert_allclose(
+            actual_output,
+            expected_output.detach().cpu().numpy(),
+            rtol=1e-3,
+            atol=2e-4,
+        )
+    assert max(
+        float(np.max(np.abs(a - b))) for a, b in zip(actual, changed)
+    ) > 1e-4
+
+    image = np.random.default_rng(44).integers(
+        0, 256, (518, 518, 3), dtype=np.uint8
+    )
+    assert runtime.predict(image).semantic_mask is not None
+
+
+@pytest.mark.experimental_backend
+@pytest.mark.network
+def test_dinov2_classification_runtime_parity(tmp_path, monkeypatch):
+    """Cover the real DINOv2 backbone and classification logits contract."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+    from libreyolo.export.exporter import ExecuTorchExporter
+    from libreyolo.models.dinov2.model import LibreDINOv2
+
+    torch.manual_seed(51)
+    model = LibreDINOv2(
+        None, size="n", task="classify", nb_classes=5, device="cpu"
+    )
+    first = torch.from_numpy(
+        np.random.default_rng(51).standard_normal(
+            (1, 3, 224, 224), dtype=np.float32
+        )
+    )
+    second = torch.zeros_like(first)
+
+    exporter = ExecuTorchExporter(model)
+    with exporter._model_context(
+        torch.device("cpu"), False, False, 1, (224, 224)
+    ) as (prepared, _), torch.no_grad():
+        expected = prepared(first)
+    if isinstance(expected, torch.Tensor):
+        expected = (expected,)
+
+    artifact = model.export(
+        "executorch",
+        output_path=str(tmp_path / "dinov2_classify.pte"),
+        imgsz=224,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+    actual = runtime._run_inference(first.numpy())
+    changed = runtime._run_inference(second.numpy())
+
+    for expected_output, actual_output in zip(expected, actual):
+        np.testing.assert_allclose(
+            actual_output,
+            expected_output.detach().cpu().numpy(),
+            rtol=1e-3,
+            atol=2e-4,
+        )
+    assert max(
+        float(np.max(np.abs(a - b))) for a, b in zip(actual, changed)
+    ) > 1e-4
+    assert runtime.predict(np.zeros((224, 224, 3), dtype=np.uint8)).probs is not None
+
+
+@pytest.mark.experimental_backend
+@pytest.mark.network
+def test_dinov2_embedding_runtime_parity(tmp_path, monkeypatch):
+    """Cover the real DINOv2 backbone and normalized embedding contract."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+    from libreyolo.export.exporter import ExecuTorchExporter
+    from libreyolo.models.dinov2.model import LibreDINOv2
+
+    model = LibreDINOv2(None, size="n", task="embed", device="cpu")
+    first = torch.from_numpy(
+        np.random.default_rng(52).standard_normal(
+            (1, 3, 224, 224), dtype=np.float32
+        )
+    )
+    second = torch.zeros_like(first)
+
+    exporter = ExecuTorchExporter(model)
+    with exporter._model_context(
+        torch.device("cpu"), False, False, 1, (224, 224)
+    ) as (prepared, _), torch.no_grad():
+        expected = prepared(first)
+
+    artifact = model.export(
+        "executorch",
+        output_path=str(tmp_path / "dinov2_embed.pte"),
+        imgsz=224,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+    actual = runtime._run_inference(first.numpy())[0]
+    changed = runtime._run_inference(second.numpy())[0]
+
+    np.testing.assert_allclose(
+        actual,
+        expected.detach().cpu().numpy(),
+        rtol=1e-3,
+        atol=2e-4,
+    )
+    assert float(np.max(np.abs(actual - changed))) > 1e-4
+    result = runtime.predict(np.zeros((224, 224, 3), dtype=np.uint8))
+    assert result.embeddings is not None
+    np.testing.assert_allclose(
+        result.embeddings.data.norm(dim=1).numpy(),
+        np.ones(1, dtype=np.float32),
+        atol=1e-5,
+    )
+
+
+@pytest.mark.experimental_backend
+@pytest.mark.parametrize("family", ["rtmdet", "yolonas", "yolo9_p2"])
 def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     """Cover detector families lacking redistributable trained parity data."""
     _require_executorch(monkeypatch)
 
-    from libreyolo import LibreYOLO, LibreYOLO9P2, LibreYOLONAS
+    from libreyolo import LibreRTMDet, LibreYOLO, LibreYOLO9P2, LibreYOLONAS
     from libreyolo.export.exporter import ExecuTorchExporter
 
     torch.manual_seed(11)
-    if family == "yolonas":
+    if family == "rtmdet":
+        model = LibreRTMDet(None, size="t", nb_classes=2, device="cpu")
+    elif family == "yolonas":
         model = LibreYOLONAS(None, size="s", nb_classes=2, device="cpu")
     else:
         model = LibreYOLO9P2(
@@ -232,7 +395,7 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     )
     second = (
         torch.full_like(first, 100.0)
-        if family == "yolo9_p2"
+        if family in {"rtmdet", "yolo9_p2"}
         else torch.from_numpy(
             np.random.default_rng(12).standard_normal(
                 (1, 3, 64, 64), dtype=np.float32
@@ -273,7 +436,8 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
         float(np.max(np.abs(first_output - second_output)))
         for first_output, second_output in zip(actual, changed)
     )
-    assert sensitivity > max(parity_error * 100, 1e-4)
+    sensitivity_floor = 1e-8 if family == "rtmdet" else 1e-4
+    assert sensitivity > max(parity_error * 100, sensitivity_floor)
 
     image = np.random.default_rng(13).integers(
         0, 256, (64, 64, 3), dtype=np.uint8
@@ -287,11 +451,15 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     ("case", "imgsz"),
     [
         ("convnext_classify", 64),
+        ("depth_anything3_depth", 56),
         ("nafnet_restore", 64),
         ("ec_pose", 64),
         ("ec_segment", 128),
         ("fomo_point", 64),
+        ("l2cs_gaze", 448),
         ("realesrgan_restore", 32),
+        ("rfdetr_obb", 384),
+        ("segformer_semantic", 64),
         ("yolonas_pose", 64),
     ],
 )
@@ -301,10 +469,14 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
 
     from libreyolo import (
         LibreConvNeXt,
+        LibreDepthAnything3,
         LibreEC,
         LibreFOMO,
+        LibreL2CS,
         LibreNAFNet,
         LibreRealESRGAN,
+        LibreRFDETR,
+        LibreSegformer,
         LibreYOLO,
         LibreYOLONAS,
     )
@@ -314,6 +486,9 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         "convnext_classify": lambda: LibreConvNeXt(
             None, size="t", nb_classes=3, device="cpu"
         ),
+        "depth_anything3_depth": lambda: LibreDepthAnything3(
+            None, size="l", device="cpu"
+        ),
         "nafnet_restore": lambda: LibreNAFNet(None, size="s", device="cpu"),
         "ec_pose": lambda: LibreEC(None, size="s", task="pose", device="cpu"),
         "ec_segment": lambda: LibreEC(
@@ -322,8 +497,15 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         "fomo_point": lambda: LibreFOMO(
             None, size="s", nb_classes=2, device="cpu"
         ),
+        "l2cs_gaze": lambda: LibreL2CS(None, size="r18", device="cpu"),
         "realesrgan_restore": lambda: LibreRealESRGAN(
             None, size="x4t", device="cpu"
+        ),
+        "rfdetr_obb": lambda: LibreRFDETR(
+            {}, size="n", task="obb", nb_classes=2, device="cpu"
+        ),
+        "segformer_semantic": lambda: LibreSegformer(
+            None, size="b0", nb_classes=3, device="cpu"
         ),
         "yolonas_pose": lambda: LibreYOLONAS(
             None, size="n", task="pose", device="cpu"
@@ -382,11 +564,15 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
     result = runtime.predict(image, conf=0.0, max_det=10)
     expected_attribute = {
         "convnext_classify": "probs",
+        "depth_anything3_depth": "depth_map",
         "nafnet_restore": "restored",
         "ec_pose": "keypoints",
         "ec_segment": "masks",
         "fomo_point": "points",
+        "l2cs_gaze": "gaze",
         "realesrgan_restore": "restored",
+        "rfdetr_obb": "obb",
+        "segformer_semantic": "semantic_mask",
         "yolonas_pose": "keypoints",
     }[case]
     assert getattr(result, expected_attribute) is not None
@@ -479,6 +665,7 @@ def test_trained_detection_parity(
         ("mobilenetv4", "LIBREYOLO_EXECUTORCH_MOBILENETV4_WEIGHTS"),
         ("efficientnetv2", "LIBREYOLO_EXECUTORCH_EFFICIENTNETV2_WEIGHTS"),
         ("resnet", "LIBREYOLO_EXECUTORCH_RESNET_WEIGHTS"),
+        ("convnext", "LIBREYOLO_EXECUTORCH_CONVNEXT_WEIGHTS"),
     ],
 )
 def test_trained_classification_parity(
@@ -527,18 +714,31 @@ def test_trained_classification_parity(
 
 @pytest.mark.external_data
 @pytest.mark.flagship_nightly
-def test_trained_pidnet_semantic_parity(tmp_path, monkeypatch):
-    """Match trained PIDNet semantic maps after public postprocessing."""
+@pytest.mark.parametrize(
+    ("family", "weights_env", "imgsz"),
+    [
+        ("pidnet", "LIBREYOLO_EXECUTORCH_PIDNET_WEIGHTS", 1024),
+        (
+            "lingbotvision",
+            "LIBREYOLO_EXECUTORCH_LINGBOTVISION_WEIGHTS",
+            512,
+        ),
+    ],
+)
+def test_trained_semantic_parity(
+    tmp_path, monkeypatch, family, weights_env, imgsz
+):
+    """Match trained semantic maps after public postprocessing."""
     _require_executorch(monkeypatch)
 
     from libreyolo import LibreYOLO
 
-    weights_value = os.environ.get("LIBREYOLO_EXECUTORCH_PIDNET_WEIGHTS")
+    weights_value = os.environ.get(weights_env)
     image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
     if not weights_value or len(image_values) < 2:
         pytest.skip(
-            "set LIBREYOLO_EXECUTORCH_PIDNET_WEIGHTS and "
-            "LIBREYOLO_EXECUTORCH_IMAGES to at least two images"
+            f"set {weights_env} and LIBREYOLO_EXECUTORCH_IMAGES "
+            "to at least two images"
         )
 
     weights = Path(weights_value)
@@ -549,8 +749,8 @@ def test_trained_pidnet_semantic_parity(tmp_path, monkeypatch):
     native = LibreYOLO(str(weights), device="cpu")
     artifact = native.export(
         "executorch",
-        output_path=str(tmp_path / "pidnet.pte"),
-        imgsz=1024,
+        output_path=str(tmp_path / f"{family}.pte"),
+        imgsz=imgsz,
         batch=1,
         dynamic=False,
     )
@@ -565,6 +765,214 @@ def test_trained_pidnet_semantic_parity(tmp_path, monkeypatch):
         )
         assert expected.shape == actual.shape
         assert float(np.mean(expected == actual)) >= 0.95
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
+@pytest.mark.parametrize(
+    ("family", "weights_env", "imgsz"),
+    [
+        (
+            "depth_anything",
+            "LIBREYOLO_EXECUTORCH_DEPTH_ANYTHING_WEIGHTS",
+            518,
+        ),
+        ("zipdepth", "LIBREYOLO_EXECUTORCH_ZIPDEPTH_WEIGHTS", 384),
+    ],
+)
+def test_trained_depth_parity(
+    tmp_path, monkeypatch, family, weights_env, imgsz
+):
+    """Match a trained depth map on its fixed export canvas."""
+    _require_executorch(monkeypatch)
+
+    from PIL import Image
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get(weights_env)
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            f"set {weights_env} and LIBREYOLO_EXECUTORCH_IMAGES "
+            "to at least two images"
+        )
+
+    native = LibreYOLO(weights_value, device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / f"{family}.pte"),
+        imgsz=imgsz,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image_path in image_values:
+        image = np.asarray(
+            Image.open(image_path).convert("RGB").resize((imgsz, imgsz))
+        )
+        expected = native.predict(image, imgsz=imgsz).depth_map.data.numpy()
+        actual = runtime.predict(image).depth_map.data.numpy()
+        np.testing.assert_allclose(actual, expected, rtol=1e-3, atol=1e-4)
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
+def test_trained_moge2_normal_parity(tmp_path, monkeypatch):
+    """Match trained MoGe-2 surface normals on its fixed export canvas."""
+    _require_executorch(monkeypatch)
+
+    from PIL import Image
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get("LIBREYOLO_EXECUTORCH_MOGE2_WEIGHTS")
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            "set LIBREYOLO_EXECUTORCH_MOGE2_WEIGHTS and "
+            "LIBREYOLO_EXECUTORCH_IMAGES to at least two images"
+        )
+
+    native = LibreYOLO(weights_value, device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / "moge2.pte"),
+        imgsz=518,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image_path in image_values:
+        image = np.asarray(
+            Image.open(image_path).convert("RGB").resize((518, 518))
+        )
+        expected = native.predict(image, imgsz=518).normal_map.data.numpy()
+        actual = runtime.predict(image).normal_map.data.numpy()
+        cosine = np.clip(np.sum(actual * expected, axis=-1), -1.0, 1.0)
+        angular_error = np.degrees(np.arccos(cosine))
+        assert float(np.mean(angular_error)) < 0.01
+        assert float(np.max(angular_error)) < 0.1
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
+def test_trained_realesrgan_parity(tmp_path, monkeypatch):
+    """Match trained x4 restoration and enforce the fixed-canvas contract."""
+    _require_executorch(monkeypatch)
+
+    from PIL import Image
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get("LIBREYOLO_EXECUTORCH_REALESRGAN_WEIGHTS")
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            "set LIBREYOLO_EXECUTORCH_REALESRGAN_WEIGHTS and "
+            "LIBREYOLO_EXECUTORCH_IMAGES to at least two images"
+        )
+
+    native = LibreYOLO(weights_value, device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / "realesrgan.pte"),
+        imgsz=64,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image_path in image_values:
+        image = np.asarray(
+            Image.open(image_path).convert("RGB").resize((64, 64))
+        )
+        expected = native.predict(image, imgsz=64).restored.data.numpy()
+        actual = runtime.predict(image).restored.data.numpy()
+        assert actual.shape == expected.shape == (256, 256, 3)
+        assert int(
+            np.max(np.abs(actual.astype(np.int16) - expected.astype(np.int16)))
+        ) <= 1
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
+@pytest.mark.parametrize(
+    ("family", "task", "weights_env", "imgsz"),
+    [
+        ("ec", "segment", "LIBREYOLO_EXECUTORCH_EC_SEG_WEIGHTS", 640),
+        ("ec", "pose", "LIBREYOLO_EXECUTORCH_EC_POSE_WEIGHTS", 640),
+        (
+            "rfdetr",
+            "segment",
+            "LIBREYOLO_EXECUTORCH_RFDETR_SEG_WEIGHTS",
+            312,
+        ),
+        ("rfdetr", "pose", "LIBREYOLO_EXECUTORCH_RFDETR_POSE_WEIGHTS", 576),
+    ],
+)
+def test_trained_instance_task_parity(
+    tmp_path, monkeypatch, family, task, weights_env, imgsz
+):
+    """Match trained boxes plus pose keypoints or instance masks."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get(weights_env)
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            f"set {weights_env} and LIBREYOLO_EXECUTORCH_IMAGES "
+            "to at least two images"
+        )
+
+    native = LibreYOLO(weights_value, device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / f"{family}_{task}.pte"),
+        imgsz=imgsz,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image_path in image_values:
+        from PIL import Image
+
+        expected = native.predict(
+            image_path, imgsz=imgsz, conf=0.25, iou=0.6, max_det=100
+        )
+        actual = runtime.predict(
+            image_path, conf=0.25, iou=0.6, max_det=100
+        )
+        width, height = Image.open(image_path).size
+        expected_boxes = expected.boxes.data.numpy().copy()
+        expected_boxes[:, [0, 2]] = np.clip(
+            expected_boxes[:, [0, 2]], 0, width
+        )
+        expected_boxes[:, [1, 3]] = np.clip(
+            expected_boxes[:, [1, 3]], 0, height
+        )
+        np.testing.assert_allclose(
+            actual.boxes.data.numpy(),
+            expected_boxes,
+            rtol=1e-3,
+            atol=2e-3,
+        )
+        if task == "segment":
+            assert float(
+                (actual.masks.data == expected.masks.data).float().mean()
+            ) >= 0.999
+        else:
+            np.testing.assert_allclose(
+                actual.keypoints.data.numpy(),
+                expected.keypoints.data.numpy(),
+                rtol=1e-3,
+                atol=2e-3,
+            )
 
 
 def test_failed_export_restores_yolo9_state(tmp_path, monkeypatch):

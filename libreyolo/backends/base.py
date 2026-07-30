@@ -41,6 +41,7 @@ from ..utils.results import (
     Boxes,
     DepthMap,
     EdgeMap,
+    Embeddings,
     Gaze,
     Keypoints,
     Matte,
@@ -407,7 +408,9 @@ class BaseBackend(ABC):
             Tuple of (input_tensor, original_img, original_size, ratio).
         """
         if self.task == "restore" or self.model_family == "nafnet":
-            if self.model_family == "realesrgan":
+            if self.model_family == "realesrgan" and not getattr(
+                self, "fixed_input_shape", False
+            ):
                 return self._preprocess_restore_native(image, color_format)
             return self._preprocess_restore(image, effective_imgsz, color_format)
         if self.task == "depth":
@@ -420,7 +423,7 @@ class BaseBackend(ABC):
             return self._preprocess_matte(image, effective_imgsz, color_format)
         if self.task == "gaze":
             return self._preprocess_gaze(image, effective_imgsz, color_format)
-        if self.task == "classify":
+        if self.task in {"classify", "embed"}:
             return self._preprocess_classify(image, effective_imgsz, color_format)
         if self.task == "point" and self.model_family == "fomo":
             from ..models.fomo.utils import preprocess_image as fomo_preprocess_image
@@ -2114,6 +2117,19 @@ class BaseBackend(ABC):
         return torch.softmax(logits_t, dim=1)[0]
 
     @staticmethod
+    def _parse_embeddings(all_outputs) -> torch.Tensor:
+        embeddings = np.asarray(all_outputs[0], dtype=np.float32)
+        if embeddings.ndim == 1:
+            embeddings = embeddings[None, :]
+        if embeddings.ndim != 2:
+            raise ValueError(
+                "Embedding backend output must have shape (batch, dimensions), "
+                f"got {tuple(embeddings.shape)}."
+            )
+        embeddings_t = torch.from_numpy(np.ascontiguousarray(embeddings))
+        return F.normalize(embeddings_t, dim=1)
+
+    @staticmethod
     def _parse_restore_output(
         all_outputs, original_size: Tuple[int, int], scale: int = 1
     ) -> np.ndarray:
@@ -2151,6 +2167,21 @@ class BaseBackend(ABC):
             names=self.names,
         )
 
+    def _build_embedding_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        image_path,
+    ) -> Results:
+        return Results(
+            boxes=None,
+            embeddings=Embeddings(self._parse_embeddings(all_outputs), orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
     @staticmethod
     def _parse_depth_output(
         all_outputs, original_size: Tuple[int, int]
@@ -2174,6 +2205,59 @@ class BaseBackend(ABC):
         )
         return depth_t[0, 0]
 
+    @staticmethod
+    def _parse_depth_anything3_output(
+        all_outputs, original_size: Tuple[int, int]
+    ) -> torch.Tensor:
+        if len(all_outputs) != 2:
+            raise ValueError(
+                "Depth Anything 3 backend output must contain depth and sky maps."
+            )
+        depth = torch.from_numpy(
+            np.ascontiguousarray(np.asarray(all_outputs[0], dtype=np.float32))
+        )
+        sky = torch.from_numpy(
+            np.ascontiguousarray(np.asarray(all_outputs[1], dtype=np.float32))
+        )
+        if depth.ndim != 4 or sky.shape != depth.shape or depth.shape[1] != 1:
+            raise ValueError(
+                "Depth Anything 3 backend depth and sky outputs must both have "
+                f"shape [B, 1, H, W], got {tuple(depth.shape)} and "
+                f"{tuple(sky.shape)}."
+            )
+
+        corrected = depth
+        for index in range(depth.shape[0]):
+            non_sky = sky[index] < 0.3
+            if non_sky.sum() <= 10 or (~non_sky).sum() <= 10:
+                continue
+            non_sky_depth = depth[index][non_sky]
+            if non_sky_depth.numel() > 100_000:
+                sample_indices = torch.randint(
+                    0,
+                    non_sky_depth.numel(),
+                    (100_000,),
+                )
+                non_sky_depth = non_sky_depth[sample_indices]
+            far_depth = torch.quantile(non_sky_depth, 0.99)
+            if corrected is depth:
+                corrected = depth.clone()
+            corrected[index] = torch.where(
+                non_sky, depth[index], far_depth
+            )
+
+        inverse_depth = torch.reciprocal(corrected.clamp_min(1e-6))
+        return BaseBackend._parse_depth_output(
+            [inverse_depth.numpy()], original_size
+        )
+
+    def _parse_depth_outputs(
+        self, all_outputs, original_size: Tuple[int, int]
+    ) -> torch.Tensor:
+        if self.model_family == "depth_anything3":
+            return self._parse_depth_anything3_output(all_outputs, original_size)
+        return self._parse_depth_output(all_outputs, original_size)
+
     def _build_depth_result(
         self,
         all_outputs,
@@ -2182,7 +2266,7 @@ class BaseBackend(ABC):
         original_size: Tuple[int, int],
         image_path,
     ) -> Results:
-        depth = self._parse_depth_output(all_outputs, original_size)
+        depth = self._parse_depth_outputs(all_outputs, original_size)
         return Results(
             boxes=None,
             depth_map=DepthMap(depth, orig_shape),
@@ -2829,6 +2913,8 @@ class BaseBackend(ABC):
         outputs = self._as_numpy_outputs(output)
         if self.task == "classify":
             return {"probs": self._parse_classify_probs(outputs)}
+        if self.task == "embed":
+            return {"embeddings": self._parse_embeddings(outputs)}
         if self.task == "restore":
             restored = np.asarray(outputs[0])
             if restored.ndim == 4:
@@ -2836,7 +2922,7 @@ class BaseBackend(ABC):
                 restored = restored[:, :, :orig_h, :orig_w]
             return {"restored": torch.from_numpy(restored).float().clamp(0.0, 1.0)}
         if self.task == "depth":
-            return {"depth": self._parse_depth_output(outputs, original_size)}
+            return {"depth": self._parse_depth_outputs(outputs, original_size)}
         if self.task == "normal":
             return {"normal": self._parse_normal_output(outputs, original_size)}
         if self.task == "edge":
@@ -2980,6 +3066,10 @@ class BaseBackend(ABC):
         )
         if self.task == "classify":
             validator_cls = ClassifyValidator
+        elif self.task == "embed":
+            raise NotImplementedError(
+                "Exported embedding validation requires a retrieval dataset contract."
+            )
         elif self.task == "point":
             validator_cls = PointValidator
         elif self.task == "segment":
@@ -3058,6 +3148,12 @@ class BaseBackend(ABC):
                     output_path,
                 )
             return result
+        if self.task == "embed":
+            return self._build_embedding_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                image_path=image_path,
+            )
         if self.task == "restore":
             result = self._build_restore_result(
                 all_outputs,
@@ -3388,6 +3484,12 @@ class BaseBackend(ABC):
                     orig_shape=orig_shape,
                     image_path=image_path,
                 )
+            elif self.task == "embed":
+                result = self._build_embedding_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    image_path=image_path,
+                )
             elif self.task == "restore":
                 result = self._build_restore_result(
                     per_image,
@@ -3617,6 +3719,12 @@ class BaseBackend(ABC):
             orig_shape = (orig_h, orig_w)
             if self.task == "classify":
                 return self._build_classify_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    image_path=str(source),
+                )
+            if self.task == "embed":
+                return self._build_embedding_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     image_path=str(source),

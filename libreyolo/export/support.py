@@ -137,13 +137,18 @@ _add(
     ),
 )
 _add(
-    "blocked",
+    "experimental",
     ("rtmdet",),
     ("detect",),
     ("executorch",),
     reason=(
-        "ExecuTorch 1.2 XNNPACK lowering fails in FuseBatchNormPass because "
-        "the generated graph has a duplicate fused parameter name."
+        "The export-only graph unshares RTMDet's cross-level head convolutions "
+        "to avoid duplicate XNNPACK batch-norm fusion parameter names. Full "
+        "conversion, runtime execution, input sensitivity, deterministic "
+        "random-weight raw parity, and detection parsing are covered."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(
@@ -171,15 +176,16 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("ec",),
     ("pose", "segment"),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "deterministic random-weight raw parity, and task result parsing are "
-        "covered. Trained-checkpoint task parity is not yet available."
+        "Trained-checkpoint XNNPACK boxes and pose-keypoint or instance-mask "
+        "parity are covered by the external-data flagship test in "
+        "tests/e2e/test_executorch.py."
     ),
+    since="1.4",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; "
         "EC segmentation requires a canvas large enough for its top-300 query selection"
@@ -200,22 +206,22 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("convnext",),
     ("classify",),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "and deterministic random-weight logits parity are covered. "
-        "Trained-checkpoint classification parity is not yet available."
+        "Trained-checkpoint XNNPACK logits cosine and top-1 parity are covered "
+        "by the external-data flagship test in tests/e2e/test_executorch.py."
     ),
+    since="1.4",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(
     "experimental",
-    ("nafnet", "realesrgan"),
+    ("nafnet",),
     ("restore",),
     ("executorch",),
     reason=(
@@ -226,6 +232,229 @@ _add(
     ),
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    ("realesrgan",),
+    ("restore",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK image parity and fixed-canvas result "
+        "cropping are covered by the external-data flagship test in "
+        "tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed export canvas; "
+        "inputs larger than the canvas are rejected"
+    ),
+)
+_add(
+    "blocked",
+    ("swinir",),
+    ("restore",),
+    ("executorch",),
+    reason=(
+        "The trained lightweight x4 model captures, lowers, and serializes, "
+        "but ExecuTorch 1.2 runtime execution fails because alias_copy receives "
+        "tensors with mixed dimension orders."
+    ),
+)
+_add(
+    "validated",
+    ("depth_anything",),
+    ("depth",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK depth-map parity is covered by the "
+        "external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    ("zipdepth",),
+    ("depth",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK depth-map parity is covered by the "
+        "external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    ("lingbotvision",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK semantic-mask parity is covered by the "
+        "external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("dinov2",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "The real pretrained DINOv2 backbone has full XNNPACK conversion, "
+        "runtime execution, input sensitivity, deterministic random-head raw "
+        "parity, and semantic result parsing coverage. A permissive trained "
+        "LibreDINOv2 semantic checkpoint is not available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 518x518 input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("dinov2",),
+    ("classify",),
+    ("executorch",),
+    reason=(
+        "The real pretrained DINOv2 backbone has full XNNPACK conversion, "
+        "runtime execution, input sensitivity, deterministic random-head "
+        "logits parity, and classification result parsing coverage. A "
+        "permissive trained LibreDINOv2 classification checkpoint is unavailable."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 224x224 input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("dinov2",),
+    ("embed",),
+    ("executorch",),
+    reason=(
+        "The real pretrained DINOv2 backbone has full XNNPACK conversion, "
+        "runtime execution, input sensitivity, embedding-vector parity, "
+        "normalization, and result parsing coverage."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 224x224 input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("segformer",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "The b0 graph has full XNNPACK conversion, runtime execution, input "
+        "sensitivity, deterministic random-weight logits parity, and semantic "
+        "result parsing coverage. Published pretrained weights are "
+        "non-commercial and are not used by this validation."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape "
+        "divisible by 32"
+    ),
+)
+_add(
+    "experimental",
+    ("depth_anything3",),
+    ("depth",),
+    ("executorch",),
+    reason=(
+        "The fixed-canvas graph exports raw depth and sky maps so LibreYOLO's "
+        "runtime can apply the tensor-dependent sky correction and inverse-depth "
+        "contract outside the portable graph. Conversion, runtime execution, "
+        "raw-map parity, input sensitivity, and depth result parsing are covered."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape "
+        "divisible by 14"
+    ),
+)
+_add(
+    "experimental",
+    ("l2cs",),
+    ("gaze",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, input sensitivity, "
+        "deterministic random-weight two-head logits parity, and gaze decoding "
+        "are covered. Published task weights cannot be redistributed."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 448x448 face crops"
+    ),
+)
+_add(
+    "blocked",
+    ("eomt",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "Strict torch.export capture fails on a data-dependent symbolic "
+        "expression in the mask path before XNNPACK lowering."
+    ),
+)
+_add(
+    "blocked",
+    ("birefnet", "feynobg"),
+    ("matte",),
+    ("executorch",),
+    reason=(
+        "The fixed-shape matte graph captures and lowers, but ExecuTorch 1.2 "
+        "cannot serialize torchvision::deform_conv2d because it has no out variant."
+    ),
+)
+_add(
+    "validated",
+    ("moge2",),
+    ("normal",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK angular normal-map parity is covered by "
+        "the external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape"
+    ),
+)
+_add(
+    "validated",
+    ("rfdetr",),
+    ("pose", "segment"),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK boxes and pose-keypoint or instance-mask "
+        "parity are covered by the external-data flagship test in "
+        "tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("rfdetr",),
+    ("obb",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, deterministic "
+        "random-weight raw parity, and oriented-box result parsing are "
+        "covered. A permissive trained OBB checkpoint is not available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed native 384x384 "
+        "input shape; other sizes retain an unsupported antialiased bicubic op"
     ),
 )
 _add(
@@ -346,18 +575,32 @@ _add(
     "blocked",
     ("dinov2",),
     ("classify",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreai"}),
-    reason="LibreDINOv2 classify export currently supports ONNX only.",
+    tuple(
+        fmt
+        for fmt in EXPORT_FORMATS
+        if fmt not in {"onnx", "coreai", "executorch"}
+    ),
+    reason=(
+        "LibreDINOv2 classify export currently supports ONNX, Core AI, "
+        "and ExecuTorch only."
+    ),
 )
 _add(
     "blocked",
-    ("clip", "siglip2", "dinov2"),
+    ("clip", "siglip2"),
     ("embed",),
     EXPORT_FORMATS,
     reason=(
         "Embedding export is not implemented in v1; use the native "
         "predict()/embed() API."
     ),
+)
+_add(
+    "blocked",
+    ("dinov2",),
+    ("embed",),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "executorch"),
+    reason="LibreDINOv2 embedding export currently supports ExecuTorch only.",
 )
 _add(
     "blocked",
@@ -1204,11 +1447,10 @@ _add(
     "blocked",
     ("segformer",),
     ("semantic",),
-    ("coreai",),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "executorch"),
     reason=(
-        "LibreSegformer implements no export path at all ('Export is not "
-        "implemented for LibreSegformer yet'), so this is not a Core AI "
-        "limitation. Note its weights are non-commercial regardless."
+        "LibreSegformer export currently supports ExecuTorch only. Published "
+        "pretrained weights remain non-commercial regardless of export format."
     ),
 )
 _add(
@@ -1248,23 +1490,19 @@ _add(
     ("coreai",),
     reason=(
         "The model itself refuses: 'LibreL2CS export to coreai is not "
-        "implemented. The v1 gaze export contract supports ONNX only.' That "
+        "implemented. The v1 gaze export contract supports ONNX and "
+        "ExecuTorch only.' That "
         "is a model-side decision, unchanged by opening the support gate, so "
         "nothing about Core AI is being tested here. Wiring the gaze contract "
-        "beyond ONNX comes first."
+        "beyond ONNX and ExecuTorch comes first."
     ),
 )
 _add(
     "blocked",
     ("depth_anything3",),
     ("depth",),
-    ("coreai",),
-    reason=(
-        "The model raises NotImplementedError for every format: depth export "
-        "is out of scope per ADR 0006, the depth task contract. Depth Anything "
-        "V2 exports and validates at 5.2e-06, so this is specific to the V3 "
-        "family and not a Core AI limitation."
-    ),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "executorch"),
+    reason="Depth Anything 3 export currently supports ExecuTorch only.",
 )
 
 
@@ -1297,12 +1535,10 @@ _TASK_BLOCKS = {
 }
 
 _FAMILY_BLOCKS = {
-    "depth_anything3": (
-        "Depth Anything 3 currently rejects export for every format; its "
-        "depth graph has not been added to the exported-runtime contract."
-    ),
     "eomt": "EoMT instance and panoptic export do not yet have runtime parsing.",
-    "l2cs": "The v1 L2CS gaze export contract supports ONNX only.",
+    "l2cs": (
+        "The v1 L2CS gaze export contract supports ONNX and ExecuTorch only."
+    ),
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
     "edgetam": "Promptable model export is out of scope for the v1 runtime contract.",
