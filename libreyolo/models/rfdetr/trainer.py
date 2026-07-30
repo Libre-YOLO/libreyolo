@@ -896,6 +896,59 @@ class RFDETRTrainer(BaseTrainer):
         result.update(loss_dict)
         return result
 
+    def cuda_graph_train_spec(self):
+        """Capture spec: graph the DETR network, keep the criterion eager.
+
+        The detect-task LWDETR forward never reads targets (group-DETR
+        queries are a fixed ``num_queries * group_detr`` block in training
+        mode), so the whole network is static-shaped and capturable; the
+        Hungarian criterion is host-side by nature and stays eager,
+        mirroring ``on_forward``'s detect tail exactly. Seg/pose/obb/
+        classification/semantic variants route targets or masks through
+        the forward and run eager.
+        """
+        from libreyolo.training.cuda_graph import (
+            CudaGraphTrainSpec,
+            GraphableNetwork,
+        )
+        from .nn import LibreRFDETRModel
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            return None
+        model = self.model
+        if not isinstance(model, LibreRFDETRModel):
+            return None
+        if any(
+            getattr(model, attr, False)
+            for attr in ("segmentation", "pose", "obb", "classification", "semantic")
+        ):
+            return None
+        if getattr(self, "criterion", None) is None:
+            return None
+
+        network = GraphableNetwork(model)
+
+        def assemble(flat, imgs, targets, polygons=None):
+            outputs = network.rebuild(flat)
+            target_list = self._targets_to_rfdetr_list(
+                targets,
+                height=imgs.shape[-2],
+                width=imgs.shape[-1],
+            )
+            loss_dict = self.criterion(outputs, target_list)
+            weight_dict = self.criterion.weight_dict
+            total = sum(
+                loss_dict[key] * weight_dict[key]
+                for key in loss_dict
+                if key in weight_dict
+            )
+            result = {"total_loss": total}
+            result.update(loss_dict)
+            return result
+
+        return CudaGraphTrainSpec(network=network, assemble=assemble)
+
     def get_loss_components(self, outputs: Dict) -> Dict[str, float]:
         loss_task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
         if loss_task == "classify":
