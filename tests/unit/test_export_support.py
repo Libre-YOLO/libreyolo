@@ -72,6 +72,7 @@ def test_executorch_realtime_support_is_evidence_backed():
         ("depth_anything", "depth"),
         ("efficientnetv2", "classify"),
         ("lingbotvision", "semantic"),
+        ("moge2", "normal"),
         ("mobilenetv4", "classify"),
         ("picodet", "detect"),
         ("pidnet", "semantic"),

@@ -639,6 +639,46 @@ def test_trained_depth_parity(
 
 @pytest.mark.external_data
 @pytest.mark.flagship_nightly
+def test_trained_moge2_normal_parity(tmp_path, monkeypatch):
+    """Match trained MoGe-2 surface normals on its fixed export canvas."""
+    _require_executorch(monkeypatch)
+
+    from PIL import Image
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get("LIBREYOLO_EXECUTORCH_MOGE2_WEIGHTS")
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            "set LIBREYOLO_EXECUTORCH_MOGE2_WEIGHTS and "
+            "LIBREYOLO_EXECUTORCH_IMAGES to at least two images"
+        )
+
+    native = LibreYOLO(weights_value, device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / "moge2.pte"),
+        imgsz=518,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image_path in image_values:
+        image = np.asarray(
+            Image.open(image_path).convert("RGB").resize((518, 518))
+        )
+        expected = native.predict(image, imgsz=518).normal_map.data.numpy()
+        actual = runtime.predict(image).normal_map.data.numpy()
+        cosine = np.clip(np.sum(actual * expected, axis=-1), -1.0, 1.0)
+        angular_error = np.degrees(np.arccos(cosine))
+        assert float(np.mean(angular_error)) < 0.01
+        assert float(np.max(angular_error)) < 0.1
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
 def test_trained_realesrgan_parity(tmp_path, monkeypatch):
     """Match trained x4 restoration and enforce the fixed-canvas contract."""
     _require_executorch(monkeypatch)

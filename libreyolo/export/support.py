@@ -299,6 +299,20 @@ _add(
 )
 _add(
     "validated",
+    ("moge2",),
+    ("normal",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK angular normal-map parity is covered by "
+        "the external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape"
+    ),
+)
+_add(
+    "validated",
     ("rfdetr",),
     ("pose", "segment"),
     ("executorch",),

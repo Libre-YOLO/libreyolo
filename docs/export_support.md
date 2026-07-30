@@ -43,7 +43,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | locateanything | point |  |  |  |  |  |  |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |
-| moge2 | normal | ✓ |  |  |  |  |  |  |  |  |
+| moge2 | normal | ✓ |  | ✓ |  |  |  |  |  |  |
 | nafnet | restore | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |  |
@@ -135,6 +135,7 @@ A check mark applies only under any constraint listed here.
 - `mobilenetv4` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `mobilenetv4` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `moge2` / `normal` / `onnx`: fixed square batch-1 export canvas divisible by 14; exported inference rejects non-square sources rather than stretching image-plane geometry; the official MIT ViT-S/B/L normal checkpoints are covered by FP32 same-canvas native-versus-ONNX angular parity below 0.1 degree
+- `moge2` / `normal` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape
 - `nafnet` / `restore` / `onnx`: fixed-resolution export canvas
 - `nafnet` / `restore` / `torchscript`: fixed-resolution export canvas
 - `nafnet` / `restore` / `ncnn`: fixed-resolution export canvas
@@ -411,7 +412,6 @@ A check mark applies only under any constraint listed here.
 - `mobilesam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `moge2` / `normal` / `torchscript`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
-- `moge2` / `normal` / `executorch`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `tensorrt`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `openvino`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `ncnn`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
