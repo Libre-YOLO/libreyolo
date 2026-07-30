@@ -84,6 +84,15 @@ class TestFactoryAliases:
         with pytest.raises(ValueError, match="Unknown open-vocabulary detector"):
             LibreOpenVocab("definitely-not-real")
 
+    def test_grounding_dino_pins_and_coreml_fail_closed(self):
+        assert LibreGroundingDINO.HF_REVISIONS == {
+            "t": "842ba2640b927b39c4c06a62e4d2238a9df965f1",
+            "b": "2d2f9b44aa8740a3c6a5b84c5d739441f22b7494",
+        }
+        model = object.__new__(LibreGroundingDINO)
+        with pytest.raises(NotImplementedError, match="proposal"):
+            model.export(format="coreml")
+
     def test_every_name_the_inventory_advertises_is_loadable(self):
         """`libreyolo models` prints <family>-<size>, with the family's
         underscore. Those names must resolve, or the CLI advertises models the

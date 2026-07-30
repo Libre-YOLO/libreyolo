@@ -105,6 +105,35 @@ def test_dfine_backend_skips_generic_nms():
     assert len(result.boxes) == 2
 
 
+def test_backend_build_result_accepts_tensor_masks():
+    backend = _DummyBackend(
+        "eomt",
+        task="segment",
+        supported_tasks=("detect", "segment"),
+    )
+    masks = torch.tensor(
+        [
+            [[True, False], [False, True]],
+            [[False, True], [True, False]],
+        ]
+    )
+
+    result = backend._build_result(
+        np.array([[0, 0, 1, 1], [0, 0, 2, 2]], dtype=np.float32),
+        np.array([0.9, 0.8], dtype=np.float32),
+        np.array([0, 1], dtype=np.int64),
+        masks=masks,
+        orig_shape=(2, 2),
+        image_path=None,
+        iou=0.45,
+        classes=None,
+        max_det=300,
+    )
+
+    assert result.masks is not None
+    assert torch.equal(result.masks.data, masks)
+
+
 def test_rfdetr_backend_skips_generic_nms():
     backend = _DummyBackend("rfdetr")
 

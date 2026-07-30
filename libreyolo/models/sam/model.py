@@ -26,7 +26,7 @@ through the permissive ``transformers`` model API. See
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Tuple, Type
+from typing import Any, Dict, Tuple, Type
 
 from .base import LibreSAMModel
 from .edgetam import LibreEdgeTAM
@@ -95,9 +95,12 @@ _ALIASES: Dict[str, Tuple[Type[LibreSAMModel] | str, str]] = {
 }
 
 _DEFAULT_MODEL = "base"
+_COREML_SAM_FAMILIES = frozenset(
+    {"edgetam", "mobilesam", "picosam3", "sam", "sam2", "sam3"}
+)
 
 
-def LibreSAM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreSAMModel:
+def LibreSAM(model: str = _DEFAULT_MODEL, **kwargs) -> Any:
     """Load a promptable segmentation model by name.
 
     Args:
@@ -118,6 +121,16 @@ def LibreSAM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreSAMModel:
     """
     model_value = str(model).strip()
     if Path(model_value).suffix.lower() == ".mlpackage":
+        from ...backends.coreml_facerec import coreml_package_family
+
+        family = coreml_package_family(model_value)
+        if family not in _COREML_SAM_FAMILIES:
+            declared = repr(family) if family is not None else "missing"
+            raise ValueError(
+                "LibreSAM requires a Core ML package with promptable-SAM "
+                "model_family metadata; expected one of "
+                f"{sorted(_COREML_SAM_FAMILIES)!r}, found {declared}."
+            )
         from ...backends.coreml import CoreMLBackend
 
         return CoreMLBackend(model_value, **kwargs)

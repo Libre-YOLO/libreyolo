@@ -7,7 +7,8 @@ and returns standard detection ``Results``.
 
 from __future__ import annotations
 
-from typing import Dict, Tuple, Type
+from pathlib import Path
+from typing import Any, Dict, Tuple, Type
 
 from .base import LibreOpenVocabDetector
 from .grounding_dino import LibreGroundingDINO
@@ -53,16 +54,31 @@ _ALIASES: Dict[str, Tuple[Type[LibreOpenVocabDetector], str]] = {
 }
 
 _DEFAULT_MODEL = "grounding-dino-tiny"
+_COREML_OPENVOCAB_FAMILIES = frozenset({"omdet_turbo", "owlv2"})
 
 
-def LibreOpenVocab(
-    model: str = _DEFAULT_MODEL, **kwargs
-) -> LibreOpenVocabDetector:
+def LibreOpenVocab(model: str = _DEFAULT_MODEL, **kwargs) -> Any:
     """Load an open-vocabulary detector by alias."""
+    model_value = str(model).strip()
+    if Path(model_value).suffix.lower() == ".mlpackage":
+        from ...backends.coreml_facerec import coreml_package_family
+
+        family = coreml_package_family(model_value)
+        if family not in _COREML_OPENVOCAB_FAMILIES:
+            declared = repr(family) if family is not None else "missing"
+            raise ValueError(
+                "LibreOpenVocab requires a Core ML package with a supported "
+                "frozen-vocabulary model_family; expected one of "
+                f"{sorted(_COREML_OPENVOCAB_FAMILIES)!r}, found {declared}."
+            )
+        from ...backends.coreml import CoreMLBackend
+
+        return CoreMLBackend(model_value, **kwargs)
+
     # Underscores fold to hyphens so the family-qualified names the inventory
     # and `libreyolo models` print (omdet_turbo-t, grounding_dino-t) load as
     # given; the aliases themselves are hyphenated.
-    key = str(model).strip().lower().replace("_", "-")
+    key = model_value.lower().replace("_", "-")
     match = _ALIASES.get(key)
     if match is None:
         raise ValueError(

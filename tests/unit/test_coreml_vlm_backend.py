@@ -645,6 +645,29 @@ class _FakeModel:
         return {COREML_VLM_LAST_LOGITS_OUTPUT: logits}
 
 
+def test_fp16_output_normalizes_apple_float32_materialization():
+    values = np.asarray([1.5, -2.25], dtype=np.float32)
+
+    actual = backend._only_fp16_output(
+        {"output": values},
+        name="output",
+        shape=(2,),
+    )
+
+    assert actual.dtype == np.float16
+    assert actual.flags.c_contiguous
+    assert np.array_equal(actual, values.astype(np.float16))
+
+
+def test_fp16_output_rejects_non_floating_materialization():
+    with pytest.raises(RuntimeError, match="float16 or float32"):
+        backend._only_fp16_output(
+            {"output": np.asarray([1, 2], dtype=np.int32)},
+            name="output",
+            shape=(2,),
+        )
+
+
 def _runtime(
     monkeypatch,
     tmp_path,
@@ -721,6 +744,7 @@ def _runtime(
     )
     runtime = backend.CoreMLVLMRuntime(
         bundle,
+        compute_units="cpu_only",
         coremltools_module=_fake_ct(load_model),
     )
     return runtime, processor, calls, loads, models
@@ -742,7 +766,7 @@ def test_fake_runtime_loads_named_functions_and_runs_fresh_stateful_generation(
     assert [kwargs["function_name"] for _path, kwargs in loads] == list(
         COREML_VLM_FUNCTION_NAMES
     )
-    assert all(kwargs["compute_units"] == "ALL" for _path, kwargs in loads)
+    assert all(kwargs["compute_units"] == "CPU_ONLY" for _path, kwargs in loads)
     assert len(models[COREML_VLM_DECODE_FUNCTION].states) == 1
     decode_calls = [
         (inputs, kwargs)
@@ -825,6 +849,53 @@ def test_detection_host_parses_normalized_bbox_contract(
     }
 
 
+def test_runtime_default_rejects_before_processor_or_native_proxy(
+    monkeypatch,
+    tmp_path,
+):
+    profile = smolvlm2_500m_coreml_profile(2048)
+    metadata = smolvlm2_500m_coreml_metadata(profile)
+    bundle = tmp_path / "experimental.coremlvlm"
+    model_path = bundle / "Model.mlpackage"
+    processor_path = bundle / "Processor"
+    model_path.mkdir(parents=True)
+    processor_path.mkdir()
+    info = backend.CoreMLVLMBundleInfo(
+        path=bundle.resolve(),
+        model_path=model_path.resolve(),
+        processor_path=processor_path.resolve(),
+        profile=profile,
+        metadata=metadata,
+        manifest={},
+    )
+    monkeypatch.setattr(
+        backend,
+        "validate_coreml_vlm_bundle",
+        lambda *_args, **_kwargs: info,
+    )
+    monkeypatch.setattr(sys, "platform", "darwin")
+    processor_calls = []
+    proxy_calls = []
+    monkeypatch.setattr(
+        backend,
+        "_load_smolvlm2_processor",
+        lambda path: processor_calls.append(path),
+    )
+
+    def load_model(*args, **kwargs):
+        proxy_calls.append((args, kwargs))
+        return object()
+
+    with pytest.raises(NotImplementedError, match="explicitly experimental"):
+        backend.CoreMLVLMRuntime(
+            bundle,
+            coremltools_module=_fake_ct(load_model),
+        )
+
+    assert processor_calls == []
+    assert proxy_calls == []
+
+
 def test_runtime_rejects_modified_runtime_metadata(monkeypatch, tmp_path):
     profile = smolvlm2_500m_coreml_profile(2048)
     metadata = smolvlm2_500m_coreml_metadata(profile)
@@ -861,6 +932,7 @@ def test_runtime_rejects_modified_runtime_metadata(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="strict Core ML VLM contract"):
         backend.CoreMLVLMRuntime(
             bundle,
+            compute_units="cpu_only",
             coremltools_module=_fake_ct(load_model),
         )
 

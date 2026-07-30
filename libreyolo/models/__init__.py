@@ -232,7 +232,7 @@ def LibreYOLO(
     nb_classes: int | None = None,
     device: str = "auto",
     task: str | None = None,
-    compute_units: str = "all",
+    compute_units: str = "cpu_only",
 ):
     """
     Unified factory that detects model family from weights and returns
@@ -246,8 +246,10 @@ def LibreYOLO(
         nb_classes: Number of classes (auto-detected if omitted).
         device: Device for inference ("auto", "cuda", "cpu", "mps").
         task: Optional canonical task name. See ``libreyolo.tasks.TASKS``.
-        compute_units: CoreML-only — Apple silicon routing for .mlpackage loads.
-                       One of "all", "cpu_only", "cpu_and_gpu", "cpu_and_ne".
+        compute_units: CoreML-only Apple silicon routing for .mlpackage loads.
+                       One of "validated", "all", "cpu_only", "cpu_and_gpu",
+                       or "cpu_and_ne". The default is the broadly compatible
+                       CPU path; "validated" opts into exact profile matching.
                        Ignored for non-CoreML formats.
 
     Returns:

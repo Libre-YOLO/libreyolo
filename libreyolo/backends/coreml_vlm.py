@@ -18,8 +18,6 @@ conversion contract from :mod:`libreyolo.export.coreml_vlm`.
 
 from __future__ import annotations
 
-import ctypes
-import errno
 import hashlib
 import hmac
 import importlib.metadata
@@ -63,6 +61,7 @@ from ..export.coreml_vlm import (
     SMOLVLM2_500M_WEIGHTS_FILENAME,
     SMOLVLM2_500M_WEIGHTS_SHA256,
     SMOLVLM2_500M_WEIGHTS_SIZE,
+    _publish_directory_no_replace,
     merge_coreml_vlm_image_embeddings,
     prepare_smolvlm2_500m_coreml_processor_batch,
     preprocess_smolvlm2_500m_coreml_image,
@@ -75,6 +74,7 @@ from ..export.coreml_vlm import (
     validate_coreml_vlm_multifunction_spec,
     validate_smolvlm2_500m_processor_assets,
 )
+from ..export.coreml_profiles import resolve_coreml_runtime_compute_units
 from ..models.vlm.parsing import build_detection_dict, extract_detections
 from ..utils.image_loader import ImageInput, ImageLoader
 
@@ -235,84 +235,6 @@ def _validate_bundle_destination(path: Path) -> None:
         )
     if path.exists() or path.is_symlink():
         raise FileExistsError(f"Refusing to overwrite Core ML VLM bundle: {path}.")
-
-
-def _publish_directory_no_replace(source: Path, destination: Path) -> None:
-    """Atomically publish a staged directory without replacing any node."""
-
-    if os.name == "nt":
-        source.rename(destination)
-        return
-
-    source_bytes = os.fsencode(source)
-    destination_bytes = os.fsencode(destination)
-    libc = ctypes.CDLL(None, use_errno=True)
-    function = None
-    arguments: tuple[Any, ...] = ()
-    if sys.platform == "darwin":
-        function = getattr(libc, "renameatx_np", None)
-        if function is not None:
-            function.argtypes = [
-                ctypes.c_int,
-                ctypes.c_char_p,
-                ctypes.c_int,
-                ctypes.c_char_p,
-                ctypes.c_uint,
-            ]
-            function.restype = ctypes.c_int
-            arguments = (
-                -2,
-                source_bytes,
-                -2,
-                destination_bytes,
-                0x00000004,
-            )
-    elif sys.platform.startswith("linux"):
-        function = getattr(libc, "renameat2", None)
-        if function is not None:
-            function.argtypes = [
-                ctypes.c_int,
-                ctypes.c_char_p,
-                ctypes.c_int,
-                ctypes.c_char_p,
-                ctypes.c_uint,
-            ]
-            function.restype = ctypes.c_int
-            arguments = (
-                -100,
-                source_bytes,
-                -100,
-                destination_bytes,
-                0x00000001,
-            )
-    if function is not None:
-        ctypes.set_errno(0)
-        if function(*arguments) == 0:
-            return
-        error = ctypes.get_errno()
-        if error in {errno.EEXIST, getattr(errno, "ENOTEMPTY", errno.EEXIST)}:
-            raise FileExistsError(
-                error,
-                "Core ML VLM bundle destination already exists",
-                str(destination),
-            )
-        unsupported = {
-            errno.EINVAL,
-            errno.ENOSYS,
-            getattr(errno, "ENOTSUP", errno.EINVAL),
-            getattr(errno, "EOPNOTSUPP", errno.EINVAL),
-        }
-        if error not in unsupported:
-            raise OSError(
-                error,
-                "Failed to publish Core ML VLM bundle",
-                str(destination),
-            )
-    raise RuntimeError(
-        "This platform/filesystem does not expose atomic no-replace directory "
-        "publication. Refusing an unsafe Core ML VLM bundle rename; choose a "
-        "local APFS, NTFS, ext4, or other supported destination."
-    )
 
 
 def _runtime_profile(context_length: Any) -> CoreMLVLMProfile:
@@ -1070,9 +992,10 @@ def _only_fp16_output(
             f"got {actual}."
         )
     value = np.asarray(result[name])
-    if value.dtype != np.float16:
+    if value.dtype not in (np.float16, np.float32):
         raise RuntimeError(
-            f"Core ML VLM output {name!r} must be float16, got {value.dtype}."
+            f"Core ML VLM output {name!r} must materialize as float16 or "
+            f"float32, got {value.dtype}."
         )
     if tuple(value.shape) != shape:
         raise RuntimeError(
@@ -1083,7 +1006,12 @@ def _only_fp16_output(
         raise RuntimeError(
             f"Core ML VLM output {name!r} contains NaN or infinity."
         )
-    return np.ascontiguousarray(value)
+    normalized = np.ascontiguousarray(value, dtype=np.float16)
+    if not bool(np.isfinite(normalized).all()):
+        raise RuntimeError(
+            f"Core ML VLM output {name!r} exceeds the declared FP16 range."
+        )
+    return normalized
 
 
 class _DecodeRequest:
@@ -1156,7 +1084,7 @@ class CoreMLVLMRuntime:
         self,
         bundle_path: str | os.PathLike[str],
         *,
-        compute_units: str = "all",
+        compute_units: str = "validated",
         coremltools_module: Any | None = None,
     ) -> None:
         if sys.platform != "darwin":
@@ -1169,8 +1097,12 @@ class CoreMLVLMRuntime:
             bundle_path,
             coremltools_module=ct,
         )
+        resolved_compute_units = resolve_coreml_runtime_compute_units(
+            compute_units,
+            info.metadata,
+        )
         processor = _load_smolvlm2_processor(info.processor_path)
-        unit = _compute_unit(ct, compute_units)
+        unit = _compute_unit(ct, resolved_compute_units)
         models: dict[str, Any] = {}
         try:
             for function_name in COREML_VLM_FUNCTION_NAMES:

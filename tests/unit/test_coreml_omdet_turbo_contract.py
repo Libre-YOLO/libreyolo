@@ -639,14 +639,14 @@ def test_direct_export_preparation_pins_canvas_and_metadata(monkeypatch):
         {
             "output": "frozen.OTHER",
             "imgsz": 640,
-            "half": True,
+            "half": False,
             "compute_units": "cpu_only",
         },
     )
     image_size, output, metadata, precision, compute_units = prepared
     assert image_size == 640
     assert output.endswith("frozen.mlpackage")
-    assert precision == "fp16"
+    assert precision == "fp32"
     assert compute_units == "cpu_only"
     assert metadata["frozen_classes"] is True
     assert metadata["omdet_turbo_num_classes"] == 2
@@ -655,7 +655,7 @@ def test_direct_export_preparation_pins_canvas_and_metadata(monkeypatch):
     )
     assert calls == [
         {
-            "half": True,
+            "half": False,
             "int8": False,
             "data": None,
             "nms": False,
@@ -736,6 +736,7 @@ def test_direct_export_restores_live_model_state(
         ({"nms": True}, "host"),
         ({"imgsz": 608}, "640x640"),
         ({"device": "cuda"}, "traces on CPU"),
+        ({"half": True}, "FP32-only"),
         ({"text": ["cat"]}, "Unsupported"),
     ],
 )

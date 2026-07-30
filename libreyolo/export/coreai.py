@@ -191,12 +191,14 @@ def _freeze_anchor_grid(nn_model: nn.Module, dummy: torch.Tensor):
             head.shape = previous_shape
 
     try:
-        # Warm up in NON-export mode so _grid populates the anchor cache.
-        # Input values are irrelevant; anchors depend only on feature geometry,
-        # which dummy's H/W fixes.
+        # Warm up the detector itself in NON-export mode so _grid populates the
+        # anchor cache.  Do not call ``nn_model`` here: export pipelines wrap
+        # the detector in semantic output adapters whose contract is valid only
+        # while ``head.export`` is true.  Their output is irrelevant to this
+        # geometry-only warm-up.
         head.export = False
         with torch.no_grad():
-            nn_model(dummy)
+            target(dummy)
         anchors = getattr(head, "anchors", None)
         strides = getattr(head, "strides", None)
         if anchors is None or strides is None or anchors.ndim < 2:

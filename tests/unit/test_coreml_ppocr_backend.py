@@ -158,6 +158,7 @@ class _Runtime:
 def _load(monkeypatch, tmp_path, *, metadata=None, spec=None):
     metadata = metadata or _metadata()
     spec = spec or _spec()
+    spec.description.metadata = SimpleNamespace(userDefined=metadata)
     calls = []
     loads = []
 
@@ -174,6 +175,7 @@ def _load(monkeypatch, tmp_path, *, metadata=None, spec=None):
             CPU_ONLY="CPU_ONLY",
         ),
         models=SimpleNamespace(MLModel=load_model),
+        utils=SimpleNamespace(load_spec=lambda *_args, **_kwargs: spec),
     )
     monkeypatch.setitem(sys.modules, "coremltools", fake_ct)
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -182,7 +184,7 @@ def _load(monkeypatch, tmp_path, *, metadata=None, spec=None):
 
     from libreyolo.backends.coreml import CoreMLBackend
 
-    backend = CoreMLBackend(str(package))
+    backend = CoreMLBackend(str(package), compute_units="cpu_only")
     return backend, calls, loads
 
 
@@ -196,7 +198,7 @@ def test_multifunction_loader_opens_both_functions_and_runs_named_outputs(
     assert backend.task == "ocr"
     assert backend.charset == ["blank", "a", "b", " "]
     assert backend.rec_num_classes == 4
-    assert loads == ["detector", "detector", "recognizer"]
+    assert loads == ["detector", "recognizer"]
 
     result = backend.predict(Image.new("RGB", (80, 40), color=(127, 63, 31)))
     assert result.ocr is not None
@@ -321,6 +323,7 @@ def test_public_exporter_routes_bounded_multifunction_profile(
             output_path=str(output),
             rec_batch_max=2,
             rec_max_width=325,
+            compute_units="cpu_only",
         )
 
     assert result == str(output)
@@ -334,7 +337,11 @@ def test_public_exporter_routes_bounded_multifunction_profile(
     assert captured["metadata"]["rec_num_classes"] == 4
 
     with pytest.raises(ValueError, match="explicit finite rec_max_width"):
-        exporter(imgsz=64, output_path=str(tmp_path / "missing.mlpackage"))
+        exporter(
+            imgsz=64,
+            output_path=str(tmp_path / "missing.mlpackage"),
+            compute_units="cpu_only",
+        )
 
 
 @pytest.mark.parametrize(
@@ -342,7 +349,7 @@ def test_public_exporter_routes_bounded_multifunction_profile(
     [
         (
             lambda metadata, spec: metadata.__setitem__("dynamic", "False"),
-            "dynamic=true",
+            "dynamic.*True",
         ),
         (
             lambda metadata, spec: setattr(

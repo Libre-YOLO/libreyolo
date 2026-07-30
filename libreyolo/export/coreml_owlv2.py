@@ -614,7 +614,7 @@ def prepare_owlv2_coreml_export(
     batch = int(options.pop("batch", 1))
     nms = bool(options.pop("nms", False))
     device = options.pop("device", None)
-    compute_units = str(options.pop("compute_units", "all")).lower()
+    compute_units = options.pop("compute_units", "cpu_only")
     conf = options.pop("conf", 0.1)
     iou = options.pop("iou", 0.45)
     max_det = options.pop("max_det", 300)
@@ -633,6 +633,12 @@ def prepare_owlv2_coreml_export(
         names = ", ".join(sorted(options))
         raise TypeError(f"Unsupported OWLv2 Core ML export options: {names}")
 
+    if half:
+        raise NotImplementedError(
+            "OWLv2 Core ML export is FP32-only. Core ML Tools 9 FP16 "
+            "conversion completes, but real Apple runtime outputs diverge "
+            "from the prepared graph; pass half=False."
+        )
     if dynamic:
         raise NotImplementedError(
             "Frozen-vocabulary OWLv2 Core ML export uses a fixed image and "
@@ -665,12 +671,23 @@ def prepare_owlv2_coreml_export(
     else:
         requested = (int(imgsz), int(imgsz))
     validate_owlv2_coreml_profile(size=size, canvas_hw=requested)
-
     labels = _ordered_names(getattr(model, "names", {}))
     if int(getattr(model, "nb_classes", 0)) != len(labels):
         raise RuntimeError(
             "OWLv2 class metadata is inconsistent: nb_classes must match names."
         )
+    from .coreml_profiles import resolve_coreml_export_compute_units
+
+    compute_units, _ = resolve_coreml_export_compute_units(
+        compute_units,
+        family="owlv2",
+        task="detect",
+        size=size,
+        canvas=requested,
+        precision="fp32",
+        nms=False,
+        class_count=len(labels),
+    )
 
     exporter = CoreMLExporter(model)
     half, int8 = exporter._validate(half, int8, data)

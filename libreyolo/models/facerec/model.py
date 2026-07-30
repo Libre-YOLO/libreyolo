@@ -56,7 +56,7 @@ class LibreFaceEmbedder:
         face_detector: Any = None,
         names: Optional[dict] = None,
         task: str | None = "embed",
-        compute_units: str = "all",
+        compute_units: str = "cpu_only",
     ):
         from ...tasks import normalize_task
 

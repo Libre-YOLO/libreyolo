@@ -160,6 +160,25 @@ def test_yolo9_p2_prepare_state_dict_passes_p2_checkpoints_through():
     assert set(prepared) == set(own_sd)
 
 
+def test_yolo9_p2_transfer_loading_leaves_public_inference_ready(tmp_path):
+    from libreyolo import LibreYOLO9, LibreYOLO9P2
+
+    source = LibreYOLO9(None, size="t", device="cpu")
+    checkpoint = tmp_path / "LibreYOLO9t.pt"
+    torch.save(source.model.state_dict(), checkpoint)
+
+    model = LibreYOLO9P2(None, size="t", device="cpu")
+    assert model.model.training
+    stats = model._load_transfer_weights(checkpoint)
+
+    assert stats["loaded"] > 0
+    assert not model.model.training
+    with torch.no_grad():
+        output = model.model(torch.zeros(1, 3, 64, 64))
+    assert isinstance(output, dict)
+    assert output["predictions"].shape == (1, 84, 340)
+
+
 def test_yolo9_p2_visdrone_variant_filename_routing():
     """The published VisDrone research-preview weight must route like any
     other weight file: size detected, base family not claiming it, and the

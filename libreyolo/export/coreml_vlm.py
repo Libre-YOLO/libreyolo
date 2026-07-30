@@ -27,11 +27,14 @@ No checkpoint code is executed (``trust_remote_code=False``).
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import hmac
 import json
 import math
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from numbers import Integral
@@ -44,8 +47,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 
+from .coreml_profiles import (
+    coreml_execution_profile_metadata,
+    resolve_coreml_export_compute_units,
+)
 
-COREML_VLM_SCHEMA_VERSION = 1
+
+COREML_VLM_SCHEMA_VERSION = 2
 COREML_VLM_ARTIFACT_SCOPE = "host_orchestrated_generative_vlm_multifunction"
 COREML_VLM_MINIMUM_DEPLOYMENT_TARGETS = ("iOS18", "macOS15")
 COREML_VLM_REQUIRED_COREMLTOOLS_MAJOR = 9
@@ -73,7 +81,9 @@ COREML_VLM_LAST_LOGITS_OUTPUT = "last_logits"
 COREML_VLM_KEY_CACHE_STATE = "key_cache"
 COREML_VLM_VALUE_CACHE_STATE = "value_cache"
 
-SMOLVLM2_500M_COMPONENT_CONTRACT = "smolvlm2_500m_fixed_square_stateful_v1"
+SMOLVLM2_500M_COMPONENT_CONTRACT = (
+    "smolvlm2_500m_fixed_square_fp32vision_fp16embed_fp32decode_state16_v2"
+)
 SMOLVLM2_500M_REPO = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
 SMOLVLM2_500M_REVISION = "7b375e1b73b11138ff12fe22c8f2822d8fe03467"
 SMOLVLM2_500M_CONTEXT_CHOICES = (2048, 4096, 8192)
@@ -271,7 +281,7 @@ class CoreMLVLMProfile:
 def smolvlm2_500m_coreml_profile(
     context_length: int = SMOLVLM2_500M_DEFAULT_CONTEXT,
 ) -> CoreMLVLMProfile:
-    """Build the only currently specified production VLM profile."""
+    """Build the only currently specified bounded VLM graph profile."""
 
     context = _strict_positive_int(context_length, name="context_length")
     if context not in SMOLVLM2_500M_CONTEXT_CHOICES:
@@ -296,6 +306,29 @@ def smolvlm2_500m_coreml_profile(
         head_dim=64,
         max_new_tokens=SMOLVLM2_500M_CONTEXT_MAX_NEW_TOKENS[context],
     )
+
+
+def resolve_smolvlm2_500m_coreml_export_compute_units(
+    compute_units: Any,
+) -> str:
+    """Resolve this unvalidated VLM export without implying Apple evidence."""
+
+    resolved, execution_profile = resolve_coreml_export_compute_units(
+        compute_units,
+        family="smolvlm2",
+        task="detect",
+        size="500m",
+        canvas=SMOLVLM2_500M_SOURCE_IMAGE_SIZE,
+        precision="fp32",
+        nms=False,
+    )
+    if execution_profile is not None:
+        raise RuntimeError(
+            "SmolVLM2 Core ML is still experimental, but an exact hardware "
+            "execution profile was unexpectedly registered. Update the "
+            "specialized bundle contract before enabling validated routing."
+        )
+    return resolved
 
 
 def validate_coreml_vlm_decode_bounds(
@@ -992,6 +1025,10 @@ def smolvlm2_500m_coreml_metadata(
         "dynamic_crop_count": False,
         "pixel_attention_mask": "implicit_all_ones",
     }
+    execution_profile = coreml_execution_profile_metadata(
+        None,
+        conversion_compute_units="cpu_only",
+    )
     integrity_surface = {
         "profile": resolved.as_dict(),
         "functions": functions,
@@ -1000,6 +1037,7 @@ def smolvlm2_500m_coreml_metadata(
         "generation": generation,
         "image_profile": image_profile,
         "host_operations": list(COREML_VLM_HOST_OPERATIONS),
+        "execution_profile": execution_profile,
     }
     return {
         "artifact_scope": COREML_VLM_ARTIFACT_SCOPE,
@@ -1016,12 +1054,18 @@ def smolvlm2_500m_coreml_metadata(
         "model_family": "smolvlm2",
         "size": "500m",
         "task": "detect",
-        "precision": "fp16",
+        "precision": "mixed",
+        "vision_compute_precision": "fp32",
+        "token_embedding_compute_precision": "fp16",
+        "decoder_compute_precision": "fp32",
+        "function_io_precision": "fp16",
+        "state_precision": "fp16",
         "conversion_source_precision": "fp32",
         "batch": 1,
         "dynamic": True,
         "weights_license": "apache-2.0",
         "artifact_redistributable": True,
+        **execution_profile,
         "vlm_profile": resolved.as_dict(),
         "vlm_functions": functions,
         "processor": processor,
@@ -1070,6 +1114,18 @@ def validate_coreml_vlm_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
 
     if not isinstance(metadata, Mapping):
         raise ValueError("Core ML VLM metadata must be a mapping.")
+    expected_keys = set(
+        smolvlm2_500m_coreml_metadata(
+            smolvlm2_500m_coreml_profile()
+        )
+    )
+    if set(metadata) != expected_keys:
+        missing = sorted(expected_keys - set(metadata))
+        extra = sorted(set(metadata) - expected_keys)
+        raise ValueError(
+            "Core ML VLM metadata keys changed: "
+            f"missing={missing}, extra={extra}."
+        )
     raw_profile = metadata.get("vlm_profile")
     if isinstance(raw_profile, str):
         try:
@@ -1820,7 +1876,15 @@ def _convert_coreml_vlm_component(
         "inputs": inputs,
         "outputs": outputs,
         "convert_to": "mlprogram",
-        "compute_precision": ct.precision.FLOAT16,
+        # The complete SmolVLM2 vision tower and recurrent decoder exceed their
+        # hardware parity gates when every intermediate is lowered to FP16.
+        # Preserve FP32 compute for both graphs while retaining the bounded
+        # FP16 public/state ABI. The embedding lookup is exact with FP16 compute.
+        "compute_precision": (
+            ct.precision.FLOAT16
+            if function_name == COREML_VLM_EMBED_TOKENS_FUNCTION
+            else ct.precision.FLOAT32
+        ),
         "minimum_deployment_target": ct.target.iOS18,
         "compute_units": _to_compute_unit(ct, compute_units),
         "skip_model_load": True,
@@ -1953,22 +2017,131 @@ def validate_coreml_vlm_multifunction_spec(
         )
 
 
+def _publish_directory_no_replace(source: Path, destination: Path) -> None:
+    """Atomically publish a staged package without replacing any node."""
+
+    if os.name == "nt":
+        source.rename(destination)
+        return
+
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    libc = ctypes.CDLL(None, use_errno=True)
+    function = None
+    arguments: tuple[Any, ...] = ()
+    if sys.platform == "darwin":
+        function = getattr(libc, "renameatx_np", None)
+        if function is not None:
+            function.argtypes = [
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_uint,
+            ]
+            function.restype = ctypes.c_int
+            arguments = (
+                -2,
+                source_bytes,
+                -2,
+                destination_bytes,
+                0x00000004,
+            )
+    elif sys.platform.startswith("linux"):
+        function = getattr(libc, "renameat2", None)
+        if function is not None:
+            function.argtypes = [
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_uint,
+            ]
+            function.restype = ctypes.c_int
+            arguments = (
+                -100,
+                source_bytes,
+                -100,
+                destination_bytes,
+                0x00000001,
+            )
+    if function is not None:
+        ctypes.set_errno(0)
+        if function(*arguments) == 0:
+            return
+        error = ctypes.get_errno()
+        if error in {errno.EEXIST, getattr(errno, "ENOTEMPTY", errno.EEXIST)}:
+            raise FileExistsError(
+                error,
+                "Core ML VLM artifact destination already exists",
+                str(destination),
+            )
+        unsupported = {
+            errno.EINVAL,
+            errno.ENOSYS,
+            getattr(errno, "ENOTSUP", errno.EINVAL),
+            getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+        }
+        if error not in unsupported:
+            raise OSError(
+                error,
+                "Failed to publish Core ML VLM artifact",
+                str(destination),
+            )
+    raise RuntimeError(
+        "The destination filesystem lacks atomic no-replace directory "
+        "publication. Refusing an unsafe Core ML VLM artifact rename."
+    )
+
+
+def _write_coreml_vlm_metadata_in_place(
+    ct: Any,
+    model: Any,
+    package_path: Path,
+    metadata: Mapping[str, str],
+) -> None:
+    """Atomically replace only the package protobuf, never its large weights."""
+
+    spec = model.get_spec()
+    spec.description.metadata.userDefined.update(dict(metadata))
+    model_files = list(package_path.rglob("*.mlmodel"))
+    if len(model_files) != 1:
+        raise RuntimeError(
+            "Merged Core ML VLM package must contain exactly one model "
+            f"protobuf, found {len(model_files)}."
+        )
+    model_file = model_files[0]
+    temporary = model_file.with_name(".libreyolo-metadata.mlmodel")
+    if temporary.exists() or temporary.is_symlink():
+        raise FileExistsError(
+            f"Refusing to replace existing Core ML metadata staging file: {temporary}."
+        )
+    try:
+        ct.utils.save_spec(spec, str(temporary))
+        os.replace(temporary, model_file)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def build_coreml_vlm_multifunction_package(
     components: Mapping[str, nn.Module],
     *,
     output_path: str | os.PathLike[str],
     profile: CoreMLVLMProfile,
     metadata: Mapping[str, Any],
-    compute_units: str = "cpu_and_gpu",
+    compute_units: str = "validated",
     coremltools_module: Any | None = None,
 ) -> str:
     """Convert and merge three components into one native stateful package.
 
-    The destination must not already exist. This vertical-slice API chooses a
-    fail-safe no-overwrite policy until it is wired through LibreYOLO's public
-    export transaction layer.
+    The destination must not already exist. Publication uses a same-filesystem
+    atomic no-replace rename and fails closed when the platform or filesystem
+    cannot provide that primitive.
     """
 
+    resolved_compute_units = (
+        resolve_smolvlm2_500m_coreml_export_compute_units(compute_units)
+    )
     expected_names = list(COREML_VLM_FUNCTION_NAMES)
     if list(components) != expected_names:
         raise ValueError(
@@ -2012,7 +2185,7 @@ def build_coreml_vlm_multifunction_package(
                 components[function_name],
                 function_name=function_name,
                 profile=profile,
-                compute_units=compute_units,
+                compute_units=resolved_compute_units,
             )
             validate_coreml_vlm_function_description(
                 converted.get_spec().description,
@@ -2031,18 +2204,21 @@ def build_coreml_vlm_multifunction_package(
         merged_path = workspace / "merged.mlpackage"
         ct.utils.save_multifunction(descriptor, str(merged_path))
         merged = ct.models.MLModel(str(merged_path), skip_model_load=True)
-        merged.user_defined_metadata.update(string_metadata)
-        staged_path = workspace / "staged.mlpackage"
-        merged.save(str(staged_path))
+        _write_coreml_vlm_metadata_in_place(
+            ct,
+            merged,
+            merged_path,
+            string_metadata,
+        )
         del merged
-        staged = ct.models.MLModel(str(staged_path), skip_model_load=True)
+        staged = ct.models.MLModel(str(merged_path), skip_model_load=True)
         validate_coreml_vlm_multifunction_spec(
             staged.get_spec(),
             profile=profile,
         )
         validate_coreml_vlm_metadata(dict(staged.user_defined_metadata))
         del staged
-        staged_path.rename(destination)
+        _publish_directory_no_replace(merged_path, destination)
 
     return str(destination)
 
@@ -2054,10 +2230,13 @@ def export_smolvlm2_500m_coreml_package(
     processor_revision: str,
     output_path: str | os.PathLike[str],
     context_length: int = SMOLVLM2_500M_DEFAULT_CONTEXT,
-    compute_units: str = "cpu_and_gpu",
+    compute_units: str = "validated",
 ) -> str:
     """Strict internal Smol500 package path; not yet a public model hook."""
 
+    resolved_compute_units = (
+        resolve_smolvlm2_500m_coreml_export_compute_units(compute_units)
+    )
     require_coreml_vlm_transformers_toolchain()
     profile = smolvlm2_500m_coreml_profile(context_length)
     validate_smolvlm2_500m_model(model)
@@ -2146,7 +2325,7 @@ def export_smolvlm2_500m_coreml_package(
             output_path=output_path,
             profile=profile,
             metadata=metadata,
-            compute_units=compute_units,
+            compute_units=resolved_compute_units,
         )
     finally:
         for module, training in training_states:
@@ -2191,6 +2370,7 @@ __all__ = [
     "prepare_smolvlm2_500m_coreml_processor_batch",
     "require_coreml_vlm_toolchain",
     "require_coreml_vlm_transformers_toolchain",
+    "resolve_smolvlm2_500m_coreml_export_compute_units",
     "smolvlm2_500m_coreml_metadata",
     "smolvlm2_500m_coreml_profile",
     "smolvlm2_500m_processor_manifest",

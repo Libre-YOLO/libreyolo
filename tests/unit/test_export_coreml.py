@@ -91,6 +91,31 @@ class _DummyYoloxExportModel(torch.nn.Module):
         )
 
 
+class _DummyYolo9ExportModel(torch.nn.Module):
+    def __init__(self, nc: int = 80):
+        super().__init__()
+        self.nc = int(nc)
+
+    def forward(self, x):
+        return torch.zeros(
+            x.shape[0],
+            4 + self.nc,
+            8400,
+            dtype=x.dtype,
+            device=x.device,
+        )
+
+
+class _NoGradYoloxExportModel(_DummyYoloxExportModel):
+    """Model whose trace must use the same inference state as JIT's check."""
+
+    def forward(self, x):
+        assert not torch.is_grad_enabled()
+        if torch.jit.is_tracing():
+            assert not torch.backends.mha.get_fastpath_enabled()
+        return super().forward(x)
+
+
 class _DummyRtdetrExportModel(torch.nn.Module):
     def forward(self, x):
         batch = x.shape[0]
@@ -173,9 +198,47 @@ def _patch_ct(monkeypatch):
 
     # Create the MLModel mock that gets returned by convert
     mlmodel = MagicMock()
-    mlmodel.user_defined_metadata = {}
+    mlmodel.user_defined_metadata = {
+        "com.github.apple.coremltools.conversion_date": "2026-07-29",
+        "com.github.apple.coremltools.source": "torch==2.7.0",
+        "com.github.apple.coremltools.source_dialect": "TorchScript",
+        "com.github.apple.coremltools.version": "9.0",
+    }
     mlmodel.save.side_effect = lambda path: Path(path).mkdir(parents=True)
     fake.convert = MagicMock(return_value=mlmodel)
+    fake.utils.load_spec.side_effect = lambda _path: SimpleNamespace(
+        description=SimpleNamespace(
+            metadata=SimpleNamespace(
+                userDefined=dict(mlmodel.user_defined_metadata)
+            ),
+        ),
+    )
+
+    from libreyolo.export import coreml as coreml_module
+    from libreyolo.export import coreml_identity
+
+    def bind_test_abi(metadata, _spec):
+        return {
+            **metadata,
+            "coreml_profile_abi_schema": "coreml-deployment-abi-v2",
+            "coreml_profile_abi_sha256": "3" * 64,
+        }
+
+    monkeypatch.setattr(
+        coreml_identity,
+        "bind_coreml_deployment_abi",
+        bind_test_abi,
+    )
+    monkeypatch.setattr(
+        coreml_identity,
+        "validate_coreml_deployment_abi",
+        lambda _spec, _metadata: "3" * 64,
+    )
+    monkeypatch.setattr(
+        coreml_module,
+        "_validate_coreml_deployment_spec",
+        lambda *_args, **_kwargs: None,
+    )
 
     # Patch the module and submodules
     monkeypatch.setitem(sys.modules, "coremltools", fake)
@@ -188,6 +251,32 @@ def _patch_ct(monkeypatch):
 
 
 class TestExportCoreML:
+    def test_trace_runs_with_gradients_disabled(self, tmp_path, monkeypatch):
+        _patch_ct(monkeypatch)
+        from libreyolo.export.coreml import export_coreml
+
+        fastpath_before = torch.backends.mha.get_fastpath_enabled()
+        result = export_coreml(
+            _NoGradYoloxExportModel(nc=1).eval(),
+            torch.randn(1, 3, 32, 32),
+            output_path=str(tmp_path / "no-grad.mlpackage"),
+            precision="fp32",
+            metadata=_strict_metadata(
+                "yolox",
+                "detect",
+                "n",
+                names={"0": "person"},
+                imgsz=32,
+            ),
+            model_family="yolox",
+            model_task="detect",
+            model_size="n",
+            compute_units="cpu_only",
+        )
+
+        assert result.endswith("no-grad.mlpackage")
+        assert torch.backends.mha.get_fastpath_enabled() is fastpath_before
+
     def test_fp32_basic_call(self, tmp_path, monkeypatch):
         fake, mlmodel = _patch_ct(monkeypatch)
         from libreyolo.export.coreml import export_coreml
@@ -241,6 +330,35 @@ class TestExportCoreML:
         assert staged_path.name == "candidate.mlpackage"
         assert staged_path != out
 
+    def test_unpromoted_exact_profile_defaults_to_cpu_only(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        fake, _ = _patch_ct(monkeypatch)
+        from libreyolo.export.coreml import export_coreml
+
+        output = tmp_path / "yolo9-profile.mlpackage"
+        export_coreml(
+            _DummyYolo9ExportModel().eval(),
+            torch.randn(1, 3, 640, 640),
+            output_path=str(output),
+            metadata=_strict_metadata(
+                "yolo9",
+                "detect",
+                "t",
+                names={
+                    str(index): f"class_{index}"
+                    for index in range(80)
+                },
+            ),
+            model_family="yolo9",
+            model_task="detect",
+            model_size="t",
+        )
+        assert fake.convert.call_args.kwargs["compute_units"] == "CPU_ONLY"
+        assert output.is_dir()
+
     def test_picosam3_component_converts_saves_and_embeds_scope(
         self,
         tmp_path,
@@ -264,6 +382,7 @@ class TestExportCoreML:
             model_family="picosam3",
             model_task="segment",
             model_size="pico",
+            compute_units="cpu_only",
         )
 
         assert result == str(output)
@@ -320,6 +439,7 @@ class TestExportCoreML:
             model_family="eomt",
             model_task="semantic",
             model_size="s",
+            compute_units="cpu_only",
         )
 
         assert result == str(output)
@@ -354,6 +474,7 @@ class TestExportCoreML:
             _DummyRFDETRPoseExportModel().eval(),
             torch.rand(1, 3, 64, 64),
             output_path=str(output),
+            compute_units="cpu_only",
             model_family="rfdetr",
             model_task="pose",
             model_size="n",
@@ -367,10 +488,26 @@ class TestExportCoreML:
         )
 
         assert result == str(output)
+        pipeline = fake.PassPipeline.return_value
+        fake.PassPipeline.assert_called_once_with()
+        pipeline.remove_passes.assert_called_once_with(
+            {"common::divide_to_multiply"}
+        )
+
+        assert fake.convert.call_args.kwargs["pass_pipeline"] is pipeline
         fake.ImageType.assert_not_called()
         tensor_kwargs = fake.TensorType.call_args_list[0].kwargs
         assert tensor_kwargs == {"name": "image", "shape": (1, 3, 64, 64)}
-        io = __import__("json").loads(mlmodel.user_defined_metadata["coreml_io"])
+        metadata = mlmodel.user_defined_metadata
+        assert metadata["coreml_required_compute_units"] == "cpu_only"
+        assert (
+            metadata["coreml_conversion_pass_profile"]
+            == "rfdetr_pose_preserve_division_v1"
+        )
+        assert __import__("json").loads(metadata["coreml_disabled_passes"]) == [
+            "common::divide_to_multiply"
+        ]
+        io = __import__("json").loads(metadata["coreml_io"])
         assert io["input"] == {
             "name": "image",
             "kind": "tensor",
@@ -382,6 +519,128 @@ class TestExportCoreML:
             "resize_backend": "torchvision",
             "pad_value": 0,
         }
+
+    def test_pass_pipeline_preserves_rfdetr_division(self):
+        from libreyolo.export.coreml import _coreml_pass_pipeline
+
+        fake_ct = SimpleNamespace(PassPipeline=MagicMock())
+        assert _coreml_pass_pipeline(fake_ct, "ec", "pose") is None
+        fake_ct.PassPipeline.assert_not_called()
+
+        for task in ("detect", "obb", "pose"):
+            pipeline = _coreml_pass_pipeline(fake_ct, "rfdetr", task)
+            assert pipeline is fake_ct.PassPipeline.return_value
+            pipeline.remove_passes.assert_called_once_with(
+                {"common::divide_to_multiply"}
+            )
+            fake_ct.PassPipeline.reset_mock()
+            pipeline.remove_passes.reset_mock()
+
+        nafnet_pipeline = _coreml_pass_pipeline(fake_ct, "nafnet", "restore")
+        assert nafnet_pipeline is fake_ct.PassPipeline.return_value
+        fake_ct.PassPipeline.assert_called_once_with()
+        nafnet_pipeline.remove_passes.assert_called_once_with(
+            {"common::fuse_elementwise_to_batchnorm"}
+        )
+
+    @pytest.mark.parametrize(
+        "compute_units",
+        ["all", "cpu_and_gpu", "cpu_and_ne"],
+    )
+    def test_direct_rfdetr_pose_rejects_non_cpu_before_graph_or_destination(
+        self,
+        tmp_path,
+        monkeypatch,
+        compute_units,
+    ):
+        fake, _mlmodel = _patch_ct(monkeypatch)
+        from libreyolo.export.coreml import export_coreml
+
+        output = tmp_path / "rejected.mlpackage"
+        with pytest.raises(NotImplementedError, match="requires.*cpu_only"):
+            export_coreml(
+                _DummyRFDETRPoseExportModel().eval(),
+                torch.rand(1, 3, 64, 64),
+                output_path=str(output),
+                compute_units=compute_units,
+                model_family="rfdetr",
+                model_task="pose",
+                model_size="n",
+                metadata=_strict_metadata(
+                    "rfdetr",
+                    "pose",
+                    "n",
+                    names={"0": "person"},
+                    imgsz=64,
+                ),
+            )
+
+        fake.convert.assert_not_called()
+        assert not output.exists()
+
+    def test_direct_rfdetr_pose_rejects_fp16_before_graph_or_destination(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        fake, _mlmodel = _patch_ct(monkeypatch)
+        from libreyolo.export.coreml import export_coreml
+
+        output = tmp_path / "rejected-fp16.mlpackage"
+        with pytest.raises(NotImplementedError, match="requires precision='fp32'"):
+            export_coreml(
+                _DummyRFDETRPoseExportModel().eval(),
+                torch.rand(1, 3, 64, 64),
+                output_path=str(output),
+                precision="fp16",
+                compute_units="cpu_only",
+                model_family="rfdetr",
+                model_task="pose",
+                model_size="n",
+                metadata=_strict_metadata(
+                    "rfdetr",
+                    "pose",
+                    "n",
+                    names={"0": "person"},
+                    imgsz=64,
+                ),
+            )
+
+        fake.convert.assert_not_called()
+        assert not output.exists()
+
+    def test_direct_depth_anything3_rejects_fp16_before_conversion(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        fake, _mlmodel = _patch_ct(monkeypatch)
+        from libreyolo.export.coreml import export_coreml
+
+        output = tmp_path / "rejected-da3-fp16.mlpackage"
+        with pytest.raises(
+            NotImplementedError,
+            match="Depth Anything 3.*precision='fp32'",
+        ):
+            export_coreml(
+                _DummyYoloxExportModel(nc=1).eval(),
+                torch.rand(1, 3, 504, 504),
+                output_path=str(output),
+                precision="fp16",
+                compute_units="cpu_only",
+                model_family="depth_anything3",
+                model_task="depth",
+                model_size="l",
+                metadata=_strict_metadata(
+                    "depth_anything3",
+                    "depth",
+                    "l",
+                    imgsz=504,
+                ),
+            )
+
+        fake.convert.assert_not_called()
+        assert not output.exists()
 
     def test_fp16_uses_float16_precision(self, tmp_path, monkeypatch):
         fake, mlmodel = _patch_ct(monkeypatch)
@@ -447,6 +706,7 @@ class TestExportCoreML:
             model_family="yolox",
             model_task="detect",
             model_size="n",
+            compute_units="cpu_only",
         )
 
         assert result == str(tmp_path / "detector.mlpackage")
@@ -477,6 +737,7 @@ class TestExportCoreML:
                 model_family="yolox",
                 model_task="detect",
                 model_size="n",
+                compute_units="cpu_only",
             )
 
         fake.convert.assert_not_called()
@@ -505,6 +766,16 @@ class TestExportCoreML:
 
 
 class TestUnsupportedFamily:
+    def test_rfdetr_s_and_l_obb_are_rejected_after_m4_parity_failures(self):
+        from libreyolo.export.coreml import _validate_export_profile
+
+        with pytest.raises(NotImplementedError, match="2.66%"):
+            _validate_export_profile("rfdetr", "obb", "l")
+        with pytest.raises(NotImplementedError, match="0.52%"):
+            _validate_export_profile("rfdetr", "obb", "s")
+        _validate_export_profile("rfdetr", "obb", "n")
+        _validate_export_profile("rfdetr", "obb", "m")
+
     def test_unknown_family_raises(self, tmp_path, monkeypatch):
         _patch_ct(monkeypatch)
         from libreyolo.export.coreml import export_coreml
@@ -533,6 +804,34 @@ class TestUnsupportedFamily:
                 model_family="yolo9",
                 model_task="segment",
             )
+
+    def test_rfdetr_segment_direct_export_fails_before_graph_or_destination(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        _patch_ct(monkeypatch)
+        from libreyolo.export import coreml
+
+        prepare = MagicMock()
+        monkeypatch.setattr(coreml, "_wrap_coreml_contract", prepare)
+        destination = tmp_path / "rfdetr-segment.mlpackage"
+
+        with pytest.raises(
+            NotImplementedError,
+            match="not supported for 'rfdetr' task 'segment'",
+        ):
+            coreml.export_coreml(
+                _DummyModel().eval(),
+                torch.randn(1, 3, 16, 16),
+                output_path=str(destination),
+                model_family="rfdetr",
+                model_task="segment",
+                model_size="n",
+            )
+
+        prepare.assert_not_called()
+        assert not destination.exists()
 
     @pytest.mark.parametrize("size", [None, "s", "m", "l", "x"])
     def test_deimv2_license_boundary_is_size_gated(self, size, tmp_path, monkeypatch):
@@ -585,6 +884,80 @@ class TestUnsupportedFamily:
             )
         prepare.assert_not_called()
 
+    def test_sam_dynamic_flag_rejected_before_component_wrapping(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        _patch_ct(monkeypatch)
+        from libreyolo.export import coreml
+
+        wrap = MagicMock()
+        monkeypatch.setattr(coreml, "_export_sam_coreml_impl", wrap)
+        with pytest.raises(
+            NotImplementedError,
+            match="prompt_max_points.*dynamic=True",
+        ):
+            coreml.export_coreml(
+                _DummyModel().eval(),
+                torch.randn(1, 3, 16, 16),
+                output_path=str(tmp_path / "sam.mlpackage"),
+                model_family="mobilesam",
+                model_task="segment",
+                model_size="tiny",
+                dynamic=True,
+            )
+        wrap.assert_not_called()
+
+    def test_sam_prompt_bound_controls_execution_profile_label(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        _patch_ct(monkeypatch)
+        from libreyolo.export import coreml
+
+        dispatch = MagicMock(return_value=str(tmp_path / "edgetam.mlpackage"))
+        monkeypatch.setattr(coreml, "_export_sam_coreml_impl", dispatch)
+        metadata = _strict_metadata(
+            "edgetam",
+            "segment",
+            "edge",
+            imgsz=1024,
+        )
+        with pytest.raises(NotImplementedError, match="not yet been promoted"):
+            coreml.export_coreml(
+                _DummyModel().eval(),
+                torch.zeros(1, 3, 1024, 1024),
+                output_path=str(tmp_path / "edgetam.mlpackage"),
+                model_family="edgetam",
+                model_task="segment",
+                model_size="edge",
+                metadata=metadata,
+                prompt_max_points=4,
+                compute_units="validated",
+            )
+        dispatch.assert_not_called()
+
+        with pytest.warns(RuntimeWarning, match="awaiting"):
+            coreml.export_coreml(
+                _DummyModel().eval(),
+                torch.zeros(1, 3, 1024, 1024),
+                output_path=str(tmp_path / "edgetam-p16.mlpackage"),
+                model_family="edgetam",
+                model_task="segment",
+                model_size="edge",
+                metadata=metadata,
+                prompt_max_points=4,
+                compute_units="cpu_only",
+            )
+        assert not dispatch.call_args.kwargs[
+            "has_candidate_execution_profile"
+        ]
+        assert dispatch.call_args.kwargs["requested_compute_units"] == (
+            "cpu_only"
+        )
+
     def test_incomplete_metadata_rejected_before_graph_preparation(
         self, tmp_path, monkeypatch
     ):
@@ -602,6 +975,7 @@ class TestUnsupportedFamily:
                 model_task="classify",
                 model_size="18",
                 metadata={"names": {"0": "class_0"}, "nc": 1},
+                compute_units="cpu_only",
             )
         prepare.assert_not_called()
 
@@ -611,11 +985,12 @@ class TestCoreMLContracts:
         from libreyolo.export.coreml import supported_coreml_exports
 
         supported = supported_coreml_exports()
-        assert len(supported) == 61
+        assert len(supported) == 59
+        assert ("grounding_dino", "detect") not in supported
         assert ("clip", "classify") in supported
         assert ("siglip2", "classify") in supported
         assert ("rfdetr", "detect") in supported
-        assert ("rfdetr", "segment") in supported
+        assert ("rfdetr", "segment") not in supported
         assert ("ec", "pose") in supported
         assert ("yolo9", "segment") not in supported
         assert ("yolonas", "detect") in supported
@@ -691,9 +1066,6 @@ class TestCoreMLContracts:
     def test_multi_output_semantic_order(self):
         from libreyolo.export.coreml import _output_contract
 
-        assert [
-            item["name"] for item in _output_contract("rfdetr", "segment", nms=False)
-        ] == ["pred_boxes", "pred_logits", "pred_masks"]
         assert [
             item["name"] for item in _output_contract("dfine", "segment", nms=False)
         ] == ["pred_logits", "pred_boxes", "pred_masks"]
@@ -843,6 +1215,139 @@ class TestAtomicPackageSave:
         assert not (destination / "old.txt").exists()
         assert not list(tmp_path.glob(".*.staging"))
 
+    def test_candidate_validation_failure_preserves_existing_package(
+        self,
+        tmp_path,
+    ):
+        from libreyolo.export.coreml import _save_mlpackage_atomic
+
+        destination = tmp_path / "model.mlpackage"
+        destination.mkdir()
+        sentinel = destination / "known-good.txt"
+        sentinel.write_text("old", encoding="utf-8")
+        model = MagicMock()
+
+        def save(path):
+            Path(path).mkdir(parents=True)
+
+        model.save.side_effect = save
+
+        def reject(_candidate):
+            raise ValueError("staged ABI mismatch")
+
+        with pytest.raises(ValueError, match="staged ABI mismatch"):
+            _save_mlpackage_atomic(
+                model,
+                destination,
+                validate_candidate=reject,
+            )
+
+        assert sentinel.read_text(encoding="utf-8") == "old"
+        assert not list(tmp_path.glob(".*.staging"))
+
+
+class TestFinalDeploymentSpec:
+    @staticmethod
+    def _tensor_feature(name, shape, *, dtype=65568):
+        array = SimpleNamespace(shape=list(shape), dataType=dtype)
+        feature_type = SimpleNamespace(
+            isOptional=False,
+            multiArrayType=array,
+            WhichOneof=lambda _name: "multiArrayType",
+        )
+        return SimpleNamespace(name=name, type=feature_type)
+
+    def _spec(self):
+        return SimpleNamespace(
+            description=SimpleNamespace(
+                input=[
+                    self._tensor_feature(
+                        "image",
+                        (1, 3, 32, 32),
+                    )
+                ],
+                output=[
+                    self._tensor_feature(
+                        "prediction",
+                        (1, 6, 21),
+                    )
+                ],
+            )
+        )
+
+    def test_exact_tensor_boundary_passes(self):
+        from libreyolo.export.coreml import (
+            _validate_coreml_deployment_spec,
+        )
+
+        _validate_coreml_deployment_spec(
+            self._spec(),
+            input_contract={"name": "image", "kind": "tensor"},
+            output_contract=[
+                {"name": "prediction", "shape": [1, 6, 21]}
+            ],
+            input_shape=(1, 3, 32, 32),
+            nms=False,
+        )
+
+    @pytest.mark.parametrize(
+        ("mutation", "message"),
+        [
+            (
+                lambda spec: setattr(
+                    spec.description.input[0],
+                    "name",
+                    "other",
+                ),
+                "input name",
+            ),
+            (
+                lambda spec: setattr(
+                    spec.description.input[0].type.multiArrayType,
+                    "shape",
+                    [1, 3, 16, 16],
+                ),
+                "TensorType shape",
+            ),
+            (
+                lambda spec: setattr(
+                    spec.description.output[0].type.multiArrayType,
+                    "shape",
+                    [1, 6, 20],
+                ),
+                "changed shape",
+            ),
+            (
+                lambda spec: setattr(
+                    spec.description.output[0].type.multiArrayType,
+                    "dataType",
+                    65552,
+                ),
+                "must be FP32",
+            ),
+        ],
+    )
+    def test_tampered_boundary_fails(self, mutation, message):
+        from libreyolo.export.coreml import (
+            _validate_coreml_deployment_spec,
+        )
+
+        spec = self._spec()
+        mutation(spec)
+        with pytest.raises(RuntimeError, match=message):
+            _validate_coreml_deployment_spec(
+                spec,
+                input_contract={"name": "image", "kind": "tensor"},
+                output_contract=[
+                    {
+                        "name": "prediction",
+                        "shape": [1, 6, 21],
+                    }
+                ],
+                input_shape=(1, 3, 32, 32),
+                nms=False,
+            )
+
 
 class TestTransactionalPreparation:
     def test_pool_is_restored_when_trace_fails(self, tmp_path, monkeypatch):
@@ -879,6 +1384,7 @@ class TestTransactionalPreparation:
                     },
                     imgsz=16,
                 ),
+                compute_units="cpu_only",
             )
         assert model[0] is original_pool
 
@@ -1014,8 +1520,17 @@ class TestCoreMLBackendModule:
 
         sentinel = MagicMock(name="CoreMLBackendSentinel")
         import libreyolo.backends.coreml as coreml_mod
+        import libreyolo.backends.coreml_facerec as coreml_facerec_mod
 
         monkeypatch.setattr(coreml_mod, "CoreMLBackend", sentinel)
+        # This test owns only generic package dispatch.  A bare directory is
+        # not a valid Core ML package, so keep the separate face-embedding
+        # metadata discriminator out of scope.
+        monkeypatch.setattr(
+            coreml_facerec_mod,
+            "coreml_package_family",
+            lambda _path: None,
+        )
 
         from libreyolo.models import LibreYOLO
 
@@ -1035,7 +1550,7 @@ class TestCoreMLBackendModule:
             "coreml_io_schema_version": "1",
             "schema_version": "1",
             "libreyolo_version": "0.0.1",
-            "model_family": "rfdetr",
+            "model_family": "dfine",
             "size": "n",
             "model_size": "n",
             "task": "segment",
@@ -1049,16 +1564,16 @@ class TestCoreMLBackendModule:
                 '{"input":{"name":"image","kind":"image","layout":"NCHW",'
                 '"color":"rgb","range":"uint8","geometry":"stretch",'
                 '"interpolation":"bilinear","resize_backend":"pillow","pad_value":0},'
-                '"outputs":[{"name":"pred_boxes","role":"boxes",'
-                '"encoding":"cxcywh_normalized","rank":3,"dtype":"float32"},'
-                '{"name":"pred_logits","role":"class_logits",'
+                '"outputs":[{"name":"pred_logits","role":"class_logits",'
                 '"rank":3,"dtype":"float32"},'
-                '{"name":"pred_masks","role":"mask_logits",'
-                '"rank":4,"dtype":"float32"}],'
+                '{"name":"pred_boxes","role":"boxes",'
+                '"encoding":"cxcywh_normalized","rank":3,"dtype":"float32"},'
+                '{"name":"pred_masks","role":"mask_probabilities",'
+                '"encoding":"sigmoid_probabilities","rank":4,"dtype":"float32"}],'
                 '"validation":{"color":"rgb","range":"0_255"}}'
             ),
         }
-        mlmodel.get_spec.return_value = SimpleNamespace(
+        package_spec = SimpleNamespace(
             description=SimpleNamespace(
                 input=[
                     SimpleNamespace(
@@ -1070,19 +1585,29 @@ class TestCoreMLBackendModule:
                     )
                 ],
                 output=[
-                    SimpleNamespace(name="pred_boxes"),
                     SimpleNamespace(name="pred_logits"),
+                    SimpleNamespace(name="pred_boxes"),
                     SimpleNamespace(name="pred_masks"),
                 ],
             )
         )
+        package_spec.description.metadata = SimpleNamespace(
+            userDefined=mlmodel.user_defined_metadata
+        )
+        mlmodel.get_spec.return_value = package_spec
+        fake.utils.load_spec.side_effect = None
+        fake.utils.load_spec.return_value = package_spec
         fake.models.MLModel.return_value = mlmodel
 
         from libreyolo.backends.coreml import CoreMLBackend
 
-        backend = CoreMLBackend(str(pkg), nb_classes=80)
+        backend = CoreMLBackend(
+            str(pkg),
+            nb_classes=80,
+            compute_units="cpu_only",
+        )
 
-        assert backend.model_family == "rfdetr"
+        assert backend.model_family == "dfine"
         assert backend.model_size == "n"
         assert backend.size == "n"
         assert backend.task == "segment"

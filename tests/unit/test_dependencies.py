@@ -46,3 +46,15 @@ def test_openvocab_extra_covers_clip_tokenizer_runtime():
     names = {dep.split(">=")[0].split("==")[0].strip() for dep in deps}
     assert "ftfy" in names
     assert "regex" in names
+
+
+def test_coreml_extra_matches_parity_gated_converter_frontends():
+    """Keep CT9 below NumPy's 2.4 removal of one-element scalar coercion."""
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+    deps = pyproject["project"]["optional-dependencies"]["coreml"]
+    assert "numpy<2.4" in deps
+    assert "coremltools>=9.0,<10" in deps
+    assert "transformers==5.12.1" in deps
+
+    vlm_deps = pyproject["project"]["optional-dependencies"]["coreml-vlm"]
+    assert "numpy<2.4" in vlm_deps

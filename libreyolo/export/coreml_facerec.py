@@ -18,7 +18,6 @@ import hashlib
 import importlib.metadata
 import json
 import math
-import warnings
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
@@ -39,6 +38,7 @@ FACEREC_COREML_SOURCE_HASH_KEY = "facerec_source_manifest_sha256"
 FACEREC_COREML_SOURCE_MANIFEST_KEY = "facerec_source_manifest_json"
 FACEREC_COREML_ARTIFACT_SCOPE = "host_aligned_face_embedding_component"
 FACEREC_COREML_GEOMETRY = "host_aligned_face"
+FACEREC_COREML_REQUIRED_COMPUTE_UNITS = "cpu_only"
 
 _FACEREC_SOURCE_MANIFEST_DOMAIN = (
     b"libreyolo.facerec.onnx-source-manifest.v1"
@@ -344,9 +344,17 @@ def validate_facerec_coreml_metadata(
                 f"size {size}, got {declared_size}."
             )
     precision = str(metadata.get("precision", "")).strip().lower()
-    if precision not in {"fp16", "fp32"}:
+    if precision != "fp32":
         raise ValueError(
-            "Face Core ML precision must be exactly 'fp16' or 'fp32'."
+            "Face Core ML precision must be exactly 'fp32'."
+        )
+    required_compute_units = str(
+        metadata.get("coreml_required_compute_units", "")
+    ).strip().lower()
+    if required_compute_units != FACEREC_COREML_REQUIRED_COMPUTE_UNITS:
+        raise ValueError(
+            "Face Core ML required compute units must be exactly "
+            f"{FACEREC_COREML_REQUIRED_COMPUTE_UNITS!r}."
         )
     _strict_false(metadata.get("dynamic"), key="dynamic")
 
@@ -467,6 +475,7 @@ def validate_facerec_coreml_metadata(
         "source_manifest_sha256": source_hash,
         "source_manifest": source_entries,
         "precision": precision,
+        "required_compute_units": required_compute_units,
         "size": size_name,
     }
 
@@ -1095,7 +1104,12 @@ def _resolve_options(
     nms = option_bool("nms", False)
     imgsz = options.pop("imgsz", None)
     device = options.pop("device", None)
-    compute_units = str(options.pop("compute_units", "all")).strip().lower()
+    compute_units = str(
+        options.pop(
+            "compute_units",
+            "cpu_only",
+        )
+    ).strip().lower()
     if options:
         raise TypeError(
             "Unsupported or irrelevant face Core ML export options: "
@@ -1110,6 +1124,12 @@ def _resolve_options(
         raise ValueError(f"Face Core ML export requires batch=1; got {batch}.")
     if int8:
         raise NotImplementedError("Face Core ML export does not support int8.")
+    if half:
+        raise NotImplementedError(
+            "Face Core ML export is FP32-only. Fresh Apple M4 validation "
+            "measured 1.99e-2 relative raw-embedding error with FP16 versus "
+            "5.71e-6 with FP32; pass half=False."
+        )
     if nms:
         raise NotImplementedError("NMS is not applicable to face embeddings.")
     if device not in (None, "", "auto", "cpu", torch.device("cpu")):
@@ -1138,17 +1158,75 @@ def _resolve_options(
                 "Face Core ML export must preserve the recognition head's "
                 f"fixed {model.cfg.size}x{model.cfg.size} input; got {requested}."
             )
-    valid_compute_units = {"all", "cpu_and_gpu", "cpu_and_ne", "cpu_only"}
+    valid_compute_units = {
+        "validated",
+        "all",
+        "cpu_and_gpu",
+        "cpu_and_ne",
+        "cpu_only",
+    }
     if compute_units not in valid_compute_units:
         raise ValueError(
             f"Invalid Core ML compute_units {compute_units!r}; expected one of "
             f"{sorted(valid_compute_units)}."
         )
+    if compute_units not in {
+        "validated",
+        FACEREC_COREML_REQUIRED_COMPUTE_UNITS,
+    }:
+        raise NotImplementedError(
+            "Face Core ML export is validated only with "
+            "compute_units='cpu_only'. Other planners have not passed the "
+            "raw-embedding hardware parity gate."
+        )
     return (
         destination,
-        "fp16" if half else "fp32",
+        "fp32",
         compute_units,
     )
+
+
+def _apply_coreml_execution_profile(
+    metadata: Mapping[str, Any],
+    *,
+    size: str,
+    canvas: int,
+    precision: str,
+    compute_units: str,
+    embedding_dim: int,
+) -> tuple[dict[str, Any], str, Any]:
+    """Resolve FaceRec source identity while deferring final protobuf ABI."""
+    from .coreml_identity import (
+        COREML_PROFILE_SOURCE_KIND_KEY,
+        COREML_PROFILE_SOURCE_SHA256_KEY,
+    )
+    from .coreml_profiles import (
+        resolve_coreml_export_compute_units,
+    )
+
+    identified = dict(metadata)
+    identified.setdefault(
+        COREML_PROFILE_SOURCE_KIND_KEY,
+        "facerec-onnx-source-manifest-v1",
+    )
+    identified.setdefault(
+        COREML_PROFILE_SOURCE_SHA256_KEY,
+        identified.get(FACEREC_COREML_SOURCE_HASH_KEY),
+    )
+    resolved_compute_units, profile = resolve_coreml_export_compute_units(
+        compute_units,
+        family="facerec",
+        task="embed",
+        size=size,
+        canvas=canvas,
+        precision=precision,
+        nms=False,
+        class_count=1,
+        embedding_dim=embedding_dim,
+        source_kind=identified.get(COREML_PROFILE_SOURCE_KIND_KEY),
+        source_sha256=identified.get(COREML_PROFILE_SOURCE_SHA256_KEY),
+    )
+    return identified, resolved_compute_units, profile
 
 
 def export_facerec_coreml(
@@ -1164,12 +1242,6 @@ def export_facerec_coreml(
             f"ONNX file, got {onnx_path}."
         )
 
-    warnings.warn(
-        "facerec embed export to coreml is experimental: conversion and "
-        "component parity are covered, but real macOS runtime parity is pending.",
-        RuntimeWarning,
-        stacklevel=2,
-    )
     try:
         import onnx
     except ImportError as exc:
@@ -1212,6 +1284,18 @@ def export_facerec_coreml(
         model_proto,
         preprocess=preprocess,
     )
+    size = "l" if official_source else "custom"
+    requested_compute_units = compute_units
+    profile_identity, compute_units, execution_profile = (
+        _apply_coreml_execution_profile(
+            {FACEREC_COREML_SOURCE_HASH_KEY: source_hash},
+            size=size,
+            canvas=int(preprocess["size"]),
+            precision=precision,
+            compute_units=requested_compute_units,
+            embedding_dim=declared_dim,
+        )
+    )
 
     try:
         import coremltools as ct
@@ -1220,6 +1304,13 @@ def export_facerec_coreml(
             "Face Core ML export requires coremltools. Install with: "
             "pip install 'libreyolo[coreml]'"
         ) from exc
+    from .coreml import _coreml_profile_for_toolchain
+
+    execution_profile = _coreml_profile_for_toolchain(
+        execution_profile,
+        requested_compute_units=requested_compute_units,
+        coremltools=ct,
+    )
     convert_onnx_to_torch = _require_exact_onnx2torch()
 
     # Passing ModelProto avoids onnx2torch's temporary-file path on Windows and
@@ -1232,52 +1323,25 @@ def export_facerec_coreml(
             f"{embedding_dim} != {declared_dim}."
         )
 
-    compute_precision = (
-        ct.precision.FLOAT16
-        if precision == "fp16"
-        else ct.precision.FLOAT32
-    )
-    mlmodel = ct.convert(
-        traced,
-        inputs=[
-            ct.TensorType(
-                name=FACEREC_COREML_INPUT_NAME,
-                shape=input_shape,
-                dtype=np.float32,
-            )
-        ],
-        outputs=[
-            ct.TensorType(
-                name=FACEREC_COREML_OUTPUT_NAME,
-                dtype=np.float32,
-            )
-        ],
-        convert_to="mlprogram",
-        compute_precision=compute_precision,
-        minimum_deployment_target=ct.target.iOS15,
-        compute_units={
-            "all": ct.ComputeUnit.ALL,
-            "cpu_and_gpu": ct.ComputeUnit.CPU_AND_GPU,
-            "cpu_and_ne": ct.ComputeUnit.CPU_AND_NE,
-            "cpu_only": ct.ComputeUnit.CPU_ONLY,
-        }[compute_units],
-    )
-    spec = mlmodel.get_spec()
-    input_names = [str(item.name) for item in spec.description.input]
-    output_names = [str(item.name) for item in spec.description.output]
-    if input_names != [FACEREC_COREML_INPUT_NAME] or output_names != [
-        FACEREC_COREML_OUTPUT_NAME
-    ]:
-        raise RuntimeError(
-            "Core ML converter changed the face component ABI: "
-            f"inputs={input_names}, outputs={output_names}."
-        )
-
     from .. import __version__
+    from ..backends.coreml_facerec import validate_facerec_coreml_spec
     from ..utils.serialization import SCHEMA_VERSION
-    from .coreml import _save_mlpackage_atomic, _stringify_metadata
+    from .coreml import (
+        _replace_user_defined_metadata,
+        _save_mlpackage_atomic,
+        _stringify_metadata,
+    )
+    from .coreml_identity import (
+        COREML_PROFILE_SOURCE_KIND_KEY,
+        COREML_PROFILE_SOURCE_SHA256_KEY,
+        bind_coreml_deployment_abi,
+        validate_coreml_deployment_abi,
+    )
+    from .coreml_profiles import (
+        finalize_coreml_execution_profile_metadata,
+        validate_coreml_execution_profile_metadata,
+    )
 
-    size = "l" if official_source else "custom"
     metadata: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "libreyolo_version": __version__,
@@ -1298,6 +1362,9 @@ def export_facerec_coreml(
         "imgsz_h": int(preprocess["size"]),
         "imgsz_w": int(preprocess["size"]),
         "precision": precision,
+        "coreml_required_compute_units": (
+            FACEREC_COREML_REQUIRED_COMPUTE_UNITS
+        ),
         "dynamic": False,
         "facerec_contract": FACEREC_COREML_CONTRACT,
         FACEREC_COREML_PREPROCESS_KEY: _canonical_json(preprocess),
@@ -1344,11 +1411,98 @@ def export_facerec_coreml(
     }
     if official_source:
         metadata.update(_official_provenance_metadata())
+    metadata.update(
+        {
+            COREML_PROFILE_SOURCE_KIND_KEY: (
+                profile_identity[COREML_PROFILE_SOURCE_KIND_KEY]
+            ),
+            COREML_PROFILE_SOURCE_SHA256_KEY: profile_identity[
+                COREML_PROFILE_SOURCE_SHA256_KEY
+            ],
+        }
+    )
+    validate_facerec_coreml_metadata(metadata)
+
+    mlmodel = ct.convert(
+        traced,
+        inputs=[
+            ct.TensorType(
+                name=FACEREC_COREML_INPUT_NAME,
+                shape=input_shape,
+                dtype=np.float32,
+            )
+        ],
+        outputs=[
+            ct.TensorType(
+                name=FACEREC_COREML_OUTPUT_NAME,
+                dtype=np.float32,
+            )
+        ],
+        convert_to="mlprogram",
+        compute_precision=ct.precision.FLOAT32,
+        minimum_deployment_target=ct.target.iOS15,
+        compute_units={
+            "all": ct.ComputeUnit.ALL,
+            "cpu_and_gpu": ct.ComputeUnit.CPU_AND_GPU,
+            "cpu_and_ne": ct.ComputeUnit.CPU_AND_NE,
+            "cpu_only": ct.ComputeUnit.CPU_ONLY,
+        }[compute_units],
+    )
+    spec = mlmodel.get_spec()
+    input_names = [str(item.name) for item in spec.description.input]
+    output_names = [str(item.name) for item in spec.description.output]
+    if input_names != [FACEREC_COREML_INPUT_NAME] or output_names != [
+        FACEREC_COREML_OUTPUT_NAME
+    ]:
+        raise RuntimeError(
+            "Core ML converter changed the face component ABI: "
+            f"inputs={input_names}, outputs={output_names}."
+        )
+    metadata = bind_coreml_deployment_abi(metadata, spec)
+    metadata, execution_profile = (
+        finalize_coreml_execution_profile_metadata(
+            metadata,
+            execution_profile,
+            requested_compute_units=requested_compute_units,
+            conversion_compute_units=compute_units,
+            deployment_abi_sha256=metadata[
+                "coreml_profile_abi_sha256"
+            ],
+        )
+    )
     validate_facerec_coreml_metadata(metadata)
     serialized_metadata = _stringify_metadata(metadata)
     validate_facerec_coreml_metadata(serialized_metadata)
-    mlmodel.user_defined_metadata.update(serialized_metadata)
-    _save_mlpackage_atomic(mlmodel, output_path)
+    validate_coreml_execution_profile_metadata(serialized_metadata)
+    validate_facerec_coreml_spec(spec, serialized_metadata)
+
+    _replace_user_defined_metadata(mlmodel, serialized_metadata)
+
+    def validate_candidate(candidate: Path) -> None:
+        staged_spec = ct.utils.load_spec(str(candidate))
+        staged_metadata_container = getattr(
+            getattr(staged_spec, "description", None),
+            "metadata",
+            None,
+        )
+        staged_metadata = dict(
+            getattr(staged_metadata_container, "userDefined", None) or {}
+        )
+        if staged_metadata != serialized_metadata:
+            raise RuntimeError(
+                "Staged Face Core ML metadata differs from the validated "
+                "pre-save contract."
+            )
+        validate_facerec_coreml_metadata(staged_metadata)
+        validate_facerec_coreml_spec(staged_spec, staged_metadata)
+        validate_coreml_deployment_abi(staged_spec, staged_metadata)
+        validate_coreml_execution_profile_metadata(staged_metadata)
+
+    _save_mlpackage_atomic(
+        mlmodel,
+        output_path,
+        validate_candidate=validate_candidate,
+    )
     return str(output_path)
 
 
@@ -1358,6 +1512,7 @@ __all__ = [
     "FACEREC_COREML_GEOMETRY",
     "FACEREC_COREML_INPUT_NAME",
     "FACEREC_COREML_OUTPUT_NAME",
+    "FACEREC_COREML_REQUIRED_COMPUTE_UNITS",
     "FACEREC_COREML_SOURCE_MANIFEST_KEY",
     "export_facerec_coreml",
     "facerec_onnx_source_manifest",

@@ -948,6 +948,81 @@ Used for: the conversion-only fixed-square vision and stateful Llama decoder
 The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
 
 --------------------------------------------------------------------
+Florence-2 Core ML conversion and beam wrappers / Hugging Face Transformers
+--------------------------------------------------------------------
+Source: https://github.com/huggingface/transformers
+Commit: ddb849abe009d1089e6c691bfc897f27211c663c (v5.12.1)
+Files:
+  src/transformers/models/florence2/modeling_florence2.py
+  src/transformers/models/bart/modeling_bart.py
+  src/transformers/generation/utils.py
+  src/transformers/generation/logits_process.py
+  src/transformers/generation/stopping_criteria.py
+License: Apache License 2.0
+Copyright 2020 The Hugging Face Inc. team
+Checkpoint: florence-community/Florence-2-base
+Checkpoint revision: 00921df66db728a9ceb750f5eca43e5c203a2051
+Checkpoint license: MIT
+Checkpoint model.safetensors SHA-256:
+  62f3e696da74f8869a68ddb529a9b3e14eb25b21c592cb3dea6179bf944df6a0
+Used for: the conversion-only fixed-profile DaViT/projector, BART encoder,
+          and stateful BART decoder wrappers in
+          libreyolo/export/coreml_florence.py, and the exact three-beam host
+          scorer in libreyolo/backends/coreml_florence_beam.py. The portable
+          bundle and request-local Core ML state orchestration in
+          libreyolo/backends/coreml_florence.py are LibreYOLO MIT code.
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
+Kosmos-2 Core ML component wrappers / Hugging Face Transformers
+--------------------------------------------------------------------
+Source: https://github.com/huggingface/transformers
+Commit: ddb849abe009d1089e6c691bfc897f27211c663c (v5.12.1)
+Files:
+  src/transformers/models/kosmos2/modeling_kosmos2.py
+  src/transformers/generation/logits_process.py
+License: Apache License 2.0
+Checkpoint: microsoft/kosmos-2-patch14-224
+Checkpoint revision: e91cfbcb4ce051b6a55bfb5f96165a3bbf5eb82c
+Checkpoint license: MIT
+Checkpoint model.safetensors SHA-256:
+  051bf4b62a25429f4d542d11ec0c07a4ac1aac91003d3bf301133c6913008cbf
+Used for: the fixed 224px vision/projector, token-embedding, and stateless
+          128-token decoder component boundaries in
+          libreyolo/export/coreml_kosmos.py. The runtime invokes
+          Transformers' public no-repeat-ngram processor; the left-padded
+          bundle orchestration in libreyolo/backends/coreml_kosmos.py is
+          LibreYOLO MIT code.
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
+Qwen3-VL-2B Core ML component wrappers / Hugging Face Transformers
+--------------------------------------------------------------------
+Source: https://github.com/huggingface/transformers
+Commit: ddb849abe009d1089e6c691bfc897f27211c663c (v5.12.1)
+Files:
+  src/transformers/models/qwen3_vl/modeling_qwen3_vl.py
+  src/transformers/models/qwen3_vl/processing_qwen3_vl.py
+  src/transformers/models/qwen3_vl/image_processing_qwen3_vl.py
+  src/transformers/generation/logits_process.py
+License: Apache License 2.0
+Checkpoint: Qwen/Qwen3-VL-2B-Instruct
+Checkpoint revision: 89644892e4d85e24eaac8bacfd4f463576704203
+Checkpoint license: Apache License 2.0
+Checkpoint model.safetensors SHA-256:
+  7de1838c87a5349b016c26a1c3f7d2bc400a3d485f95ef39a7059ffd734977a0
+Used for: the fixed 448-square vision/deep-stack, token-embedding, and
+          stateless 512-token text-decoder component boundaries in
+          libreyolo/export/coreml_qwen3vl.py. The runtime invokes the pinned
+          processor and repetition-penalty processor. Its one-image MRoPE
+          positions and tables follow the pinned Apache-2.0 implementation;
+          the portable-bundle validation and left-padded orchestration in
+          libreyolo/backends/coreml_qwen3vl.py are LibreYOLO MIT code.
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
 SenseNova-Vision / Bagel (SenseTime; ByteDance; Hugging Face; BFL)
 --------------------------------------------------------------------
 Source: https://github.com/OpenSenseNova/SenseNova-Vision

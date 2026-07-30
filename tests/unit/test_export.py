@@ -104,12 +104,53 @@ class _TinyRTDETRExport(nn.Module):
         super().__init__()
         self.anchor = nn.Parameter(torch.zeros(()))
 
+    def deploy(self):
+        return self
+
     def forward(self, x):
         batch = x.shape[0]
         signal = x.mean(dim=(1, 2, 3), keepdim=True) + self.anchor
         logits = signal.reshape(batch, 1, 1).expand(batch, 3, 2)
         boxes = signal.reshape(batch, 1, 1).expand(batch, 3, 4)
         return {"pred_logits": logits, "pred_boxes": boxes}
+
+
+class _TinyDINOEmbeddings(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.position_embeddings = nn.Parameter(torch.zeros(1, 5, 4))
+
+    def interpolate_pos_encoding(self, embeddings, height, width):
+        return self.position_embeddings
+
+
+class _TinyDINOEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.encoder = nn.Module()
+        self.encoder.embeddings = _TinyDINOEmbeddings()
+        self.shape = (384, 384)
+        self._export = False
+
+    def export(self):
+        self._export = True
+        self.encoder.embeddings.position_embeddings = nn.Parameter(
+            torch.ones(1, 5, 4)
+        )
+
+    def forward(self, x):
+        return x
+
+
+class _TinyDINOSemantic(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.segmenter = nn.Module()
+        self.segmenter.backbone = nn.Module()
+        self.segmenter.backbone.encoder = _TinyDINOEncoder()
+
+    def forward(self, x):
+        return self.segmenter.backbone.encoder(x)
 
 
 def _make_wrapper(nb_classes=4, model_name="TESTYOLO", size="s", input_size=32):
@@ -131,6 +172,37 @@ def _make_wrapper(nb_classes=4, model_name="TESTYOLO", size="s", input_size=32):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def test_dinov2_semantic_context_bakes_and_restores_fixed_position_table():
+    wrapper = _make_wrapper(model_name="dinov2", input_size=518)
+    wrapper.model = _TinyDINOSemantic().eval()
+    wrapper.task = "semantic"
+    encoder = wrapper.model.segmenter.backbone.encoder
+    original_position_embeddings = encoder.encoder.embeddings.position_embeddings
+
+    exporter = CoreMLExporter(wrapper)
+    with exporter._model_context(
+        torch.device("cpu"),
+        False,
+        False,
+        1,
+        (518, 518),
+    ) as (prepared, dummy):
+        assert encoder._export is True
+        assert encoder.shape == (518, 518)
+        assert (
+            encoder.encoder.embeddings.position_embeddings
+            is not original_position_embeddings
+        )
+        assert torch.equal(prepared(dummy), dummy)
+
+    assert encoder._export is False
+    assert encoder.shape == (384, 384)
+    assert (
+        encoder.encoder.embeddings.position_embeddings
+        is original_position_embeddings
+    )
 
 
 class TestExporterFormats:
@@ -189,6 +261,17 @@ class TestExporterFormats:
         with pytest.raises(NotImplementedError, match="task 'segment'"):
             exporter._preflight(half=False, int8=False, data=None, nms=True)
 
+    def test_coreml_preflight_rejects_rfdetr_segment_before_dependency_import(self):
+        wrapper = _make_wrapper(model_name="rfdetr")
+        wrapper.task = "segment"
+        exporter = CoreMLExporter(wrapper)
+
+        with pytest.raises(
+            NotImplementedError,
+            match="not supported for 'rfdetr' task 'segment'",
+        ):
+            exporter._preflight(half=False, int8=False, data=None)
+
     def test_export_rejects_yolo9_segment(self):
         wrapper = _make_wrapper(model_name="yolo9")
         wrapper.task = "segment"
@@ -244,6 +327,54 @@ class TestExporterFormats:
             )
 
     @pytest.mark.parametrize(
+        "compute_units",
+        ["all", "cpu_and_gpu", "cpu_and_ne"],
+    )
+    def test_coreml_rfdetr_pose_requires_cpu_only_before_dependency_import(
+        self,
+        compute_units,
+    ):
+        wrapper = _make_wrapper(model_name="rfdetr")
+        wrapper.task = "pose"
+        exporter = CoreMLExporter(wrapper)
+
+        with pytest.raises(NotImplementedError, match="requires.*cpu_only"):
+            exporter._preflight(
+                half=False,
+                int8=False,
+                data=None,
+                compute_units=compute_units,
+            )
+
+    def test_coreml_rfdetr_pose_rejects_fp16_before_dependency_import(self):
+        wrapper = _make_wrapper(model_name="rfdetr")
+        wrapper.task = "pose"
+        exporter = CoreMLExporter(wrapper)
+
+        with pytest.raises(NotImplementedError, match="requires precision='fp32'"):
+            exporter._preflight(
+                half=True,
+                int8=False,
+                data=None,
+                compute_units="cpu_only",
+            )
+
+    def test_coreml_rfdetr_detect_profile_keeps_all_compute_units(
+        self,
+        coremltools_stub,
+    ):
+        wrapper = _make_wrapper(model_name="rfdetr")
+        wrapper.task = "detect"
+        exporter = CoreMLExporter(wrapper)
+
+        exporter._preflight(
+            half=False,
+            int8=False,
+            data=None,
+            compute_units="all",
+        )
+
+    @pytest.mark.parametrize(
         ("name", "value"),
         [
             ("conf", -0.01),
@@ -275,6 +406,15 @@ class TestExporterFormats:
         with pytest.raises(NotImplementedError, match="fixed input shape"):
             exporter(dynamic=True, output_path="unused.mlpackage")
 
+    def test_coreml_sam_rejects_dynamic_flag_before_base_export(self):
+        exporter = CoreMLExporter(_make_wrapper(model_name="mobilesam"))
+
+        with pytest.raises(
+            NotImplementedError,
+            match="prompt_max_points.*dynamic=True",
+        ):
+            exporter(dynamic=True, output_path="unused.mlpackage")
+
     def test_coreml_rejects_batch_before_base_export(self):
         exporter = CoreMLExporter(_make_wrapper(model_name="yolo9"))
 
@@ -294,6 +434,19 @@ class TestExporterFormats:
         assert metadata["dynamic"] is False
         assert metadata["crop_pct"] == 0.95
         assert metadata["interpolation"] == "bicubic"
+
+    def test_coreml_sam_metadata_declares_direct_runtime_fixed(self):
+        wrapper = _make_wrapper(model_name="mobilesam")
+        wrapper.task = "segment"
+
+        metadata = CoreMLExporter(wrapper)._build_metadata(
+            "fp32",
+            True,
+            None,
+            imgsz=1024,
+        )
+
+        assert metadata["dynamic"] is False
 
     def test_onnx_embedded_nms_preflight_rejects_non_yolo9_detect(self):
         exporter = OnnxExporter(_make_wrapper(model_name="yolox"))
@@ -1097,6 +1250,34 @@ class TestExportLoraOrdering:
         with pytest.raises(NotImplementedError, match="NMS"):
             OnnxExporter(wrapper)(nms=True)
         assert merged == []
+
+    @pytest.mark.parametrize(
+        "export_kwargs",
+        [
+            {"compute_units": "all"},
+            {"compute_units": "cpu_only", "half": True},
+        ],
+    )
+    def test_rfdetr_pose_coreml_profile_rejection_precedes_lora_and_destination(
+        self,
+        monkeypatch,
+        tmp_path,
+        export_kwargs,
+    ):
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+        wrapper = _make_wrapper(model_name="rfdetr")
+        wrapper.task = "pose"
+        output = tmp_path / "rejected.mlpackage"
+
+        with pytest.raises(NotImplementedError):
+            CoreMLExporter(wrapper)(
+                output_path=str(output),
+                **export_kwargs,
+            )
+
+        assert merged == []
+        assert not output.exists()
 
     def test_quantized_export_rejection_leaves_lora_untouched(self, monkeypatch):
         from types import SimpleNamespace

@@ -31,7 +31,7 @@ from ..export.coreml_sam import (
     SAM_COREML_POINT_COORDS_INPUT,
     SAM_COREML_POINT_LABELS_INPUT,
     SAMCoreMLProfile,
-    sam_coreml_function_contracts,
+    sam_coreml_runtime_function_contract,
     validate_sam_coreml_function_io,
 )
 
@@ -398,8 +398,13 @@ def _validate_runtime_inputs(
     inputs: Mapping[str, torch.Tensor],
     *,
     profile: SAMCoreMLProfile,
+    contract: Mapping[str, Any] | None = None,
 ) -> None:
-    contract = sam_coreml_function_contracts(profile)[function_name]
+    if contract is None:
+        contract = sam_coreml_runtime_function_contract(
+            profile,
+            function_name,
+        )
     expected_names = [item["name"] for item in contract["inputs"]]
     if list(inputs) != expected_names:
         raise ValueError(
@@ -468,15 +473,23 @@ class SAMCoreMLFunction:
         self.runtime = runtime
         self.function_name = function_name
         self.profile = profile
-        contract = sam_coreml_function_contracts(profile)[function_name]
-        self.input_names = tuple(item["name"] for item in contract["inputs"])
-        self.output_names = tuple(item["name"] for item in contract["outputs"])
+        self.contract = sam_coreml_runtime_function_contract(
+            profile,
+            function_name,
+        )
+        self.input_names = tuple(
+            item["name"] for item in self.contract["inputs"]
+        )
+        self.output_names = tuple(
+            item["name"] for item in self.contract["outputs"]
+        )
 
     def __call__(self, inputs: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         _validate_runtime_inputs(
             self.function_name,
             inputs,
             profile=self.profile,
+            contract=self.contract,
         )
         arrays = {}
         for name, tensor in inputs.items():
@@ -513,6 +526,7 @@ class SAMCoreMLFunction:
             inputs,
             outputs,
             profile=self.profile,
+            _contract=self.contract,
         )
         return outputs
 

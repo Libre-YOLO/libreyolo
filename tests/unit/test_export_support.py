@@ -127,8 +127,12 @@ def test_checkpoint_gates_are_canonical_and_independent_of_technical_tier():
     assert CHECKPOINT_GATES[("depth_anything", "depth")]
 
 
-def test_coreml_matrix_is_explicit_and_never_overclaims_validation():
+def test_coreml_matrix_is_explicit_and_hardware_validation_set_is_exact():
     from libreyolo.export.coreml import supported_coreml_exports
+    from libreyolo.export.coreml_profiles import (
+        COREML_EXECUTION_PROFILES,
+        COREML_VALIDATED_EXECUTION_PROFILES,
+    )
 
     inventory = json.loads(INVENTORY_SNAPSHOT.read_text(encoding="utf-8"))
     entries = {
@@ -137,22 +141,62 @@ def test_coreml_matrix_is_explicit_and_never_overclaims_validation():
         for task in metadata["tasks"]
     }
     assert entries
-    assert all(entry.tier in {"experimental", "blocked"} for entry in entries.values())
-    assert not any(entry.tier == "validated" for entry in entries.values())
+    validated = {
+        key for key, entry in entries.items() if entry.tier == "validated"
+    }
+    assert validated == {
+        (profile.family, profile.task)
+        for profile in COREML_VALIDATED_EXECUTION_PROFILES.values()
+    }
+    assert all(entries[key].since == "1.5" for key in validated)
+    assert all("M4" in entries[key].reason for key in validated)
+    candidates = {
+        (profile.family, profile.task)
+        for profile in COREML_EXECUTION_PROFILES.values()
+    }
+    assert validated <= candidates
+    assert all(
+        entries[key].tier == "experimental"
+        for key in candidates - validated
+    )
+    rfdetr_segment = entries[("rfdetr", "segment")]
+    assert rfdetr_segment.tier == "blocked"
+    assert "Apple M4" in rfdetr_segment.reason
+    assert "not semantics-preserving" in rfdetr_segment.reason
     dedicated_component_routes = {
         ("facerec", "embed"),
+        ("florence2", "detect"),
+        ("kosmos2", "detect"),
+        ("qwen3vl", "detect"),
         ("smolvlm2", "detect"),
     }
+    conversion_enabled = supported_coreml_exports() | (
+        dedicated_component_routes & entries.keys()
+    )
+    assert {
+        key
+        for key, entry in entries.items()
+        if entry.tier in {"validated", "experimental"}
+    } == conversion_enabled
     assert {
         key for key, entry in entries.items() if entry.tier == "experimental"
-    } == supported_coreml_exports() | (dedicated_component_routes & entries.keys())
+    } == conversion_enabled - validated
     assert not (dedicated_component_routes & supported_coreml_exports())
 
     deimv2 = get_support("deimv2", "detect", "coreml")
-    assert deimv2.tier == "experimental"
+    assert deimv2.tier == "validated"
     assert deimv2.constraint
     assert all(size in deimv2.constraint for size in ("atto", "femto", "pico", "n"))
     assert all(size in deimv2.constraint for size in ("s", "m", "l", "x"))
+    assert "hardware validation currently covers `atto` only" in deimv2.constraint
+
+    rfdetr_pose = get_support("rfdetr", "pose", "coreml")
+    assert rfdetr_pose.tier == "validated"
+    assert rfdetr_pose.constraint
+    assert "`compute_units='cpu_only'`" in rfdetr_pose.constraint
+    assert "`rfdetr_pose_preserve_division_v1`" in rfdetr_pose.constraint
+    assert "ALL/GPU exceeded" in rfdetr_pose.constraint
+    assert "legacy artifacts fail closed" in rfdetr_pose.constraint
 
 
 def test_matrix_rejects_duplicate_explicit_keys():
@@ -367,13 +411,16 @@ def test_committed_inventory_matches_runtime_inventory():
 def test_partial_exporters_are_custom_not_blocked():
     """A family that exports some formats and raises for the rest is custom.
 
-    PicoSAM3 ships a validated ONNX export and raises for every other format.
-    Reporting it as ``blocked`` would tell inventory consumers to reject an
-    export the support matrix marks validated.
+    PicoSAM3 ships a validated ONNX export, while MobileSAM routes Core ML
+    through the shared exporter factory. Reporting either as ``blocked`` would
+    tell inventory consumers to reject an export the support matrix marks
+    validated.
     """
     inventory = collect_model_inventory()
     assert inventory["picosam3"]["export_override"] == "custom"
+    assert inventory["mobilesam"]["export_override"] == "custom"
     assert get_support("picosam3", "segment", "onnx").tier == "validated"
+    assert get_support("mobilesam", "segment", "coreml").tier == "experimental"
 
     for family, metadata in inventory.items():
         if metadata["export_override"] != "blocked":

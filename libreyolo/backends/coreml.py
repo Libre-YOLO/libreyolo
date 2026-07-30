@@ -8,14 +8,14 @@ rest of LibreYOLO (Results, drawing, etc.) sees the same interface.
 from __future__ import annotations
 
 import ast
+import gc
 import json
 import logging
 import sys
-from contextvars import ContextVar
 from dataclasses import dataclass
 from numbers import Integral
 from pathlib import Path
-from types import GeneratorType
+from threading import RLock
 from typing import Any, Mapping, Optional
 
 import numpy as np
@@ -714,6 +714,160 @@ def _to_compute_unit(compute_units: str):
             f"Must be one of: {sorted(mapping)}"
         )
     return mapping[key]
+
+
+_RFDETR_POSE_COREML_PASS_PROFILE = "rfdetr_pose_preserve_division_v1"
+_RFDETR_POSE_COREML_DISABLED_PASSES = ("common::divide_to_multiply",)
+
+
+def _spec_user_defined_metadata(spec: Any) -> dict[str, Any]:
+    """Read package metadata from a protobuf spec without compiling a proxy."""
+    description = getattr(spec, "description", None)
+    metadata = getattr(description, "metadata", None)
+    values = getattr(metadata, "userDefined", None)
+    return dict(values or {})
+
+
+def _preflight_multifunction_spec(
+    spec: Any,
+    meta: Mapping[str, Any],
+    *,
+    path: Path,
+) -> str | None:
+    """Validate a recognized multifunction package before native compilation."""
+    description = getattr(spec, "description", None)
+    functions = list(getattr(description, "functions", ()) or ())
+    family = str(meta.get("model_family", "")).strip().lower()
+    component = str(meta.get("component_contract", "")).strip()
+    sam_marker = (
+        family in {"edgetam", "mobilesam", "sam", "sam2", "sam3"}
+        or component
+        in {
+            "sam_split_promptable_v1",
+            "sam_split_promptable_v2",
+            "sam_split_promptable_v3",
+        }
+    )
+    ppocr_marker = (
+        family == "ppocr" or component == "ppocr_det_rec_v1"
+    )
+    if sam_marker:
+        from ..export.coreml import _validate_sam_multifunction_spec
+        from ..export.coreml_sam import (
+            validate_sam_coreml_metadata,
+            validate_sam_coreml_profile,
+        )
+
+        canonical = validate_sam_coreml_metadata(meta)
+        values = canonical["sam_coreml_profile"]
+        profile = validate_sam_coreml_profile(
+            family=values["family"],
+            size=values["size"],
+            precision=values["precision"],
+            prompt_max_points=values["prompt_max_points"],
+        )
+        try:
+            _validate_sam_multifunction_spec(spec, profile=profile)
+        except RuntimeError as exc:
+            raise ValueError(
+                f"Invalid LibreSAM Core ML multifunction spec: {exc}"
+            ) from exc
+        return "sam"
+    if ppocr_marker:
+        from ..export.coreml import _validate_ppocr_multifunction_spec
+        from ..export.coreml_ppocr import (
+            validate_ppocr_coreml_metadata,
+            validate_ppocr_coreml_profile,
+        )
+
+        canonical = validate_ppocr_coreml_metadata(meta)
+        values = canonical["ppocr_coreml_profile"]
+        profile = validate_ppocr_coreml_profile(
+            size=values["size"],
+            precision=values["precision"],
+            det_limit_side_len=values["det_limit_side_len"],
+            rec_batch_max=values["rec_batch_max"],
+            rec_max_width=values["rec_max_width"],
+        )
+        try:
+            _validate_ppocr_multifunction_spec(spec, profile=profile)
+        except RuntimeError as exc:
+            raise ValueError(
+                f"Invalid LibrePPOCR Core ML multifunction spec: {exc}"
+            ) from exc
+        return "ppocr"
+    if functions:
+        generic_marker = (
+            "coreml_multifunction" in meta
+            and _metadata_bool(
+                meta["coreml_multifunction"],
+                key="coreml_multifunction",
+            )
+        )
+        marker_text = (
+            " despite coreml_multifunction=true"
+            if generic_marker
+            else ""
+        )
+        raise ValueError(
+            f"CoreML artifact {path} is an unknown multifunction "
+            f"package{marker_text}; no recognized strict component "
+            "contract was declared."
+        )
+    return None
+
+
+def _require_rfdetr_pose_cpu_profile(
+    meta: Mapping[str, Any],
+    *,
+    compute_units: str,
+) -> None:
+    """Fail closed before Core ML compiles an unvalidated RF pose route."""
+    family = str(meta.get("model_family", "")).strip().lower()
+    try:
+        task = normalize_task(meta.get("task"))
+    except ValueError:
+        task = str(meta.get("task", "")).strip().lower()
+    if (family, task) != ("rfdetr", "pose"):
+        return
+
+    required_units = str(
+        meta.get("coreml_required_compute_units", "")
+    ).strip().lower()
+    precision = str(meta.get("precision", "")).strip().lower()
+    pass_profile = str(
+        meta.get("coreml_conversion_pass_profile", "")
+    ).strip()
+    raw_disabled = meta.get("coreml_disabled_passes")
+    if isinstance(raw_disabled, str):
+        try:
+            raw_disabled = json.loads(raw_disabled)
+        except json.JSONDecodeError:
+            raw_disabled = None
+    disabled_passes = (
+        tuple(raw_disabled)
+        if isinstance(raw_disabled, (list, tuple))
+        and all(isinstance(value, str) for value in raw_disabled)
+        else ()
+    )
+    if (
+        required_units != "cpu_only"
+        or precision != "fp32"
+        or pass_profile != _RFDETR_POSE_COREML_PASS_PROFILE
+        or disabled_passes != _RFDETR_POSE_COREML_DISABLED_PASSES
+    ):
+        raise ValueError(
+            "RF-DETR pose Core ML artifact lacks the validated CPU conversion "
+            "profile. Re-export with FP32, compute_units='cpu_only', and "
+            f"pass profile {_RFDETR_POSE_COREML_PASS_PROFILE!r}."
+        )
+    if str(compute_units).strip().lower() != "cpu_only":
+        raise NotImplementedError(
+            "RF-DETR pose Core ML inference currently requires "
+            "compute_units='cpu_only'. GPU/ALL execution does not meet the "
+            "fixed M4 conversion-fidelity gate; cpu_and_ne is also excluded "
+            "because this FP32 ML Program is placed on CPU."
+        )
 
 
 def _normalize_metadata_supported_tasks(value) -> tuple[str, ...]:
@@ -1745,7 +1899,9 @@ class CoreMLBackend(BaseBackend):
         model_path: Path to a .mlpackage directory.
         nb_classes: Number of classes (default: 80, overridden by metadata if present).
         device: Ignored — CoreML routes via compute_units instead.
-        compute_units: 'all' | 'cpu_and_gpu' | 'cpu_and_ne' | 'cpu_only'. Default 'all'.
+        compute_units: 'validated' | 'all' | 'cpu_and_gpu' | 'cpu_and_ne' |
+            'cpu_only'. Default 'cpu_only' is the broadly compatible path;
+            'validated' opts into exact execution-profile matching.
     """
 
     def __init__(
@@ -1753,7 +1909,7 @@ class CoreMLBackend(BaseBackend):
         model_path: str,
         nb_classes: int = 80,
         device: str = "auto",
-        compute_units: str = "all",
+        compute_units: str = "cpu_only",
         task: str | None = None,
     ):
         if sys.platform != "darwin":
@@ -1772,28 +1928,73 @@ class CoreMLBackend(BaseBackend):
         if not path.exists():
             raise FileNotFoundError(f"CoreML model not found: {model_path}")
 
-        self.model = ct.models.MLModel(
-            str(path), compute_units=_to_compute_unit(compute_units)
+        package_spec = ct.utils.load_spec(str(path))
+        package_metadata = _spec_user_defined_metadata(package_spec)
+        from ..export.coreml_identity import (
+            COREML_DEPLOYMENT_ABI_SCHEMA,
+            validate_coreml_deployment_abi,
         )
-        spec = self.model.get_spec()
-        meta = (
-            dict(self.model.user_defined_metadata)
-            if self.model.user_defined_metadata
-            else {}
+        from ..export.coreml_profiles import (
+            COREML_EXECUTION_PROFILE_VERSION,
+            resolve_coreml_runtime_compute_units,
         )
+
+        declared_profile_version = str(
+            package_metadata.get(
+                "coreml_execution_profile_version",
+                "",
+            )
+        ).strip()
+        declared_abi_schema = str(
+            package_metadata.get("coreml_profile_abi_schema", "")
+        ).strip()
+        if (
+            declared_profile_version == COREML_EXECUTION_PROFILE_VERSION
+            or declared_abi_schema == COREML_DEPLOYMENT_ABI_SCHEMA
+        ):
+            validate_coreml_deployment_abi(
+                package_spec,
+                package_metadata,
+            )
+        compute_units = resolve_coreml_runtime_compute_units(
+            compute_units,
+            package_metadata,
+        )
+        _require_rfdetr_pose_cpu_profile(
+            package_metadata,
+            compute_units=compute_units,
+        )
+        spec = package_spec
+        meta = package_metadata
+        multifunction_route = _preflight_multifunction_spec(
+            spec,
+            meta,
+            path=path,
+        )
+        compute_unit = _to_compute_unit(compute_units)
         description = getattr(spec, "description", None)
-        functions = list(getattr(description, "functions", ()) or ())
-        family_marker = str(meta.get("model_family", "")).strip().lower()
-        component_marker = str(meta.get("component_contract", "")).strip()
-        sam_marker = (
-            family_marker in {"edgetam", "mobilesam", "sam", "sam2", "sam3"}
-            or component_marker == "sam_split_promptable_v1"
-        )
-        ppocr_marker = (
-            family_marker == "ppocr"
-            or component_marker == "ppocr_det_rec_v1"
-        )
-        if sam_marker:
+        if multifunction_route == "sam":
+            self.model = ct.models.MLModel(
+                str(path),
+                compute_units=compute_unit,
+            )
+            runtime_metadata = dict(
+                self.model.user_defined_metadata or {}
+            )
+            if runtime_metadata != package_metadata:
+                raise ValueError(
+                    "Core ML runtime metadata differs from the package spec "
+                    "metadata that selected the execution profile."
+                )
+            if (
+                declared_profile_version
+                == COREML_EXECUTION_PROFILE_VERSION
+                or declared_abi_schema == COREML_DEPLOYMENT_ABI_SCHEMA
+            ):
+                validate_coreml_deployment_abi(
+                    self.model.get_spec(),
+                    runtime_metadata,
+                )
             self._initialize_sam_multifunction(
                 ct=ct,
                 path=path,
@@ -1803,7 +2004,7 @@ class CoreMLBackend(BaseBackend):
                 requested_task=task,
             )
             return
-        if ppocr_marker:
+        if multifunction_route == "ppocr":
             self._initialize_ppocr_multifunction(
                 ct=ct,
                 path=path,
@@ -1813,24 +2014,6 @@ class CoreMLBackend(BaseBackend):
                 requested_task=task,
             )
             return
-        if functions:
-            generic_marker = (
-                "coreml_multifunction" in meta
-                and _metadata_bool(
-                    meta["coreml_multifunction"],
-                    key="coreml_multifunction",
-                )
-            )
-            marker_text = (
-                " despite coreml_multifunction=true"
-                if generic_marker
-                else ""
-            )
-            raise ValueError(
-                f"CoreML artifact {path} is an unknown multifunction "
-                f"package{marker_text}; no recognized strict component "
-                "contract was declared."
-            )
         spec_output_names = _feature_names(
             getattr(description, "output", None)
         )
@@ -1890,8 +2073,18 @@ class CoreMLBackend(BaseBackend):
         )
 
         family_key = (model_family or "").lower()
+        if family_key == "grounding_dino":
+            raise NotImplementedError(
+                "Grounding DINO Core ML artifacts are disabled because the "
+                "exported graph failed Apple-silicon runtime validation."
+            )
+        if family_key == "rfdetr" and resolved_task == "segment":
+            raise NotImplementedError(
+                "RF-DETR segmentation Core ML artifacts are disabled because "
+                "named outputs failed prepared-graph parity on Apple M4; "
+                "proposal-order drift changes learned query-slot pairings."
+            )
         eomt_metadata: dict[str, Any] | None = None
-        grounding_dino_text_contract: dict[str, Any] | None = None
         if strict_contract:
             io_contract = _parse_io_contract(meta)
         else:
@@ -1947,18 +2140,6 @@ class CoreMLBackend(BaseBackend):
                     size=str(model_size),
                     names=names,
                 )
-            if family_key == "grounding_dino":
-                from ..export.coreml_grounding_dino import (
-                    validate_grounding_dino_coreml_metadata,
-                )
-
-                grounding_dino_text_contract = (
-                    validate_grounding_dino_coreml_metadata(
-                        meta,
-                        size=str(model_size),
-                        names=names,
-                    )
-                )
             if family_key == "omdet_turbo":
                 from ..export.coreml_omdet_turbo import (
                     validate_omdet_turbo_coreml_metadata,
@@ -2013,7 +2194,6 @@ class CoreMLBackend(BaseBackend):
                 family_key in {"clip", "siglip2"}
                 and resolved_task == "classify"
                 or family_key in {
-                    "grounding_dino",
                     "omdet_turbo",
                     "owlv2",
                 }
@@ -2167,20 +2347,6 @@ class CoreMLBackend(BaseBackend):
             **pose_metadata,
         )
         self.frozen_classes = frozen_classes
-        if family_key == "grounding_dino":
-            if grounding_dino_text_contract is None:
-                raise ValueError(
-                    "Grounding DINO CoreML loading requires the strict frozen "
-                    "text contract emitted by LibreYOLO."
-                )
-            self._grounding_dino_text_contract = grounding_dino_text_contract
-            self._grounding_dino_text_threshold = 0.25
-            self._grounding_dino_text_threshold_context: ContextVar[
-                float | None
-            ] = ContextVar(
-                f"grounding_dino_text_threshold_{id(self)}",
-                default=None,
-            )
         if family_key == "eomt":
             if eomt_metadata is None:
                 raise ValueError(
@@ -2205,6 +2371,26 @@ class CoreMLBackend(BaseBackend):
             self.thing_class_ids = decoder.thing_class_ids
             self._eomt_decoder = decoder
         self._validate_spec_contract(spec, spec_output_names)
+        self.model = ct.models.MLModel(
+            str(path),
+            compute_units=compute_unit,
+        )
+        runtime_metadata = dict(
+            self.model.user_defined_metadata or {}
+        )
+        if runtime_metadata != package_metadata:
+            raise ValueError(
+                "Core ML runtime metadata differs from the package spec "
+                "metadata that selected the execution profile."
+            )
+        if (
+            declared_profile_version == COREML_EXECUTION_PROFILE_VERSION
+            or declared_abi_schema == COREML_DEPLOYMENT_ABI_SCHEMA
+        ):
+            validate_coreml_deployment_abi(
+                self.model.get_spec(),
+                runtime_metadata,
+            )
 
         # Dense validators choose their dataset geometry from these attributes.
         # Keeping them derived from the artifact contract prevents validation
@@ -2242,11 +2428,11 @@ class CoreMLBackend(BaseBackend):
         compute_units: str,
         requested_task: str | None,
     ) -> None:
-        """Load and validate all seven functions of a LibreSAM package."""
+        """Validate a LibreSAM package and prepare lazy exact-P dispatch."""
         from ..export.coreml import _validate_sam_multifunction_spec
         from ..export.coreml_sam import (
             SAM_COREML_ENCODER_FUNCTION,
-            SAM_COREML_FUNCTION_NAMES,
+            sam_coreml_runtime_function_names,
             validate_sam_coreml_metadata,
             validate_sam_coreml_profile,
         )
@@ -2321,10 +2507,10 @@ class CoreMLBackend(BaseBackend):
             raise ValueError("LibreSAM Core ML size/model_size aliases disagree.")
         if str(meta["precision"]).strip().lower() != "fp32":
             raise ValueError("LibreSAM Core ML packages must declare FP32.")
-        if not _metadata_bool(meta["dynamic"], key="dynamic"):
+        if _metadata_bool(meta["dynamic"], key="dynamic"):
             raise ValueError(
-                "LibreSAM Core ML packages must declare dynamic=true for "
-                "their bounded point-prompt axes."
+                "LibreSAM Core ML packages must declare dynamic=false because "
+                "every admitted point count is an exact fixed-shape function."
             )
         if "nms" in meta and _metadata_bool(meta["nms"], key="nms"):
             raise ValueError(
@@ -2398,30 +2584,32 @@ class CoreMLBackend(BaseBackend):
             ) from exc
 
         compute_unit = _to_compute_unit(compute_units)
-        runtimes: dict[str, Any] = {}
-        functions_by_name: dict[str, SAMCoreMLFunction] = {}
-        for function_name in SAM_COREML_FUNCTION_NAMES:
-            runtime = ct.models.MLModel(
-                str(path),
-                compute_units=compute_unit,
-                function_name=function_name,
+        actual_name = getattr(
+            self.model,
+            "function_name",
+            SAM_COREML_ENCODER_FUNCTION,
+        )
+        if actual_name != SAM_COREML_ENCODER_FUNCTION:
+            raise ValueError(
+                "Core ML loaded the wrong default LibreSAM function: "
+                f"expected {SAM_COREML_ENCODER_FUNCTION!r}, "
+                f"got {actual_name!r}."
             )
-            actual_name = getattr(runtime, "function_name", function_name)
-            if actual_name != function_name:
-                raise ValueError(
-                    "Core ML loaded the wrong LibreSAM function: "
-                    f"expected {function_name!r}, got {actual_name!r}."
-                )
-            runtimes[function_name] = runtime
-            functions_by_name[function_name] = SAMCoreMLFunction(
-                runtime,
-                function_name=function_name,
+        self._sam_ct = ct
+        self._sam_path = path
+        self._sam_compute_unit = compute_unit
+        self._sam_runtime_function_names = frozenset(
+            sam_coreml_runtime_function_names(profile)
+        )
+        self._sam_runtimes = {SAM_COREML_ENCODER_FUNCTION: self.model}
+        self._sam_functions = {
+            SAM_COREML_ENCODER_FUNCTION: SAMCoreMLFunction(
+                self.model,
+                function_name=SAM_COREML_ENCODER_FUNCTION,
                 profile=profile,
             )
-
-        self.model = runtimes[SAM_COREML_ENCODER_FUNCTION]
-        self._sam_runtimes = runtimes
-        self._sam_functions = functions_by_name
+        }
+        self._sam_runtime_lock = RLock()
         self._sam_profile = profile
         self._sam_image = None
         self._sam_image_path = None
@@ -2646,6 +2834,14 @@ class CoreMLBackend(BaseBackend):
             (PPOCR_COREML_DETECTOR_FUNCTION, detector_runtime),
             (PPOCR_COREML_RECOGNIZER_FUNCTION, recognizer_runtime),
         ):
+            runtime_metadata = dict(
+                runtime.user_defined_metadata or {}
+            )
+            if runtime_metadata != meta:
+                raise ValueError(
+                    "LibrePPOCR Core ML runtime metadata differs from the "
+                    "package spec validated before function compilation."
+                )
             actual_name = getattr(runtime, "function_name", expected_name)
             if actual_name != expected_name:
                 raise ValueError(
@@ -2786,65 +2982,11 @@ class CoreMLBackend(BaseBackend):
                     "by keyword."
                 )
             return self._predict_ppocr_pipeline(source, **kwargs)
-        if self.model_family == "grounding_dino":
-            text_threshold = kwargs.pop("text_threshold", None)
-            if text_threshold is None:
-                return super().__call__(source, *args, **kwargs)
-            try:
-                threshold = float(text_threshold)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    "Grounding DINO text_threshold must be a finite number "
-                    "in [0, 1]."
-                ) from exc
-            if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
-                raise ValueError(
-                    "Grounding DINO text_threshold must be a finite number "
-                    f"in [0, 1], got {text_threshold!r}."
-                )
-            context = self._grounding_dino_text_threshold_context
-            token = context.set(threshold)
-            try:
-                result = super().__call__(source, *args, **kwargs)
-            finally:
-                context.reset(token)
-            if isinstance(result, GeneratorType):
-                return self._grounding_dino_threshold_stream(
-                    result,
-                    threshold,
-                )
-            return result
         if self.model_family != "picosam3":
             return super().__call__(source, *args, **kwargs)
         if args:
             raise TypeError("PicoSAM3 prompts must be passed by keyword.")
         return self._predict_picosam3_component(source, **kwargs)
-
-    def _grounding_dino_threshold_stream(self, stream, threshold):
-        try:
-            while True:
-                token = self._grounding_dino_text_threshold_context.set(
-                    threshold
-                )
-                try:
-                    item = next(stream)
-                except StopIteration:
-                    return
-                finally:
-                    self._grounding_dino_text_threshold_context.reset(token)
-                yield item
-        finally:
-            close = getattr(stream, "close", None)
-            if callable(close):
-                close()
-
-    def _current_grounding_dino_text_threshold(self) -> float:
-        override = self._grounding_dino_text_threshold_context.get()
-        return (
-            self._grounding_dino_text_threshold
-            if override is None
-            else override
-        )
 
     def val(self, *args, **kwargs):
         """Validate only Core ML families with a fixed dataset metric contract."""
@@ -2854,7 +2996,6 @@ class CoreMLBackend(BaseBackend):
                 "contract. Validate it with explicit prompts and masks instead."
             )
         if self.model_family in {
-            "grounding_dino",
             "omdet_turbo",
             "owlv2",
         }:
@@ -2931,15 +3072,63 @@ class CoreMLBackend(BaseBackend):
             **kwargs,
         )
 
+    def _sam_function(self, function_name: str):
+        """Keep exactly one native SAM function proxy resident at a time."""
+        from ..export.coreml_sam import SAM_COREML_ENCODER_FUNCTION
+        from .coreml_sam import SAMCoreMLFunction
+
+        cached = self._sam_functions.get(function_name)
+        if cached is not None:
+            return cached
+        if function_name not in self._sam_runtime_function_names:
+            raise ValueError(
+                f"Unknown LibreSAM Core ML runtime function {function_name!r}."
+            )
+        # Core ML Tools 9 on the validation M4 can abort in native proxy
+        # construction when a second function from the same multifunction
+        # package is loaded while the first proxy remains resident. A SAM
+        # session therefore caches one active function, not an unbounded table
+        # of up to 259 native proxies. Embeddings are ordinary tensors and
+        # remain cached independently when the encoder proxy is released.
+        self.model = None
+        self._sam_functions.clear()
+        self._sam_runtimes.clear()
+        gc.collect()
+        load_kwargs = {
+            "compute_units": self._sam_compute_unit,
+        }
+        if function_name != SAM_COREML_ENCODER_FUNCTION:
+            load_kwargs["function_name"] = function_name
+        runtime = self._sam_ct.models.MLModel(
+            str(self._sam_path),
+            **load_kwargs,
+        )
+        actual_name = getattr(runtime, "function_name", function_name)
+        if actual_name != function_name:
+            raise ValueError(
+                "Core ML loaded the wrong LibreSAM function: "
+                f"expected {function_name!r}, got {actual_name!r}."
+            )
+        function = SAMCoreMLFunction(
+            runtime,
+            function_name=function_name,
+            profile=self._sam_profile,
+        )
+        self.model = runtime
+        self._sam_runtimes[function_name] = runtime
+        self._sam_functions[function_name] = function
+        return function
+
     def _run_sam_encoder(self, encoding):
         from ..export.coreml_sam import (
             SAM_COREML_ENCODER_FUNCTION,
             SAM_COREML_ENCODER_INPUT,
         )
 
-        outputs = self._sam_functions[SAM_COREML_ENCODER_FUNCTION](
-            {SAM_COREML_ENCODER_INPUT: encoding.pixel_values}
-        )
+        with self._sam_runtime_lock:
+            outputs = self._sam_function(SAM_COREML_ENCODER_FUNCTION)(
+                {SAM_COREML_ENCODER_INPUT: encoding.pixel_values}
+            )
         return {
             name: outputs[name]
             for name in self._sam_profile.embedding_names
@@ -2969,6 +3158,8 @@ class CoreMLBackend(BaseBackend):
             SAM_COREML_MASKS_OUTPUT,
             SAM_COREML_POINT_COORDS_INPUT,
             SAM_COREML_POINT_LABELS_INPUT,
+            parse_sam_coreml_runtime_function,
+            sam_coreml_runtime_function_name,
         )
 
         values: dict[str, torch.Tensor] = {
@@ -2981,7 +3172,25 @@ class CoreMLBackend(BaseBackend):
             values[SAM_COREML_POINT_LABELS_INPUT] = point_labels
         if boxes is not None:
             values[SAM_COREML_BOXES_INPUT] = boxes
-        outputs = self._sam_functions[function_name](values)
+        runtime_name = function_name
+        if point_coords is not None:
+            if not torch.is_tensor(point_coords) or point_coords.ndim != 4:
+                raise ValueError(
+                    "LibreSAM point coordinates must be a rank-4 tensor."
+                )
+            runtime_name = sam_coreml_runtime_function_name(
+                function_name,
+                point_count=int(point_coords.shape[2]),
+            )
+            parse_sam_coreml_runtime_function(
+                runtime_name,
+                profile=self._sam_profile,
+            )
+        # Function selection, native proxy replacement, and prediction are one
+        # critical section. Core ML Tools 9 can abort the process if another
+        # thread replaces a multifunction proxy while prediction is in flight.
+        with self._sam_runtime_lock:
+            outputs = self._sam_function(runtime_name)(values)
         return (
             outputs[SAM_COREML_MASKS_OUTPUT],
             outputs[SAM_COREML_IOU_OUTPUT],
@@ -3152,7 +3361,7 @@ class CoreMLBackend(BaseBackend):
         show: bool = False,
         **kwargs,
     ) -> Results:
-        """Run exact host orchestration over a seven-function SAM package."""
+        """Run exact host orchestration over a fixed-function SAM package."""
         del iou, vid_stride
         normalize_predict_kwargs(kwargs)
         if text is not None:
@@ -3645,15 +3854,6 @@ class CoreMLBackend(BaseBackend):
                 size=size,
                 canvas_hw=_imgsz_hw(imgsz),
             )
-        if family == "grounding_dino":
-            from ..export.coreml_grounding_dino import (
-                validate_grounding_dino_coreml_profile,
-            )
-
-            validate_grounding_dino_coreml_profile(
-                size=size,
-                canvas_hw=_imgsz_hw(imgsz),
-            )
         if family == "omdet_turbo":
             from ..export.coreml_omdet_turbo import (
                 validate_omdet_turbo_coreml_profile,
@@ -3857,31 +4057,6 @@ class CoreMLBackend(BaseBackend):
                         "Strict OWLv2 CoreML output shapes disagree with the "
                         f"frozen detector ABI: expected {expected_shapes}, "
                         f"got {actual_shapes}."
-                    )
-            if family == "grounding_dino":
-                from ..export.coreml_grounding_dino import (
-                    expected_grounding_dino_coreml_shapes,
-                )
-
-                actual_shapes = {
-                    output.name: output.shape
-                    for output in io_contract.outputs
-                }
-                token_shape = actual_shapes.get("token_logits")
-                if token_shape is None or len(token_shape) != 3:
-                    raise ValueError(
-                        "Strict Grounding DINO CoreML token_logits must have "
-                        "a declared rank-three shape."
-                    )
-                expected_shapes = expected_grounding_dino_coreml_shapes(
-                    size=str(size),
-                    sequence_length=int(token_shape[-1]),
-                )
-                if actual_shapes != expected_shapes:
-                    raise ValueError(
-                        "Strict Grounding DINO CoreML output shapes disagree "
-                        f"with the frozen detector ABI: expected "
-                        f"{expected_shapes}, got {actual_shapes}."
                     )
             if family == "omdet_turbo":
                 from ..export.coreml_omdet_turbo import (
@@ -4295,30 +4470,6 @@ class CoreMLBackend(BaseBackend):
     ):
         if ratio is None:
             ratio = 1.0
-        if self.model_family == "grounding_dino":
-            from ..export.coreml_grounding_dino import (
-                postprocess_grounding_dino_coreml_outputs,
-            )
-
-            by_name = dict(zip(self.output_names, all_outputs))
-            decoded = postprocess_grounding_dino_coreml_outputs(
-                by_name["token_logits"],
-                by_name["pred_boxes"],
-                size=str(self.model_size),
-                names=self.names,
-                text_contract=self._grounding_dino_text_contract,
-                original_size=original_size,
-                conf=conf,
-                text_threshold=self._current_grounding_dino_text_threshold(),
-                max_det=max_det,
-                classes=kwargs.get("classes"),
-            )
-            return (
-                decoded["boxes"].numpy(),
-                decoded["scores"].numpy(),
-                decoded["classes"].numpy(),
-                None,
-            )
         if self.model_family == "omdet_turbo":
             from ..export.coreml_omdet_turbo import (
                 postprocess_omdet_turbo_coreml_outputs,
@@ -4613,19 +4764,6 @@ class CoreMLBackend(BaseBackend):
                 image_size=input_h,
             )
             return tensor, img.copy(), img.size, 1.0
-
-        if self.model_family == "grounding_dino":
-            from ..export.coreml_grounding_dino import (
-                preprocess_grounding_dino_coreml_image,
-            )
-
-            img = ImageLoader.load(image, color_format=color_format)
-            tensor = preprocess_grounding_dino_coreml_image(
-                img,
-                canvas_hw=_imgsz_hw(effective_imgsz),
-            )
-            # The common ImageType encoder consumes canonical RGB bytes.
-            return tensor.mul(255.0), img.copy(), img.size, 1.0
 
         if self.model_family == "owlv2":
             from ..export.coreml_owlv2 import (

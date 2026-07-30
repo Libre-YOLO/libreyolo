@@ -376,7 +376,11 @@ class LibreYOLO9(BaseModel):
         }
         current.update(matched)
         self.model.load_state_dict(current, strict=True)
-        self.model.to(self.device)
+        # Keep the wrapper immediately usable for inference. The trainer
+        # explicitly enters train mode at each epoch, so transfer
+        # initialization does not need to leak PyTorch's construction-time
+        # training mode into public predict calls.
+        self.model.to(self.device).eval()
         return {
             "loaded": len(matched),
             "skipped": max(total_tensors - len(matched), 0),

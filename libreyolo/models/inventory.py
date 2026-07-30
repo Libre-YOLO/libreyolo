@@ -69,8 +69,9 @@ def _export_override(cls, base_cls) -> str:
 
     ``blocked`` means every path raises. A family that exports some formats
     and raises for the rest (PicoSAM3 ships ONNX only) is ``custom``, so walk
-    the AST for an actual export call instead of matching source text: the
-    old ``"export_" not in source`` check missed ``torch.onnx.export``.
+    the AST for an actual export call or the shared ``BaseExporter.create``
+    factory instead of matching source text: the old ``"export_" not in
+    source`` check missed ``torch.onnx.export``.
     """
     if cls.export is base_cls.export:
         return "none"
@@ -87,11 +88,16 @@ def _export_override(cls, base_cls) -> str:
         elif isinstance(node, ast.Call):
             called = node.func
             name = ""
+            owner = ""
             if isinstance(called, ast.Attribute):
                 name = called.attr
+                if isinstance(called.value, ast.Name):
+                    owner = called.value.id
             elif isinstance(called, ast.Name):
                 name = called.id
-            if "export" in name.lower():
+            if "export" in name.lower() or (
+                owner == "BaseExporter" and name == "create"
+            ):
                 performs_export = True
     if raises_not_implemented and not performs_export:
         return "blocked"

@@ -93,6 +93,10 @@ class TestFactoryResolution:
 
         assert _ALIASES["florence-2"] == (LibreFlorence2, "base")
         assert _ALIASES["kosmos-2"] == (LibreKosmos2, "224")
+        assert (
+            LibreKosmos2.HF_REVISIONS["224"]
+            == "e91cfbcb4ce051b6a55bfb5f96165a3bbf5eb82c"
+        )
 
     def test_unknown_alias_raises_before_loading(self):
         from libreyolo.models.vlm import LibreVLM

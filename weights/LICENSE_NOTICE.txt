@@ -78,6 +78,28 @@ project the weights were derived from. Per-family summary:
              google/siglip2-so400m-patch14-384 (Hugging Face).
              Convert with weights/convert_siglip2_weights.py.
 
+    Grounding DINO (LibreGroundingDINO{t,b})            Apache-2.0
+             tiny:
+               upstream IDEA-Research/grounding-dino-tiny
+               revision a2bb814dd30d776dcf7e30523b00659f4f141c71
+               mirror LibreYOLO/LibreGroundingDINOt
+               revision 842ba2640b927b39c4c06a62e4d2238a9df965f1
+               model.safetensors:
+                 689359096 bytes
+                 SHA-256:
+                 1a2412ef99bd74bcd3c2a246fa1e48581f8889a1300c9051974741314fc042f3
+             base:
+               upstream IDEA-Research/grounding-dino-base
+               revision 12bdfa3120f3e7ec7b434d90674b3396eccf88eb
+               mirror LibreYOLO/LibreGroundingDINOb
+               revision 2d2f9b44aa8740a3c6a5b84c5d739441f22b7494
+               model.safetensors:
+                 933400872 bytes
+                 SHA-256:
+                 5548f844c928c4b6f411fa8cbcc2bfa8dbbba437cb1d513975519f93c2a9ed21
+             Each pinned mirror safetensors is byte-identical to its pinned
+             upstream file; see libreyolo/models/grounding_dino/NOTICE.
+
     OWLv2    (LibreOWLv2{b16,l14})                    Apache-2.0
              base patch-16 ensemble:
                upstream google/owlv2-base-patch16-ensemble
@@ -222,18 +244,25 @@ project the weights were derived from. Per-family summary:
              snapshot. The upstream and mirror model cards declare
              Apache-2.0; learned parameters are unchanged.
 
-    MobileSAM (LibreYOLO/LibreMobileSAM)                PROVENANCE GAP
-             Current LibreYOLO mirror revision:
+    MobileSAM (LibreYOLO/LibreMobileSAM)                Apache-2.0
+             Upstream: https://github.com/ChaoningZhang/MobileSAM
+             revision:
+               f706ad9c4eb7f219c00d9050e46328518ffb65d2
+             LICENSE SHA-256:
+               c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+             weights/mobile_sam.pt:
+               40,728,226 bytes
+               6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f
+             LibreYOLO mirror revision:
                c80f272421d38fc26ef4bd0c02111b6c1f1c8cb9
-             LibreMobileSAM.pt SHA-256:
+             LibreMobileSAM.pt:
+               40,730,739 bytes
                79f09a3671f38696d45da0aed49ef382fde2efd1bc966d172ac9822b952e35fe
-             The mirror card declares Apache-2.0 and attributes the
-             Apache-2.0 ChaoningZhang/MobileSAM and TinyViT projects, but it
-             does not record the exact upstream source commit or checkpoint
-             revision/hash from which this file was converted. This mirror
-             hash does not repair that missing source provenance. Keep the
-             Core ML release-notice gap active and do not describe converted
-             artifacts as redistribution-ready until the source is pinned.
+             The checkpoint containers unwrap to the same 439 named tensors
+             and 10,140,231 parameter values. Canonical state SHA-256:
+               92dc21da1d9d0ca2721ac08745d4e77c8f02b4af96b2e8de0aced98c5b4622ea
+             The gated source parity suite passes exactly at the pinned
+             revision. The learned parameters are unchanged.
 
     SAM 3    (facebook/sam3 snapshot; not rehosted)   custom SAM License
              upstream: facebook/sam3 on Hugging Face. Access is gated and
@@ -277,6 +306,35 @@ project the weights were derived from. Per-family summary:
                  2029990624 bytes
                SHA-256:
                  b9bfd456c9472c0acd5719d6e514c4b859891af205ee1a736552fd3497b8b0c3
+             The upstream model card declares Apache-2.0. The source
+             safetensors file is conversion input and is not copied into the
+             portable .coremlvlm deployment bundle.
+
+    Florence-2-base (florence-community/Florence-2-base)        MIT
+             Downloaded directly from the upstream Hugging Face repository;
+             LibreYOLO does not rehost the source checkpoint. The exact
+             snapshot accepted by the Core ML conversion contract is:
+               revision:
+                 00921df66db728a9ceb750f5eca43e5c203a2051
+               model.safetensors:
+                 463178864 bytes
+               SHA-256:
+                 62f3e696da74f8869a68ddb529a9b3e14eb25b21c592cb3dea6179bf944df6a0
+             The community repository and original Microsoft checkpoint
+             declare the MIT license. The source safetensors file is
+             conversion input and is not copied into the portable
+             .coremlvlm deployment bundle.
+
+    Qwen3-VL-2B-Instruct (Qwen/Qwen3-VL-2B-Instruct)     Apache-2.0
+             Downloaded directly from the upstream Hugging Face repository;
+             LibreYOLO does not rehost the source checkpoint. The exact
+             snapshot accepted by the Core ML conversion contract is:
+               revision:
+                 89644892e4d85e24eaac8bacfd4f463576704203
+               model.safetensors:
+                 4255140312 bytes
+               SHA-256:
+                 7de1838c87a5349b016c26a1c3f7d2bc400a3d485f95ef39a7059ffd734977a0
              The upstream model card declares Apache-2.0. The source
              safetensors file is conversion input and is not copied into the
              portable .coremlvlm deployment bundle.

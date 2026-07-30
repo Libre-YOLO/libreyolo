@@ -8,8 +8,8 @@ each prompt query.  This module defines that boundary without importing
 * one fixed-shape, model-ready FP32 image encoder;
 * six decoder functions covering points, boxes, and points+box prompts in
   single-mask and multimask modes;
-* fixed batch/query dimensions (``N=1``, ``Q=1``) with a genuinely dynamic,
-  finitely bounded point dimension ``P``;
+* fixed batch/query dimensions (``N=1``, ``Q=1``), with a separately captured
+  exact fixed-``P`` runtime function for every admitted point count;
 * exact named FP32/INT32 tensor interfaces and integrity-checked metadata.
 
 The host owns raw-image preprocessing, prompt-coordinate transforms, the
@@ -29,14 +29,18 @@ lower faithfully with a symbolic point count:
 Both rewrites compose LibreYOLO's existing Apache-2.0 model modules and learned
 parameters.  They do not introduce model code or weights from a new upstream.
 SAM3 support is visual-prompt-only.  Its gated custom-license weights make any
-converted artifact local-user-only and non-redistributable.
+converted artifact local-user-only and non-redistributable. MobileSAM's
+Apache-2.0 source, source checkpoint, LibreYOLO mirror, and exact tensor-value
+chain are pinned in the profile below.
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import hmac
 import json
+import struct
 from dataclasses import dataclass
 from numbers import Integral
 from types import MethodType
@@ -45,14 +49,15 @@ from typing import Any, Mapping, Sequence
 import torch
 import torch.nn as nn
 
-SAM_COREML_COMPONENT_CONTRACT = "sam_split_promptable_v1"
-SAM_COREML_PIPELINE_SCHEMA_VERSION = 1
+SAM_COREML_COMPONENT_CONTRACT = "sam_split_promptable_v3"
+SAM_COREML_PIPELINE_SCHEMA_VERSION = 3
 SAM_COREML_ARTIFACT_SCOPE = "host_orchestrated_promptable_component_bundle"
 # Core ML multifunction ML Programs are available from iOS 18 / macOS 15.
 # Individual component graphs could target iOS 15, but LibreYOLO deliberately
-# emits one native package with seven named functions rather than inventing a
-# directory-of-packages container that Core ML itself cannot load.
+# emits one native package rather than inventing a directory-of-packages
+# container that Core ML itself cannot load.
 SAM_COREML_MINIMUM_DEPLOYMENT_TARGET = "iOS18"
+SAM_COREML_POINT_DISPATCH = "exact_fixed_function_per_point_count_v1"
 
 SAM_COREML_ENCODER_FUNCTION = "encode_image"
 SAM_COREML_PROMPT_MODES = ("points", "boxes", "points_boxes")
@@ -91,6 +96,16 @@ SAM_COREML_HOST_OPERATIONS = (
 
 _SAM2_FIXED_POSITION_BUFFER = "_libreyolo_coreml_fixed_position_embedding"
 _SAM2_ORIGINAL_GET_POS_EMBED = "_libreyolo_coreml_original_get_pos_embed"
+_SAM_COREML_CAPTURE_DECOMPOSITIONS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "edgetam": (
+        "edgetam_where_scalarother_v1",
+        ("aten.where.ScalarOther",),
+    ),
+    "sam2": (
+        "sam2_where_scalarother_v1",
+        ("aten.where.ScalarOther",),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -149,10 +164,6 @@ _FAMILY_SPECS: dict[str, _SAMFamilySpec] = {
         encoder_rewrite="model_ready_image_encoder",
         weights_license="Apache-2.0",
         redistributable=True,
-        release_notice_gap=(
-            "MobileSAM upstream source commit/checkpoint revision is not "
-            "pinned; see weights/LICENSE_NOTICE.txt"
-        ),
     ),
     "sam": _SAMFamilySpec(
         sizes=("base", "large", "huge"),
@@ -185,7 +196,11 @@ _FAMILY_SPECS: dict[str, _SAMFamilySpec] = {
         preprocess_contract="sam2_processor_model_ready_v1",
         postprocess_size_metadata=("original_size",),
         iou_encoding="sigmoid_probability",
-        model_types=("sam2",),
+        # Transformers exposes the official SAM2.1 image-inference checkpoint
+        # through Sam2Model while retaining the top-level Sam2VideoConfig
+        # discriminator. The exported graph remains the bounded image encoder
+        # and prompt decoder; video memory is neither captured nor advertised.
+        model_types=("sam2_video",),
         encoder_rewrite="freeze_native_hiera_position_embedding",
         weights_license="Apache-2.0",
         redistributable=True,
@@ -217,6 +232,41 @@ _FAMILY_SPECS: dict[str, _SAMFamilySpec] = {
     ),
 }
 
+_MOBILESAM_STATE_SHA256 = (
+    "92dc21da1d9d0ca2721ac08745d4e77c8f02b4af96b2e8de0aced98c5b4622ea"
+)
+_SAM_COREML_CHECKPOINT_PROVENANCE: dict[str, dict[str, Any]] = {
+    "mobilesam": {
+        "upstream_repo": "https://github.com/ChaoningZhang/MobileSAM",
+        "upstream_revision": "f706ad9c4eb7f219c00d9050e46328518ffb65d2",
+        "upstream_license": "Apache-2.0",
+        "upstream_checkpoint": "weights/mobile_sam.pt",
+        "upstream_checkpoint_size_bytes": 40_728_226,
+        "upstream_checkpoint_sha256": (
+            "6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f"
+        ),
+        "mirror_repo": "LibreYOLO/LibreMobileSAM",
+        "mirror_revision": "c80f272421d38fc26ef4bd0c02111b6c1f1c8cb9",
+        "mirror_checkpoint": "LibreMobileSAM.pt",
+        "mirror_checkpoint_size_bytes": 40_730_739,
+        "mirror_checkpoint_sha256": (
+            "79f09a3671f38696d45da0aed49ef382fde2efd1bc966d172ac9822b952e35fe"
+        ),
+        "state_tensor_count": 439,
+        "state_parameter_count": 10_140_231,
+        "state_tensor_sha256": _MOBILESAM_STATE_SHA256,
+        "state_values_equal": True,
+    }
+}
+_SAM_COREML_REVIEWED_PINNED_WEIGHTS = "reviewed_pinned"
+_SAM_COREML_FAMILY_PROFILE_WEIGHTS = "family_profile"
+_SAM_COREML_UNKNOWN_LOCAL_WEIGHTS = "unknown_local"
+_SAM_COREML_UNKNOWN_LOCAL_LICENSE = "unknown-local"
+_SAM_COREML_UNKNOWN_LOCAL_NOTICE = (
+    "Checkpoint provenance and weight license were not supplied or reviewed; "
+    "the converted artifact is local-only and non-redistributable."
+)
+
 # These strings are deliberately verbose. They are part of the signed profile
 # persisted into the package, so changing any resize domain, arithmetic order,
 # padding domain, or mask-resize stage requires a new versioned contract rather
@@ -237,9 +287,7 @@ _SAM_COREML_HOST_CONTRACTS: dict[str, dict[str, str]] = {
         "image_resize": "pillow_uint8_longest_side_half_up_bilinear",
         "normalization": "fp32_raw255_mobile_mean_std_after_resize",
         "padding": "normalized_zero_right_bottom_to_1024",
-        "coordinates": (
-            "numpy_fp32_then_float64_half_up_resized_wh_scale_then_fp32"
-        ),
+        "coordinates": ("numpy_fp32_then_float64_half_up_resized_wh_scale_then_fp32"),
         "mask_postprocess": (
             "bilinear_align_corners_false_low256_to_1024_crop_reshaped_"
             "then_original_then_strict_gt_zero"
@@ -316,6 +364,27 @@ def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def _model_state_sha256(model: nn.Module) -> str:
+    """Hash names, dtypes, shapes, and bytes in a deterministic state mapping."""
+
+    digest = hashlib.sha256()
+    for name, value in sorted(model.state_dict().items()):
+        tensor = value.detach().cpu().contiguous()
+        name_bytes = name.encode("utf-8")
+        dtype_bytes = str(tensor.dtype).encode("ascii")
+        digest.update(struct.pack("<I", len(name_bytes)))
+        digest.update(name_bytes)
+        digest.update(struct.pack("<I", len(dtype_bytes)))
+        digest.update(dtype_bytes)
+        digest.update(struct.pack("<I", tensor.ndim))
+        for dimension in tensor.shape:
+            digest.update(struct.pack("<Q", int(dimension)))
+        raw = tensor.reshape(-1).view(torch.uint8).numpy().tobytes()
+        digest.update(struct.pack("<Q", len(raw)))
+        digest.update(raw)
+    return digest.hexdigest()
+
+
 def _json_field(metadata: Mapping[str, Any], name: str, expected_type: type) -> Any:
     value = metadata.get(name)
     if isinstance(value, str):
@@ -325,8 +394,7 @@ def _json_field(metadata: Mapping[str, Any], name: str, expected_type: type) -> 
             raise ValueError(f"{name} must contain valid JSON.") from exc
     if not isinstance(value, expected_type):
         raise ValueError(
-            f"{name} must be a {expected_type.__name__}, got "
-            f"{type(value).__name__}."
+            f"{name} must be a {expected_type.__name__}, got {type(value).__name__}."
         )
     return value
 
@@ -359,7 +427,7 @@ class SAMCoreMLProfile:
         point_max = _strict_int(
             self.prompt_max_points,
             name="prompt_max_points",
-            minimum=2,
+            minimum=1,
             maximum=SAM_COREML_MAX_POINTS_LIMIT,
         )
         object.__setattr__(self, "family", family)
@@ -406,10 +474,7 @@ class SAMCoreMLProfile:
             "iou_encoding": spec.iou_encoding,
             "encoder_rewrite": spec.encoder_rewrite,
             "visual_only": spec.visual_only,
-            "weights_license": spec.weights_license,
-            "redistributable": spec.redistributable,
             "native_outputs_omitted": list(spec.native_outputs_omitted),
-            "release_notice_gap": spec.release_notice_gap,
         }
 
 
@@ -457,6 +522,8 @@ def _shape_axes(shape: Sequence[int]) -> list[dict[str, Any]]:
 
 
 def _point_axis(profile: SAMCoreMLProfile) -> dict[str, Any]:
+    if profile.prompt_max_points == 1:
+        return _fixed_axis("P", 1)
     return {
         "axis": "P",
         "kind": "range",
@@ -614,7 +681,7 @@ def _decoder_outputs(
 def sam_coreml_function_contracts(
     profile: SAMCoreMLProfile,
 ) -> dict[str, dict[str, Any]]:
-    """Return all seven exact component function descriptors."""
+    """Return the seven source component descriptors used for graph capture."""
 
     functions: dict[str, dict[str, Any]] = {
         SAM_COREML_ENCODER_FUNCTION: {
@@ -632,15 +699,165 @@ def sam_coreml_function_contracts(
             "mask_mode": mask_mode,
             "inputs": _decoder_inputs(profile, prompt_mode),
             "outputs": _decoder_outputs(profile, mask_mode),
-            "capture": "torch_export_dynamic_points",
+            "capture": (
+                "torch_export_dynamic_points"
+                if _decoder_uses_points(function_name)
+                and profile.prompt_max_points > 1
+                else "torch_export_fixed"
+            ),
         }
+    return functions
+
+
+def _decoder_uses_points(function_name: str) -> bool:
+    prompt_mode, _ = _decoder_function_parts(function_name)
+    return prompt_mode in ("points", "points_boxes")
+
+
+def sam_coreml_runtime_function_name(
+    source_function_name: str,
+    *,
+    point_count: int | None = None,
+) -> str:
+    """Resolve one source component to its exact fixed-shape runtime name."""
+
+    if source_function_name == SAM_COREML_ENCODER_FUNCTION:
+        if point_count is not None:
+            raise ValueError("The LibreSAM encoder has no point-count dispatch.")
+        return source_function_name
+    prompt_mode, _ = _decoder_function_parts(source_function_name)
+    if prompt_mode not in ("points", "points_boxes"):
+        if point_count is not None:
+            raise ValueError(
+                f"{source_function_name!r} has no point-count dispatch."
+            )
+        return source_function_name
+    if point_count is None:
+        raise ValueError(
+            f"{source_function_name!r} requires an exact point_count."
+        )
+    resolved = _strict_int(
+        point_count,
+        name="point_count",
+        minimum=1,
+        maximum=SAM_COREML_MAX_POINTS_LIMIT,
+    )
+    return f"{source_function_name}_p{resolved}"
+
+
+def parse_sam_coreml_runtime_function(
+    function_name: str,
+    *,
+    profile: SAMCoreMLProfile,
+) -> tuple[str, int | None]:
+    """Return ``(source function, P)`` for one admitted runtime function."""
+
+    name = str(function_name)
+    if name == SAM_COREML_ENCODER_FUNCTION:
+        return name, None
+    if name in SAM_COREML_DECODER_FUNCTIONS and not _decoder_uses_points(name):
+        return name, None
+    for source_name in SAM_COREML_DECODER_FUNCTIONS:
+        if not _decoder_uses_points(source_name):
+            continue
+        prefix = f"{source_name}_p"
+        if not name.startswith(prefix):
+            continue
+        suffix = name[len(prefix) :]
+        if not suffix.isdigit() or suffix != str(int(suffix)):
+            break
+        point_count = int(suffix)
+        if not 1 <= point_count <= profile.prompt_max_points:
+            raise ValueError(
+                f"LibreSAM runtime point count must be in [1, "
+                f"{profile.prompt_max_points}], got {point_count}."
+            )
+        return source_name, point_count
+    raise ValueError(f"Unknown LibreSAM Core ML runtime function {name!r}.")
+
+
+def sam_coreml_runtime_function_names(
+    profile: SAMCoreMLProfile,
+) -> tuple[str, ...]:
+    """Return the ordered native function table for one finite profile."""
+
+    names = [SAM_COREML_ENCODER_FUNCTION]
+    for source_name in SAM_COREML_DECODER_FUNCTIONS:
+        if _decoder_uses_points(source_name):
+            names.extend(
+                sam_coreml_runtime_function_name(
+                    source_name,
+                    point_count=point_count,
+                )
+                for point_count in range(1, profile.prompt_max_points + 1)
+            )
+        else:
+            names.append(source_name)
+    return tuple(names)
+
+
+def _fixed_sam_coreml_runtime_contract(
+    source_contract: Mapping[str, Any],
+    *,
+    source_name: str,
+    point_count: int | None,
+) -> dict[str, Any]:
+    contract = copy.deepcopy(source_contract)
+    contract["source_function"] = source_name
+    if point_count is None:
+        return contract
+    contract["point_count"] = point_count
+    contract["capture"] = "torch_export_fixed_points"
+    for feature in contract["inputs"]:
+        for axis in feature["shape"]:
+            if axis["axis"] == "P":
+                axis.clear()
+                axis.update(_fixed_axis("P", point_count))
+    return contract
+
+
+def sam_coreml_runtime_function_contract(
+    profile: SAMCoreMLProfile,
+    function_name: str,
+) -> dict[str, Any]:
+    """Return one fixed runtime contract without building the full table."""
+
+    source_name, point_count = parse_sam_coreml_runtime_function(
+        function_name,
+        profile=profile,
+    )
+    source_contract = sam_coreml_function_contracts(profile)[source_name]
+    return _fixed_sam_coreml_runtime_contract(
+        source_contract,
+        source_name=source_name,
+        point_count=point_count,
+    )
+
+
+def sam_coreml_runtime_function_contracts(
+    profile: SAMCoreMLProfile,
+) -> dict[str, dict[str, Any]]:
+    """Return the exact fixed-shape ABI persisted in the native package."""
+
+    source_contracts = sam_coreml_function_contracts(profile)
+    functions: dict[str, dict[str, Any]] = {}
+    for runtime_name in sam_coreml_runtime_function_names(profile):
+        source_name, point_count = parse_sam_coreml_runtime_function(
+            runtime_name,
+            profile=profile,
+        )
+        functions[runtime_name] = _fixed_sam_coreml_runtime_contract(
+            source_contracts[source_name],
+            source_name=source_name,
+            point_count=point_count,
+        )
     return functions
 
 
 def sam_coreml_decoder_dynamic_shapes(
     profile: SAMCoreMLProfile,
     function_name: str,
-) -> tuple[tuple[dict[int, Any], ...]]:
+) -> tuple[tuple[dict[int, Any], ...]] | None:
     """Return the positional ``torch.export`` dynamic-shape tuple.
 
     Point coordinates and labels share one symbolic ``P``.  Box-only decoders
@@ -651,6 +868,8 @@ def sam_coreml_decoder_dynamic_shapes(
 
     prompt_mode, _ = _decoder_function_parts(function_name)
     inputs = _decoder_inputs(profile, prompt_mode)
+    if profile.prompt_max_points == 1 or prompt_mode == "boxes":
+        return None
     point_dim = torch.export.Dim(
         "P",
         min=1,
@@ -671,12 +890,117 @@ def sam_coreml_decoder_dynamic_shapes(
     return (tuple(dynamic_shapes),)
 
 
-def sam_coreml_metadata(profile: SAMCoreMLProfile) -> dict[str, Any]:
+def _default_sam_coreml_weights_claim(
+    profile: SAMCoreMLProfile,
+) -> dict[str, Any]:
+    provenance = _SAM_COREML_CHECKPOINT_PROVENANCE.get(profile.family)
+    return {
+        "status": (
+            _SAM_COREML_REVIEWED_PINNED_WEIGHTS
+            if profile.family == "mobilesam"
+            else _SAM_COREML_FAMILY_PROFILE_WEIGHTS
+        ),
+        "state_sha256": (
+            _MOBILESAM_STATE_SHA256 if profile.family == "mobilesam" else None
+        ),
+        "weights_license": profile.spec.weights_license,
+        "artifact_redistributable": profile.spec.redistributable,
+        "checkpoint_provenance": (
+            copy.deepcopy(provenance) if provenance is not None else None
+        ),
+    }
+
+
+def _unknown_local_mobilesam_weights_claim(
+    state_sha256: str,
+) -> dict[str, Any]:
+    return {
+        "status": _SAM_COREML_UNKNOWN_LOCAL_WEIGHTS,
+        "state_sha256": state_sha256,
+        "weights_license": _SAM_COREML_UNKNOWN_LOCAL_LICENSE,
+        "artifact_redistributable": False,
+        "checkpoint_provenance": None,
+    }
+
+
+def _normalize_sam_coreml_weights_claim(
+    profile: SAMCoreMLProfile,
+    claim: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    expected_keys = {
+        "status",
+        "state_sha256",
+        "weights_license",
+        "artifact_redistributable",
+        "checkpoint_provenance",
+    }
+    if claim is None:
+        return _default_sam_coreml_weights_claim(profile)
+    if not isinstance(claim, Mapping):
+        raise ValueError("sam_coreml_weights must be a mapping.")
+    if set(claim) != expected_keys:
+        raise ValueError(
+            "sam_coreml_weights must contain exactly "
+            f"{sorted(expected_keys)!r}."
+        )
+    normalized = {
+        "status": str(claim["status"]),
+        "state_sha256": claim["state_sha256"],
+        "weights_license": str(claim["weights_license"]),
+        "artifact_redistributable": _strict_bool(
+            claim["artifact_redistributable"],
+            name="sam_coreml_weights.artifact_redistributable",
+        ),
+        "checkpoint_provenance": copy.deepcopy(
+            claim["checkpoint_provenance"]
+        ),
+    }
+    default = _default_sam_coreml_weights_claim(profile)
+    if profile.family == "mobilesam" and normalized["status"] == (
+        _SAM_COREML_UNKNOWN_LOCAL_WEIGHTS
+    ):
+        state_sha256 = str(normalized["state_sha256"]).lower()
+        if (
+            len(state_sha256) != 64
+            or any(value not in "0123456789abcdef" for value in state_sha256)
+            or hmac.compare_digest(state_sha256, _MOBILESAM_STATE_SHA256)
+        ):
+            raise ValueError(
+                "Unknown-local MobileSAM weights require a non-pinned SHA-256 "
+                "state fingerprint."
+            )
+        expected = _unknown_local_mobilesam_weights_claim(state_sha256)
+        if normalized != expected:
+            raise ValueError(
+                "Unknown-local MobileSAM weights must be local-only, "
+                "non-redistributable, and carry no checkpoint provenance."
+            )
+        return expected
+    if normalized != default:
+        raise ValueError(
+            "sam_coreml_weights conflicts with the reviewed family weight claim."
+        )
+    return default
+
+
+def sam_coreml_metadata(
+    profile: SAMCoreMLProfile,
+    *,
+    weights_claim: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build the strict bundle manifest persisted into every component."""
 
-    functions = sam_coreml_function_contracts(profile)
+    functions = sam_coreml_runtime_function_contracts(profile)
+    function_names = sam_coreml_runtime_function_names(profile)
     spec = profile.spec
-    return {
+    normalized_weights = _normalize_sam_coreml_weights_claim(
+        profile,
+        weights_claim,
+    )
+    unknown_local = normalized_weights["status"] == (
+        _SAM_COREML_UNKNOWN_LOCAL_WEIGHTS
+    )
+    manifest = {
         "artifact_scope": SAM_COREML_ARTIFACT_SCOPE,
         "component_contract": SAM_COREML_COMPONENT_CONTRACT,
         "sam_coreml_schema_version": SAM_COREML_PIPELINE_SCHEMA_VERSION,
@@ -687,22 +1011,44 @@ def sam_coreml_metadata(profile: SAMCoreMLProfile) -> dict[str, Any]:
         "task": "segment",
         "precision": "fp32",
         "coreml_minimum_deployment_target": SAM_COREML_MINIMUM_DEPLOYMENT_TARGET,
-        "coreml_function_names": list(SAM_COREML_FUNCTION_NAMES),
+        "coreml_function_names": list(function_names),
+        "coreml_function_count": len(function_names),
+        "sam_coreml_point_dispatch": SAM_COREML_POINT_DISPATCH,
         "prompt_modes": list(SAM_COREML_PROMPT_MODES),
         "mask_modes": list(SAM_COREML_MASK_MODES),
         "sam_coreml_profile": profile.as_dict(),
         "sam_coreml_functions": functions,
         "sam_coreml_functions_sha256": _canonical_sha256(functions),
+        "sam_coreml_weights": normalized_weights,
+        "sam_coreml_weights_sha256": _canonical_sha256(normalized_weights),
         "host_operations": list(SAM_COREML_HOST_OPERATIONS),
         "native_outputs_omitted": list(spec.native_outputs_omitted),
         "mask_encoding": "raw_logits",
         "mask_threshold": 0.0,
-        "weights_license": spec.weights_license,
-        "artifact_redistributable": spec.redistributable,
+        "weights_license": normalized_weights["weights_license"],
+        "artifact_redistributable": normalized_weights[
+            "artifact_redistributable"
+        ],
         "sam3_visual_only": spec.visual_only,
         "sam3_pcs_included": False,
-        "release_notice_gap": spec.release_notice_gap,
+        "release_notice_gap": (
+            _SAM_COREML_UNKNOWN_LOCAL_NOTICE
+            if unknown_local
+            else spec.release_notice_gap
+        ),
     }
+    capture_decomposition = _SAM_COREML_CAPTURE_DECOMPOSITIONS.get(
+        profile.family
+    )
+    if capture_decomposition is not None:
+        capture_profile, capture_ops = capture_decomposition
+        manifest.update(
+            {
+                "coreml_capture_decomposition_profile": capture_profile,
+                "coreml_capture_decompositions": list(capture_ops),
+            }
+        )
+    return manifest
 
 
 def _strict_bool(value: Any, *, name: str) -> bool:
@@ -734,7 +1080,8 @@ def validate_sam_coreml_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError(
             f"sam_coreml_profile is missing required field {exc.args[0]!r}."
         ) from exc
-    expected = sam_coreml_metadata(profile)
+    actual_weights = _json_field(metadata, "sam_coreml_weights", dict)
+    expected = sam_coreml_metadata(profile, weights_claim=actual_weights)
 
     scalar_fields = (
         "artifact_scope",
@@ -745,7 +1092,10 @@ def validate_sam_coreml_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
         "task",
         "precision",
         "coreml_minimum_deployment_target",
+        "coreml_function_count",
+        "sam_coreml_point_dispatch",
         "sam_coreml_functions_sha256",
+        "sam_coreml_weights_sha256",
         "mask_encoding",
         "mask_threshold",
         "weights_license",
@@ -781,6 +1131,28 @@ def validate_sam_coreml_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
         if value != expected[name]:
             raise ValueError(f"{name} conflicts with the strict component manifest.")
 
+    capture_keys = (
+        "coreml_capture_decomposition_profile",
+        "coreml_capture_decompositions",
+    )
+    if capture_keys[0] in expected:
+        if metadata.get(capture_keys[0]) != expected[capture_keys[0]]:
+            raise ValueError(
+                "coreml_capture_decomposition_profile conflicts with the "
+                "strict component manifest."
+            )
+        actual_capture_ops = _json_field(metadata, capture_keys[1], list)
+        if actual_capture_ops != expected[capture_keys[1]]:
+            raise ValueError(
+                "coreml_capture_decompositions conflicts with the strict "
+                "component manifest."
+            )
+    elif any(name in metadata for name in capture_keys):
+        raise ValueError(
+            "Core ML capture-decomposition metadata is not admitted for this "
+            "SAM family."
+        )
+
     actual_profile = _json_field(metadata, "sam_coreml_profile", dict)
     if actual_profile != expected["sam_coreml_profile"]:
         raise ValueError("sam_coreml_profile contains inconsistent derived fields.")
@@ -791,6 +1163,12 @@ def validate_sam_coreml_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
     computed_hash = _canonical_sha256(actual_functions)
     if not hmac.compare_digest(actual_hash, computed_hash):
         raise ValueError("sam_coreml_functions_sha256 does not match the manifest.")
+    if actual_weights != expected["sam_coreml_weights"]:
+        raise ValueError("sam_coreml_weights conflicts with the weight claim.")
+    weights_hash = str(metadata.get("sam_coreml_weights_sha256", ""))
+    computed_weights_hash = _canonical_sha256(actual_weights)
+    if not hmac.compare_digest(weights_hash, computed_weights_hash):
+        raise ValueError("sam_coreml_weights_sha256 does not match the claim.")
 
     for name in (
         "artifact_redistributable",
@@ -826,6 +1204,7 @@ class SAMCoreMLModelSignature:
     embedding_shapes: tuple[tuple[int, int, int, int], ...]
     low_res_mask_size: int
     num_multimask_outputs: int
+    weights_claim: Mapping[str, Any]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -834,6 +1213,7 @@ class SAMCoreMLModelSignature:
             "embedding_shapes": [list(shape) for shape in self.embedding_shapes],
             "low_res_mask_size": self.low_res_mask_size,
             "num_multimask_outputs": self.num_multimask_outputs,
+            "weights_claim": copy.deepcopy(dict(self.weights_claim)),
         }
 
 
@@ -845,6 +1225,7 @@ def inspect_sam_coreml_model(
     """Reject a graph whose family-level modules/config do not match profile."""
 
     graph = _unwrap_model(model)
+    weights_claim = _default_sam_coreml_weights_claim(profile)
     for name in ("prompt_encoder", "mask_decoder"):
         if not isinstance(getattr(graph, name, None), nn.Module):
             raise ValueError(f"LibreSAM Core ML graph is missing '.{name}'.")
@@ -862,6 +1243,15 @@ def inspect_sam_coreml_model(
             raise ValueError("MobileSAM prompt embedding width must be 256.")
         if prompt_hw is not None and tuple(prompt_hw) != (64, 64):
             raise ValueError("MobileSAM prompt embedding grid must be 64x64.")
+        state_sha256 = _model_state_sha256(graph)
+        if not (
+            type(graph).__module__ == "libreyolo.models.mobilesam.model"
+            and type(graph).__name__ == "MobileSAMNetwork"
+            and hmac.compare_digest(state_sha256, _MOBILESAM_STATE_SHA256)
+        ):
+            weights_claim = _unknown_local_mobilesam_weights_claim(
+                state_sha256
+            )
         model_type = None
     else:
         if not callable(getattr(graph, "get_image_embeddings", None)):
@@ -886,9 +1276,7 @@ def inspect_sam_coreml_model(
                 f"{profile.family} prompt image size does not match the profile."
             )
         if prompt_hidden is not None and int(prompt_hidden) != 256:
-            raise ValueError(
-                f"{profile.family} prompt embedding width must be 256."
-            )
+            raise ValueError(f"{profile.family} prompt embedding width must be 256.")
         if profile.family == "sam":
             vision_config = getattr(config, "vision_config", None)
             vision_image_size = getattr(vision_config, "image_size", None)
@@ -931,6 +1319,7 @@ def inspect_sam_coreml_model(
         embedding_shapes=profile.embedding_shapes,
         low_res_mask_size=profile.low_res_mask_size,
         num_multimask_outputs=SAM_COREML_NUM_MULTIMASK_OUTPUTS,
+        weights_claim=weights_claim,
     )
 
 
@@ -1107,8 +1496,7 @@ class SAMCoreMLDecoder(nn.Module):
             )
             point_embeddings = (
                 point_embeddings
-                + negative.to(point_embeddings.dtype)
-                * encoder.not_a_point_embed.weight
+                + negative.to(point_embeddings.dtype) * encoder.not_a_point_embed.weight
                 + zero.to(point_embeddings.dtype) * encoder.point_embeddings[0].weight
                 + positive.to(point_embeddings.dtype)
                 * encoder.point_embeddings[1].weight
@@ -1270,19 +1658,42 @@ def validate_sam_coreml_function_io(
     outputs: Mapping[str, Any],
     *,
     profile: SAMCoreMLProfile,
+    _contract: Mapping[str, Any] | None = None,
 ) -> None:
     """Validate actual graph/runtime tensors by declared name and semantics."""
 
-    contracts = sam_coreml_function_contracts(profile)
-    if function_name not in contracts:
-        raise ValueError(f"Unknown LibreSAM Core ML function {function_name!r}.")
-    contract = contracts[function_name]
+    fixed_point_count = None
+    source_function_name = function_name
+    if (
+        function_name == SAM_COREML_ENCODER_FUNCTION
+        or function_name in SAM_COREML_DECODER_FUNCTIONS
+    ):
+        contract = (
+            sam_coreml_function_contracts(profile)[function_name]
+            if _contract is None
+            else _contract
+        )
+    else:
+        source_function_name, fixed_point_count = (
+            parse_sam_coreml_runtime_function(
+                function_name,
+                profile=profile,
+            )
+        )
+        contract = (
+            sam_coreml_runtime_function_contract(
+                profile,
+                function_name,
+            )
+            if _contract is None
+            else _contract
+        )
     input_names = [item["name"] for item in contract["inputs"]]
     output_names = [item["name"] for item in contract["outputs"]]
     _exact_named_values(inputs, input_names, kind="input")
     _exact_named_values(outputs, output_names, kind="output")
 
-    if function_name == SAM_COREML_ENCODER_FUNCTION:
+    if source_function_name == SAM_COREML_ENCODER_FUNCTION:
         size = profile.image_size
         _require_tensor(
             inputs[SAM_COREML_ENCODER_INPUT],
@@ -1299,7 +1710,7 @@ def validate_sam_coreml_function_io(
             )
         return
 
-    prompt_mode, mask_mode = _decoder_function_parts(function_name)
+    prompt_mode, mask_mode = _decoder_function_parts(source_function_name)
     for name, shape in zip(profile.embedding_names, profile.embedding_shapes):
         _require_tensor(
             inputs[name],
@@ -1329,6 +1740,11 @@ def validate_sam_coreml_function_io(
             raise ValueError(
                 f"Point count P must be in [1, {profile.prompt_max_points}], "
                 f"got {point_count}; sentinel padding is forbidden."
+            )
+        if fixed_point_count is not None and point_count != fixed_point_count:
+            raise ValueError(
+                f"Runtime function {function_name!r} requires exactly "
+                f"P={fixed_point_count}, got P={point_count}."
             )
         if not bool(((labels == 0) | (labels == 1)).all()):
             raise ValueError("point_labels may contain only 0 or 1.")
@@ -1433,6 +1849,7 @@ __all__ = [
     "SAM_COREML_NUM_MULTIMASK_OUTPUTS",
     "SAM_COREML_PIPELINE_SCHEMA_VERSION",
     "SAM_COREML_POINT_COORDS_INPUT",
+    "SAM_COREML_POINT_DISPATCH",
     "SAM_COREML_POINT_LABELS_INPUT",
     "SAM_COREML_PROMPT_MODES",
     "SAM_COREML_QUERY_BATCH",
@@ -1446,6 +1863,11 @@ __all__ = [
     "sam_coreml_encoder_input_contract",
     "sam_coreml_function_contracts",
     "sam_coreml_metadata",
+    "sam_coreml_runtime_function_contract",
+    "sam_coreml_runtime_function_contracts",
+    "sam_coreml_runtime_function_name",
+    "sam_coreml_runtime_function_names",
+    "parse_sam_coreml_runtime_function",
     "validate_sam_coreml_component_graphs",
     "validate_sam_coreml_function_io",
     "validate_sam_coreml_graph_signature",

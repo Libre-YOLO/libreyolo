@@ -34,6 +34,10 @@ class LibreGroundingDINO(LibreOpenVocabDetector):
         "t": "LibreYOLO/LibreGroundingDINOt",
         "b": "LibreYOLO/LibreGroundingDINOb",
     }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "t": "842ba2640b927b39c4c06a62e4d2238a9df965f1",
+        "b": "2d2f9b44aa8740a3c6a5b84c5d739441f22b7494",
+    }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"t": 800, "b": 800}
     DEFAULT_CONF: ClassVar[float] = 0.25
     DEFAULT_TEXT_THRESHOLD: ClassVar[float] = 0.25
@@ -224,11 +228,12 @@ class LibreGroundingDINO(LibreOpenVocabDetector):
         """Export the current finite class vocabulary as an image-only graph."""
         if str(format).strip().lower() != "coreml":
             return super().export(format=format, **kwargs)
-        from ...export.coreml_grounding_dino import (
-            export_grounding_dino_coreml,
+        raise NotImplementedError(
+            "Grounding DINO Core ML export is disabled. Core ML Tools 9 "
+            "FP16 and FP32 runtime numerics can reorder nearly tied encoder "
+            "proposals before distinct learned rank queries, producing "
+            "materially different detections on Apple Silicon."
         )
-
-        return export_grounding_dino_coreml(self, kwargs)
 
 
 __all__ = ["LibreGroundingDINO"]

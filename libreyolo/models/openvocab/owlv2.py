@@ -18,6 +18,10 @@ class LibreOWLv2(LibreOpenVocabDetector):
         "b16": "LibreYOLO/LibreOWLv2b16",
         "l14": "LibreYOLO/LibreOWLv2l14",
     }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "b16": "499390c5a97e2620c83028de36be28860771d0b3",
+        "l14": "ed036ee9085ad9a8201281e5cfb6609458bd22c7",
+    }
     # Informational only: the HF processor owns resizing and predict(imgsz=...)
     # is rejected by the open-vocab base. Values mirror the published configs.
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"b16": 960, "l14": 1008}

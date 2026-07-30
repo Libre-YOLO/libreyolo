@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
+from typing import ClassVar
 
 import numpy as np
 import pytest
 import torch
-import torch.nn as nn
 from PIL import Image
+from torch import nn
 
 pytestmark = pytest.mark.unit
 
 
+def _portable_bundle(path, *, bundle_format="libreyolo_coreml_vlm_bundle"):
+    path.mkdir()
+    (path / "manifest.json").write_text(
+        json.dumps({"bundle_format": bundle_format}),
+        encoding="utf-8",
+    )
+    return path
+
+
 class _FakeCoreMLVLMRuntime:
-    calls = []
+    calls: ClassVar[list] = []
 
     def __init__(self, bundle_path, *, compute_units):
         self.bundle_path = str(bundle_path)
@@ -54,8 +65,7 @@ def test_librevlm_routes_bundle_through_smol_runtime(
 ):
     from libreyolo.models.vlm import CoreMLSmolVLM2, LibreVLM
 
-    bundle = tmp_path / "renamed.coremlvlm"
-    bundle.mkdir()
+    bundle = _portable_bundle(tmp_path / "renamed.coremlvlm")
     _FakeCoreMLVLMRuntime.calls = []
     monkeypatch.setattr(
         "libreyolo.backends.coreml_vlm.CoreMLVLMRuntime",
@@ -108,8 +118,7 @@ def test_librevlm_bundle_path_and_runtime_options_fail_closed(
     with pytest.raises(FileNotFoundError, match="does not exist"):
         LibreVLM(str(missing))
 
-    bundle = tmp_path / "model.coremlvlm"
-    bundle.mkdir()
+    bundle = _portable_bundle(tmp_path / "model.coremlvlm")
     _FakeCoreMLVLMRuntime.calls = []
     monkeypatch.setattr(
         "libreyolo.backends.coreml_vlm.CoreMLVLMRuntime",
@@ -130,13 +139,17 @@ def test_coreml_smol_predict_rejects_imgsz_override(
 ):
     from libreyolo.models.vlm import LibreVLM
 
-    bundle = tmp_path / "model.coremlvlm"
-    bundle.mkdir()
+    bundle = _portable_bundle(tmp_path / "model.coremlvlm")
     monkeypatch.setattr(
         "libreyolo.backends.coreml_vlm.CoreMLVLMRuntime",
         _FakeCoreMLVLMRuntime,
     )
     model = LibreVLM(str(bundle), names=["cat"])
+    assert _FakeCoreMLVLMRuntime.calls[-1] == (
+        "init",
+        str(bundle),
+        "validated",
+    )
     image = Image.fromarray(np.zeros((50, 100, 3), dtype=np.uint8))
     with pytest.raises(ValueError, match="fixed 2048x2048"):
         model.predict(image, imgsz=512)
@@ -165,8 +178,8 @@ def test_native_smol_export_builds_portable_bundle(
     monkeypatch,
     tmp_path,
 ):
-    from libreyolo.export import coreml_vlm
     from libreyolo.backends import coreml_vlm as backend
+    from libreyolo.export import coreml_vlm
 
     model = _native_smol_for_export(tmp_path)
     output = tmp_path / "smol.coremlvlm"
@@ -210,6 +223,23 @@ def test_native_smol_export_builds_portable_bundle(
     assert captured["bundle"]["output_path"] == output
 
 
+def test_native_smol_export_default_rejects_before_weight_access(
+    tmp_path,
+):
+    model = _native_smol_for_export(tmp_path)
+    weight_calls = []
+    model._ensure_weights = lambda: weight_calls.append("weights")
+
+    with pytest.raises(NotImplementedError, match="exact Apple-M4"):
+        model.export(
+            format="coreml",
+            output_path=tmp_path / "smol.coremlvlm",
+            context_length=2048,
+        )
+
+    assert weight_calls == []
+
+
 @pytest.mark.parametrize("context_length", [8192, 1024, True])
 def test_native_smol_export_rejects_unreviewed_context(
     tmp_path,
@@ -248,7 +278,11 @@ def test_native_smol_export_rejects_size_device_options_and_overwrite(
         )
     output.mkdir()
     with pytest.raises(FileExistsError, match="overwrite"):
-        model.export(format="coreml", output_path=output)
+        model.export(
+            format="coreml",
+            output_path=output,
+            compute_units="cpu_only",
+        )
 
 
 def test_smolvlm_coreml_support_is_experimental():

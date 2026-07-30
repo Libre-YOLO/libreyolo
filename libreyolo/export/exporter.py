@@ -140,6 +140,69 @@ def _pose_keypoint_shape_metadata(model) -> dict:
     return meta
 
 
+def _coreml_execution_profile_dimensions(model) -> dict:
+    """Derive graph dimensions that distinguish exact M4 execution profiles."""
+    family = (
+        str(model._get_model_name()).strip().lower()
+        if hasattr(model, "_get_model_name")
+        else ""
+    )
+    task = str(getattr(model, "task", "")).strip().lower()
+    dimensions: dict[str, object] = {}
+
+    if task == "pose":
+        pose = _pose_keypoint_shape_metadata(model)
+        for key in ("num_keypoints", "keypoint_dim"):
+            value = pose.get(key)
+            if value not in (None, ""):
+                dimensions[key] = int(value)
+        schema = pose.get("num_keypoints_per_class")
+        if schema:
+            dimensions["num_keypoints_per_class"] = tuple(
+                int(count) for count in schema
+            )
+        class_count = int(getattr(model, "nb_classes", 0) or 0)
+        if family in {"ec", "rfdetr"} and class_count > 0:
+            # Both exact pose contracts expose a learned background logit.
+            dimensions["graph_class_width"] = class_count + 1
+        elif family == "yolonas" and class_count > 0:
+            dimensions["graph_class_width"] = class_count
+
+    if task == "classify":
+        dimensions["classification_activation"] = (
+            "sigmoid"
+            if bool(getattr(model, "multi_label", False))
+            else "softmax"
+        )
+
+    if family == "nafnet":
+        model_path = getattr(model, "model_path", None)
+        if model_path not in (None, ""):
+            variant = model.detect_variant_from_filename(Path(model_path).name)
+            if variant:
+                dimensions["checkpoint_variant"] = str(variant).lower()
+        config = getattr(model, "_arch_config", None)
+        if isinstance(config, dict):
+            width = int(config["width"])
+            middle = int(config["middle_blk_num"])
+            enc = ".".join(str(int(value)) for value in config["enc_blk_nums"])
+            dec = ".".join(str(int(value)) for value in config["dec_blk_nums"])
+            dimensions["architecture_signature"] = (
+                f"w{width}-m{middle}-e{enc}-d{dec}"
+            )
+        dimensions["restore_scale"] = 1
+
+    if family == "realesrgan":
+        inner_name = type(getattr(model, "model", None)).__name__.lower()
+        if "srvgg" in inner_name:
+            dimensions["architecture_signature"] = "srvgg"
+        elif "rrdb" in inner_name:
+            dimensions["architecture_signature"] = "rrdbnet"
+        dimensions["restore_scale"] = int(model.restore_scale)
+
+    return dimensions
+
+
 _FIXED_SQUARE_EXPORT_FAMILIES = {
     "dfine",
     "deim",
@@ -726,16 +789,34 @@ class BaseExporter(ABC):
             # user's live model.
             nn_model = copy.deepcopy(nn_model).to(device)
             nn_model.eval()
+        if family == "dinov2" and task == "semantic":
+            # The DINOv2 embeddings intentionally keep antialiased bicubic
+            # interpolation available for arbitrary eager input sizes.
+            # Core ML Tools cannot lower that operator. Export is fixed-canvas,
+            # so bake the model's own positional table for the requested
+            # canvas before the semantic wrapper hides the backbone path.
+            segmenter = getattr(nn_model, "segmenter", None)
+            encoder = getattr(getattr(segmenter, "backbone", None), "encoder", None)
+            if (
+                encoder is not None
+                and hasattr(encoder, "export")
+                and not getattr(encoder, "_export", False)
+            ):
+                rfdetr_export_snapshots = _snapshot_rfdetr_export_state(nn_model)
+                encoder.shape = (imgsz[0], imgsz[1])
+                encoder.export()
+                rfdetr_export_activated = True
         if task == "semantic":
             nn_model = _SemanticExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
-        elif family == "dfine":
+        elif family in {"dfine", "rtdetrv4"}:
             from ..models.dfine.nn import DFINEExportWrapper
 
             # deploy() (BN fusion + decoder-layer pruning + head swap) mutates
-            # the wrapped model in place; deepcopy first so the user's live
-            # model is never destructively modified (mirrors the deimv2 path).
+            # the D-FINE graph in place. RT-DETRv4 uses that same graph, so it
+            # needs the same preparation rather than the generic RT-DETR dict
+            # adapter. Deepcopy first so the user's live model is untouched.
             nn_model = copy.deepcopy(nn_model)
             nn_model = DFINEExportWrapper(nn_model).to(device)
             nn_model.eval()
@@ -779,7 +860,7 @@ class BaseExporter(ABC):
             nn_model = YOLO7ExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
-        elif family in {"rtdetr", "rtdetrv2", "rtdetrv4"}:
+        elif family in {"rtdetr", "rtdetrv2"}:
             nn_model = _RTDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
@@ -1574,7 +1655,15 @@ class CoreMLExporter(BaseExporter):
     supports_embedded_nms = True
 
     def __call__(
-        self, *, dynamic: bool = False, batch: int = 1, **kwargs
+        self,
+        *,
+        dynamic: bool = False,
+        batch: int = 1,
+        imgsz: Optional[Union[int, Tuple[int, int]]] = None,
+        half: bool = False,
+        nms: bool = False,
+        compute_units: str = "cpu_only",
+        **kwargs,
     ) -> str:
         """Export a strict Core ML contract.
 
@@ -1582,11 +1671,24 @@ class CoreMLExporter(BaseExporter):
         public contract is usually narrower: one RGB input represents one
         image at a declared canvas size (usually ImageType; RF-DETR pose uses
         TensorType). LibrePPOCR is a bounded-flexible two-function package, so
-        its profile deliberately records ``dynamic=True``. Reject unsupported
-        requests before dependency loading or any live-model mutation instead
-        of silently writing an unusable or mislabeled artifact.
+        its profile deliberately records ``dynamic=True``. LibreSAM captures a
+        bounded source graph but materializes every admitted point count into
+        fixed runtime functions and records ``dynamic=False``. Reject
+        unsupported requests before dependency loading or any live-model
+        mutation instead of silently writing an unusable or mislabeled
+        artifact.
         """
         family = self.model._get_model_name()
+        task = getattr(self.model, "task", "detect")
+        if not isinstance(task, str):
+            task = "detect"
+        size = getattr(self.model, "size", None)
+        # DEIMv2's size gate is a licensing boundary and must win before
+        # profile discovery or any optional model helper is touched.
+        from .coreml import _validate_export_profile
+
+        if family == "deimv2":
+            _validate_export_profile(family, task, size)
         sam_families = {"edgetam", "mobilesam", "sam", "sam2", "sam3"}
         if family in sam_families:
             if batch != 1:
@@ -1594,37 +1696,92 @@ class CoreMLExporter(BaseExporter):
                     "LibreSAM Core ML export uses fixed image/query batch one; "
                     f"got batch={batch}."
                 )
-            # The image frame is fixed, while the point-prompt axis has a
-            # finite RangeDim recorded by the seven-function package manifest.
-            return super().__call__(dynamic=True, batch=1, **kwargs)
-        if family == "ppocr":
+            if dynamic:
+                raise NotImplementedError(
+                    "LibreSAM Core ML uses a fixed encoder and exact fixed-P "
+                    "runtime functions. Configure the finite prompt bound with "
+                    "prompt_max_points=... instead of dynamic=True."
+                )
+        elif family == "ppocr":
             if batch != 1:
                 raise ValueError(
                     "LibrePPOCR Core ML export uses a batch-one detector "
                     "function. Configure the recognizer bound with "
                     "rec_batch_max=... instead of batch=...."
                 )
+        else:
+            if dynamic:
+                raise NotImplementedError(
+                    "Core ML export uses a fixed input shape; "
+                    "dynamic=True is not supported."
+                )
+            if batch != 1:
+                raise ValueError(
+                    "Core ML export uses a single-image contract; "
+                    f"got batch={batch}. Use batch=1."
+                )
+
+        if family != "deimv2":
+            _validate_export_profile(family, task, size)
+        requested_canvas = (
+            self.model._get_input_size() if imgsz is None else imgsz
+        )
+        from .coreml_profiles import (
+            normalize_coreml_compute_units,
+            resolve_coreml_export_compute_units,
+        )
+
+        profile_dimensions = _coreml_execution_profile_dimensions(self.model)
+        requested_compute_units = normalize_coreml_compute_units(
+            compute_units
+        )
+        compute_units, _ = resolve_coreml_export_compute_units(
+            requested_compute_units,
+            family=family,
+            task=task,
+            size=size,
+            canvas=requested_canvas,
+            precision="fp16" if half else "fp32",
+            nms=nms,
+            prompt_max_points=(
+                kwargs.get("prompt_max_points", 16)
+                if family in sam_families
+                else None
+            ),
+            class_count=(
+                getattr(self.model, "nb_classes", None)
+            ),
+            defer_source_validation=True,
+            **profile_dimensions,
+        )
+        common = {
+            "imgsz": imgsz,
+            "half": half,
+            "nms": nms,
+            "compute_units": compute_units,
+            "_requested_compute_units": requested_compute_units,
+            **kwargs,
+        }
+        if family in sam_families:
+            # The source point axis is captured symbolically, then materialized
+            # into exact fixed-P runtime functions in one native package.
+            return super().__call__(dynamic=False, batch=1, **common)
+        if family == "ppocr":
             # The package contains bounded RangeDim axes even when callers use
             # the Core ML API's default dynamic=False spelling. Its exact
             # bounds are persisted in the multifunction contract.
-            return super().__call__(dynamic=True, batch=1, **kwargs)
-        if dynamic:
-            raise NotImplementedError(
-                "Core ML export uses a fixed input shape; "
-                "dynamic=True is not supported."
-            )
-        if batch != 1:
-            raise ValueError(
-                "Core ML export uses a single-image contract; "
-                f"got batch={batch}. Use batch=1."
-            )
-        return super().__call__(dynamic=False, batch=1, **kwargs)
+            return super().__call__(dynamic=True, batch=1, **common)
+        return super().__call__(dynamic=False, batch=1, **common)
 
     def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
         # Support policy must fail before optional dependency discovery (ADR
         # 0011), while dependency discovery must still happen before the
         # destructive LoRA merge in BaseExporter.__call__.
-        from .coreml import _validate_export_profile
+        from .coreml import (
+            _validate_coreml_compute_unit_profile,
+            _validate_export_profile,
+            _validate_coreml_precision_profile,
+        )
 
         family = self.model._get_model_name()
         task = getattr(self.model, "task", "detect")
@@ -1634,6 +1791,11 @@ class CoreMLExporter(BaseExporter):
             family,
             task,
             getattr(self.model, "size", None),
+        )
+        _validate_coreml_precision_profile(
+            family,
+            task,
+            "fp16" if half else "fp32",
         )
         if family == "birefnet":
             from .coreml_birefnet import validate_birefnet_coreml_profile
@@ -1715,6 +1877,7 @@ class CoreMLExporter(BaseExporter):
                 f"Invalid Core ML compute_units {compute_units!r}; expected one of "
                 f"{sorted(valid_compute_units)}."
             )
+        _validate_coreml_compute_unit_profile(family, task, compute_units)
 
         if kwargs.get("nms"):
             for name, default in (("conf", 0.25), ("iou", 0.45)):
@@ -1854,15 +2017,6 @@ class CoreMLExporter(BaseExporter):
                 size=getattr(self.model, "size", None),
                 canvas_hw=imgsz,
             )
-        if family == "grounding_dino":
-            from .coreml_grounding_dino import (
-                validate_grounding_dino_coreml_profile,
-            )
-
-            validate_grounding_dino_coreml_profile(
-                size=getattr(self.model, "size", None),
-                canvas_hw=imgsz,
-            )
         if family == "omdet_turbo":
             from .coreml_omdet_turbo import (
                 validate_omdet_turbo_coreml_profile,
@@ -1905,17 +2059,12 @@ class CoreMLExporter(BaseExporter):
 
     def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
         # CoreML normally uses a hard-fixed input shape. LibrePPOCR is the
-        # bounded-flexible multifunction exception.
+        # bounded-flexible multifunction exception. LibreSAM's symbolic source
+        # decoders are materialized into exact fixed-P runtime functions.
         meta = super()._build_metadata(precision, dynamic, onnx_path, imgsz=imgsz)
         family = self.model._get_model_name()
-        meta["dynamic"] = family in {
-            "edgetam",
-            "mobilesam",
-            "ppocr",
-            "sam",
-            "sam2",
-            "sam3",
-        }
+        meta["dynamic"] = family == "ppocr"
+        meta.update(_coreml_execution_profile_dimensions(self.model))
         if family == "ppocr":
             require_metadata = getattr(
                 self.model,
@@ -1985,13 +2134,14 @@ class CoreMLExporter(BaseExporter):
         output_path,
         precision,
         metadata,
-        compute_units="all",
+        compute_units="cpu_only",
         nms=False,
         iou=0.45,
         conf=0.25,
         rec_batch_max=6,
         rec_max_width=None,
         prompt_max_points=16,
+        _requested_compute_units=None,
         **kwargs,
     ):
         from .coreml import export_coreml
@@ -2012,4 +2162,5 @@ class CoreMLExporter(BaseExporter):
             rec_batch_max=rec_batch_max,
             rec_max_width=rec_max_width,
             prompt_max_points=prompt_max_points,
+            _requested_compute_units=_requested_compute_units,
         )

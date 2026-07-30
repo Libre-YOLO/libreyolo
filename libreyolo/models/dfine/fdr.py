@@ -99,11 +99,19 @@ class Integral(nn.Module):
     def __init__(self, reg_max=32):
         super().__init__()
         self.reg_max = reg_max
+        self._deploy = False
+
+    def convert_to_deploy(self):
+        """Use the rank-two linear weight required by export backends."""
+        self._deploy = True
 
     def forward(self, x, project):
         shape = x.shape
         x = F.softmax(x.reshape(-1, self.reg_max + 1), dim=1)
-        x = F.linear(x, project.to(x.device)).reshape(-1, 4)
+        project = project.to(x.device)
+        if self._deploy:
+            project = project.unsqueeze(0)
+        x = F.linear(x, project).reshape(-1, 4)
         return x.reshape(list(shape[:-1]) + [-1])
 
 

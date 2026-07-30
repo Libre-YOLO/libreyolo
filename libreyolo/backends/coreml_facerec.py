@@ -13,8 +13,10 @@ import numpy as np
 from ..export.coreml_facerec import (
     FACEREC_COREML_INPUT_NAME,
     FACEREC_COREML_OUTPUT_NAME,
+    FACEREC_COREML_REQUIRED_COMPUTE_UNITS,
     validate_facerec_coreml_metadata,
 )
+from ..export.coreml_profiles import resolve_coreml_runtime_compute_units
 
 _COREML_FLOAT32 = 65568
 
@@ -164,7 +166,7 @@ class CoreMLFaceSession:
         self,
         model_path: str,
         *,
-        compute_units: str = "all",
+        compute_units: str = "cpu_only",
     ) -> None:
         if sys.platform != "darwin":
             raise RuntimeError(
@@ -186,10 +188,43 @@ class CoreMLFaceSession:
             )
         spec = ct.utils.load_spec(str(path))
         metadata = _metadata_from_spec(spec)
+        from ..export.coreml_identity import (
+            COREML_DEPLOYMENT_ABI_SCHEMA,
+            validate_coreml_deployment_abi,
+        )
+        from ..export.coreml_profiles import (
+            COREML_EXECUTION_PROFILE_VERSION,
+        )
+
+        declared_profile_version = str(
+            metadata.get("coreml_execution_profile_version", "")
+        ).strip()
+        declared_abi_schema = str(
+            metadata.get("coreml_profile_abi_schema", "")
+        ).strip()
+        if (
+            declared_profile_version == COREML_EXECUTION_PROFILE_VERSION
+            or declared_abi_schema == COREML_DEPLOYMENT_ABI_SCHEMA
+        ):
+            validate_coreml_deployment_abi(spec, metadata)
         contract = validate_facerec_coreml_spec(spec, metadata)
+        requested_compute_units = resolve_coreml_runtime_compute_units(
+            compute_units,
+            metadata,
+        )
+        if (
+            requested_compute_units
+            != FACEREC_COREML_REQUIRED_COMPUTE_UNITS
+        ):
+            raise NotImplementedError(
+                "Face Core ML runtime is validated only with "
+                "compute_units='cpu_only'. FP16 failed raw-embedding parity, "
+                "and other compute-unit planners have not passed the hardware "
+                "gate."
+            )
         self.model = ct.models.MLModel(
             str(path),
-            compute_units=_compute_unit(ct, compute_units),
+            compute_units=_compute_unit(ct, requested_compute_units),
         )
         runtime_metadata = {
             str(key): str(value)
@@ -200,6 +235,14 @@ class CoreMLFaceSession:
         if runtime_metadata and runtime_metadata != metadata:
             raise ValueError(
                 "Face Core ML runtime metadata differs from the package spec."
+            )
+        if (
+            declared_profile_version == COREML_EXECUTION_PROFILE_VERSION
+            or declared_abi_schema == COREML_DEPLOYMENT_ABI_SCHEMA
+        ):
+            validate_coreml_deployment_abi(
+                self.model.get_spec(),
+                runtime_metadata,
             )
         self.model_path = str(path)
         self.metadata = metadata

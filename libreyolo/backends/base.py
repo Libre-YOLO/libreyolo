@@ -2524,7 +2524,7 @@ class BaseBackend(ABC):
         max_scores: np.ndarray,
         class_ids: np.ndarray,
         *,
-        masks: "np.ndarray | None" = None,
+        masks: "np.ndarray | torch.Tensor | None" = None,
         obb: "np.ndarray | None" = None,
         keypoints: "np.ndarray | None" = None,
         orig_shape: Tuple[int, int],
@@ -2621,7 +2621,10 @@ class BaseBackend(ABC):
 
         masks_obj = None
         if masks is not None and len(masks) > 0:
-            masks_obj = Masks(torch.from_numpy(masks).bool(), orig_shape=orig_shape)
+            masks_obj = Masks(
+                torch.as_tensor(masks).bool(),
+                orig_shape=orig_shape,
+            )
 
         keypoints_obj = None
         if keypoints is not None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import sys
 
 import numpy as np
@@ -59,13 +60,16 @@ def test_facerec_official_coreml_raw_public_and_gallery_parity(tmp_path):
         )
         for blob in blobs
     ]
+    expected = source.embed_aligned(list(probes))
 
     artifact = source.export(
         format="coreml",
-        half=True,
+        half=False,
         output_path=tmp_path / "librefacerec-l.mlpackage",
         compute_units="cpu_only",
     )
+    del source
+    gc.collect()
     deployed = LibreYOLO(artifact, compute_units="cpu_only")
     assert isinstance(deployed, LibreFaceEmbedder)
     actual_raw = [
@@ -75,11 +79,23 @@ def test_facerec_official_coreml_raw_public_and_gallery_parity(tmp_path):
         )
         for blob in blobs
     ]
+    repeated_raw = [
+        np.asarray(
+            deployed.session.run(None, {deployed.input_name: blob})[0],
+            dtype=np.float32,
+        )
+        for blob in blobs
+    ]
+    for actual_value, repeated_value in zip(actual_raw, repeated_raw):
+        np.testing.assert_array_equal(actual_value, repeated_value)
 
     worst = 0.0
-    for expected, actual in zip(expected_raw, actual_raw):
-        scale = max(float(np.abs(expected).max()), 1e-12)
-        worst = max(worst, float(np.abs(actual - expected).max()) / scale)
+    for expected_value, actual_value in zip(expected_raw, actual_raw):
+        scale = max(float(np.abs(expected_value).max()), 1e-12)
+        worst = max(
+            worst,
+            float(np.abs(actual_value - expected_value).max()) / scale,
+        )
     assert worst <= 3e-4
     sensitivity_scale = max(
         float(np.abs(expected_raw[0]).max()),
@@ -92,8 +108,9 @@ def test_facerec_official_coreml_raw_public_and_gallery_parity(tmp_path):
     )
     assert relative_sensitivity > max(worst * 100.0, 1e-6)
 
-    expected = source.embed_aligned(list(probes))
     actual = deployed.embed_aligned(list(probes))
+    repeated = deployed.embed_aligned(list(probes))
+    np.testing.assert_array_equal(actual, repeated)
     np.testing.assert_allclose(actual, expected, rtol=3e-4, atol=3e-5)
     np.testing.assert_allclose(
         np.linalg.norm(actual, axis=1),

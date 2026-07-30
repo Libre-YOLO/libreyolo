@@ -72,15 +72,99 @@ def test_promptable_sam_export_routes_coreml_to_shared_exporter(
 
 def test_libresam_factory_routes_mlpackage_to_coreml_backend(monkeypatch, tmp_path):
     from libreyolo.backends import coreml as coreml_module
+    from libreyolo.backends import coreml_facerec as metadata_module
     from libreyolo.models.sam.model import LibreSAM
 
     backend = object()
     backend_cls = MagicMock(return_value=backend)
     monkeypatch.setattr(coreml_module, "CoreMLBackend", backend_cls)
+    monkeypatch.setattr(
+        metadata_module,
+        "coreml_package_family",
+        lambda _path: "sam2",
+    )
     package = Path(tmp_path, "Interactive.MLPACKAGE")
 
     assert LibreSAM(package, device="cpu") is backend
     backend_cls.assert_called_once_with(str(package), device="cpu")
+
+
+@pytest.mark.parametrize("family", [None, "facerec", "owlv2", "yolo9"])
+def test_libresam_factory_rejects_wrong_or_missing_coreml_family(
+    monkeypatch,
+    tmp_path,
+    family,
+):
+    from libreyolo.backends import coreml as coreml_module
+    from libreyolo.backends import coreml_facerec as metadata_module
+    from libreyolo.models.sam.model import LibreSAM
+
+    backend_cls = MagicMock()
+    monkeypatch.setattr(coreml_module, "CoreMLBackend", backend_cls)
+    monkeypatch.setattr(
+        metadata_module,
+        "coreml_package_family",
+        lambda _path: family,
+    )
+
+    package = tmp_path / "wrong.mlpackage"
+    with pytest.raises(ValueError, match="promptable-SAM model_family"):
+        LibreSAM(package)
+    backend_cls.assert_not_called()
+
+
+@pytest.mark.parametrize("family", ["omdet_turbo", "owlv2"])
+def test_openvocab_factory_routes_supported_mlpackage(
+    monkeypatch,
+    tmp_path,
+    family,
+):
+    from libreyolo.backends import coreml as coreml_module
+    from libreyolo.backends import coreml_facerec as metadata_module
+    from libreyolo.models.openvocab import LibreOpenVocab
+
+    backend = object()
+    backend_cls = MagicMock(return_value=backend)
+    monkeypatch.setattr(coreml_module, "CoreMLBackend", backend_cls)
+    monkeypatch.setattr(
+        metadata_module,
+        "coreml_package_family",
+        lambda _path: family,
+    )
+    package = tmp_path / "frozen.mlpackage"
+
+    assert LibreOpenVocab(package, compute_units="cpu_only") is backend
+    backend_cls.assert_called_once_with(
+        str(package),
+        compute_units="cpu_only",
+    )
+
+
+@pytest.mark.parametrize(
+    "family",
+    [None, "facerec", "grounding_dino", "ov_deim", "sam", "yolo9"],
+)
+def test_openvocab_factory_rejects_unsupported_coreml_family(
+    monkeypatch,
+    tmp_path,
+    family,
+):
+    from libreyolo.backends import coreml as coreml_module
+    from libreyolo.backends import coreml_facerec as metadata_module
+    from libreyolo.models.openvocab import LibreOpenVocab
+
+    backend_cls = MagicMock()
+    monkeypatch.setattr(coreml_module, "CoreMLBackend", backend_cls)
+    monkeypatch.setattr(
+        metadata_module,
+        "coreml_package_family",
+        lambda _path: family,
+    )
+
+    package = tmp_path / "wrong.mlpackage"
+    with pytest.raises(ValueError, match="frozen-vocabulary model_family"):
+        LibreOpenVocab(package)
+    backend_cls.assert_not_called()
 
 
 def test_promptable_sam_non_coreml_export_fails_before_factory(monkeypatch):

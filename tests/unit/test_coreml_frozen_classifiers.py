@@ -223,7 +223,13 @@ def test_frozen_classifier_helper_runs_shared_coreml_preflight(monkeypatch, tmp_
     monkeypatch.setattr(CoreMLExporter, "_validate", fake_validate)
     monkeypatch.setattr(CoreMLExporter, "_preflight", fake_preflight)
     monkeypatch.setattr(CoreMLExporter, "_build_metadata", fake_metadata)
-    owner = SimpleNamespace(input_size=32, multi_label=True)
+    owner = SimpleNamespace(
+        input_size=32,
+        multi_label=True,
+        task="classify",
+        size="b32",
+        _get_model_name=lambda: "clip",
+    )
 
     size, output, metadata, precision, compute_units = (
         coreml.prepare_frozen_classifier_coreml_export(

@@ -60,6 +60,24 @@ class TestIntegral:
         out = integral(logits.reshape(1, 1, 4 * 33), project)
         assert torch.allclose(out, torch.zeros_like(out), atol=1e-3)
 
+    def test_deploy_linear_weight_is_rank_two_and_trace_equivalent(self):
+        """Deploy avoids Core ML's unsupported rank-one linear weight."""
+        torch.manual_seed(7)
+        integral = Integral(reg_max=8).eval()
+        logits = torch.randn(2, 5, 4 * 9)
+        project = weighting_function(8, torch.tensor([0.5]), torch.tensor([4.0]))
+
+        eager = integral(logits, project)
+        integral.convert_to_deploy()
+        deployed = integral(logits, project)
+        traced = torch.jit.trace(integral, (logits, project), check_trace=True)
+
+        torch.testing.assert_close(deployed, eager, rtol=0, atol=0)
+        torch.testing.assert_close(traced(logits, project), deployed, rtol=0, atol=0)
+        graph = str(traced.inlined_graph)
+        assert "aten::unsqueeze" in graph
+        assert "aten::linear" in graph
+
 
 class TestDistance2Bbox:
     def test_zero_distances_return_point_box(self):

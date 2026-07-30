@@ -436,6 +436,18 @@ def test_io_validators_pin_shapes_ranges_and_probability_semantics():
         profile=profile,
         rec_num_classes=4,
     )
+    wide_input = torch.zeros(1, 3, 48, 320, dtype=torch.float32)
+    wide_probabilities = torch.full(
+        (1, ppocr_recognizer_timesteps(320), 18_385),
+        (1.0 + 1e-4) / 18_385,
+        dtype=torch.float32,
+    )
+    validate_ppocr_recognizer_coreml_io(
+        wide_input,
+        wide_probabilities,
+        profile=profile,
+        rec_num_classes=18_385,
+    )
 
     with pytest.raises(ValueError, match="stride-32"):
         validate_ppocr_detector_coreml_shape(33, 64, profile=profile)

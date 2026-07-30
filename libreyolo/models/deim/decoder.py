@@ -416,7 +416,9 @@ class TransformerDecoder(nn.Module):
 
             pred_corners = bbox_head[i](output + output_detach) + pred_corners_undetach
             inter_ref_bbox = distance2bbox(
-                ref_points_initial, integral(pred_corners, project), reg_scale
+                ref_points_initial,
+                integral(pred_corners, project.unsqueeze(0)),
+                reg_scale,
             )
 
             if self.training or i == self.eval_idx:

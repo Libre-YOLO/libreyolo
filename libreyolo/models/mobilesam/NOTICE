@@ -24,16 +24,33 @@ Pretrained weights are converted from the MobileSAM Apache-2.0 checkpoint and
 hosted as LibreMobileSAM.pt under LibreYOLO/LibreMobileSAM. The hosted model
 repo must carry this NOTICE and the Apache-2.0 LICENSE alongside the weights.
 
-Provenance gap
---------------
+Pinned checkpoint provenance
+----------------------------
 
-The currently reviewed LibreYOLO mirror is revision
-``c80f272421d38fc26ef4bd0c02111b6c1f1c8cb9`` and its
-``LibreMobileSAM.pt`` SHA-256 is
-``79f09a3671f38696d45da0aed49ef382fde2efd1bc966d172ac9822b952e35fe``.
-The hosted model card and NOTICE do not identify the exact upstream MobileSAM
-source commit or checkpoint revision/hash used for the conversion. The mirror
-hash alone cannot establish that missing source provenance. Release-facing
-Core ML metadata must retain an explicit provenance gap until the upstream
-source is pinned; converted artifacts must not be represented as ready for
-redistribution before then.
+The admitted Apache-2.0 source and checkpoint are:
+
+    Upstream repository: https://github.com/ChaoningZhang/MobileSAM
+    Upstream revision:   f706ad9c4eb7f219c00d9050e46328518ffb65d2
+    LICENSE SHA-256:     c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+    Checkpoint:          weights/mobile_sam.pt
+    Checkpoint bytes:    40,728,226
+    Checkpoint SHA-256:  6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f
+
+The separately packaged LibreYOLO checkpoint is pinned to:
+
+    Mirror repository:  LibreYOLO/LibreMobileSAM
+    Mirror revision:    c80f272421d38fc26ef4bd0c02111b6c1f1c8cb9
+    Checkpoint:          LibreMobileSAM.pt
+    Checkpoint bytes:    40,730,739
+    Checkpoint SHA-256:  79f09a3671f38696d45da0aed49ef382fde2efd1bc966d172ac9822b952e35fe
+
+Unwrapping both checkpoint containers yields the same 439 named tensors and
+10,140,231 parameter values. LibreYOLO's canonical state digest (tensor name,
+dtype, shape, and raw bytes in sorted-name order) is:
+
+    92dc21da1d9d0ca2721ac08745d4e77c8f02b4af96b2e8de0aced98c5b4622ea
+
+The gated upstream parity suite at the pinned revision also passes with exact
+zero error for image embeddings, prompt embeddings, mask logits, and IoU
+scores. The wrapper/container metadata differs; the learned tensor values do
+not.

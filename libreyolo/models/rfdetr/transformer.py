@@ -57,7 +57,10 @@ def gen_sineembed_for_position(pos_tensor, dim=128):
     # sineembed_tensor = torch.zeros(n_query, bs, 256)
     scale = 2 * math.pi
     dim = int(dim)
-    dim_t = pos_tensor.new_ones((dim,), dtype=pos_tensor.dtype).cumsum(0) - 1
+    # Seed from the input tensor so a serialized TorchScript graph remains
+    # device-portable. Core ML Tools 9 cannot lower ``aten::new_ones``, while
+    # ``ones_like`` plus a fixed expand preserves the same exact sequence.
+    dim_t = torch.ones_like(pos_tensor[0, 0, :1]).expand(dim).cumsum(0) - 1
     dim_t = 10000 ** (2 * torch.div(dim_t, 2, rounding_mode="floor") / dim)
     x_embed = pos_tensor[:, :, 0] * scale
     y_embed = pos_tensor[:, :, 1] * scale
@@ -107,8 +110,16 @@ def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shape
             valid_height = torch.zeros_like(memory[:, 0, 0]).long() + height
             valid_width = torch.zeros_like(memory[:, 0, 0]).long() + width
 
-        grid_y = memory.new_ones((height, width), dtype=torch.float32).cumsum(0) - 1
-        grid_x = memory.new_ones((height, width), dtype=torch.float32).cumsum(1) - 1
+        # Derive the grid seed from an existing tensor. Core ML Tools 9 does
+        # not lower ``aten::new_ones``, while ``ones_like`` preserves the exact
+        # device, dtype, shape, and cumulative-sum numerics of the original
+        # construction.
+        grid_seed = torch.ones_like(
+            memory[0, _cur : (_cur + height * width), 0],
+            dtype=torch.float32,
+        ).reshape(height, width)
+        grid_y = grid_seed.cumsum(0) - 1
+        grid_x = grid_seed.cumsum(1) - 1
         grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # height, width, 2
 
         # reshape(-1, ...) and unsqueeze(0) broadcasting avoid hardcoding N_ in ONNX
@@ -152,11 +163,12 @@ def ms_deform_attn_core_pytorch(
     value_spatial_shapes: torch.Tensor,
     sampling_locations: torch.Tensor,
     attention_weights: torch.Tensor,
+    num_points: int,
     value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
 ) -> torch.Tensor:
     """Pure-PyTorch fallback for the deformable-attention core."""
     batch_size, n_heads, head_dim, _ = value.shape
-    _, len_query, n_heads, num_levels, num_points, _ = sampling_locations.shape
+    _, len_query, n_heads, _, _ = sampling_locations.shape
     # Use Python int pairs when available (required for torch.export compatibility,
     # since iterating over a tensor and using scalar elements as split/view sizes
     # fails during FakeTensor tracing).
@@ -166,11 +178,16 @@ def ms_deform_attn_core_pytorch(
     sampling_value_list = []
     for level_index, (height, width) in enumerate(shapes):
         value_l_ = value_list[level_index].view(batch_size * n_heads, head_dim, height, width)
-        sampling_grid_l_ = sampling_grids[:, :, :, level_index].transpose(1, 2).flatten(0, 1)
+        point_start = level_index * num_points
+        sampling_grid_l_ = (
+            sampling_grids[:, :, :, point_start : point_start + num_points]
+            .transpose(1, 2)
+            .flatten(0, 1)
+        )
         sampling_value_l_ = _bilinear_grid_sample(value_l_, sampling_grid_l_, padding_mode="zeros", align_corners=False)
         sampling_value_list.append(sampling_value_l_)
     attention_weights = attention_weights.transpose(1, 2).reshape(
-        batch_size * n_heads, 1, len_query, num_levels * num_points
+        batch_size * n_heads, 1, len_query, attention_weights.shape[-1]
     )
     sampling_value_list = torch.stack(sampling_value_list, dim=-2).flatten(-2)
     output = (sampling_value_list * attention_weights).sum(-1).view(batch_size, n_heads * head_dim, len_query)
@@ -300,23 +317,42 @@ class MSDeformAttn(nn.Module):
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
 
+        # Keep level and point on one axis. Core ML tensors are limited to rank
+        # five, so the conventional (N, Q, heads, levels, points, 2) layout
+        # cannot be represented even though the two axes are only bookkeeping.
+        num_locations = self.n_levels * self.n_points
         sampling_offsets = self.sampling_offsets(query).view(
-            batch_size, len_query, self.n_heads, self.n_levels, self.n_points, 2
+            batch_size, len_query, self.n_heads, num_locations, 2
         )
         attention_weights = self.attention_weights(query).view(
-            batch_size, len_query, self.n_heads, self.n_levels * self.n_points
+            batch_size, len_query, self.n_heads, num_locations
         )
 
+        reference_locations = (
+            reference_points[:, :, :, None, :]
+            .expand(-1, -1, -1, self.n_points, -1)
+            .reshape(batch_size, len_query, num_locations, reference_points.shape[-1])
+        )
         if reference_points.shape[-1] == 2:
-            offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
+            offset_normalizer = torch.stack(
+                [input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1
+            )
+            offset_normalizer = (
+                offset_normalizer[:, None, :]
+                .expand(-1, self.n_points, -1)
+                .reshape(num_locations, 2)
+            )
             sampling_locations = (
-                reference_points[:, :, None, :, None, :]
-                + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+                reference_locations[:, :, None, :, :]
+                + sampling_offsets / offset_normalizer[None, None, None, :, :]
             )
         elif reference_points.shape[-1] == 4:
             sampling_locations = (
-                reference_points[:, :, None, :, None, :2]
-                + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+                reference_locations[:, :, None, :, :2]
+                + sampling_offsets
+                / self.n_points
+                * reference_locations[:, :, None, :, 2:]
+                * 0.5
             )
         else:
             raise ValueError(
@@ -332,6 +368,7 @@ class MSDeformAttn(nn.Module):
             input_spatial_shapes,
             sampling_locations,
             attention_weights,
+            self.n_points,
             value_spatial_shapes_hw=input_spatial_shapes_hw,
         )
         output = self.output_proj(output)
@@ -546,7 +583,8 @@ class Transformer(nn.Module):
                     )  # (bs, \sum{hw}, 4) unsigmoid
 
                 topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
-                topk_proposals_gidx = torch.topk(enc_outputs_class_unselected_gidx.max(-1)[0], topk, dim=1)[1]  # bs, nq
+                proposal_scores = enc_outputs_class_unselected_gidx.max(-1)[0]
+                topk_proposals_gidx = torch.topk(proposal_scores, topk, dim=1)[1]  # bs, nq
 
                 refpoint_embed_gidx_undetach = torch.gather(
                     enc_outputs_coord_unselected_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, 4)

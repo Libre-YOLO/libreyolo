@@ -22,7 +22,10 @@ import math
 import os
 import shutil
 import tempfile
+import warnings
+from contextlib import contextmanager
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -56,7 +59,6 @@ _SUPPORTED_TASKS_BY_FAMILY: dict[str, frozenset[str]] = {
     "efficientnetv2": frozenset({"classify"}),
     "eomt": frozenset({"panoptic", "segment", "semantic"}),
     "fomo": frozenset({"point"}),
-    "grounding_dino": frozenset({"detect"}),
     "l2cs": frozenset({"gaze"}),
     "lingbotvision": frozenset({"semantic"}),
     "mobilenetv4": frozenset({"classify"}),
@@ -69,7 +71,7 @@ _SUPPORTED_TASKS_BY_FAMILY: dict[str, frozenset[str]] = {
     "ppocr": frozenset({"ocr"}),
     "realesrgan": frozenset({"restore"}),
     "resnet": frozenset({"classify"}),
-    "rfdetr": frozenset({"detect", "obb", "pose", "segment"}),
+    "rfdetr": frozenset({"detect", "obb", "pose"}),
     "rtdetr": frozenset({"detect"}),
     "rtdetrv2": frozenset({"detect"}),
     "rtdetrv4": frozenset({"detect"}),
@@ -151,13 +153,11 @@ _NMS_FREE_FAMILIES = {
     "deimv2": "DEIMv2",
     "ec": "EC",
     "eomt": "EoMT",
-    "grounding_dino": "Grounding DINO",
     "omdet_turbo": "OMDet-Turbo",
     "owlv2": "OWLv2",
     "ppocr": "LibrePPOCR",
     "yolo9_e2e": "YOLO9-E2E",
 }
-
 
 class _YoloxPreprocess(nn.Module):
     """Map canonical RGB[0,1] input → BGR[0,255] expected by YOLOX."""
@@ -324,18 +324,6 @@ def _wrap_coreml_contract(
                 "adapter built by LibreOWLv2.export(format='coreml')."
             )
         return nn_model.eval()
-    if model_family == "grounding_dino":
-        from .coreml_grounding_dino import (
-            GroundingDinoFrozenCoreMLAdapter,
-        )
-
-        if not isinstance(nn_model, GroundingDinoFrozenCoreMLAdapter):
-            raise TypeError(
-                "Grounding DINO Core ML export requires the image-only "
-                "frozen-vocabulary adapter built by "
-                "LibreGroundingDINO.export(format='coreml')."
-            )
-        return nn_model.eval()
     if model_family == "omdet_turbo":
         from .coreml_omdet_turbo import (
             OmDetTurboFrozenCoreMLAdapter,
@@ -454,6 +442,299 @@ def _prepare_rtdetr_static_eval(nn_model: nn.Module, height: int, width: int) ->
             decoder.register_buffer("valid_mask", valid_mask, persistent=False)
 
 
+class _CoreMLRtdetrDeformableAttention(nn.Module):
+    """Run RT-DETR deformable attention without rank-six intermediates.
+
+    Core ML tensors are limited to rank five. RT-DETR's eager implementation
+    represents offsets as ``[B, Q, H, L, P, 2]`` before slicing one feature
+    level at a time. This deployment-only adapter flattens ``L * P`` first and
+    performs the same sampling level by level, so every intermediate remains
+    rank five or lower. Concatenating the sampled levels before the weighted
+    reduction preserves the eager operation order.
+    """
+
+    def __init__(self, source: nn.Module):
+        super().__init__()
+        self.source = source
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        reference_points: torch.Tensor,
+        value: torch.Tensor,
+        value_spatial_shapes: list[list[int]],
+        value_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        source = self.source
+        batch_size, query_length = query.shape[:2]
+        value_length = value.shape[1]
+
+        value = source.value_proj(value)
+        if value_mask is not None:
+            value = value * value_mask.to(value.dtype).unsqueeze(-1)
+        value = value.reshape(
+            batch_size,
+            value_length,
+            source.num_heads,
+            source.head_dim,
+        )
+
+        points_per_head = source.num_levels * source.num_points
+        sampling_offsets = source.sampling_offsets(query).reshape(
+            batch_size,
+            query_length,
+            source.num_heads,
+            points_per_head,
+            2,
+        )
+        attention_weights = source.attention_weights(query).reshape(
+            batch_size,
+            query_length,
+            source.num_heads,
+            points_per_head,
+        )
+        attention_weights = torch.nn.functional.softmax(
+            attention_weights,
+            dim=-1,
+        )
+
+        split_shapes = [height * width for height, width in value_spatial_shapes]
+        value_levels = value.split(split_shapes, dim=1)
+        sampled_levels = []
+        for level, (height, width) in enumerate(value_spatial_shapes):
+            point_start = level * source.num_points
+            point_end = point_start + source.num_points
+            offsets = sampling_offsets[:, :, :, point_start:point_end, :]
+
+            reference_level = level
+            if reference_points.shape[-1] == 2:
+                reference = reference_points.reshape(
+                    batch_size,
+                    query_length,
+                    source.num_levels,
+                    2,
+                )[:, :, reference_level, :]
+                normalizer = offsets.new_tensor((width, height))
+                locations = reference[:, :, None, None, :] + offsets / normalizer
+            elif reference_points.shape[-1] == 4:
+                if reference_points.shape[2] == 1:
+                    reference_level = 0
+                reference = reference_points[:, :, reference_level, :]
+                locations = (
+                    reference[:, :, None, None, :2]
+                    + offsets
+                    / source.num_points
+                    * reference[:, :, None, None, 2:]
+                    * 0.5
+                )
+            else:
+                raise ValueError(
+                    "Last dim of reference_points must be 2 or 4, got "
+                    f"{reference_points.shape[-1]}"
+                )
+
+            value_level = (
+                value_levels[level]
+                .flatten(2)
+                .permute(0, 2, 1)
+                .reshape(
+                    batch_size * source.num_heads,
+                    source.head_dim,
+                    height,
+                    width,
+                )
+            )
+            sampling_grid = (2 * locations - 1).permute(0, 2, 1, 3, 4).flatten(0, 1)
+            sampled_levels.append(
+                torch.nn.functional.grid_sample(
+                    value_level,
+                    sampling_grid,
+                    mode="bilinear",
+                    padding_mode="zeros",
+                    align_corners=False,
+                )
+            )
+
+        attention_weights = attention_weights.permute(0, 2, 1, 3).reshape(
+            batch_size * source.num_heads,
+            1,
+            query_length,
+            points_per_head,
+        )
+        output = (
+            (torch.cat(sampled_levels, dim=-1) * attention_weights)
+            .sum(-1)
+            .reshape(batch_size, source.embed_dim, query_length)
+            .permute(0, 2, 1)
+        )
+        return source.output_proj(output)
+
+
+class _CoreMLECPoseDeformableAttention(nn.Module):
+    """Run EC pose deformable attention without rank-six intermediates.
+
+    EC pose keeps the feature-level and sampling-point dimensions separate in
+    eager mode. Core ML cannot represent that rank-six layout, so this
+    deployment-only adapter flattens those two bookkeeping axes while
+    preserving their level-major order and the original per-level sampling
+    reduction.
+    """
+
+    def __init__(self, source: nn.Module):
+        super().__init__()
+        self.source = source
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        reference_points: torch.Tensor,
+        value: tuple[torch.Tensor, ...],
+        input_spatial_shapes: list[tuple[int, int]],
+    ) -> torch.Tensor:
+        source = self.source
+        batch_size, query_length = query.shape[:2]
+        points_per_head = source.n_levels * source.n_points
+
+        sampling_offsets = source.sampling_offsets(query).reshape(
+            batch_size,
+            query_length,
+            source.n_heads,
+            points_per_head,
+            2,
+        )
+        attention_weights = source.attention_weights(query).reshape(
+            batch_size,
+            query_length,
+            source.n_heads,
+            points_per_head,
+        )
+        attention_weights = torch.nn.functional.softmax(attention_weights, dim=-1)
+
+        # The eager pose module receives references grouped by instance and
+        # keypoint, then flattens those axes before deformable attention.
+        reference_points = torch.transpose(reference_points, 2, 3).flatten(1, 2)
+        reference_points = reference_points.expand(
+            -1,
+            -1,
+            source.n_levels,
+            -1,
+        )
+        reference_locations = (
+            reference_points[:, :, :, None, :]
+            .expand(-1, -1, -1, source.n_points, -1)
+            .reshape(
+                batch_size,
+                query_length,
+                points_per_head,
+                reference_points.shape[-1],
+            )
+        )
+
+        if reference_points.shape[-1] == 2:
+            offset_normalizer = torch.tensor(
+                input_spatial_shapes,
+                device=query.device,
+            )
+            offset_normalizer = (
+                offset_normalizer.flip([1])[:, None, :]
+                .expand(-1, source.n_points, -1)
+                .reshape(points_per_head, 2)
+            )
+            sampling_locations = (
+                reference_locations[:, :, None, :, :]
+                + sampling_offsets / offset_normalizer[None, None, None, :, :]
+            )
+        elif reference_points.shape[-1] == 4:
+            sampling_locations = (
+                reference_locations[:, :, None, :, :2]
+                + sampling_offsets
+                / source.n_points
+                * reference_locations[:, :, None, :, 2:]
+                * 0.5
+            )
+        else:
+            raise ValueError(
+                "Last dim of reference_points must be 2 or 4, got "
+                f"{reference_points.shape[-1]}"
+            )
+
+        _, head_dim, _ = value[0].shape
+        sampling_grids = (2 * sampling_locations - 1).transpose(1, 2).flatten(0, 1)
+        sampled_levels = []
+        for level, (height, width) in enumerate(input_spatial_shapes):
+            point_start = level * source.n_points
+            point_end = point_start + source.n_points
+            sampled_levels.append(
+                torch.nn.functional.grid_sample(
+                    value[level].unflatten(2, (height, width)),
+                    sampling_grids[:, :, point_start:point_end, :],
+                    mode="bilinear",
+                    padding_mode="zeros",
+                    align_corners=False,
+                )
+            )
+
+        attention_weights = attention_weights.transpose(1, 2).reshape(
+            batch_size * source.n_heads,
+            1,
+            query_length,
+            points_per_head,
+        )
+        output = (
+            (torch.cat(sampled_levels, dim=-1) * attention_weights)
+            .sum(-1)
+            .reshape(batch_size, source.n_heads * head_dim, query_length)
+        )
+        return output.transpose(1, 2)
+
+
+@contextmanager
+def _prepare_coreml_deformable_attention(
+    nn_model: nn.Module,
+    model_family: str,
+    model_task: str | None,
+):
+    """Transactionally replace rank-six attention for Core ML tracing only."""
+    if model_family == "rtdetr":
+        from ..models.rtdetr.nn import MSDeformableAttention
+
+        source_type = MSDeformableAttention
+        adapter_type = _CoreMLRtdetrDeformableAttention
+    elif model_family == "ec" and model_task == "pose":
+        from ..models.ec.decoder import MSDeformAttnPose
+
+        source_type = MSDeformAttnPose
+        adapter_type = _CoreMLECPoseDeformableAttention
+    else:
+        yield nn_model
+        return
+
+    replacements = [
+        (parent, name, child)
+        for parent in nn_model.modules()
+        for name, child in parent.named_children()
+        if isinstance(child, source_type)
+    ]
+    try:
+        for parent, name, child in replacements:
+            setattr(parent, name, adapter_type(child))
+        yield nn_model
+    finally:
+        for parent, name, child in reversed(replacements):
+            setattr(parent, name, child)
+
+
+@contextmanager
+def _disable_torch_mha_fastpath():
+    """Keep traced attention decomposed into converter-supported operators."""
+    previous = torch.backends.mha.get_fastpath_enabled()
+    torch.backends.mha.set_fastpath_enabled(False)
+    try:
+        yield
+    finally:
+        torch.backends.mha.set_fastpath_enabled(previous)
+
+
 class _NMSOutputAdapter(nn.Module):
     """Map detector outputs to CoreML NMS inputs: confidence and cxcywh boxes."""
 
@@ -529,6 +810,17 @@ def _validate_export_profile(
             f"sizes {sorted(_PERMISSIVE_DEIMV2_SIZES)}; got size={size!r}. "
             "The larger variants cross the repository's DINOv3 licensing boundary."
         )
+    if family == "rfdetr" and task == "obb" and size in {"s", "l"}:
+        measured_error = {
+            "s": "0.52% for boxes at the 512 canvas",
+            "l": "2.66% for boxes and 1.68% for logits at the 704 canvas",
+        }[size]
+        raise NotImplementedError(
+            f"RF-DETR-{size.upper()} OBB Core ML export is disabled: real FP32 "
+            "CPU_ONLY execution on Apple M4 diverged from PyTorch by "
+            f"{measured_error}. RF-DETR-N and RF-DETR-M OBB passed the strict "
+            "parity and public-result gates."
+        )
     if family == "swinir":
         from .coreml_swinir import SWINIR_COREML_SIZES
 
@@ -550,16 +842,77 @@ def _validate_export_profile(
         from .coreml_owlv2 import validate_owlv2_coreml_profile
 
         validate_owlv2_coreml_profile(size=size)
-    if family == "grounding_dino":
-        from .coreml_grounding_dino import (
-            validate_grounding_dino_coreml_profile,
-        )
-
-        validate_grounding_dino_coreml_profile(size=size)
     if family == "omdet_turbo":
         from .coreml_omdet_turbo import validate_omdet_turbo_coreml_profile
 
         validate_omdet_turbo_coreml_profile(size=size)
+
+
+_RFDETR_POSE_COREML_COMPUTE_UNITS = "cpu_only"
+_RFDETR_POSE_COREML_PASS_PROFILE = "rfdetr_pose_preserve_division_v1"
+_RFDETR_POSE_COREML_DISABLED_PASSES = ("common::divide_to_multiply",)
+_NAFNET_COREML_PASS_PROFILE = "nafnet_preserve_elementwise_affine_v1"
+_NAFNET_COREML_DISABLED_PASSES = ("common::fuse_elementwise_to_batchnorm",)
+
+
+def _validate_coreml_compute_unit_profile(
+    family: str,
+    task: str,
+    compute_units: str,
+) -> None:
+    """Reject accelerator routes that do not meet a profile's parity gate."""
+    if (
+        family == "rfdetr"
+        and task == "pose"
+        and compute_units != _RFDETR_POSE_COREML_COMPUTE_UNITS
+    ):
+        raise NotImplementedError(
+            "RF-DETR pose Core ML export currently requires "
+            "compute_units='cpu_only'. Real M4 runtime validation found that "
+            "GPU/ALL execution exceeds the fixed conversion-fidelity gate; "
+            "cpu_and_ne is also excluded because this FP32 ML Program is "
+            "placed on CPU rather than the Neural Engine."
+        )
+
+
+def _validate_coreml_precision_profile(
+    family: str,
+    task: str,
+    precision: str,
+) -> None:
+    """Reject unvalidated precision variants of narrowly gated profiles."""
+    if (family, task) == ("rfdetr", "pose") and precision != "fp32":
+        raise NotImplementedError(
+            "RF-DETR pose Core ML export currently requires precision='fp32' "
+            "(half=False). FP16 conversion/runtime fidelity has not been "
+            "validated on Apple hardware."
+        )
+    if (family, task) == ("depth_anything3", "depth") and precision != "fp32":
+        raise NotImplementedError(
+            "Depth Anything 3 Core ML export requires precision='fp32' "
+            "(half=False). Real DA3MONO-LARGE execution on Apple M4 measured "
+            "2.066% FP16 raw relative error, while FP32 passed the strict "
+            "raw and public depth parity gates."
+        )
+
+
+def _coreml_pass_pipeline(ct: Any, family: str, task: str) -> Any | None:
+    """Return a fresh, narrowly scoped conversion pipeline when required."""
+    disabled_passes: tuple[str, ...] = ()
+    if family == "rfdetr":
+        disabled_passes = _RFDETR_POSE_COREML_DISABLED_PASSES
+    elif (family, task) == ("nafnet", "restore"):
+        # coremltools 9 folds NAFNet's 72 channel-wise affine pairs into
+        # batch_norm operations. A saved-package M4 A/B measured 5.07e-4
+        # relative error with that fusion versus 1.63e-5 when only this pass
+        # is disabled. Preserve the source mul+add pairs instead of weakening
+        # the global parity gate.
+        disabled_passes = _NAFNET_COREML_DISABLED_PASSES
+    if not disabled_passes:
+        return None
+    pipeline = ct.PassPipeline()
+    pipeline.remove_passes(set(disabled_passes))
+    return pipeline
 
 
 def _output_contract(
@@ -609,12 +962,6 @@ def _output_contract(
         from .coreml_owlv2 import owlv2_coreml_output_contract
 
         return owlv2_coreml_output_contract()
-    if family == "grounding_dino":
-        from .coreml_grounding_dino import (
-            grounding_dino_coreml_output_contract,
-        )
-
-        return grounding_dino_coreml_output_contract()
     if family == "omdet_turbo":
         from .coreml_omdet_turbo import omdet_turbo_coreml_output_contract
 
@@ -650,9 +997,7 @@ def _output_contract(
             output("pred_boxes", "boxes", "cxcywh_normalized"),
             output("pred_logits", "class_logits"),
         ]
-        if task == "segment":
-            values.append(output("pred_masks", "mask_logits"))
-        elif task == "pose":
+        if task == "pose":
             values.append(output("pred_keypoints", "keypoints"))
         elif task == "obb":
             values.append(output("pred_angles", "angles"))
@@ -733,12 +1078,6 @@ def _input_contract(family: str, task: str, size: str | None) -> dict[str, Any]:
         from .coreml_owlv2 import owlv2_coreml_input_contract
 
         return owlv2_coreml_input_contract()
-    if family == "grounding_dino":
-        from .coreml_grounding_dino import (
-            grounding_dino_coreml_input_contract,
-        )
-
-        return grounding_dino_coreml_input_contract()
     if family == "omdet_turbo":
         from .coreml_omdet_turbo import omdet_turbo_coreml_input_contract
 
@@ -863,12 +1202,6 @@ def _validation_contract(family: str, task: str) -> dict[str, Any]:
         from .coreml_owlv2 import owlv2_coreml_validation_contract
 
         return owlv2_coreml_validation_contract()
-    if family == "grounding_dino":
-        from .coreml_grounding_dino import (
-            grounding_dino_coreml_validation_contract,
-        )
-
-        return grounding_dino_coreml_validation_contract()
     if family == "omdet_turbo":
         from .coreml_omdet_turbo import (
             omdet_turbo_coreml_validation_contract,
@@ -1067,33 +1400,6 @@ def _validate_output_semantics(
         )
         return
 
-    if family == "grounding_dino":
-        from .coreml_grounding_dino import (
-            expected_grounding_dino_coreml_shapes,
-        )
-
-        sequence_length = int(
-            metadata.get("grounding_dino_sequence_length", 0) or 0
-        )
-        expected_shapes = expected_grounding_dino_coreml_shapes(
-            size=str(size),
-            sequence_length=sequence_length,
-        )
-        require(
-            set(by_name) == set(expected_shapes),
-            "Grounding DINO outputs must match its frozen text/box ABI",
-        )
-        for name, expected_shape in expected_shapes.items():
-            require(
-                tuple(by_name[name].shape) == expected_shape,
-                f"{name} must have shape {expected_shape}",
-            )
-        boxes = by_name["pred_boxes"]
-        require(
-            bool(((boxes >= 0.0) & (boxes <= 1.0)).all()),
-            "pred_boxes must be normalized to [0, 1]",
-        )
-        return
 
     if family == "omdet_turbo":
         from .coreml_omdet_turbo import (
@@ -1381,7 +1687,12 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def _save_mlpackage_atomic(mlmodel: Any, output_path: str | Path) -> None:
+def _save_mlpackage_atomic(
+    mlmodel: Any,
+    output_path: str | Path,
+    *,
+    validate_candidate: Callable[[Path], None] | None = None,
+) -> None:
     """Stage, then transactionally replace one package without losing the old one."""
     destination = Path(output_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1402,6 +1713,8 @@ def _save_mlpackage_atomic(mlmodel: Any, output_path: str | Path) -> None:
             raise RuntimeError(
                 "coremltools returned from save() without creating the staged package."
             )
+        if validate_candidate is not None:
+            validate_candidate(candidate)
         if destination.exists() or destination.is_symlink():
             os.replace(destination, previous)
             moved_previous = True
@@ -1443,6 +1756,105 @@ def _spec_output_names(mlmodel: Any) -> list[str]:
         return [str(item.name) for item in mlmodel.get_spec().description.output]
     except (AttributeError, TypeError):
         return []
+
+
+def _validate_coreml_deployment_spec(
+    spec: Any,
+    *,
+    input_contract: dict[str, Any],
+    output_contract: list[dict[str, Any]],
+    input_shape: tuple[int, ...],
+    nms: bool,
+) -> None:
+    """Cross-check final converter protobuf features before package install."""
+    description = getattr(spec, "description", None)
+    inputs = list(getattr(description, "input", ()) or ())
+    outputs = list(getattr(description, "output", ()) or ())
+    if len(inputs) != 1:
+        raise RuntimeError(
+            "Final Core ML spec must declare exactly one input."
+        )
+    expected_output_names = [item["name"] for item in output_contract]
+    actual_output_names = [str(item.name) for item in outputs]
+    if actual_output_names != expected_output_names:
+        raise RuntimeError(
+            "Final Core ML spec changed the ordered output ABI: "
+            f"expected {expected_output_names}, got {actual_output_names}."
+        )
+
+    input_feature = inputs[0]
+    if str(input_feature.name) != input_contract["name"]:
+        raise RuntimeError(
+            "Final Core ML spec changed the declared input name."
+        )
+    input_type = getattr(input_feature, "type", None)
+    which_input = getattr(input_type, "WhichOneof", None)
+    if not callable(which_input):
+        raise RuntimeError("Final Core ML input type is not inspectable.")
+    actual_input_kind = which_input("Type")
+    expected_input_kind = (
+        "imageType"
+        if input_contract["kind"] == "image"
+        else "multiArrayType"
+    )
+    if actual_input_kind != expected_input_kind:
+        raise RuntimeError(
+            "Final Core ML spec changed the declared input feature kind."
+        )
+    if bool(getattr(input_type, "isOptional", False)):
+        raise RuntimeError("Final Core ML input must not be optional.")
+    if expected_input_kind == "imageType":
+        image_type = getattr(input_type, "imageType", None)
+        expected_height, expected_width = input_shape[-2:]
+        if (
+            int(getattr(image_type, "height", 0) or 0) != expected_height
+            or int(getattr(image_type, "width", 0) or 0) != expected_width
+            or int(getattr(image_type, "colorSpace", 0) or 0) != 20
+        ):
+            raise RuntimeError(
+                "Final Core ML ImageType dimensions or RGB color space "
+                "changed during conversion."
+            )
+    else:
+        array = getattr(input_type, "multiArrayType", None)
+        actual_shape = tuple(
+            int(value) for value in getattr(array, "shape", ())
+        )
+        if (
+            actual_shape != input_shape
+            or int(getattr(array, "dataType", 0) or 0) != 65568
+        ):
+            raise RuntimeError(
+                "Final Core ML TensorType shape or FP32 dtype changed during "
+                "conversion."
+            )
+
+    for feature, contract in zip(outputs, output_contract):
+        feature_type = getattr(feature, "type", None)
+        which_output = getattr(feature_type, "WhichOneof", None)
+        if (
+            not callable(which_output)
+            or which_output("Type") != "multiArrayType"
+            or bool(getattr(feature_type, "isOptional", False))
+        ):
+            raise RuntimeError(
+                f"Final Core ML output {contract['name']!r} must be a "
+                "non-optional MultiArray."
+            )
+        array = getattr(feature_type, "multiArrayType", None)
+        if int(getattr(array, "dataType", 0) or 0) != 65568:
+            raise RuntimeError(
+                f"Final Core ML output {contract['name']!r} must be FP32."
+            )
+        if not nms:
+            actual_shape = [
+                int(value) for value in getattr(array, "shape", ())
+            ]
+            if actual_shape != contract["shape"]:
+                raise RuntimeError(
+                    f"Final Core ML output {contract['name']!r} changed "
+                    f"shape: expected {contract['shape']}, got {actual_shape}."
+                )
 
 
 def _prepare_strict_metadata(
@@ -1739,7 +2151,7 @@ def prepare_frozen_classifier_coreml_export(
     batch = int(options.pop("batch", 1))
     nms = bool(options.pop("nms", False))
     device = options.pop("device", None)
-    compute_units = str(options.pop("compute_units", "all")).lower()
+    compute_units = options.pop("compute_units", "cpu_only")
     conf = options.pop("conf", 0.25)
     iou = options.pop("iou", 0.45)
     max_det = options.pop("max_det", 300)
@@ -1797,6 +2209,27 @@ def prepare_frozen_classifier_coreml_export(
             f"position table is resolution-specific; got {height}x{width}."
         )
 
+    from .coreml_profiles import (
+        normalize_coreml_compute_units,
+        resolve_coreml_export_compute_units,
+    )
+
+    classification_activation = (
+        "sigmoid" if bool(getattr(model, "multi_label", False)) else "softmax"
+    )
+    requested_compute_units = normalize_coreml_compute_units(compute_units)
+    conversion_compute_units, _ = resolve_coreml_export_compute_units(
+        requested_compute_units,
+        family=str(model._get_model_name()).lower(),
+        task=str(getattr(model, "task", "classify")).lower(),
+        size=getattr(model, "size", None),
+        canvas=(height, width),
+        precision="fp16" if half else "fp32",
+        nms=nms,
+        class_count=getattr(model, "nb_classes", None),
+        classification_activation=classification_activation,
+        defer_source_validation=True,
+    )
     exporter = CoreMLExporter(model)
     half, int8 = exporter._validate(half, int8, data)
     exporter._preflight(
@@ -1804,7 +2237,7 @@ def prepare_frozen_classifier_coreml_export(
         int8=int8,
         data=data,
         nms=nms,
-        compute_units=compute_units,
+        compute_units=conversion_compute_units,
         conf=conf,
         iou=iou,
         max_det=max_det,
@@ -1819,16 +2252,20 @@ def prepare_frozen_classifier_coreml_export(
     metadata.update(
         {
             "frozen_classes": True,
-            "classification_activation": (
-                "sigmoid" if bool(getattr(model, "multi_label", False)) else "softmax"
-            ),
+            "classification_activation": classification_activation,
         }
     )
 
     destination = Path(output_path)
     if destination.suffix.lower() != ".mlpackage":
         destination = destination.with_suffix(".mlpackage")
-    return height, str(destination), metadata, precision, compute_units
+    return (
+        height,
+        str(destination),
+        metadata,
+        precision,
+        requested_compute_units,
+    )
 
 
 def _stringify_metadata(metadata: dict) -> dict:
@@ -1843,6 +2280,18 @@ def _stringify_metadata(metadata: dict) -> dict:
         else:
             out[str(k)] = str(v)
     return out
+
+
+def _replace_user_defined_metadata(mlmodel, metadata: dict[str, str]) -> None:
+    """Replace converter build metadata with the validated artifact contract."""
+    container = mlmodel.user_defined_metadata
+    container.clear()
+    container.update(metadata)
+    if dict(container) != metadata:
+        raise RuntimeError(
+            "Core ML model metadata differs from the validated artifact "
+            "contract before save."
+        )
 
 
 def _to_compute_unit(compute_units: str):
@@ -1865,6 +2314,35 @@ def _to_compute_unit(compute_units: str):
             f"Must be one of: {sorted(mapping)}"
         )
     return mapping[key]
+
+
+def _coreml_profile_for_toolchain(
+    execution_profile: Any,
+    *,
+    requested_compute_units: str,
+    coremltools: Any,
+) -> Any:
+    """Keep validation only under the toolchain used for the M4 evidence."""
+    if execution_profile is None:
+        return None
+    actual = str(getattr(coremltools, "__version__", "")).strip()
+    expected = "9.0"
+    if actual == expected:
+        return execution_profile
+    if str(requested_compute_units).strip().lower() == "validated":
+        raise RuntimeError(
+            "compute_units='validated' requires the exact Core ML Tools "
+            f"{expected} conversion toolchain used by the Apple-M4 evidence; "
+            f"found {actual or 'unknown'}."
+        )
+    warnings.warn(
+        "The installed Core ML Tools version does not match the Apple-M4 "
+        "execution profile. Keeping this explicit native-planner artifact "
+        "experimental.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+    return None
 
 
 def _canonical_trace_probe(dummy: torch.Tensor) -> torch.Tensor:
@@ -2157,11 +2635,22 @@ def _validate_sam_function_description(
     *,
     function_name: str,
     profile: Any,
+    runtime: bool = False,
+    contracts: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Pin one serialized SAM function's exact names, dtypes, and input bounds."""
-    from .coreml_sam import sam_coreml_function_contracts
+    from .coreml_sam import (
+        sam_coreml_function_contracts,
+        sam_coreml_runtime_function_contracts,
+    )
 
-    contract = sam_coreml_function_contracts(profile)[function_name]
+    if contracts is None:
+        contracts = (
+            sam_coreml_runtime_function_contracts(profile)
+            if runtime
+            else sam_coreml_function_contracts(profile)
+        )
+    contract = contracts[function_name]
     inputs = list(getattr(description, "input", ()) or ())
     outputs = list(getattr(description, "output", ()) or ())
     expected_input_names = [item["name"] for item in contract["inputs"]]
@@ -2282,10 +2771,11 @@ def _validate_sam_multifunction_spec(
     *,
     profile: Any,
 ) -> None:
-    """Validate the complete native seven-function SAM package table."""
+    """Validate the complete native fixed-function SAM package table."""
     from .coreml_sam import (
         SAM_COREML_ENCODER_FUNCTION,
-        SAM_COREML_FUNCTION_NAMES,
+        sam_coreml_runtime_function_contracts,
+        sam_coreml_runtime_function_names,
     )
 
     description = getattr(spec, "description", None)
@@ -2304,7 +2794,9 @@ def _validate_sam_multifunction_spec(
         )
     functions = list(getattr(description, "functions", ()) or ())
     names = [str(value.name) for value in functions]
-    if names != list(SAM_COREML_FUNCTION_NAMES):
+    expected_names = list(sam_coreml_runtime_function_names(profile))
+    contracts = sam_coreml_runtime_function_contracts(profile)
+    if names != expected_names:
         raise RuntimeError(
             "LibreSAM multifunction package function order/names changed: "
             f"{names!r}."
@@ -2314,6 +2806,8 @@ def _validate_sam_multifunction_spec(
             function,
             function_name=str(function.name),
             profile=profile,
+            runtime=True,
+            contracts=contracts,
         )
 
 
@@ -2465,7 +2959,9 @@ def _sam_validate_and_build_probes(
             profile,
             function_name,
             first_embeddings,
-            point_count=2 if uses_points else 0,
+            point_count=(
+                min(2, profile.prompt_max_points) if uses_points else 0
+            ),
             alternate=False,
         )
         second_inputs = _sam_component_inputs(
@@ -2505,6 +3001,101 @@ def _sam_validate_and_build_probes(
     return probes
 
 
+def _sam_build_fixed_point_probes(
+    component: nn.Module,
+    *,
+    function_name: str,
+    point_count: int,
+    profile: Any,
+    source_probes: tuple[
+        tuple[torch.Tensor, ...],
+        tuple[torch.Tensor, ...],
+        dict[str, torch.Tensor],
+    ],
+) -> tuple[
+    tuple[torch.Tensor, ...],
+    tuple[torch.Tensor, ...],
+    dict[str, torch.Tensor],
+]:
+    """Rebuild two exact-P probes for one directly captured runtime graph."""
+    from .coreml_sam import (
+        sam_coreml_function_contracts,
+        validate_sam_coreml_function_io,
+    )
+
+    if "points" not in function_name:
+        raise ValueError(
+            f"LibreSAM fixed-point probes require a point decoder, got "
+            f"{function_name!r}."
+        )
+    first_source, second_source, _ = source_probes
+    embedding_count = len(profile.embedding_names)
+    first_inputs = _sam_component_inputs(
+        profile,
+        function_name,
+        tuple(first_source[:embedding_count]),
+        point_count=point_count,
+        alternate=False,
+    )
+    second_inputs = _sam_component_inputs(
+        profile,
+        function_name,
+        tuple(second_source[:embedding_count]),
+        point_count=point_count,
+        alternate=True,
+    )
+    contract = sam_coreml_function_contracts(profile)[function_name]
+    input_names = tuple(item["name"] for item in contract["inputs"])
+    output_names = tuple(item["name"] for item in contract["outputs"])
+    with torch.inference_mode():
+        first_outputs = _sam_named_tensor_outputs(
+            component(*first_inputs),
+            output_names,
+        )
+        second_outputs = _sam_named_tensor_outputs(
+            component(*second_inputs),
+            output_names,
+        )
+    validate_sam_coreml_function_io(
+        function_name,
+        dict(zip(input_names, first_inputs)),
+        first_outputs,
+        profile=profile,
+    )
+    validate_sam_coreml_function_io(
+        function_name,
+        dict(zip(input_names, second_inputs)),
+        second_outputs,
+        profile=profile,
+    )
+    return first_inputs, second_inputs, second_outputs
+
+
+def _sam_capture_decomposition_table(profile: Any) -> dict[Any, Any]:
+    """Return the smallest public PyTorch decomposition set for one SAM."""
+    family = str(getattr(profile, "family", "")).lower()
+    if family not in {"edgetam", "sam2"}:
+        return {}
+    # EdgeTAM and SAM2 capture aten.where.ScalarOther in their mask-selection
+    # paths, which coremltools 9 cannot lower. PyTorch's public default
+    # decomposition preserves the exact branch semantics as primitive tensor
+    # operations. Select only this overload: broad default decomposition
+    # changes unrelated SAM graphs and makes the deployment contract harder
+    # to audit.
+    where_scalar_other = torch.ops.aten.where.ScalarOther
+    default_decompositions = torch.export.default_decompositions()
+    try:
+        return {
+            where_scalar_other: default_decompositions[where_scalar_other]
+        }
+    except KeyError as exc:
+        raise RuntimeError(
+            "This PyTorch build does not provide the public "
+            "aten.where.ScalarOther decomposition required by "
+            f"{family} Core ML export."
+        ) from exc
+
+
 def _sam_capture_component(
     component: nn.Module,
     *,
@@ -2516,10 +3107,9 @@ def _sam_capture_component(
         dict[str, torch.Tensor],
     ],
 ) -> Any:
-    """Capture one SAM graph and prove the alternate eager result is exact."""
+    """Capture one fixed-shape SAM graph and prove its alternate probe is exact."""
     from .coreml_sam import (
         SAM_COREML_ENCODER_FUNCTION,
-        sam_coreml_decoder_dynamic_shapes,
         sam_coreml_function_contracts,
     )
 
@@ -2543,17 +3133,19 @@ def _sam_capture_component(
                 output_names,
             )
     else:
-        dynamic_shapes = (
-            sam_coreml_decoder_dynamic_shapes(profile, function_name)
-            if "points" in function_name
-            else None
-        )
+        first_shapes = tuple(tuple(value.shape) for value in first_inputs)
+        second_shapes = tuple(tuple(value.shape) for value in second_inputs)
+        if first_shapes != second_shapes:
+            raise RuntimeError(
+                f"LibreSAM fixed capture for {function_name!r} received "
+                f"different probe shapes: {first_shapes!r} != "
+                f"{second_shapes!r}."
+            )
         captured = torch.export.export(
             component,
             first_inputs,
-            dynamic_shapes=dynamic_shapes,
             strict=False,
-        ).run_decompositions({})
+        ).run_decompositions(_sam_capture_decomposition_table(profile))
         with torch.inference_mode():
             actual = _sam_named_tensor_outputs(
                 captured.module()(*second_inputs),
@@ -2597,6 +3189,8 @@ def _export_sam_coreml_impl(
     output_path: str,
     precision: str,
     compute_units: str,
+    requested_compute_units: str,
+    has_candidate_execution_profile: bool,
     nms: bool,
     metadata: dict | None,
     model_family: str | None,
@@ -2608,8 +3202,11 @@ def _export_sam_coreml_impl(
     from .coreml_sam import (
         SAM_COREML_ENCODER_FUNCTION,
         SAM_COREML_FUNCTION_NAMES,
+        inspect_sam_coreml_model,
         sam_coreml_function_contracts,
         sam_coreml_metadata,
+        sam_coreml_runtime_function_contracts,
+        sam_coreml_runtime_function_name,
         validate_sam_coreml_metadata,
         validate_sam_coreml_profile,
         wrap_sam_coreml_components,
@@ -2666,6 +3263,19 @@ def _export_sam_coreml_impl(
             "LibreSAM Core ML conversion requires a CPU graph; found "
             f"devices={sorted(graph_devices)}."
         )
+    model_signature = inspect_sam_coreml_model(nn_model, profile=profile)
+    from .coreml_identity import (
+        COREML_PROFILE_SOURCE_KIND_KEY,
+        COREML_PROFILE_SOURCE_SHA256_KEY,
+        bind_coreml_deployment_abi,
+        pytorch_module_source_identity,
+        validate_coreml_deployment_abi,
+    )
+    from .coreml_profiles import (
+        finalize_coreml_execution_profile_metadata,
+        resolve_coreml_export_compute_units,
+        validate_coreml_execution_profile_metadata,
+    )
 
     common_input = dict(values)
     common_input["dynamic"] = False
@@ -2677,7 +3287,10 @@ def _export_sam_coreml_impl(
         height=profile.image_size,
         width=profile.image_size,
     )
-    contract_metadata = sam_coreml_metadata(profile)
+    contract_metadata = sam_coreml_metadata(
+        profile,
+        weights_claim=model_signature.weights_claim,
+    )
     for key, expected in contract_metadata.items():
         current = values.get(key)
         if current not in (None, "") and current != expected:
@@ -2691,9 +3304,37 @@ def _export_sam_coreml_impl(
             "libreyolo_producer": "libreyolo",
             "artifact_format": "coreml",
             "precision": "fp32",
-            "dynamic": True,
+            "dynamic": False,
         }
     )
+    execution_profile = None
+    source_identity = pytorch_module_source_identity(nn_model.eval())
+    prepared.update(source_identity)
+    if has_candidate_execution_profile:
+        resolved_compute_units, execution_profile = (
+            resolve_coreml_export_compute_units(
+                requested_compute_units,
+                family=family,
+                task="segment",
+                size=size,
+                canvas=profile.image_size,
+                precision=precision,
+                nms=False,
+                prompt_max_points=profile.prompt_max_points,
+                class_count=1,
+                source_kind=source_identity[
+                    COREML_PROFILE_SOURCE_KIND_KEY
+                ],
+                source_sha256=source_identity[
+                    COREML_PROFILE_SOURCE_SHA256_KEY
+                ],
+            )
+        )
+        if resolved_compute_units != compute_units:
+            raise RuntimeError(
+                "LibreSAM Core ML two-phase profile resolution changed the "
+                "conversion planner after source preparation."
+            )
     validate_sam_coreml_metadata(prepared)
 
     components = wrap_sam_coreml_components(nn_model.eval(), profile=profile)
@@ -2705,16 +3346,20 @@ def _export_sam_coreml_impl(
 
     import coremltools as ct
 
+    execution_profile = _coreml_profile_for_toolchain(
+        execution_profile,
+        requested_compute_units=requested_compute_units,
+        coremltools=ct,
+    )
     compute_unit = _to_compute_unit(compute_units)
     contracts = sam_coreml_function_contracts(profile)
+    runtime_contracts = sam_coreml_runtime_function_contracts(profile)
     conversion_kwargs = {
         "convert_to": "mlprogram",
         "compute_precision": ct.precision.FLOAT32,
         "minimum_deployment_target": ct.target.iOS18,
         "compute_units": compute_unit,
     }
-    string_metadata = _stringify_metadata(prepared)
-
     class _SAMMultifunctionSaver:
         def save(self, candidate_path: str) -> None:
             with tempfile.TemporaryDirectory(
@@ -2723,13 +3368,76 @@ def _export_sam_coreml_impl(
                 workspace = Path(root)
                 descriptor = ct.utils.MultiFunctionDescriptor()
                 for index, function_name in enumerate(SAM_COREML_FUNCTION_NAMES):
+                    contract = contracts[function_name]
+                    prompt_mode = contract.get("prompt_mode")
+                    if prompt_mode in ("points", "points_boxes"):
+                        for point_count in range(
+                            1,
+                            profile.prompt_max_points + 1,
+                        ):
+                            runtime_name = sam_coreml_runtime_function_name(
+                                function_name,
+                                point_count=point_count,
+                            )
+                            runtime_contract = runtime_contracts[runtime_name]
+                            fixed_probes = _sam_build_fixed_point_probes(
+                                components[function_name],
+                                function_name=function_name,
+                                point_count=point_count,
+                                profile=profile,
+                                source_probes=probes[function_name],
+                            )
+                            captured = _sam_capture_component(
+                                components[function_name],
+                                function_name=function_name,
+                                profile=profile,
+                                probes=fixed_probes,
+                            )
+                            converted = ct.convert(
+                                captured,
+                                inputs=[
+                                    _sam_coreml_tensor_type(ct, item)
+                                    for item in runtime_contract["inputs"]
+                                ],
+                                outputs=[
+                                    ct.TensorType(
+                                        name=item["name"],
+                                        dtype=np.float32,
+                                    )
+                                    for item in runtime_contract["outputs"]
+                                ],
+                                **conversion_kwargs,
+                            )
+                            _validate_sam_mil_outputs(
+                                converted,
+                                function_name=function_name,
+                                profile=profile,
+                            )
+                            _validate_sam_function_description(
+                                converted.get_spec().description,
+                                function_name=runtime_name,
+                                profile=profile,
+                                runtime=True,
+                                contracts=runtime_contracts,
+                            )
+                            component_path = workspace / (
+                                f"{index:02d}-{runtime_name}.mlpackage"
+                            )
+                            converted.save(str(component_path))
+                            descriptor.add_function(
+                                str(component_path),
+                                "main",
+                                runtime_name,
+                            )
+                            del converted, captured
+                        continue
+
                     captured = _sam_capture_component(
                         components[function_name],
                         function_name=function_name,
                         profile=profile,
                         probes=probes[function_name],
                     )
-                    contract = contracts[function_name]
                     converted = ct.convert(
                         captured,
                         inputs=[
@@ -2754,6 +3462,7 @@ def _export_sam_coreml_impl(
                         converted.get_spec().description,
                         function_name=function_name,
                         profile=profile,
+                        contracts=contracts,
                     )
                     component_path = workspace / (
                         f"{index:02d}-{function_name}.mlpackage"
@@ -2773,17 +3482,38 @@ def _export_sam_coreml_impl(
                     str(combined_path),
                     skip_model_load=True,
                 )
+                final_metadata = bind_coreml_deployment_abi(
+                    prepared,
+                    combined.get_spec(),
+                )
+                final_metadata, _ = (
+                    finalize_coreml_execution_profile_metadata(
+                        final_metadata,
+                        execution_profile,
+                        requested_compute_units=requested_compute_units,
+                        conversion_compute_units=compute_units,
+                        deployment_abi_sha256=final_metadata[
+                            "coreml_profile_abi_sha256"
+                        ],
+                    )
+                )
+                string_metadata = _stringify_metadata(final_metadata)
                 combined.user_defined_metadata.update(string_metadata)
                 combined.save(candidate_path)
 
             reloaded = ct.models.MLModel(candidate_path, skip_model_load=True)
+            reloaded_spec = reloaded.get_spec()
+            reloaded_metadata = dict(reloaded.user_defined_metadata)
             _validate_sam_multifunction_spec(
-                reloaded.get_spec(),
+                reloaded_spec,
                 profile=profile,
             )
-            validate_sam_coreml_metadata(
-                dict(reloaded.user_defined_metadata)
+            validate_sam_coreml_metadata(reloaded_metadata)
+            validate_coreml_deployment_abi(
+                reloaded_spec,
+                reloaded_metadata,
             )
+            validate_coreml_execution_profile_metadata(reloaded_metadata)
 
     _save_mlpackage_atomic(_SAMMultifunctionSaver(), output_path)
     return str(output_path)
@@ -2796,6 +3526,8 @@ def _export_ppocr_coreml_impl(
     output_path: str,
     precision: str,
     compute_units: str,
+    requested_compute_units: str,
+    has_candidate_execution_profile: bool,
     nms: bool,
     metadata: dict | None,
     model_task: str | None,
@@ -2931,6 +3663,46 @@ def _export_ppocr_coreml_impl(
             "dynamic": True,
         }
     )
+    from .coreml_identity import (
+        COREML_PROFILE_SOURCE_KIND_KEY,
+        COREML_PROFILE_SOURCE_SHA256_KEY,
+        bind_coreml_deployment_abi,
+        pytorch_module_source_identity,
+        validate_coreml_deployment_abi,
+    )
+    from .coreml_profiles import (
+        finalize_coreml_execution_profile_metadata,
+        resolve_coreml_export_compute_units,
+        validate_coreml_execution_profile_metadata,
+    )
+
+    execution_profile = None
+    source_identity = pytorch_module_source_identity(nn_model.eval())
+    prepared.update(source_identity)
+    if has_candidate_execution_profile:
+        resolved_compute_units, execution_profile = (
+            resolve_coreml_export_compute_units(
+                requested_compute_units,
+                family="ppocr",
+                task="ocr",
+                size=size,
+                canvas=det_limit,
+                precision=precision,
+                nms=False,
+                class_count=1,
+                source_kind=source_identity[
+                    COREML_PROFILE_SOURCE_KIND_KEY
+                ],
+                source_sha256=source_identity[
+                    COREML_PROFILE_SOURCE_SHA256_KEY
+                ],
+            )
+        )
+        if resolved_compute_units != compute_units:
+            raise RuntimeError(
+                "LibrePPOCR Core ML two-phase profile resolution changed the "
+                "conversion planner after source preparation."
+            )
     validate_ppocr_coreml_metadata(prepared)
 
     wrapped = wrap_ppocr_coreml_components(
@@ -2995,6 +3767,11 @@ def _export_ppocr_coreml_impl(
 
     import coremltools as ct
 
+    execution_profile = _coreml_profile_for_toolchain(
+        execution_profile,
+        requested_compute_units=requested_compute_units,
+        coremltools=ct,
+    )
     compute_unit = _to_compute_unit(compute_units)
     conversion_kwargs = {
         "convert_to": "mlprogram",
@@ -3102,8 +3879,6 @@ def _export_ppocr_coreml_impl(
         ),
     )
 
-    string_metadata = _stringify_metadata(prepared)
-
     class _PPOCRMultifunctionSaver:
         def save(self, candidate_path: str) -> None:
             with tempfile.TemporaryDirectory(prefix="libreyolo-ppocr-coreml-") as root:
@@ -3132,17 +3907,38 @@ def _export_ppocr_coreml_impl(
                     str(combined_path),
                     skip_model_load=True,
                 )
+                final_metadata = bind_coreml_deployment_abi(
+                    prepared,
+                    combined.get_spec(),
+                )
+                final_metadata, _ = (
+                    finalize_coreml_execution_profile_metadata(
+                        final_metadata,
+                        execution_profile,
+                        requested_compute_units=requested_compute_units,
+                        conversion_compute_units=compute_units,
+                        deployment_abi_sha256=final_metadata[
+                            "coreml_profile_abi_sha256"
+                        ],
+                    )
+                )
+                string_metadata = _stringify_metadata(final_metadata)
                 combined.user_defined_metadata.update(string_metadata)
                 combined.save(candidate_path)
 
             reloaded = ct.models.MLModel(candidate_path, skip_model_load=True)
+            reloaded_spec = reloaded.get_spec()
+            reloaded_metadata = dict(reloaded.user_defined_metadata)
             _validate_ppocr_multifunction_spec(
-                reloaded.get_spec(),
+                reloaded_spec,
                 profile=profile,
             )
-            validate_ppocr_coreml_metadata(
-                dict(reloaded.user_defined_metadata)
+            validate_ppocr_coreml_metadata(reloaded_metadata)
+            validate_coreml_deployment_abi(
+                reloaded_spec,
+                reloaded_metadata,
             )
+            validate_coreml_execution_profile_metadata(reloaded_metadata)
 
     _save_mlpackage_atomic(_PPOCRMultifunctionSaver(), output_path)
     return str(output_path)
@@ -3155,6 +3951,8 @@ def _export_coreml_impl(
     output_path: str,
     precision: str,
     compute_units: str,
+    requested_compute_units: str,
+    has_candidate_execution_profile: bool,
     nms: bool,
     iou: float,
     conf: float,
@@ -3209,6 +4007,7 @@ def _export_coreml_impl(
         raise ValueError(
             f"Invalid Core ML precision {precision!r}; expected 'fp32' or 'fp16'."
         )
+    _validate_coreml_precision_profile(family, task, precision)
     if str(compute_units).lower() not in {
         "all",
         "cpu_and_gpu",
@@ -3219,6 +4018,8 @@ def _export_coreml_impl(
             f"Invalid compute_units {compute_units!r}. Must be one of: "
             "['all', 'cpu_and_gpu', 'cpu_and_ne', 'cpu_only']"
         )
+    compute_units = str(compute_units).lower()
+    _validate_coreml_compute_unit_profile(family, task, compute_units)
     _validate_export_profile(family, task, size)
     if family == "birefnet":
         from .coreml_birefnet import validate_birefnet_coreml_profile
@@ -3256,15 +4057,6 @@ def _export_coreml_impl(
         from .coreml_owlv2 import validate_owlv2_coreml_profile
 
         validate_owlv2_coreml_profile(
-            size=size,
-            canvas_hw=(int(dummy.shape[-2]), int(dummy.shape[-1])),
-        )
-    if family == "grounding_dino":
-        from .coreml_grounding_dino import (
-            validate_grounding_dino_coreml_profile,
-        )
-
-        validate_grounding_dino_coreml_profile(
             size=size,
             canvas_hw=(int(dummy.shape[-2]), int(dummy.shape[-1])),
         )
@@ -3357,16 +4149,6 @@ def _export_coreml_impl(
             size=str(size),
             names=metadata["names"],
         )
-    if family == "grounding_dino":
-        from .coreml_grounding_dino import (
-            validate_grounding_dino_coreml_metadata,
-        )
-
-        validate_grounding_dino_coreml_metadata(
-            metadata,
-            size=str(size),
-            names=metadata["names"],
-        )
     if family == "omdet_turbo":
         from .coreml_omdet_turbo import (
             validate_omdet_turbo_coreml_metadata,
@@ -3437,6 +4219,29 @@ def _export_coreml_impl(
                 }
             )
     metadata["precision"] = precision
+    if (family, task) == ("rfdetr", "pose"):
+        metadata.update(
+            {
+                "coreml_required_compute_units": (
+                    _RFDETR_POSE_COREML_COMPUTE_UNITS
+                ),
+                "coreml_conversion_pass_profile": (
+                    _RFDETR_POSE_COREML_PASS_PROFILE
+                ),
+                "coreml_disabled_passes": list(
+                    _RFDETR_POSE_COREML_DISABLED_PASSES
+                ),
+            }
+        )
+    elif (family, task) == ("nafnet", "restore"):
+        metadata.update(
+            {
+                "coreml_conversion_pass_profile": _NAFNET_COREML_PASS_PROFILE,
+                "coreml_disabled_passes": list(
+                    _NAFNET_COREML_DISABLED_PASSES
+                ),
+            }
+        )
 
     import coremltools as ct
 
@@ -3458,13 +4263,29 @@ def _export_coreml_impl(
         .to(device=dummy.device)
         .eval()
     )
+    from .coreml_identity import (
+        COREML_PROFILE_SOURCE_KIND_KEY,
+        COREML_PROFILE_SOURCE_SHA256_KEY,
+        bind_coreml_deployment_abi,
+        pytorch_traced_source_identity,
+        validate_coreml_deployment_abi,
+    )
+    from .coreml_profiles import (
+        finalize_coreml_execution_profile_metadata,
+        resolve_coreml_export_compute_units,
+        validate_coreml_execution_profile_metadata,
+    )
 
     # Core AI's preparation transaction contains only PyTorch graph surgery;
     # it has no Core AI package/runtime dependency and is shared here so the
     # two Apple exporters cannot diverge on anchor/state restoration.
     from .coreai import _prepare_coreai_graph
 
-    with _prepare_coreai_graph(wrapped, canonical_dummy, family):
+    execution_profile = None
+    with (
+        _prepare_coreai_graph(wrapped, canonical_dummy, family),
+        _prepare_coreml_deformable_attention(wrapped, family, task),
+    ):
         with torch.no_grad():
             sample_outputs = _flatten_tensor_outputs(wrapped(canonical_dummy))
         _validate_output_semantics(
@@ -3479,13 +4300,67 @@ def _export_coreml_impl(
             metadata=metadata,
         )
         output_contract = _enrich_output_contract(declared_outputs, sample_outputs)
-        traced = torch.jit.trace(
-            wrapped,
-            canonical_dummy,
-            check_trace=True,
-            check_inputs=[(check_probe,)],
-        )
+        # Trace inference under the same autograd state used by JIT's sanity
+        # rerun. PyTorch's MultiheadAttention selects a different fast path
+        # when gradients are enabled; tracing with grads and checking without
+        # them makes otherwise identical EC pose graphs fail structurally.
+        with torch.no_grad(), _disable_torch_mha_fastpath():
+            traced = torch.jit.trace(
+                wrapped,
+                canonical_dummy,
+                check_trace=True,
+                check_inputs=[(check_probe,)],
+            )
+        source_identity = pytorch_traced_source_identity(wrapped, traced)
+        metadata.update(source_identity)
+        if has_candidate_execution_profile:
+            resolved_compute_units, execution_profile = (
+                resolve_coreml_export_compute_units(
+                    requested_compute_units,
+                    family=family,
+                    task=task,
+                    size=size,
+                    canvas=(
+                        int(dummy.shape[-2]),
+                        int(dummy.shape[-1]),
+                    ),
+                    precision=precision,
+                    nms=nms,
+                    class_count=metadata.get("nc"),
+                    graph_class_width=metadata.get("graph_class_width"),
+                    num_keypoints=metadata.get("num_keypoints"),
+                    keypoint_dim=metadata.get("keypoint_dim"),
+                    num_keypoints_per_class=metadata.get(
+                        "num_keypoints_per_class"
+                    ),
+                    classification_activation=metadata.get(
+                        "classification_activation"
+                    ),
+                    checkpoint_variant=metadata.get("checkpoint_variant"),
+                    architecture_signature=metadata.get(
+                        "architecture_signature"
+                    ),
+                    restore_scale=metadata.get("restore_scale"),
+                    embedding_dim=metadata.get("facerec_embedding_dim"),
+                    source_kind=source_identity[
+                        COREML_PROFILE_SOURCE_KIND_KEY
+                    ],
+                    source_sha256=source_identity[
+                        COREML_PROFILE_SOURCE_SHA256_KEY
+                    ],
+                )
+            )
+            if resolved_compute_units != compute_units:
+                raise RuntimeError(
+                    "Core ML two-phase profile resolution changed the "
+                    "conversion planner after exact graph tracing."
+                )
 
+    execution_profile = _coreml_profile_for_toolchain(
+        execution_profile,
+        requested_compute_units=requested_compute_units,
+        coremltools=ct,
+    )
     input_contract = _input_contract(family, task, size)
     if input_contract["kind"] == "image":
         coreml_input = ct.ImageType(
@@ -3511,6 +4386,9 @@ def _export_coreml_impl(
         "minimum_deployment_target": ct.target.iOS15,
         "compute_units": compute_unit,
     }
+    pass_pipeline = _coreml_pass_pipeline(ct, family, task)
+    if pass_pipeline is not None:
+        convert_kwargs["pass_pipeline"] = pass_pipeline
     mlmodel = ct.convert(traced, **convert_kwargs)
 
     expected_names = [item["name"] for item in output_contract]
@@ -3546,8 +4424,63 @@ def _export_coreml_impl(
             "dynamic": False,
         }
     )
-    mlmodel.user_defined_metadata.update(_stringify_metadata(metadata))
-    _save_mlpackage_atomic(mlmodel, output_path)
+    final_spec = mlmodel.get_spec()
+    _validate_coreml_deployment_spec(
+        final_spec,
+        input_contract=input_contract,
+        output_contract=output_contract,
+        input_shape=tuple(int(value) for value in canonical_dummy.shape),
+        nms=nms,
+    )
+    metadata = bind_coreml_deployment_abi(
+        metadata,
+        final_spec,
+    )
+    metadata, execution_profile = (
+        finalize_coreml_execution_profile_metadata(
+            metadata,
+            execution_profile,
+            requested_compute_units=requested_compute_units,
+            conversion_compute_units=compute_units,
+            deployment_abi_sha256=metadata["coreml_profile_abi_sha256"],
+        )
+    )
+    serialized_metadata = _stringify_metadata(metadata)
+    _replace_user_defined_metadata(mlmodel, serialized_metadata)
+
+    def validate_candidate(candidate: Path) -> None:
+        staged_spec = ct.utils.load_spec(str(candidate))
+        staged_description = getattr(staged_spec, "description", None)
+        staged_metadata_container = getattr(
+            staged_description,
+            "metadata",
+            None,
+        )
+        staged_metadata = dict(
+            getattr(staged_metadata_container, "userDefined", None) or {}
+        )
+        if staged_metadata != serialized_metadata:
+            raise RuntimeError(
+                "Staged Core ML package metadata differs from the metadata "
+                "validated before save."
+            )
+        validate_coreml_deployment_abi(staged_spec, staged_metadata)
+        validate_coreml_execution_profile_metadata(staged_metadata)
+        _validate_coreml_deployment_spec(
+            staged_spec,
+            input_contract=input_contract,
+            output_contract=output_contract,
+            input_shape=tuple(
+                int(value) for value in canonical_dummy.shape
+            ),
+            nms=nms,
+        )
+
+    _save_mlpackage_atomic(
+        mlmodel,
+        output_path,
+        validate_candidate=validate_candidate,
+    )
     return str(output_path)
 
 
@@ -3557,7 +4490,7 @@ def export_coreml(
     *,
     output_path: str,
     precision: str = "fp32",
-    compute_units: str = "all",
+    compute_units: str = "cpu_only",
     nms: bool = False,
     iou: float = 0.45,
     conf: float = 0.25,
@@ -3569,6 +4502,7 @@ def export_coreml(
     rec_batch_max: int = 6,
     rec_max_width: int | None = None,
     prompt_max_points: int = 16,
+    _requested_compute_units: str | None = None,
 ) -> str:
     """Export a strict Core ML ML Program.
 
@@ -3581,7 +4515,10 @@ def export_coreml(
         dummy: Reference input tensor — only its (B, C, H, W) shape is used.
         output_path: Destination .mlpackage path (a directory bundle).
         precision: 'fp32' or 'fp16'.
-        compute_units: 'all' | 'cpu_and_gpu' | 'cpu_and_ne' | 'cpu_only'.
+        compute_units: 'validated' | 'all' | 'cpu_and_gpu' | 'cpu_and_ne' |
+            'cpu_only'. The default ``cpu_only`` path works for broadly
+            compatible exports. ``validated`` opts into exact M4 profile
+            matching and fails closed when no exact profile exists.
         nms: If True, embed Apple's NonMaximumSuppression as a CoreML pipeline.
             Not supported for DETR-style families (RT-DETR, RF-DETR, D-FINE,
             DEIM, EC).
@@ -3598,13 +4535,93 @@ def export_coreml(
     family = str(
         model_family or (metadata or {}).get("model_family") or ""
     ).lower()
+    task = str(
+        model_task or (metadata or {}).get("task") or "detect"
+    ).lower()
+    size_value = (
+        model_size
+        or (metadata or {}).get("size")
+        or (metadata or {}).get("model_size")
+    )
+    size = str(size_value).lower() if size_value not in (None, "") else None
+    _validate_export_profile(family, task, size)
+    execution_profile = None
+    if (
+        torch.is_tensor(dummy)
+        and dummy.ndim == 4
+        and int(dummy.shape[0]) == 1
+        and int(dummy.shape[1]) == 3
+        and not dynamic
+    ):
+        from .coreml_profiles import (
+            normalize_coreml_compute_units,
+            resolve_coreml_export_compute_units,
+        )
+        requested_compute_units = normalize_coreml_compute_units(
+            _requested_compute_units
+            if _requested_compute_units is not None
+            else compute_units
+        )
+        compute_units, execution_profile = resolve_coreml_export_compute_units(
+            requested_compute_units,
+            family=family,
+            task=task,
+            size=size,
+            canvas=(int(dummy.shape[-2]), int(dummy.shape[-1])),
+            precision=precision,
+            nms=nms,
+            prompt_max_points=(
+                prompt_max_points
+                if family
+                in {"edgetam", "mobilesam", "sam", "sam2", "sam3"}
+                else None
+            ),
+            class_count=(
+                (metadata or {}).get(
+                    "nc",
+                    (metadata or {}).get("nb_classes"),
+                )
+            ),
+            graph_class_width=(metadata or {}).get("graph_class_width"),
+            num_keypoints=(metadata or {}).get("num_keypoints"),
+            keypoint_dim=(metadata or {}).get("keypoint_dim"),
+            num_keypoints_per_class=(metadata or {}).get(
+                "num_keypoints_per_class"
+            ),
+            classification_activation=(metadata or {}).get(
+                "classification_activation"
+            ),
+            checkpoint_variant=(metadata or {}).get("checkpoint_variant"),
+            architecture_signature=(metadata or {}).get(
+                "architecture_signature"
+            ),
+            restore_scale=(metadata or {}).get("restore_scale"),
+            embedding_dim=(metadata or {}).get("facerec_embedding_dim"),
+            defer_source_validation=True,
+        )
+    else:
+        from .coreml_profiles import normalize_coreml_compute_units
+
+        requested_compute_units = normalize_coreml_compute_units(
+            _requested_compute_units
+            if _requested_compute_units is not None
+            else compute_units
+        )
     if family in {"edgetam", "mobilesam", "sam", "sam2", "sam3"}:
+        if dynamic:
+            raise NotImplementedError(
+                "LibreSAM Core ML uses a fixed encoder and exact fixed-P "
+                "runtime functions. Configure the finite prompt bound with "
+                "prompt_max_points=... instead of dynamic=True."
+            )
         return _export_sam_coreml_impl(
             nn_model,
             dummy,
             output_path=output_path,
             precision=precision,
             compute_units=compute_units,
+            requested_compute_units=requested_compute_units,
+            has_candidate_execution_profile=execution_profile is not None,
             nms=nms,
             metadata=metadata,
             model_family=model_family,
@@ -3619,6 +4636,8 @@ def export_coreml(
             output_path=output_path,
             precision=precision,
             compute_units=compute_units,
+            requested_compute_units=requested_compute_units,
+            has_candidate_execution_profile=execution_profile is not None,
             nms=nms,
             metadata=metadata,
             model_task=model_task,
@@ -3632,6 +4651,8 @@ def export_coreml(
         output_path=output_path,
         precision=precision,
         compute_units=compute_units,
+        requested_compute_units=requested_compute_units,
+        has_candidate_execution_profile=execution_profile is not None,
         nms=nms,
         iou=iou,
         conf=conf,

@@ -146,43 +146,105 @@ model.export(
 )
 ```
 
-The output is one native multifunction ML Program with seven named functions:
+The output is one native multifunction ML Program. Its source graph boundary
+still has seven components:
 
 - `encode_image`
 - `decode_points_single` and `decode_points_multimask`
 - `decode_boxes_single` and `decode_boxes_multimask`
 - `decode_points_boxes_single` and `decode_points_boxes_multimask`
 
-The package has fixed batch and query dimensions (`N=1`, `Q=1`). Point count
-`P` is genuinely dynamic from 1 through the finite `prompt_max_points` bound;
-the host loops over multiple prompt queries without padding or splitting one
-query. Inputs, embeddings, masks, and IoU scores are FP32, while point labels
-are INT32. Lossy precision, embedded NMS, and mask-prompt export are rejected.
+LibreYOLO directly captures and converts one exact fixed-shape graph for every
+admitted point count. Runtime names append the count, for example
+`decode_points_single_p1` and `decode_points_boxes_multimask_p16`. Encoder and
+box-only names remain unchanged. The resulting table has `3 + 4 *
+prompt_max_points` functions: 67 at the default bound of 16, or 19 in the
+four-point hardware profile.
+
+Direct fixed capture is required for runtime correctness. On the validation
+M4/Core ML Tools 9 toolchain, a real MobileSAM dynamic point decoder executes
+as a standalone ML Program but is rejected by the macOS runtime after it is
+wrapped as a named multifunction. Core ML Tools' dynamic-shape materialization
+utility produces loadable functions, but their MobileSAM masks differ from
+PyTorch by 1.1-3.2%, so that path is rejected rather than mislabeled as parity.
+Padding shorter prompts to one maximum shape is forbidden because even the
+model's `-1` sentinel changes MobileSAM mask and IoU outputs materially.
+
+The same M4 graph/runtime/public gate covers all three official SAM-1 image
+sizes: ViT-B/base, ViT-L/large, and ViT-H/huge. Each checkpoint converts and
+reloads the fixed 1024 encoder plus every point, box, and points+box
+single/multimask function for `P=1..4`; compares every named output against a
+pristine PyTorch oracle on two deterministic probes under the unchanged
+`3e-4` relative gate; rejects insensitive outputs; and exercises the public
+cached-prompt path.
+
+The same M4 gate covers all four official SAM2.1 image sizes: tiny, small,
+base-plus, and large. For each checkpoint it converts and reloads the fixed
+1024 encoder plus every point, box, and points+box single/multimask function
+for `P=1..4`; compares every named output against a pristine PyTorch oracle on
+two deterministic probes under a `3e-4` relative gate; rejects insensitive
+outputs; and exercises the public cached-prompt path. Core ML Tools 9 does not
+lower SAM2's captured `aten.where.ScalarOther`, so LibreYOLO selects exactly
+PyTorch's public default decomposition for that overload. Capture proves a
+second PyTorch probe bit-exact after the decomposition. No broader default
+decomposition set is admitted. The strict manifest records
+`sam2_where_scalarother_v1` and the exact overload list.
+
+The package therefore declares fixed runtime shapes (`dynamic=false`) with
+fixed batch and query dimensions (`N=1`, `Q=1`). The host selects the exact
+function for the query's real point count and rejects counts above
+`prompt_max_points`; it never pads or splits one query. Inputs, embeddings,
+masks, and IoU scores are FP32, while point labels are INT32. Lossy precision,
+embedded NMS, and mask-prompt export are rejected.
 
 The host owns raw-image preprocessing, prompt-coordinate transforms, decoder
 selection, the query loop, family-specific mask resize/crop/threshold behavior,
 automatic-mask grid orchestration, and `Results` assembly. This preserves the
 interactive lifecycle: `set_image()` runs `encode_image` once, subsequent
 prompts reuse its cached named embeddings, and `reset_image()` invalidates the
-cache. Function outputs are consumed by declared names, not mapping order.
+cache. The backend validates the complete function manifest at load time, then
+loads functions lazily while keeping exactly one native `MLModel` proxy
+resident. Core ML Tools 9 on the validation M4 aborts when a second function
+from this package is loaded while the first proxy remains alive. Embedding
+tensors remain cached independently, so switching decoder functions does not
+re-run the encoder, but it does pay a function-load cost. The M4 churn gate
+covered P1/P2/P4/P3/P1, box-only, mixed P4, and a new-image encoder reload;
+resident RSS stayed within 664-733 MB and each function switch took about
+0.81-0.84 seconds.
+Function outputs are consumed by declared names, not mapping order.
 
 Native multifunction ML Programs require an iOS 18 / macOS 15 deployment
 target. Conversion and structural validation can run on other hosts, but
 artifact execution and PyTorch parity require a supported macOS Core ML
 runtime. SAM 3 export is visual-prompt-only, excludes PCS text prompting, and
 is local-user-only because its gated custom-license weights are not
-redistributable under LibreYOLO's MIT license. MobileSAM retains an explicit
-release provenance gap documented in its NOTICE and
-`weights/LICENSE_NOTICE.txt`; creating a local artifact does not close that
-gap.
+redistributable under LibreYOLO's MIT license. MobileSAM's Apache-2.0 source,
+source checkpoint, LibreYOLO mirror, and exact tensor-value chain are pinned
+and checked before a converted artifact receives that reviewed redistribution
+claim. A structurally compatible MobileSAM model with any other tensor state is
+still exportable for local use, but its manifest records `unknown_local`,
+`weights_license=unknown-local`, no checkpoint provenance, and
+`artifact_redistributable=false`. It never inherits the pinned checkpoint's
+Apache-2.0 redistribution claim.
 
 ## Licensing
 
 SAM-1 and SAM-2 code and weights are Apache-2.0. SAM-1 loads from the upstream
 Hugging Face repositories; SAM-2 loads from LibreYOLO Hugging Face mirrors of
 the upstream Transformers-compatible snapshots. MobileSAM code and weights are
-Apache-2.0; LibreYOLO carries a native port plus a NOTICE, and the converted
-checkpoint is hosted separately as `LibreMobileSAM.pt`.
+Apache-2.0. The native port is checked against MobileSAM revision
+`f706ad9c4eb7f219c00d9050e46328518ffb65d2`; the 40,728,226-byte upstream
+checkpoint has SHA-256
+`6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f`.
+The separately packaged `LibreMobileSAM.pt` at mirror revision
+`c80f272421d38fc26ef4bd0c02111b6c1f1c8cb9` has SHA-256
+`79f09a3671f38696d45da0aed49ef382fde2efd1bc966d172ac9822b952e35fe`
+and unwraps to the same 439 named tensors and 10,140,231 parameter values.
+The reviewed claim is attached only when the implementation type and canonical
+state hash both match this chain. Fine-tuned, user-trained, or otherwise
+modified MobileSAM states receive an actual state fingerprint but remain
+explicitly local-only until a future export API accepts and validates their own
+provenance declaration.
 
 EdgeTAM code and checkpoints are Apache-2.0. LibreYOLO does not vendor its model
 architecture; image inference uses the Apache-2.0 Transformers adapter and

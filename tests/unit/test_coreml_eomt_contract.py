@@ -134,17 +134,16 @@ def _contract_io(task: str, *, thing_ids=(0,)):
 def test_eomt_contract_is_routed_for_every_task(task):
     assert ("eomt", task) in supported_coreml_exports()
     assert _input_contract("eomt", task, "s") == eomt_coreml_input_contract(task)
-    assert _output_contract("eomt", task, nms=False) == (
-        eomt_coreml_output_contract()
+    assert _output_contract("eomt", task, nms=False) == (eomt_coreml_output_contract())
+    assert _validation_contract("eomt", task) == (eomt_coreml_validation_contract(task))
+    assert (
+        eomt_coreml_metadata(
+            task=task,
+            num_queries=4,
+            image_size=32,
+        )["eomt_contract"]
+        == EOMT_COREML_CONTRACT
     )
-    assert _validation_contract("eomt", task) == (
-        eomt_coreml_validation_contract(task)
-    )
-    assert eomt_coreml_metadata(
-        task=task,
-        num_queries=4,
-        image_size=32,
-    )["eomt_contract"] == EOMT_COREML_CONTRACT
 
 
 def test_functional_adapter_and_host_reconstruction_are_native_exact(tiny_eomt):
@@ -154,12 +153,8 @@ def test_functional_adapter_and_host_reconstruction_are_native_exact(tiny_eomt):
     second = 1.0 - first
 
     with torch.no_grad():
-        normalized_first = (
-            first - tiny_eomt.pixel_mean
-        ) / tiny_eomt.pixel_std
-        normalized_second = (
-            second - tiny_eomt.pixel_mean
-        ) / tiny_eomt.pixel_std
+        normalized_first = (first - tiny_eomt.pixel_mean) / tiny_eomt.pixel_std
+        normalized_second = (second - tiny_eomt.pixel_mean) / tiny_eomt.pixel_std
         raw_first = tiny_eomt.eomt(pixel_values=normalized_first)
         raw_second = tiny_eomt.eomt(pixel_values=normalized_second)
         expected_first = adapter(first)
@@ -261,13 +256,49 @@ def test_profile_rejects_random_attention_mask_configuration(tiny_eomt):
     original = tiny_eomt.eomt.attn_mask_probs.detach().clone()
     try:
         tiny_eomt.eomt.attn_mask_probs[0] = 0.5
-        with pytest.raises(RuntimeError, match="every attn_mask_probs"):
+        with pytest.raises(RuntimeError, match="exactly 0 or 1"):
             validate_eomt_coreml_profile(
                 tiny_eomt,
                 task="semantic",
                 size="s",
                 canvas_hw=(32, 32),
             )
+    finally:
+        tiny_eomt.eomt.attn_mask_probs.copy_(original)
+
+
+@pytest.mark.parametrize("schedule", [(0.0, 0.0, 0.0), (1.0, 0.0, 1.0)])
+def test_adapter_preserves_deterministic_binary_attention_schedule(
+    tiny_eomt,
+    schedule,
+):
+    original = tiny_eomt.eomt.attn_mask_probs.detach().clone()
+    image = torch.linspace(0.0, 1.0, 3 * 32 * 32).reshape(1, 3, 32, 32)
+    try:
+        tiny_eomt.eomt.attn_mask_probs.copy_(torch.tensor(schedule))
+        validate_eomt_coreml_profile(
+            tiny_eomt,
+            task="semantic",
+            size="s",
+            canvas_hw=(32, 32),
+        )
+        adapter = EoMTCoreMLAdapter(tiny_eomt).eval()
+        normalized = (image - tiny_eomt.pixel_mean) / tiny_eomt.pixel_std
+        with torch.no_grad():
+            native = tiny_eomt.eomt(pixel_values=normalized)
+            actual = adapter(image)
+        torch.testing.assert_close(
+            actual[0],
+            native.class_queries_logits,
+            rtol=0.0,
+            atol=0.0,
+        )
+        torch.testing.assert_close(
+            actual[1],
+            native.masks_queries_logits,
+            rtol=0.0,
+            atol=0.0,
+        )
     finally:
         tiny_eomt.eomt.attn_mask_probs.copy_(original)
 
@@ -459,7 +490,12 @@ def test_output_semantics_pins_compact_query_shapes():
 
 
 @pytest.mark.parametrize("task", ["semantic", "segment", "panoptic"])
-def test_model_exposes_coreml_export_route_for_all_tasks(monkeypatch, task):
+@pytest.mark.parametrize("format_name", ["coreml", "mlpackage", " CoreML "])
+def test_model_exposes_coreml_export_route_for_all_tasks(
+    monkeypatch,
+    task,
+    format_name,
+):
     from libreyolo.models.base.model import BaseModel
 
     calls = []
@@ -471,10 +507,8 @@ def test_model_exposes_coreml_export_route_for_all_tasks(monkeypatch, task):
     monkeypatch.setattr(BaseModel, "export", fake_export)
     model = object.__new__(LibreEoMT)
     model.task = task
-    assert model.export(format="coreml", dynamic=False) == "eomt.mlpackage"
-    assert calls == [
-        (model, "coreml", {"opset": 17, "dynamic": False})
-    ]
+    assert model.export(format=format_name, dynamic=False) == "eomt.mlpackage"
+    assert calls == [(model, "coreml", {"opset": 17, "dynamic": False})]
 
 
 def test_query_tasks_keep_non_coreml_formats_blocked():

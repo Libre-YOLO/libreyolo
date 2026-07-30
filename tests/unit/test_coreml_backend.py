@@ -207,6 +207,18 @@ def _metadata(
                 ),
             }
         )
+        if family == "rfdetr":
+            metadata.update(
+                {
+                    "coreml_required_compute_units": "cpu_only",
+                    "coreml_conversion_pass_profile": (
+                        "rfdetr_pose_preserve_division_v1"
+                    ),
+                    "coreml_disabled_passes": json.dumps(
+                        ["common::divide_to_multiply"]
+                    ),
+                }
+            )
     return metadata
 
 
@@ -390,95 +402,6 @@ def _v2_owlv2_artifact():
                     "image",
                     kind="multiArrayType",
                     shape=(1, 3, 960, 960),
-                )
-            ],
-            output=[
-                _v2_feature(
-                    output["name"],
-                    kind="multiArrayType",
-                    shape=shapes[output["name"]],
-                )
-                for output in io["outputs"]
-            ],
-        )
-    )
-    return metadata, spec
-
-
-def _v2_grounding_dino_artifact():
-    from libreyolo.export.coreml_grounding_dino import (
-        GroundingDinoFrozenText,
-        expected_grounding_dino_coreml_shapes,
-        grounding_dino_coreml_metadata,
-    )
-
-    names = {0: "red fox", 1: "dog"}
-    input_ids = torch.tensor(
-        [[101, 1037, 2417, 4419, 1012, 1037, 3899, 1012, 102]],
-        dtype=torch.long,
-    )
-    sequence_length = int(input_ids.shape[1])
-    frozen = GroundingDinoFrozenText(
-        labels=tuple(names.values()),
-        prompt="a red fox. a dog.",
-        input_ids=input_ids,
-        token_type_ids=torch.zeros_like(input_ids),
-        attention_mask=torch.ones_like(input_ids),
-        text_self_attention_masks=torch.ones(
-            (1, sequence_length, sequence_length),
-            dtype=torch.bool,
-        ),
-        position_ids=torch.arange(sequence_length).view(1, -1),
-        text_features=torch.zeros((1, sequence_length, 256)),
-        token_pieces=(
-            "[CLS]",
-            "a",
-            "red",
-            "fox",
-            ".",
-            "a",
-            "dog",
-            ".",
-            "[SEP]",
-        ),
-    )
-    shapes = expected_grounding_dino_coreml_shapes(
-        size="t",
-        sequence_length=sequence_length,
-    )
-    io = _profile_io("grounding_dino", "detect", "t")
-    for output in io["outputs"]:
-        output["shape"] = list(shapes[output["name"]])
-    metadata = _metadata(
-        family="grounding_dino",
-        task="detect",
-        size="t",
-        names=names,
-        imgsz=800,
-        io=io,
-    )
-    metadata["coreml_io_schema_version"] = "2"
-    metadata["coreml_output_names"] = json.dumps(
-        [output["name"] for output in io["outputs"]]
-    )
-    metadata.update(
-        {
-            key: str(value)
-            for key, value in grounding_dino_coreml_metadata(
-                size="t",
-                names=names,
-                frozen=frozen,
-            ).items()
-        }
-    )
-    spec = SimpleNamespace(
-        description=SimpleNamespace(
-            input=[
-                _v2_feature(
-                    "image",
-                    kind="imageType",
-                    height=800,
-                    width=800,
                 )
             ],
             output=[
@@ -732,11 +655,17 @@ def _load_backend(
     metadata=None,
     spec=None,
     predict_fn=None,
+    runtime_metadata=None,
     backend_kwargs=None,
 ):
+    resolved_metadata = metadata or _metadata()
+    resolved_spec = spec or _spec()
+    resolved_spec.description.metadata = SimpleNamespace(
+        userDefined=resolved_metadata
+    )
     mlmodel = _FakeMLModel(
-        metadata or _metadata(),
-        spec or _spec(),
+        resolved_metadata if runtime_metadata is None else runtime_metadata,
+        resolved_spec,
         predict_fn=predict_fn,
     )
     fake_ct = SimpleNamespace(
@@ -747,6 +676,7 @@ def _load_backend(
             CPU_ONLY="CPU_ONLY",
         ),
         models=SimpleNamespace(MLModel=lambda *_args, **_kwargs: mlmodel),
+        utils=SimpleNamespace(load_spec=lambda *_args, **_kwargs: resolved_spec),
     )
     monkeypatch.setitem(sys.modules, "coremltools", fake_ct)
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -755,7 +685,11 @@ def _load_backend(
 
     from libreyolo.backends.coreml import CoreMLBackend
 
-    backend = CoreMLBackend(str(package), **(backend_kwargs or {}))
+    resolved_backend_kwargs = {
+        "compute_units": "cpu_only",
+        **(backend_kwargs or {}),
+    }
+    backend = CoreMLBackend(str(package), **resolved_backend_kwargs)
     return backend, mlmodel
 
 
@@ -885,178 +819,6 @@ def test_owlv2_artifact_rejects_forged_output_shape(monkeypatch, tmp_path):
     spec.description.output[0].type.multiArrayType.shape = [1, 3599, 2]
 
     with pytest.raises(ValueError, match="OWLv2 CoreML output shapes"):
-        _load_backend(
-            monkeypatch,
-            tmp_path,
-            metadata=metadata,
-            spec=spec,
-        )
-
-
-def test_grounding_dino_artifact_runs_exact_host_preprocess_and_frozen_decode(
-    monkeypatch,
-    tmp_path,
-):
-    from libreyolo.export.coreml_grounding_dino import (
-        preprocess_grounding_dino_coreml_image,
-    )
-
-    metadata, spec = _v2_grounding_dino_artifact()
-    logits = np.full((1, 900, 9), -20.0, dtype=np.float32)
-    boxes = np.zeros((1, 900, 4), dtype=np.float32)
-    # "red fox." is selected at the default text threshold. The period
-    # supplies the detection score while both label pieces remain borderline,
-    # making the per-call text_threshold override observable.
-    logits[0, 0, 2:4] = 0.0
-    logits[0, 0, 4] = 4.0
-    boxes[0, 0] = (0.5, 0.5, 0.5, 0.5)
-
-    backend, mlmodel = _load_backend(
-        monkeypatch,
-        tmp_path,
-        metadata=metadata,
-        spec=spec,
-        # Deliberately reverse mapping insertion order.
-        predict_fn=lambda _inputs: {
-            "pred_boxes": boxes,
-            "token_logits": logits,
-        },
-    )
-    source = Image.fromarray(
-        np.arange(40 * 80 * 3, dtype=np.uint16)
-        .reshape(40, 80, 3)
-        .astype(np.uint8),
-        mode="RGB",
-    )
-    result = backend.predict(source)
-
-    runtime_input = mlmodel.predict_calls[0]["image"]
-    assert isinstance(runtime_input, Image.Image)
-    expected = (
-        preprocess_grounding_dino_coreml_image(source)
-        .mul(255.0)
-        .round()
-        .to(torch.uint8)[0]
-        .permute(1, 2, 0)
-        .numpy()
-    )
-    np.testing.assert_array_equal(np.asarray(runtime_input), expected)
-    assert result.names == {0: "red fox", 1: "dog"}
-    assert result.boxes.cls.tolist() == [0.0]
-    torch.testing.assert_close(
-        result.boxes.xyxy,
-        torch.tensor([[20.0, 10.0, 60.0, 30.0]]),
-    )
-
-    strict = backend.predict(source, text_threshold=0.9)
-    assert len(strict.boxes) == 0
-    assert backend._grounding_dino_text_threshold == 0.25
-
-
-def test_grounding_dino_stream_threshold_is_request_local(
-    monkeypatch,
-    tmp_path,
-):
-    metadata, spec = _v2_grounding_dino_artifact()
-    backend, _ = _load_backend(
-        monkeypatch,
-        tmp_path,
-        metadata=metadata,
-        spec=spec,
-    )
-    observed = []
-
-    def fake_predict_video(_source, **_kwargs):
-        def frames():
-            observed.append(
-                backend._current_grounding_dino_text_threshold()
-            )
-            yield "frame"
-
-        return frames()
-
-    monkeypatch.setattr(
-        "libreyolo.backends.base.is_video_file",
-        lambda _source: True,
-    )
-    monkeypatch.setattr(backend, "_predict_video", fake_predict_video)
-
-    first = backend.predict(
-        "first.mp4",
-        stream=True,
-        text_threshold=0.8,
-    )
-    second = backend.predict(
-        "second.mp4",
-        stream=True,
-        text_threshold=0.6,
-    )
-    # Merely creating or discarding a stream must not leak its override.
-    assert backend._current_grounding_dino_text_threshold() == 0.25
-    assert next(second) == "frame"
-    assert observed == [0.6]
-    assert backend._current_grounding_dino_text_threshold() == 0.25
-    assert next(first) == "frame"
-    assert observed == [0.6, 0.8]
-    assert backend._current_grounding_dino_text_threshold() == 0.25
-    first.close()
-    second.close()
-
-
-def test_grounding_dino_filters_classes_before_max_det(
-    monkeypatch,
-    tmp_path,
-):
-    metadata, spec = _v2_grounding_dino_artifact()
-    logits = np.full((1, 900, 9), -20.0, dtype=np.float32)
-    boxes = np.zeros((1, 900, 4), dtype=np.float32)
-    # The globally highest query is class 0 ("red fox"), while the requested
-    # class 1 ("dog") ranks second. Filtering after max_det=1 would lose it.
-    logits[0, 0, 2:5] = (4.0, 4.0, 6.0)
-    logits[0, 1, 6:8] = (3.0, 4.0)
-    boxes[0, 0] = (0.25, 0.5, 0.2, 0.2)
-    boxes[0, 1] = (0.75, 0.5, 0.2, 0.2)
-    backend, _ = _load_backend(
-        monkeypatch,
-        tmp_path,
-        metadata=metadata,
-        spec=spec,
-        predict_fn=lambda _inputs: {
-            "pred_boxes": boxes,
-            "token_logits": logits,
-        },
-    )
-
-    result = backend.predict(
-        Image.new("RGB", (100, 50), color="white"),
-        classes=[1],
-        max_det=1,
-    )
-
-    assert result.boxes.cls.tolist() == [1.0]
-    torch.testing.assert_close(
-        result.boxes.xyxy,
-        torch.tensor([[65.0, 20.0, 85.0, 30.0]]),
-    )
-
-
-@pytest.mark.parametrize(
-    ("key", "value"),
-    [
-        ("frozen_classes", "false"),
-        ("grounding_dino_text_abi_sha256", "0" * 64),
-        ("grounding_dino_sequence_length", "8"),
-    ],
-)
-def test_grounding_dino_artifact_rejects_forged_frozen_metadata(
-    monkeypatch,
-    tmp_path,
-    key,
-    value,
-):
-    metadata, spec = _v2_grounding_dino_artifact()
-    metadata[key] = value
-    with pytest.raises(ValueError, match="Grounding DINO"):
         _load_backend(
             monkeypatch,
             tmp_path,
@@ -1825,10 +1587,10 @@ def test_strict_classifier_rejects_preprocess_alias_drift(
 
 
 def test_strict_profile_rejects_reordered_semantic_outputs(monkeypatch, tmp_path):
-    io = _profile_io("rfdetr", "segment", "n")
+    io = _profile_io("dfine", "segment", "n")
     io["outputs"][0], io["outputs"][1] = io["outputs"][1], io["outputs"][0]
     metadata = _metadata(
-        family="rfdetr",
+        family="dfine",
         task="segment",
         size="n",
         io=io,
@@ -1839,7 +1601,7 @@ def test_strict_profile_rejects_reordered_semantic_outputs(monkeypatch, tmp_path
             monkeypatch,
             tmp_path,
             metadata=metadata,
-            spec=_spec(outputs=("pred_boxes", "pred_logits", "pred_masks")),
+            spec=_spec(outputs=("pred_logits", "pred_boxes", "pred_masks")),
         )
 
 
@@ -1874,6 +1636,36 @@ def test_strict_deimv2_loader_enforces_license_size_gate(monkeypatch, tmp_path):
     metadata = _metadata(family="deimv2", size="s")
 
     with pytest.raises(NotImplementedError, match="DINOv3 licensing boundary"):
+        _load_backend(monkeypatch, tmp_path, metadata=metadata)
+
+
+def test_grounding_dino_artifact_fails_closed(monkeypatch, tmp_path):
+    metadata = _metadata()
+    metadata["model_family"] = "grounding_dino"
+
+    with pytest.raises(
+        NotImplementedError,
+        match="failed Apple-silicon runtime validation",
+    ):
+        _load_backend(monkeypatch, tmp_path, metadata=metadata)
+
+
+@pytest.mark.parametrize("strict_contract", [True, False])
+def test_rfdetr_segment_artifact_fails_closed(
+    monkeypatch,
+    tmp_path,
+    strict_contract,
+):
+    metadata = _metadata(family="rfdetr", task="segment", size="n")
+    if not strict_contract:
+        metadata.pop("libreyolo_producer")
+        metadata.pop("coreml_io_schema_version")
+        metadata.pop("coreml_io")
+
+    with pytest.raises(
+        NotImplementedError,
+        match="proposal-order drift changes learned query-slot pairings",
+    ):
         _load_backend(monkeypatch, tmp_path, metadata=metadata)
 
 
@@ -2179,6 +1971,7 @@ def test_rfdetr_pose_tensor_resize_matches_native_antialiased_float_path(
             outputs=("pred_boxes", "pred_logits", "pred_keypoints"),
             imgsz=64,
         ),
+        backend_kwargs={"compute_units": "cpu_only"},
     )
     yy, xx = np.mgrid[:37, :61]
     rgb = np.stack(
@@ -2221,6 +2014,242 @@ def test_rfdetr_pose_tensor_resize_matches_native_antialiased_float_path(
     )
 
 
+@pytest.mark.parametrize("compute_units", ["all", "cpu_and_gpu", "cpu_and_ne"])
+def test_rfdetr_pose_rejects_unvalidated_compute_units_before_proxy(
+    monkeypatch,
+    tmp_path,
+    compute_units,
+):
+    metadata = _metadata(
+        family="rfdetr",
+        task="pose",
+        size="n",
+        imgsz=64,
+        io=_profile_io("rfdetr", "pose", "n"),
+    )
+    spec = _spec(
+        input_kind="multiArrayType",
+        outputs=("pred_boxes", "pred_logits", "pred_keypoints"),
+        imgsz=64,
+    )
+    spec.description.metadata = SimpleNamespace(userDefined=metadata)
+    proxy_calls = []
+    fake_ct = SimpleNamespace(
+        ComputeUnit=SimpleNamespace(
+            ALL="ALL",
+            CPU_AND_GPU="CPU_AND_GPU",
+            CPU_AND_NE="CPU_AND_NE",
+            CPU_ONLY="CPU_ONLY",
+        ),
+        models=SimpleNamespace(
+            MLModel=lambda *args, **kwargs: proxy_calls.append((args, kwargs))
+        ),
+        utils=SimpleNamespace(load_spec=lambda *_args, **_kwargs: spec),
+    )
+    monkeypatch.setitem(sys.modules, "coremltools", fake_ct)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    package = tmp_path / "rfdetr-pose.mlpackage"
+    package.mkdir()
+
+    from libreyolo.backends.coreml import CoreMLBackend
+
+    with pytest.raises(NotImplementedError, match="requires.*cpu_only"):
+        CoreMLBackend(str(package), compute_units=compute_units)
+    assert proxy_calls == []
+
+
+@pytest.mark.parametrize(
+    ("metadata_key", "value"),
+    [
+        ("coreml_required_compute_units", None),
+        ("coreml_conversion_pass_profile", None),
+        ("coreml_conversion_pass_profile", "default_v1"),
+        ("coreml_disabled_passes", None),
+        ("coreml_disabled_passes", json.dumps([])),
+        (
+            "coreml_disabled_passes",
+            json.dumps(
+                ["common::divide_to_multiply", "common::fuse_gelu_exact"]
+            ),
+        ),
+        ("precision", "fp16"),
+    ],
+)
+def test_rfdetr_pose_rejects_missing_or_tampered_profile_before_proxy(
+    monkeypatch,
+    tmp_path,
+    metadata_key,
+    value,
+):
+    metadata = _metadata(
+        family="rfdetr",
+        task="pose",
+        size="n",
+        imgsz=64,
+        io=_profile_io("rfdetr", "pose", "n"),
+    )
+    if value is None:
+        metadata.pop(metadata_key)
+    else:
+        metadata[metadata_key] = value
+    spec = _spec(
+        input_kind="multiArrayType",
+        outputs=("pred_boxes", "pred_logits", "pred_keypoints"),
+        imgsz=64,
+    )
+    spec.description.metadata = SimpleNamespace(userDefined=metadata)
+    proxy_calls = []
+    fake_ct = SimpleNamespace(
+        ComputeUnit=SimpleNamespace(
+            ALL="ALL",
+            CPU_AND_GPU="CPU_AND_GPU",
+            CPU_AND_NE="CPU_AND_NE",
+            CPU_ONLY="CPU_ONLY",
+        ),
+        models=SimpleNamespace(
+            MLModel=lambda *args, **kwargs: proxy_calls.append((args, kwargs))
+        ),
+        utils=SimpleNamespace(load_spec=lambda *_args, **_kwargs: spec),
+    )
+    monkeypatch.setitem(sys.modules, "coremltools", fake_ct)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    package = tmp_path / "rfdetr-pose.mlpackage"
+    package.mkdir()
+
+    from libreyolo.backends.coreml import CoreMLBackend
+
+    with pytest.raises(ValueError, match="validated CPU conversion profile"):
+        CoreMLBackend(str(package), compute_units="cpu_only")
+    assert proxy_calls == []
+
+
+def _promoted_yolo9_metadata(monkeypatch):
+    from dataclasses import replace
+
+    from libreyolo.export.coreml_identity import (
+        COREML_DEPLOYMENT_ABI_SCHEMA,
+    )
+    from libreyolo.export.coreml_profiles import (
+        COREML_EXECUTION_PROFILES,
+        COREML_EXECUTION_PROFILES_BY_ID,
+        match_coreml_execution_profile,
+        merge_coreml_execution_profile_metadata,
+    )
+
+    candidate = match_coreml_execution_profile(
+        "yolo9",
+        "detect",
+        "t",
+        640,
+        class_count=80,
+    )
+    assert candidate is not None and not candidate.evidence_complete
+    profile = replace(
+        candidate,
+        source_kind="test-source-v1",
+        source_sha256="1" * 64,
+        deployment_abi_sha256="2" * 64,
+        evidence_sha256="3" * 64,
+    )
+    key = next(
+        key
+        for key, value in COREML_EXECUTION_PROFILES.items()
+        if value is candidate
+    )
+    monkeypatch.setitem(COREML_EXECUTION_PROFILES, key, profile)
+    monkeypatch.setitem(
+        COREML_EXECUTION_PROFILES_BY_ID,
+        profile.profile_id,
+        profile,
+    )
+    metadata = _metadata(
+        family="yolo9",
+        task="detect",
+        size="t",
+        imgsz=640,
+        names={index: f"class_{index}" for index in range(80)},
+    )
+    metadata.update(
+        {
+            "coreml_profile_source_kind": profile.source_kind,
+            "coreml_profile_source_sha256": profile.source_sha256,
+            "coreml_profile_abi_schema": COREML_DEPLOYMENT_ABI_SCHEMA,
+            "coreml_profile_abi_sha256": profile.deployment_abi_sha256,
+        }
+    )
+    return merge_coreml_execution_profile_metadata(
+        metadata,
+        profile,
+        conversion_compute_units="cpu_only",
+    )
+
+
+def test_execution_profile_metadata_is_verified_before_proxy(
+    monkeypatch,
+    tmp_path,
+):
+    metadata = _promoted_yolo9_metadata(monkeypatch)
+    metadata["coreml_runtime_compute_units"] = json.dumps(["cpu_and_ne"])
+    spec = _spec(imgsz=640)
+    spec.description.metadata = SimpleNamespace(userDefined=metadata)
+    proxy_calls = []
+    fake_ct = SimpleNamespace(
+        ComputeUnit=SimpleNamespace(
+            ALL="ALL",
+            CPU_AND_GPU="CPU_AND_GPU",
+            CPU_AND_NE="CPU_AND_NE",
+            CPU_ONLY="CPU_ONLY",
+        ),
+        models=SimpleNamespace(
+            MLModel=lambda *args, **kwargs: proxy_calls.append((args, kwargs))
+        ),
+        utils=SimpleNamespace(load_spec=lambda *_args, **_kwargs: spec),
+    )
+    monkeypatch.setitem(sys.modules, "coremltools", fake_ct)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    from libreyolo.export import coreml_identity
+
+    monkeypatch.setattr(
+        coreml_identity,
+        "validate_coreml_deployment_abi",
+        lambda _spec, _metadata: "2" * 64,
+    )
+    package = tmp_path / "tampered-profile.mlpackage"
+    package.mkdir()
+
+    from libreyolo.backends.coreml import CoreMLBackend
+
+    with pytest.raises(ValueError, match="allow-list"):
+        CoreMLBackend(str(package), compute_units="validated")
+    assert proxy_calls == []
+
+
+def test_runtime_metadata_must_equal_profile_selecting_spec_metadata(
+    monkeypatch,
+    tmp_path,
+):
+    metadata = _promoted_yolo9_metadata(monkeypatch)
+    runtime_metadata = dict(metadata)
+    runtime_metadata["coreml_validation_hardware"] = "Apple M3"
+    from libreyolo.export import coreml_identity
+
+    monkeypatch.setattr(
+        coreml_identity,
+        "validate_coreml_deployment_abi",
+        lambda _spec, _metadata: "2" * 64,
+    )
+
+    with pytest.raises(ValueError, match="differs from the package spec"):
+        _load_backend(
+            monkeypatch,
+            tmp_path,
+            metadata=metadata,
+            spec=_spec(imgsz=640),
+            runtime_metadata=runtime_metadata,
+            backend_kwargs={"compute_units": "validated"},
+        )
+
+
 @pytest.mark.parametrize("missing_key", ["num_keypoints", "keypoint_dim"])
 def test_strict_pose_requires_parser_metadata(
     monkeypatch,
@@ -2246,6 +2275,7 @@ def test_strict_pose_requires_parser_metadata(
                 outputs=("pred_boxes", "pred_logits", "pred_keypoints"),
                 imgsz=64,
             ),
+            backend_kwargs={"compute_units": "cpu_only"},
         )
 
 
@@ -2278,6 +2308,7 @@ def test_rfdetr_grouppose_cannot_drop_class_schema(monkeypatch, tmp_path):
                 outputs=("pred_boxes", "pred_logits", "pred_keypoints"),
                 imgsz=64,
             ),
+            backend_kwargs={"compute_units": "cpu_only"},
         )
 
 
@@ -2321,6 +2352,7 @@ def test_rfdetr_grouppose_rejects_noninteger_schema_items(
                 outputs=("pred_boxes", "pred_logits", "pred_keypoints"),
                 imgsz=64,
             ),
+            backend_kwargs={"compute_units": "cpu_only"},
         )
 
 

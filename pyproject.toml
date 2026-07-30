@@ -176,14 +176,21 @@ siglip2-convert = [
     "transformers>=5.1.0",
 ]
 coreml = [
-    # Face-embedding Core ML export mechanically converts a loaded ONNX graph.
+    # Core ML exporters are parity-gated against one converter/frontend stack.
+    # The exact Transformers pin is required by OMDet-Turbo's frozen graph and
+    # remains compatible with the separate SAM, EoMT, and VLM model extras.
+    # Core ML Tools 9's TorchScript `_int` lowering still relies on NumPy's
+    # pre-2.4 conversion of one-element arrays to Python scalars.
     "libreyolo[onnx]",
+    "numpy<2.4",
     "onnx2torch==1.5.15",
-    "coremltools>=8.0",
+    "coremltools>=9.0,<10",
+    "transformers==5.12.1",
 ]
 coreml-vlm = [
     # The stateful SmolVLM2 contract is intentionally pinned to the exact
     # converter/frontend and host processor versions covered by parity tests.
+    "numpy<2.4",
     "coremltools>=9.0,<10",
     "transformers==5.12.1",
     "num2words>=0.5.0",
@@ -362,6 +369,7 @@ markers = [
     "ncnn: tests requiring ncnn",
     "tflite: tests requiring TensorFlow Lite export",
     "coreml: tests requiring CoreML (macOS only)",
+    "coreml_variant: exhaustive real-Mac Core ML size/task variant checks",
     "yolox: tests covering the YOLOX model family",
     "yolo7: tests covering the YOLOv7 model family",
     "yolo9: tests covering the YOLO9 model family",

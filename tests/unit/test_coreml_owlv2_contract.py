@@ -52,6 +52,10 @@ def _gradient(width: int, height: int) -> Image.Image:
 def test_profile_and_raw_io_contract_are_fixed():
     from libreyolo.export import coreml
 
+    assert LibreOWLv2.HF_REVISIONS == {
+        "b16": "499390c5a97e2620c83028de36be28860771d0b3",
+        "l14": "ed036ee9085ad9a8201281e5cfb6609458bd22c7",
+    }
     base = validate_owlv2_coreml_profile(
         size="b16",
         canvas_hw=(960, 960),
@@ -468,14 +472,13 @@ def test_direct_export_preparation_pins_native_canvas_and_metadata(
         {
             "output": "frozen.OTHER",
             "imgsz": 960,
-            "half": True,
             "compute_units": "cpu_only",
         },
     )
     image_size, output, metadata, precision, compute_units = prepared
     assert image_size == 960
     assert output.endswith("frozen.mlpackage")
-    assert precision == "fp16"
+    assert precision == "fp32"
     assert compute_units == "cpu_only"
     assert metadata["frozen_classes"] is True
     assert metadata["owlv2_num_classes"] == 2
@@ -484,7 +487,7 @@ def test_direct_export_preparation_pins_native_canvas_and_metadata(
     )
     assert calls == [
         {
-            "half": True,
+            "half": False,
             "int8": False,
             "data": None,
             "nms": False,
@@ -499,6 +502,7 @@ def test_direct_export_preparation_pins_native_canvas_and_metadata(
 @pytest.mark.parametrize(
     ("kwargs", "error"),
     [
+        ({"half": True}, "FP32-only"),
         ({"dynamic": True}, "dynamic"),
         ({"batch": 2}, "batch=1"),
         ({"nms": True}, "does not run NMS"),

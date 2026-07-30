@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -143,8 +144,15 @@ class LibreMobileSAM(LibreSAMModel):
     FAMILY = "mobilesam"
     FILENAME_PREFIX = "LibreMobileSAM"
     HF_REPOS: ClassVar[Dict[str, str]] = {"tiny": "LibreYOLO/LibreMobileSAM"}
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "tiny": "c80f272421d38fc26ef4bd0c02111b6c1f1c8cb9"
+    }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"tiny": 1024}
     WEIGHT_FILE: ClassVar[str] = "LibreMobileSAM.pt"
+    WEIGHT_SIZE: ClassVar[int] = 40_730_739
+    WEIGHT_SHA256: ClassVar[str] = (
+        "79f09a3671f38696d45da0aed49ef382fde2efd1bc966d172ac9822b952e35fe"
+    )
     SNAPSHOT_IGNORE_PATTERNS: ClassVar[tuple[str, ...]] = (
         "*.bin",
         "*.onnx",
@@ -157,14 +165,36 @@ class LibreMobileSAM(LibreSAMModel):
     def __init__(self, size: str = "tiny", **kwargs):
         super().__init__(size=size, **kwargs)
 
-    @staticmethod
-    def _snapshot_complete(local_dir: Path) -> bool:
-        return (local_dir / _SNAPSHOT_COMPLETE_MARKER).exists() and (
-            local_dir / LibreMobileSAM.WEIGHT_FILE
-        ).exists()
+    @classmethod
+    def _snapshot_complete(cls, local_dir: Path) -> bool:
+        marker_path = local_dir / _SNAPSHOT_COMPLETE_MARKER
+        weight_path = local_dir / cls.WEIGHT_FILE
+        if (
+            marker_path.is_symlink()
+            or not marker_path.is_file()
+            or weight_path.is_symlink()
+            or not weight_path.is_file()
+        ):
+            return False
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return False
+        expected_marker = {
+            "repo": cls.HF_REPOS["tiny"],
+            "revision": cls.HF_REVISIONS["tiny"],
+        }
+        if marker != expected_marker or weight_path.stat().st_size != cls.WEIGHT_SIZE:
+            return False
+        digest = hashlib.sha256()
+        with weight_path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest() == cls.WEIGHT_SHA256
 
     def _ensure_weights(self) -> str:
         repo = self.HF_REPOS[self.size]
+        revision = self.HF_REVISIONS[self.size]
         local_dir = Path("weights") / f"{self.FILENAME_PREFIX}{self.size}"
         if self._snapshot_complete(local_dir):
             return str(local_dir)
@@ -179,10 +209,12 @@ class LibreMobileSAM(LibreSAMModel):
         snapshot_download(
             repo,
             local_dir=str(local_dir),
+            revision=revision,
             ignore_patterns=list(self.SNAPSHOT_IGNORE_PATTERNS),
         )
         (local_dir / _SNAPSHOT_COMPLETE_MARKER).write_text(
-            json.dumps({"repo": repo}) + "\n", encoding="utf-8"
+            json.dumps({"repo": repo, "revision": revision}) + "\n",
+            encoding="utf-8",
         )
         if not self._snapshot_complete(local_dir):
             (local_dir / _SNAPSHOT_COMPLETE_MARKER).unlink(missing_ok=True)

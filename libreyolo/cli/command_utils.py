@@ -2,13 +2,25 @@
 
 import json
 from pathlib import Path
-from typing import Any, NoReturn, Optional, Set, Tuple, Union
+from typing import Any, Callable, NoReturn, Optional, Set, Tuple, Union
 
 import click
 import typer
 
 from .errors import CLIError
 from .output import OutputHandler
+
+COREML_VLM_EXPORT_ALIASES = frozenset(
+    {
+        "florence-2",
+        "florence-2-base",
+        "florence2",
+        "kosmos-2",
+        "kosmos2",
+        "qwen3-vl-2b",
+        "smolvlm2-500m",
+    }
+)
 
 
 def exit_with_error(
@@ -31,19 +43,70 @@ def load_model_or_exit(
     model_path: str,
     device: str,
     task: str | None = None,
+    model_factory: Callable[..., Any] | None = None,
 ) -> Any:
     """Load a model with consistent CLI error handling."""
-    from libreyolo import LibreYOLO
+    if model_factory is None:
+        from libreyolo import LibreYOLO
+
+        model_factory = LibreYOLO
 
     out.progress(f"Loading {model}...")
     try:
-        return LibreYOLO(model_path, device=device, task=task)
+        return model_factory(model_path, device=device, task=task)
     except Exception as exc:
         exit_with_error(
             out,
             "model_load_failed",
             f"Failed to load model '{model}': {exc}",
         )
+
+
+def resolve_export_sibling_factory(
+    model: str,
+) -> Callable[..., Any] | None:
+    """Return the sibling factory for an export alias, if one owns it.
+
+    ``LibreYOLO`` intentionally covers state-dict model families only.
+    Promptable SAM and discriminative open-vocabulary models use sibling
+    factories and therefore need a narrow CLI export dispatch before the
+    normal checkpoint-name resolver runs. Existing filesystem references and
+    filename-like values always remain on the generic ``LibreYOLO`` path.
+    """
+    model_value = str(model).strip()
+    path = Path(model_value)
+    if path.exists() or path.suffix:
+        return None
+
+    key = model_value.lower()
+    if key in COREML_VLM_EXPORT_ALIASES:
+        from libreyolo import LibreVLM
+
+        return LibreVLM
+
+    sam_candidate = key in {"base", "large", "huge", "b", "l", "h"} or (
+        key.startswith(("edge-tam", "edgetam", "mobile-sam", "mobilesam"))
+        or key.startswith(("pico-sam3", "picosam3", "sam"))
+    )
+    if sam_candidate:
+        from libreyolo.models.sam.model import LibreSAM, _ALIASES as sam_aliases
+
+        if key in sam_aliases:
+            return LibreSAM
+
+    openvocab_key = key.replace("_", "-")
+    openvocab_candidate = openvocab_key.startswith(
+        ("grounding-dino", "groundingdino", "omdet", "owl-v2", "owlv2")
+    ) or openvocab_key.startswith(("ov-deim", "ovdeim"))
+    if openvocab_candidate:
+        from libreyolo.models.openvocab import (
+            LibreOpenVocab,
+            _ALIASES as openvocab_aliases,
+        )
+
+        if openvocab_key in openvocab_aliases:
+            return LibreOpenVocab
+    return None
 
 
 def get_loaded_model_family(loaded_model: Any) -> Optional[str]:
@@ -108,9 +171,7 @@ def parse_imgsz_str(imgsz: str | int | None) -> int | tuple[int, int] | None:
                 f"Invalid imgsz format: '{imgsz}'. Use 640 (square) or 480x640 (HxW)."
             )
         if h <= 0 or w <= 0:
-            raise ValueError(
-                f"imgsz dimensions must be positive, got ({h}, {w})."
-            )
+            raise ValueError(f"imgsz dimensions must be positive, got ({h}, {w}).")
         return h if h == w else (h, w)
     try:
         value = int(s)

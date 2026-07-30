@@ -8,6 +8,7 @@ function and through the public encode-once/prompt-many API.
 
 from __future__ import annotations
 
+import gc
 import os
 import sys
 from pathlib import Path
@@ -35,6 +36,7 @@ ct = pytest.importorskip(
 
 REL_TOL = 3e-4
 MIN_REL_SENSITIVITY = 1e-6
+SENSITIVITY_TO_ERROR_MARGIN = 100.0
 PROMPT_MAX_POINTS = 4
 
 SAM_CASES = [
@@ -42,6 +44,11 @@ SAM_CASES = [
     ("mobilesam", "tiny", "mobilesam"),
     ("sam", "base", "base"),
     ("sam2", "tiny", "sam2-tiny"),
+    ("sam2", "small", "sam2-small"),
+    ("sam2", "base-plus", "sam2-base-plus"),
+    ("sam2", "large", "sam2-large"),
+    ("sam", "large", "large"),
+    ("sam", "huge", "huge"),
     ("sam3", "large", "sam3"),
 ]
 
@@ -70,12 +77,16 @@ def _as_output_tuple(value) -> tuple[torch.Tensor, ...]:
 
 
 def _assert_close(
-    expected: torch.Tensor,
+    expected: torch.Tensor | np.ndarray,
     actual: np.ndarray,
     *,
     label: str,
-) -> None:
-    reference = expected.detach().cpu().numpy()
+) -> float:
+    reference = (
+        expected.detach().cpu().numpy()
+        if torch.is_tensor(expected)
+        else np.asarray(expected)
+    )
     candidate = np.asarray(actual)
     assert candidate.dtype == np.float32, (
         f"{label} returned {candidate.dtype}, expected float32"
@@ -87,16 +98,33 @@ def _assert_close(
     assert error <= REL_TOL, (
         f"{label} relative conversion error {error:.3e} exceeds {REL_TOL:.0e}"
     )
+    return error
 
 
 def _runtime_outputs(runtime, inputs, output_names):
     arrays = {
-        name: np.ascontiguousarray(value.detach().cpu().numpy())
+        name: np.ascontiguousarray(
+            value.detach().cpu().numpy()
+            if torch.is_tensor(value)
+            else np.asarray(value)
+        )
         for name, value in inputs.items()
     }
     outputs = runtime.predict(arrays)
     assert set(outputs) == set(output_names)
-    return tuple(np.asarray(outputs[name]) for name in output_names)
+    return tuple(
+        np.ascontiguousarray(outputs[name]).copy() for name in output_names
+    )
+
+
+def _owned_numpy(value: torch.Tensor | np.ndarray) -> np.ndarray:
+    """Detach an oracle value from the heavyweight eager model lifetime."""
+    array = (
+        value.detach().cpu().numpy()
+        if torch.is_tensor(value)
+        else np.asarray(value)
+    )
+    return np.ascontiguousarray(array).copy()
 
 
 def _point_prompts(
@@ -182,10 +210,7 @@ def converted_sam_case(request, tmp_path_factory):
         )
 
     from libreyolo import LibreSAM
-    from libreyolo.export.coreml_sam import (
-        validate_sam_coreml_profile,
-        wrap_sam_coreml_components,
-    )
+    from libreyolo.export.coreml_sam import validate_sam_coreml_profile
 
     model = LibreSAM(alias, device="cpu")
     profile = validate_sam_coreml_profile(
@@ -203,23 +228,117 @@ def converted_sam_case(request, tmp_path_factory):
         )
     )
     assert artifact.is_dir()
+    del model
+    gc.collect()
+    # Never retain the eager model in this module-scoped fixture. The graph
+    # test owns its pristine oracle lifetime and releases it before loading a
+    # Core ML proxy; mixing both heavyweight runtimes causes excessive RSS and
+    # can trigger native tensor-lifetime failures on macOS.
+    return family, alias, profile, artifact
+
+
+def test_saved_sam_multifunction_graph_parity(converted_sam_case):
+    from libreyolo import LibreSAM
+    from libreyolo.backends.coreml_sam import prepare_sam_coreml_image
+    from libreyolo.export.coreml_sam import (
+        SAM_COREML_ENCODER_FUNCTION,
+        parse_sam_coreml_runtime_function,
+        sam_coreml_runtime_function_contracts,
+        sam_coreml_runtime_function_names,
+        validate_sam_coreml_metadata,
+        wrap_sam_coreml_components,
+    )
+
+    family, alias, profile, artifact = converted_sam_case
+    runtime_names = sam_coreml_runtime_function_names(profile)
+    contracts = sam_coreml_runtime_function_contracts(profile)
+    images = (
+        _byte_probe(79, 61, phase=0),
+        _byte_probe(79, 61, phase=97),
+    )
+
+    # Build every eager reference before creating any native Core ML proxy.
+    # Owned NumPy arrays keep the graph gate independent of exporter mutation
+    # while allowing the multi-gigabyte pristine model to be released before
+    # runtime compilation and prediction.
+    model = LibreSAM(alias, device="cpu")
     components = wrap_sam_coreml_components(
         model.model,
         profile=profile,
     )
-    return family, model, profile, artifact, components
+    encoder_names = profile.embedding_names
+    encoder_cases = []
+    decoder_cases = {name: [] for name in runtime_names[1:]}
+    for image in images:
+        encoding = prepare_sam_coreml_image(image, profile=profile)
+        encoder = components[SAM_COREML_ENCODER_FUNCTION]
+        with torch.no_grad():
+            encoder_expected = _as_output_tuple(encoder(encoding.pixel_values))
+        assert len(encoder_expected) == len(encoder_names)
+        encoder_reference = tuple(_owned_numpy(value) for value in encoder_expected)
+        encoder_cases.append(
+            (
+                {"pixel_values": _owned_numpy(encoding.pixel_values)},
+                encoder_reference,
+            )
+        )
+        embeddings = dict(zip(encoder_names, encoder_expected))
+        owned_embeddings = dict(zip(encoder_names, encoder_reference))
 
+        for runtime_name in runtime_names[1:]:
+            source_name, fixed_point_count = parse_sam_coreml_runtime_function(
+                runtime_name,
+                profile=profile,
+            )
+            inputs = _component_inputs(
+                source_name,
+                image=image,
+                encoding=encoding,
+                embeddings=embeddings,
+                profile=profile,
+                point_count=fixed_point_count or 1,
+            )
+            input_names = [
+                item["name"] for item in contracts[runtime_name]["inputs"]
+            ]
+            output_names = [
+                item["name"] for item in contracts[runtime_name]["outputs"]
+            ]
+            component_args = tuple(inputs[name] for name in input_names)
+            with torch.no_grad():
+                expected = _as_output_tuple(
+                    components[source_name](*component_args)
+                )
+            assert len(expected) == len(output_names)
+            owned_inputs = {
+                name: (
+                    owned_embeddings[name]
+                    if name in owned_embeddings
+                    else _owned_numpy(inputs[name])
+                )
+                for name in input_names
+            }
+            decoder_cases[runtime_name].append(
+                (
+                    owned_inputs,
+                    tuple(_owned_numpy(value) for value in expected),
+                )
+            )
 
-def test_saved_sam_multifunction_graph_parity(converted_sam_case):
-    from libreyolo.backends.coreml_sam import prepare_sam_coreml_image
-    from libreyolo.export.coreml_sam import (
-        SAM_COREML_ENCODER_FUNCTION,
-        SAM_COREML_FUNCTION_NAMES,
-        sam_coreml_function_contracts,
-        validate_sam_coreml_metadata,
+    del (
+        component_args,
+        components,
+        encoder,
+        encoder_expected,
+        embeddings,
+        encoding,
+        expected,
+        inputs,
+        model,
+        owned_embeddings,
     )
+    gc.collect()
 
-    family, _model, profile, artifact, components = converted_sam_case
     default_runtime = ct.models.MLModel(
         str(artifact),
         compute_units=ct.ComputeUnit.CPU_ONLY,
@@ -229,132 +348,125 @@ def test_saved_sam_multifunction_graph_parity(converted_sam_case):
     spec = default_runtime.get_spec()
     assert spec.specificationVersion >= 9
     assert spec.description.defaultFunctionName == SAM_COREML_ENCODER_FUNCTION
-    assert [item.name for item in spec.description.functions] == list(
-        SAM_COREML_FUNCTION_NAMES
-    )
+    assert [item.name for item in spec.description.functions] == list(runtime_names)
 
-    runtimes = {SAM_COREML_ENCODER_FUNCTION: default_runtime}
-    runtimes.update(
-        {
-            function_name: ct.models.MLModel(
-                str(artifact),
-                compute_units=ct.ComputeUnit.CPU_ONLY,
-                function_name=function_name,
-            )
-            for function_name in SAM_COREML_FUNCTION_NAMES[1:]
-        }
-    )
-    contracts = sam_coreml_function_contracts(profile)
-    images = (
-        _byte_probe(79, 61, phase=0),
-        _byte_probe(79, 61, phase=97),
-    )
-    previous_reference: dict[str, tuple[torch.Tensor, ...]] = {}
-
-    for image_index, image in enumerate(images):
-        encoding = prepare_sam_coreml_image(image, profile=profile)
-        encoder = components[SAM_COREML_ENCODER_FUNCTION]
-        with torch.no_grad():
-            encoder_expected = _as_output_tuple(encoder(encoding.pixel_values))
-        encoder_names = profile.embedding_names
+    encoder_references = []
+    encoder_conversion_errors = []
+    for encoder_inputs, encoder_expected in encoder_cases:
         encoder_actual = _runtime_outputs(
-            runtimes[SAM_COREML_ENCODER_FUNCTION],
-            {"pixel_values": encoding.pixel_values},
+            default_runtime,
+            encoder_inputs,
             encoder_names,
         )
-        for name, expected, actual in zip(
-            encoder_names,
-            encoder_expected,
-            encoder_actual,
-        ):
-            _assert_close(
-                expected,
-                actual,
-                label=f"{family}/{SAM_COREML_ENCODER_FUNCTION}/{name}",
-            )
-        if image_index == 0:
-            previous_reference[SAM_COREML_ENCODER_FUNCTION] = encoder_expected
-        else:
-            first_encoder = previous_reference[SAM_COREML_ENCODER_FUNCTION]
-            for name, first, second in zip(
-                encoder_names,
-                first_encoder,
-                encoder_expected,
-            ):
-                scale = max(
-                    float(first.detach().abs().max()),
-                    float(second.detach().abs().max()),
-                    1e-12,
-                )
-                sensitivity = (
-                    float((second.detach() - first.detach()).abs().max()) / scale
-                )
-                assert sensitivity >= MIN_REL_SENSITIVITY, (
-                    f"{family}/encode_image/{name} relative input sensitivity "
-                    f"{sensitivity:.3e} is too small"
-                )
-        embeddings = dict(zip(encoder_names, encoder_expected))
-
-        for function_name in SAM_COREML_FUNCTION_NAMES[1:]:
-            point_counts = (
-                (1, 2, PROMPT_MAX_POINTS)
-                if "points" in function_name
-                else (1,)
-            )
-            for point_count in point_counts:
-                inputs = _component_inputs(
-                    function_name,
-                    image=image,
-                    encoding=encoding,
-                    embeddings=embeddings,
-                    profile=profile,
-                    point_count=point_count,
-                )
-                input_names = [
-                    item["name"] for item in contracts[function_name]["inputs"]
-                ]
-                output_names = [
-                    item["name"] for item in contracts[function_name]["outputs"]
-                ]
-                component_args = tuple(inputs[name] for name in input_names)
-                with torch.no_grad():
-                    expected = _as_output_tuple(
-                        components[function_name](*component_args)
-                    )
-                actual = _runtime_outputs(
-                    runtimes[function_name],
-                    inputs,
-                    output_names,
-                )
-                case_name = f"{function_name}/P={point_count}"
-                for name, reference, candidate in zip(
-                    output_names,
+        encoder_conversion_errors.append(
+            tuple(
+                _assert_close(
                     expected,
                     actual,
-                ):
+                    label=f"{family}/{SAM_COREML_ENCODER_FUNCTION}/{name}",
+                )
+                for name, expected, actual in zip(
+                    encoder_names,
+                    encoder_expected,
+                    encoder_actual,
+                )
+            )
+        )
+        encoder_references.append(encoder_expected)
+
+    for index, (name, first, second) in enumerate(
+        zip(
+            profile.embedding_names,
+            encoder_references[0],
+            encoder_references[1],
+        )
+    ):
+        scale = max(
+            float(np.abs(first).max()),
+            float(np.abs(second).max()),
+            1e-12,
+        )
+        sensitivity = float(np.abs(second - first).max()) / scale
+        conversion_error = max(
+            encoder_conversion_errors[0][index],
+            encoder_conversion_errors[1][index],
+        )
+        required = max(
+            MIN_REL_SENSITIVITY,
+            SENSITIVITY_TO_ERROR_MARGIN * conversion_error,
+        )
+        assert sensitivity >= required, (
+            f"{family}/encode_image/{name} relative input sensitivity "
+            f"{sensitivity:.3e} is below required {required:.3e} "
+            f"(conversion error {conversion_error:.3e})"
+        )
+
+    del default_runtime
+    gc.collect()
+
+    for runtime_name in runtime_names[1:]:
+        runtime = ct.models.MLModel(
+            str(artifact),
+            compute_units=ct.ComputeUnit.CPU_ONLY,
+            function_name=runtime_name,
+        )
+        references = []
+        conversion_errors = []
+        input_names = [
+            item["name"] for item in contracts[runtime_name]["inputs"]
+        ]
+        output_names = [
+            item["name"] for item in contracts[runtime_name]["outputs"]
+        ]
+        for inputs, expected in decoder_cases[runtime_name]:
+            actual = _runtime_outputs(
+                runtime,
+                inputs,
+                output_names,
+            )
+            conversion_errors.append(
+                tuple(
                     _assert_close(
                         reference,
                         candidate,
-                        label=f"{family}/{case_name}/{name}",
+                        label=f"{family}/{runtime_name}/{name}",
                     )
-                if image_index == 0:
-                    previous_reference[case_name] = expected
-                else:
-                    prior = previous_reference[case_name]
-                    for name, first, second in zip(output_names, prior, expected):
-                        scale = max(
-                            float(first.detach().abs().max()),
-                            float(second.detach().abs().max()),
-                            1e-12,
-                        )
-                        sensitivity = (
-                            float((second.detach() - first.detach()).abs().max())
-                            / scale
-                        )
-                        assert sensitivity >= MIN_REL_SENSITIVITY, (
-                            f"{family}/{case_name}/{name} relative input "
-                            f"sensitivity {sensitivity:.3e} is too small"
-                        )
+                    for name, reference, candidate in zip(
+                        output_names,
+                        expected,
+                        actual,
+                    )
+                )
+            )
+            references.append(expected)
+        for index, (name, first, second) in enumerate(
+            zip(
+                output_names,
+                references[0],
+                references[1],
+            )
+        ):
+            scale = max(
+                float(np.abs(first).max()),
+                float(np.abs(second).max()),
+                1e-12,
+            )
+            sensitivity = float(np.abs(second - first).max()) / scale
+            conversion_error = max(
+                conversion_errors[0][index],
+                conversion_errors[1][index],
+            )
+            required = max(
+                MIN_REL_SENSITIVITY,
+                SENSITIVITY_TO_ERROR_MARGIN * conversion_error,
+            )
+            assert sensitivity >= required, (
+                f"{family}/{runtime_name}/{name} relative input sensitivity "
+                f"{sensitivity:.3e} is below required {required:.3e} "
+                f"(conversion error {conversion_error:.3e})"
+            )
+        del runtime
+        gc.collect()
 
 
 def test_public_sam_coreml_cached_prompt_path(converted_sam_case):
@@ -364,8 +476,14 @@ def test_public_sam_coreml_cached_prompt_path(converted_sam_case):
         prepare_sam_coreml_image,
         transform_sam_coreml_points,
     )
+    from libreyolo.export.coreml_sam import wrap_sam_coreml_components
 
-    family, _model, profile, artifact, components = converted_sam_case
+    _family, alias, profile, artifact = converted_sam_case
+    model = LibreSAM(alias, device="cpu")
+    components = wrap_sam_coreml_components(
+        model.model,
+        profile=profile,
+    )
     image = _byte_probe(83, 67, phase=31)
     point = [[41.25, 33.75]]
     encoding = prepare_sam_coreml_image(image, profile=profile)
@@ -400,6 +518,19 @@ def test_public_sam_coreml_cached_prompt_path(converted_sam_case):
         profile=profile,
     )[0]
     expected_score = float(scores[0, 0, 0])
+    del (
+        components,
+        direct_inputs,
+        embeddings,
+        encoder_outputs,
+        encoding,
+        low_res,
+        model,
+        point_coords,
+        point_labels,
+        scores,
+    )
+    gc.collect()
 
     backend = LibreSAM(str(artifact), compute_units="cpu_only")
     backend.set_image(image)
@@ -423,6 +554,35 @@ def test_public_sam_coreml_cached_prompt_path(converted_sam_case):
         bboxes=[8.0, 7.0, 74.0, 59.0],
         multimask=True,
     )
+    points2, labels2 = _point_prompts(image, count=2)
+    backend.predict(points=[points2], labels=[labels2])
+    cached_p2 = backend._sam_functions["decode_points_single_p2"]
+    backend.predict(points=[points2], labels=[labels2])
+    assert backend._sam_functions["decode_points_single_p2"] is cached_p2
+    del cached_p2
+
+    points4, labels4 = _point_prompts(image, count=4)
+    backend.predict(points=[points4], labels=[labels4])
+    assert set(backend._sam_functions) == {"decode_points_single_p4"}
+    points3, labels3 = _point_prompts(image, count=3)
+    backend.predict(points=[points3], labels=[labels3])
+    assert set(backend._sam_functions) == {"decode_points_single_p3"}
+    backend.predict(points=point, labels=[1])
+    assert set(backend._sam_functions) == {"decode_points_single_p1"}
+    backend.predict(
+        bboxes=[8.0, 7.0, 74.0, 59.0],
+        multimask=True,
+    )
+    assert set(backend._sam_functions) == {"decode_boxes_multimask"}
+    backend.predict(
+        points=[points4],
+        labels=[labels4],
+        bboxes=[8.0, 7.0, 74.0, 59.0],
+        multimask=True,
+    )
+    assert set(backend._sam_functions) == {
+        "decode_points_boxes_multimask_p4",
+    }
     backend.reset_image()
     with pytest.raises(RuntimeError, match="No image set"):
         backend.predict(points=point)

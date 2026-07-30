@@ -281,6 +281,10 @@ def test_anchor_freeze_reaches_wrapped_model_and_restores_cache():
             self.model = model
 
         def forward(self, tensor):
+            if not self.model.head.export:
+                raise AssertionError(
+                    "The export-only outer adapter must not run during warm-up."
+                )
             return self.model(tensor)
 
     detector = Detector()

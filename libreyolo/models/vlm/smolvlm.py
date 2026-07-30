@@ -54,7 +54,12 @@ class LibreSmolVLM2(LibreVLMModel):
     _LICENSE_NOTICE = ""
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        """Export the exact 500M snapshot as a portable Core ML VLM bundle."""
+        """Export the exact 500M snapshot as an experimental Core ML bundle.
+
+        Until an Apple execution profile is registered, callers must opt in
+        with an explicit native planner; ``compute_units="cpu_only"`` is the
+        recommended discovery setting.
+        """
 
         normalized = str(format).strip().lower()
         if normalized not in {"coreml", "coremlvlm"}:
@@ -92,9 +97,7 @@ class LibreSmolVLM2(LibreVLMModel):
                     "output=."
                 )
         context_length = kwargs.pop("context_length", 2048)
-        compute_units = str(
-            kwargs.pop("compute_units", "cpu_and_gpu")
-        ).strip().lower()
+        compute_units = kwargs.pop("compute_units", "validated")
         if kwargs:
             raise TypeError(
                 "Unsupported or irrelevant SmolVLM2 Core ML export options: "
@@ -109,6 +112,7 @@ class LibreSmolVLM2(LibreVLMModel):
         from ...export.coreml_vlm import (
             SMOLVLM2_500M_REVISION,
             export_smolvlm2_500m_coreml_package,
+            resolve_smolvlm2_500m_coreml_export_compute_units,
             smolvlm2_500m_coreml_profile,
         )
 
@@ -126,17 +130,9 @@ class LibreSmolVLM2(LibreVLMModel):
         # Resolve the full profile before any download or conversion side
         # effect, including its finite image/text/cache budget invariants.
         smolvlm2_500m_coreml_profile(context_length)
-        valid_compute_units = {
-            "all",
-            "cpu_and_gpu",
-            "cpu_and_ne",
-            "cpu_only",
-        }
-        if compute_units not in valid_compute_units:
-            raise ValueError(
-                f"Invalid Core ML compute_units {compute_units!r}; expected "
-                f"one of {sorted(valid_compute_units)}."
-            )
+        compute_units = resolve_smolvlm2_500m_coreml_export_compute_units(
+            compute_units
+        )
 
         selected_output = output_path or output_alias
         destination = (
@@ -204,7 +200,7 @@ class CoreMLSmolVLM2(LibreSmolVLM2):
         task: str | None = None,
         prompt: Optional[str] = None,
         max_new_tokens: Optional[int] = None,
-        compute_units: str = "all",
+        compute_units: str = "validated",
     ) -> None:
         if str(device).strip().lower() not in {"auto", "cpu"}:
             raise ValueError(

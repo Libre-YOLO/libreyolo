@@ -563,7 +563,11 @@ class LibreEoMT(BaseModel):
         scores, labels = class_logits[0].softmax(dim=-1).max(-1)  # over C+1
         keep = (labels != nc) & (scores > self.PANOPTIC_SCORE_THRESHOLD)
         if not keep.any():
-            return scores[keep], labels[keep], mask_logits.new_zeros((0, orig_h, orig_w))
+            return (
+                scores[keep],
+                labels[keep],
+                mask_logits.new_zeros((0, orig_h, orig_w)),
+            )
         scores, labels = scores[keep], labels[keep]
 
         # Crop the zero-padded border, resize logits to the image, then sigmoid.
@@ -817,7 +821,9 @@ class LibreEoMT(BaseModel):
         scores, labels, mask_probs = self._dedup_panoptic_queries(
             scores, labels, mask_probs, view_ids
         )
-        detections = self._fuse_panoptic_queries(scores, labels, mask_probs, original_size)
+        detections = self._fuse_panoptic_queries(
+            scores, labels, mask_probs, original_size
+        )
 
         return Results(
             boxes=None,
@@ -1128,8 +1134,14 @@ class LibreEoMT(BaseModel):
 
     def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
         normalized_format = str(format).strip().lower()
-        if self.task == "semantic" or normalized_format in {"coreml", "mlpackage"}:
-            return super().export(format=format, opset=opset, **kwargs)
+        if normalized_format == "mlpackage":
+            normalized_format = "coreml"
+        if self.task == "semantic" or normalized_format == "coreml":
+            return super().export(
+                format=normalized_format,
+                opset=opset,
+                **kwargs,
+            )
         raise NotImplementedError(
             "LibreEoMT instance and panoptic export need query-mask runtime contracts."
         )

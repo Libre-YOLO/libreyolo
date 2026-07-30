@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -56,6 +58,7 @@ def _assert_pair_parity_and_sensitivity(
     references: list[np.ndarray],
     actuals: list[np.ndarray],
     *,
+    label: str,
     tolerance: float = 5e-3,
 ) -> None:
     errors = [
@@ -63,7 +66,6 @@ def _assert_pair_parity_and_sensitivity(
         for reference, actual in zip(references, actuals)
     ]
     worst = max(errors)
-    assert worst <= tolerance
     sensitivity_scale = max(
         *(float(np.abs(value).max()) for value in references),
         1e-6,
@@ -72,10 +74,19 @@ def _assert_pair_parity_and_sensitivity(
         float(np.abs(references[1] - references[0]).max())
         / sensitivity_scale
     )
+    print(
+        f"{label}: relative_errors={errors}, worst={worst:.8g}, "
+        f"relative_sensitivity={relative_sensitivity:.8g}"
+    )
+    assert worst <= tolerance
     assert relative_sensitivity > max(100.0 * worst, 1e-5)
 
 
-def test_smolvlm2_500m_coreml_public_bundle_and_state_parity(tmp_path):
+@pytest.mark.parametrize("context_length", [2048, 4096])
+def test_smolvlm2_500m_coreml_public_bundle_and_state_parity(
+    tmp_path,
+    context_length,
+):
     from libreyolo import LibreVLM
     from libreyolo.export.coreml_vlm import (
         COREML_VLM_CAUSAL_MASK_INPUT,
@@ -87,25 +98,46 @@ def test_smolvlm2_500m_coreml_public_bundle_and_state_parity(tmp_path):
         preprocess_smolvlm2_500m_coreml_image,
         wrap_smolvlm2_500m_coreml_components,
     )
+    from libreyolo.models.vlm.parsing import (
+        build_detection_dict,
+        extract_detections,
+    )
 
     source = LibreVLM(
         "smolvlm2-500m",
         device="cpu",
         names=["cat"],
     )
-    bundle = source.export(
-        format="coreml",
-        context_length=2048,
-        output_path=tmp_path / "smolvlm2-500m-2k.coremlvlm",
-        compute_units="cpu_only",
-    )
+    compute_units = os.environ.get(
+        "LIBREYOLO_SMOLVLM2_COREML_COMPUTE_UNITS",
+        "cpu_only",
+    ).strip().lower()
+    print(f"smolvlm2 runtime compute_units={compute_units}")
+    existing_bundle = os.environ.get("LIBREYOLO_SMOLVLM2_COREML_BUNDLE")
+    if existing_bundle:
+        bundle_path = Path(existing_bundle).expanduser()
+        if not bundle_path.is_dir():
+            pytest.fail(
+                "LIBREYOLO_SMOLVLM2_COREML_BUNDLE is not a directory: "
+                f"{bundle_path}"
+            )
+        bundle = str(bundle_path.resolve())
+    else:
+        bundle = source.export(
+            format="coreml",
+            context_length=context_length,
+            output_path=tmp_path / f"smolvlm2-500m-{context_length}.coremlvlm",
+            compute_units=compute_units,
+        )
     deployed = LibreVLM(
         bundle,
         names=["cat"],
-        compute_units="cpu_only",
+        compute_units=compute_units,
+        max_new_tokens=8,
     )
     runtime = deployed._coreml_runtime
     profile = runtime.profile
+    assert profile.context_length == context_length
     components = wrap_smolvlm2_500m_coreml_components(
         source.model,
         profile=profile,
@@ -151,6 +183,7 @@ def test_smolvlm2_500m_coreml_public_bundle_and_state_parity(tmp_path):
     _assert_pair_parity_and_sensitivity(
         vision_references,
         vision_actuals,
+        label="smolvlm2 vision",
     )
 
     id_probes = [
@@ -172,6 +205,7 @@ def test_smolvlm2_500m_coreml_public_bundle_and_state_parity(tmp_path):
     _assert_pair_parity_and_sensitivity(
         embedding_references,
         embedding_actuals,
+        label="smolvlm2 token embedding",
     )
 
     decoder_source = components[COREML_VLM_DECODE_FUNCTION]
@@ -216,18 +250,60 @@ def test_smolvlm2_500m_coreml_public_bundle_and_state_parity(tmp_path):
     _assert_pair_parity_and_sensitivity(
         decoder_references,
         decoder_actuals,
+        label="smolvlm2 stateful decoder",
     )
 
-    first = deployed.chat(
-        _image_probe(41),
-        "Name the dominant colors.",
-        max_new_tokens=8,
-    )
-    second = deployed.chat(
-        _image_probe(41),
-        "Name the dominant colors.",
-        max_new_tokens=8,
-    )
-    assert isinstance(first, str)
-    assert second == first
-    deployed.close()
+    public_probe = _image_probe(41)
+    detection_prompt = deployed._detection_prompt()
+    try:
+        first = deployed.chat(
+            public_probe,
+            detection_prompt,
+            max_new_tokens=8,
+        )
+        second = deployed.chat(
+            public_probe,
+            detection_prompt,
+            max_new_tokens=8,
+        )
+        assert isinstance(first, str)
+        assert first.strip()
+        assert second == first
+
+        items = extract_detections(first)
+        expected = build_detection_dict(
+            items,
+            deployed._name_to_id,
+            public_probe.size,
+            conf_thres=0.25,
+            iou_thres=0.7,
+            max_det=300,
+            classes=None,
+            default_score=deployed._score_detections(items),
+            bbox_key=deployed.BBOX_KEY,
+            coord_divisor=deployed.COORD_DIVISOR,
+            box_format=deployed.BOX_FORMAT,
+        )
+        public_first = deployed.predict(public_probe, verbose=False)
+        public_second = deployed.predict(public_probe, verbose=False)
+        for name in ("xyxy", "conf", "cls"):
+            first_tensor = getattr(public_first.boxes, name)
+            second_tensor = getattr(public_second.boxes, name)
+            assert torch.equal(first_tensor, second_tensor)
+            assert torch.isfinite(first_tensor).all()
+        np.testing.assert_array_equal(
+            public_first.boxes.xyxy.cpu().numpy(),
+            np.asarray(expected["boxes"], dtype=np.float32).reshape(-1, 4),
+        )
+        np.testing.assert_array_equal(
+            public_first.boxes.conf.cpu().numpy(),
+            np.asarray(expected["scores"], dtype=np.float32),
+        )
+        np.testing.assert_array_equal(
+            public_first.boxes.cls.cpu().numpy(),
+            np.asarray(expected["classes"], dtype=np.float32),
+        )
+        assert runtime._active_decode is None
+    finally:
+        deployed.close()
+    assert runtime.closed

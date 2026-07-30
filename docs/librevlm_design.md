@@ -42,10 +42,40 @@ SmolVLM2-500M is the first VLM with an export route. Its experimental Core ML
 path is deliberately not a generic `.mlpackage`: it emits a portable
 `.coremlvlm` directory containing the stateful multifunction package, exactly
 11 pinned processor/tokenizer assets, a hash-bound manifest, and the full
-Apache-2.0 license. Only 2048- and 4096-token contexts are public; Apple
-stateful-runtime parity is still pending. The exact artifact and host contract
-are documented in
+Apache-2.0 license. Only 2048- and 4096-token contexts are public. Both profiles
+have passed saved-package stateful runtime parity and repeated public inference
+on Apple M4 with the explicit CPU-only planner. The exact artifact and host
+contract are documented in
 [`adr/0014-coreml-vlm-bundle-contract.md`](adr/0014-coreml-vlm-bundle-contract.md).
+
+Florence-2-base has a separate experimental `.coremlvlm` contract because its
+DaViT/BART encoder, four decoder cache states, exact three-beam scorer, and
+processor assets differ from SmolVLM2. The complete base checkpoint has passed
+Core ML Tools 9 conversion, package merge, source-weight validation,
+portable-bundle validation, stateful runtime parity, and repeated public
+inference on Apple M4 with the explicit CPU-only planner. See
+[`adr/0015-coreml-florence-contract.md`](adr/0015-coreml-florence-contract.md).
+
+Kosmos-2-patch14-224 has its own experimental `.coremlvlm` contract with
+separate FP32 vision, tied token-embedding, and stateless fixed-prefix decoder
+packages. Its exact MIT checkpoint passed source validation, component
+conversion, portable-bundle validation, two-probe saved-package parity, and
+repeated grounded public inference on Apple M4 with the explicit CPU-only
+planner. See
+[`adr/0017-coreml-kosmos-contract.md`](adr/0017-coreml-kosmos-contract.md).
+
+Qwen3-VL-2B has a separate experimental `.coremlvlm` contract with FP32
+vision/DeepStack, FP16 tied token-embedding, and FP16 stateless fixed-prefix
+decoder packages. The exact Apache-2.0 checkpoint passed source validation,
+component parity, host MRoPE parity, portable-bundle reload, PyTorch/Core ML
+detection parity, and repeated public inference on Apple M4. See
+[`adr/0018-coreml-qwen3vl-contract.md`](adr/0018-coreml-qwen3vl-contract.md).
+
+None of the four bounded bundles is an Apple-validated execution profile yet.
+Core ML export defaults to `compute_units="validated"` and therefore rejects.
+For experimental discovery, callers must opt in explicitly; use
+`compute_units="cpu_only"`. Bundle loaders admit only the planner stated by
+their exact contract. The embedded metadata remains `experimental`.
 
 Florence-2 and Kosmos-2 do not use a chat template: they are driven by task /
 grounding prompts and decode boxes via the processor's `post_process_generation`,
@@ -264,12 +294,19 @@ These are deliberate v1 scoping choices, called out so behavior matches expectat
   association inert (no low-confidence recovery stage). `val()`/mAP is unsupported.
 - **`batch=` does not speed up VLMs.** `predict("folder/")` works, but generation
   runs one image at a time, so a larger `batch=` gives no throughput gain in v1.
-- **Python-API only.** The `libreyolo` CLI does not resolve VLM aliases yet; use
-  `LibreVLM(...)` from Python. `predict`/`track` parity is at the API level.
-- **Core ML is profile-specific.** Only the exact SmolVLM2-500M 2K/4K bundle
-  contract is implemented. Other VLM families, SmolVLM2-2.2B, and the 8K
-  profile remain blocked until each has its own bounded conversion, processor,
-  state, runtime, and memory proof.
+- **CLI export is profile-gated.** `libreyolo export` resolves only the exact
+  Core ML-enabled `smolvlm2-500m`, Florence-2-base, Kosmos-2, and
+  Qwen3-VL-2B aliases. Other VLM sizes, prediction, tracking, and chat remain
+  on the `LibreVLM(...)` Python API.
+- **Core ML is profile-specific.** Exact bundle contracts are implemented for
+  SmolVLM2-500M at 2K/4K and Florence-2-base at a 1024-token encoder/decoder
+  profile, Kosmos-2-patch14-224 at a 128-token stateless-prefix profile, and
+  Qwen3-VL-2B at a 448px/512-token stateless-prefix profile, but none has an
+  Apple execution profile. The default
+  `compute_units="validated"` route fails closed; explicit `cpu_only` is the
+  required experimental planner for Qwen3-VL and Kosmos-2. Other VLM
+  families, larger variants, and longer contexts remain blocked until each
+  has its own bounded conversion, processor, state, runtime, and memory proof.
 - **`chat()` and `prompt=`** apply to the chat-template families only; Florence-2
   and Kosmos-2 are task-token driven (`chat()` raises, `prompt=` is ignored).
 - **Point support is family-specific.** LocateAnything supports `task="point"`

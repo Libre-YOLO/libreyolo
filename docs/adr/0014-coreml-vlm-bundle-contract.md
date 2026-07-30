@@ -27,12 +27,21 @@ LibreYOLO supports one narrow, versioned profile:
 - conversion toolchain: Core ML Tools 9.x and Transformers 5.12.1;
 - public contexts: 2048 and 4096 tokens;
 - deployment target: iOS 18 or macOS 15 and later;
-- precision: FP16 ML Program weights, tensors, and KV state.
+- precision: mixed compute with FP32 vision/decoder, FP16 token embedding,
+  FP16 function I/O, and FP16 KV state.
 
 The 8192-token conversion profile remains an internal specification and is
 rejected by the public exporter/runtime until peak prefill memory is measured
 on Apple hardware. SmolVLM2-2.2B and other VLM architectures require separate
 contracts.
+
+This bounded graph contract is not an Apple hardware execution profile. Every
+package records `coreml_execution_profile_status=experimental`. Public export
+and runtime therefore default to `compute_units="validated"` and reject before
+conversion or native model-proxy creation. A caller must pass an explicit
+native planner to opt into the experimental route; `cpu_only` is the
+recommended discovery planner. Explicit accelerator planners remain
+experimental and carry no placement or numerical-parity claim.
 
 ## Portable artifact
 
@@ -106,9 +115,10 @@ bundle = source.export(
     format="coreml",
     context_length=2048,
     output_path="smol.coremlvlm",
+    compute_units="cpu_only",  # explicit experimental opt-in
 )
 
-deployed = LibreVLM("smol.coremlvlm", compute_units="all")
+deployed = LibreVLM("smol.coremlvlm", compute_units="cpu_only")
 deployed.set_classes(["cat", "dog"])
 result = deployed.predict("image.jpg")
 text = deployed.chat("image.jpg", "Describe the scene.")
@@ -123,12 +133,19 @@ The bundle stays in the `LibreVLM` tier; it is not routed through
 The exact 500M source has:
 
 - source-wrapper parity for the full fixed-grid vision path and Llama decoder;
-- a complete Core ML Tools 9 2048-context conversion;
+- complete Core ML Tools 9 conversions for both public context profiles;
 - multifunction spec, metadata, processor, license, and portable-bundle
   validation on Linux;
 - fake-runtime coverage for named-function loading, fresh state, cursor
   progression, failure cleanup, generation, parsing, and concurrent-request
-  serialization.
+  serialization;
+- real named-function and request-local-state execution on Apple M4 for the
+  2048- and 4096-token packages;
+- two-probe PyTorch/Core ML parity with 0.0258% worst vision error, exact token
+  embeddings, 0.0586% worst stateful-decoder error, and meaningful
+  input-sensitivity margins;
+- repeated public `chat()` and `predict()` inference with fresh state.
 
-Real named-function/state execution on Apple hardware is still pending. The
-support tier remains `experimental` until that parity test passes.
+This hardware evidence validates only the explicit CPU-only planner and exact
+profiles above. No execution-profile-v2 identity is registered yet, so omitting
+`compute_units` intentionally continues to fail closed.

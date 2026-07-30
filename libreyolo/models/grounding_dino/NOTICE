@@ -1,8 +1,7 @@
 Grounding DINO / Transformers provenance
 =========================================
 
-The native Grounding DINO implementation in this directory and its Core ML
-frozen-vocabulary adapter are derived from:
+The native Grounding DINO implementation in this directory is derived from:
 
   Hugging Face Transformers
   https://github.com/huggingface/transformers
@@ -10,12 +9,6 @@ frozen-vocabulary adapter are derived from:
   Annotated tag object: a030302dcd4777bbf042ee46c30c5dbe6d2a2eb2
   Apache License 2.0
   Copyright 2018-2026 The Hugging Face team
-
-The Core ML adapter preserves the cross-modal text path. It freezes only the
-prompt-independent boundary immediately after the BERT text tower, together
-with the exact token ids, masks, position ids, and WordPiece pieces needed for
-host postprocessing. The fixed-stretch image contract and frozen text
-vocabulary are LibreYOLO deployment constraints, not claims made by upstream.
 
 The underlying model architecture and released checkpoints originate from:
 

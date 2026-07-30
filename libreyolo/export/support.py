@@ -337,16 +337,6 @@ _add(
 )
 _add(
     "experimental",
-    ("yolox", "yolo9", "rtdetr", "rfdetr"),
-    ("detect",),
-    ("coreml",),
-    reason=(
-        "Fixed-canvas, batch-one raw-output conversion is available, but "
-        "numeric Core ML runtime parity has not yet been recorded on macOS."
-    ),
-)
-_add(
-    "experimental",
     ("dinov2", "eomt", "pidnet", "lingbotvision"),
     ("semantic",),
     ("tensorrt", "openvino"),
@@ -449,8 +439,7 @@ _add(
     ("segment",),
     tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreml"}),
     reason=(
-        "PicoSAM3's raw ROI component is currently wired only for ONNX and "
-        "Core ML."
+        "PicoSAM3's raw ROI component is currently wired only for ONNX and Core ML."
     ),
 )
 _add(
@@ -1129,159 +1118,615 @@ _add(
     ),
 )
 
-# Core ML uses a fixed-canvas, batch-one raw-output contract. These rows are
-# conversion-enabled, but none is validated until the saved artifact has run
-# through numeric parity on macOS. Keep this list aligned with the strict
-# family/task preflight in export/coreml.py.
+# Core ML validation is deliberately scoped to saved artifacts executed on
+# Apple hardware. Keep these rows aligned with the strict family/task preflight
+# in export/coreml.py, and keep every check mark qualified by its measured
+# checkpoint, canvas, precision, compute-unit profile, and reference graph.
 _COREML_EXPERIMENTAL_REASON = (
     "Fixed-canvas, batch-one raw-output conversion is available, but numeric "
     "Core ML runtime parity has not yet been recorded on macOS."
 )
+_COREML_M4_RAW_REASON = (
+    "A saved FP32 Core ML package executed with `compute_units='cpu_only'` on "
+    "Apple M4/macOS 27 with Core ML Tools 9.0 and matched the named outputs of "
+    "the exact exporter-prepared PyTorch graph."
+)
+_COREML_M4_RAW_GATE = (
+    "The two-probe raw-output gate requires maximum relative error 3e-4, "
+    "minimum relative output sensitivity 1e-6, and at least 100x "
+    "sensitivity-to-error margin."
+)
+_COREML_M4_RAW_SCOPE = (
+    _COREML_M4_RAW_GATE
+    + " It proves conversion fidelity for only the "
+    "stated representative checkpoint and fixed batch-one canvas; it does not "
+    "prove model accuracy, arbitrary image geometry, every size or checkpoint, "
+    "public preprocessing/postprocessing, Neural Engine placement, or device "
+    "performance."
+)
+_COREML_M4_QUERY_ALIGNMENT = (
+    " For set-prediction outputs, parity permits one whole-query assignment "
+    "shared across every semantic output for each probe; it never aligns "
+    "boxes, logits, masks, or keypoints independently."
+)
+_COREML_M4_QUERY_FAMILIES = frozenset(
+    {"deim", "dfine", "ec", "rtdetr", "rtdetrv2", "rtdetrv4"}
+)
+for _family, _checkpoint, _canvas in (
+    ("deim", "LibreDEIMn", 640),
+    ("dfine", "LibreDFINEn", 640),
+    ("ec", "LibreECs", 640),
+    ("picodet", "LibrePICODETs", 320),
+    ("rtdetr", "LibreRTDETRr18", 640),
+    ("rtdetrv2", "LibreRTDETRv2r18", 640),
+    ("rtdetrv4", "LibreRTDETRv4s", 640),
+    ("rtmdet", "LibreRTMDett", 640),
+    ("yolo1", "LibreYOLO1b", 448),
+    ("yolo2", "LibreYOLO2b", 608),
+    ("yolo3", "LibreYOLO3b", 416),
+    ("yolo4", "LibreYOLO4b", 608),
+    ("yolo7", "LibreYOLO7b", 640),
+    ("yolo9_e2e", "LibreYOLO9E2Et", 640),
+    ("yolox", "LibreYOLOXn", 416),
+):
+    _add(
+        "validated",
+        (_family,),
+        ("detect",),
+        ("coreml",),
+        reason=_COREML_M4_RAW_REASON,
+        since="1.5",
+        constraint=(
+            f"FP32 CPU_ONLY prepared-graph parity covers trained {_checkpoint} "
+            f"at a fixed {_canvas} canvas. "
+            + _COREML_M4_RAW_SCOPE
+            + (
+                _COREML_M4_QUERY_ALIGNMENT
+                if _family in _COREML_M4_QUERY_FAMILIES
+                else ""
+            )
+        ),
+    )
 _add(
-    "experimental",
-    (
-        "deim",
-        "dfine",
-        "ec",
-        "picodet",
-        "rtdetrv2",
-        "rtdetrv4",
-        "rtmdet",
-        "yolo1",
-        "yolo2",
-        "yolo3",
-        "yolo4",
-        "yolo7",
-        "yolo9_e2e",
-        "yolo9_p2",
-    ),
+    "validated",
+    ("yolo9",),
     ("detect",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=(
+        "The trained LibreYOLO9t package passed both saved raw-graph parity "
+        "and the public detection/repeat gate on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "The fixed 640 FP32 package passed the two-probe prepared-graph gate "
+        "with `compute_units='cpu_only'`. "
+        + _COREML_M4_RAW_GATE
+        + " Its odd non-square public "
+        "detection path also matched native boxes/classes/scores at IoU >= "
+        "0.95 and score error <= 0.01 and repeated deterministically through "
+        "the default compute-unit planner. This does not identify Neural "
+        "Engine placement or prove accuracy, arbitrary geometry, other sizes "
+        "or checkpoints, or device performance."
+    ),
 )
 _add(
-    "experimental",
+    "validated",
+    ("rfdetr",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "The trained LibreRFDETRn package passed both saved raw-graph parity "
+        "and the public detection/repeat gate on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "The fixed 384 FP32 package passed the two-probe prepared-graph gate "
+        "with `compute_units='cpu_only'`. "
+        + _COREML_M4_RAW_GATE
+        + " Its odd non-square public "
+        "detection path also matched native boxes/classes/scores at IoU >= "
+        "0.95 and score error <= 0.01 and repeated deterministically with the "
+        "runtime requested as ALL. This does not identify actual operator "
+        "placement, claim Neural Engine execution, or prove accuracy, "
+        "arbitrary geometry, other sizes or checkpoints, or device "
+        "performance."
+        + _COREML_M4_QUERY_ALIGNMENT
+    ),
+)
+_add(
+    "validated",
+    ("yolo9_p2",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "The deterministic YOLO9-P2-T transfer fixture passed saved raw-output "
+        "and public detection/repeat parity on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers a deterministic "
+        "YOLO9-P2-T model initialized by the SHA-256-pinned permissive "
+        "LibreYOLO9t transfer checkpoint at a fixed 640 canvas. The raw "
+        "prediction tensor passed at 1.86e-6 maximum relative error, 0.385 "
+        "relative input sensitivity, and a 207,874x sensitivity-to-error "
+        "margin. The odd non-square public path used a 1e-3 confidence gate "
+        "to exclude unstable near-zero random-P2 ties and returned three "
+        "detections with exact classes, minimum matched IoU 0.9999819, maximum "
+        "box error 9.16e-5 source pixel, maximum score error 2.10e-8, and "
+        "bit-exact repeats through the default ALL planner. This proves "
+        "conversion of the extra stride-4 branch and host detection contract, "
+        "not P2 task accuracy, other sizes, arbitrary geometry, Neural Engine "
+        "placement, or device performance. It does not use the restricted "
+        "VisDrone research-preview checkpoint."
+    ),
+)
+_add(
+    "validated",
     ("deimv2",),
     ("detect",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=_COREML_M4_RAW_REASON,
+    since="1.5",
     constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers the permissive "
+        "LibreDEIMv2atto checkpoint at a fixed 320 canvas. "
+        + _COREML_M4_RAW_SCOPE
+        + _COREML_M4_QUERY_ALIGNMENT
+        + " "
         "Only the permissive `atto`, `femto`, `pico`, and `n` variants are "
-        "accepted. DINOv3-backed `s`, `m`, `l`, `x`, and unknown variants "
-        "fail in preflight."
+        "conversion-enabled; hardware validation currently covers `atto` only. "
+        "DINOv3-backed `s`, `m`, `l`, `x`, and unknown variants fail in "
+        "preflight and are outside this claim."
     ),
 )
 _add(
-    "experimental",
-    (
-        "clip",
-        "convnext",
-        "dinov2",
-        "efficientnetv2",
-        "mobilenetv4",
-        "resnet",
-        "siglip2",
-    ),
+    "validated",
+    ("clip",),
     ("classify",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=_COREML_M4_RAW_REASON,
+    since="1.5",
     constraint=(
-        "CLIP and SigLIP2 freeze the current class set and require their native "
-        "input resolution. SigLIP2 preserves the exported softmax or sigmoid "
-        "classification activation."
+        "FP32 CPU_ONLY prepared-graph parity covers LibreCLIPb32 at its fixed "
+        "224 canvas. "
+        + _COREML_M4_RAW_SCOPE
+        + " The current class set is frozen into the artifact and changing it "
+        "requires re-export."
     ),
 )
 _add(
-    "experimental",
-    ("depth_anything", "zipdepth"),
+    "validated",
+    ("siglip2",),
+    ("classify",),
+    ("coreml",),
+    reason=_COREML_M4_RAW_REASON,
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers LibreSigLIP2b16 at its "
+        "fixed 256 canvas. "
+        + _COREML_M4_RAW_SCOPE
+        + " The current class set is frozen into the artifact and changing it "
+        "requires re-export. The artifact preserves the selected exported "
+        "softmax or sigmoid activation."
+    ),
+)
+for _family, _checkpoint, _raw_error, _public_error in (
+    ("convnext", "LibreConvNeXtt-cls", "7.09e-7", "9.24e-7"),
+    ("efficientnetv2", "LibreEfficientNetV2b0-cls", "7.17e-7", "2.39e-7"),
+    ("mobilenetv4", "LibreMobileNetV4s-cls", "2.18e-6", "3.61e-6"),
+    ("resnet", "LibreResNet18-cls", "5.83e-7", "4.92e-7"),
+):
+    _add(
+        "validated",
+        (_family,),
+        ("classify",),
+        ("coreml",),
+        reason=(
+            f"The trained {_checkpoint} package passed saved raw-output "
+            "parity and the public classification/repeat gate on Apple M4."
+        ),
+        since="1.5",
+        constraint=(
+            f"FP32 CPU_ONLY prepared-graph parity covers {_checkpoint} at its "
+            f"fixed 224 canvas with maximum relative error {_raw_error}. "
+            + _COREML_M4_RAW_GATE
+            + " The odd non-square public image path, requested through the "
+            "default ALL planner, preserved all 1000 probabilities within "
+            f"{_public_error}, exact top-1/top-5 classes, and bit-exact "
+            "repeats. This does not identify actual operator placement or "
+            "prove accuracy, arbitrary geometry, other sizes/checkpoints, "
+            "Neural Engine use, or device performance."
+        ),
+    )
+_add(
+    "validated",
+    ("dinov2",),
+    ("classify",),
+    ("coreml",),
+    reason=(
+        "A DINOv2-S-with-registers source model with a deterministic "
+        "three-class linear head passed saved raw-output parity and the public "
+        "classification/repeat gate on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY evidence covers the size-n projector and official "
+        "pretrained DINOv2-S-with-registers backbone at a fixed 224 canvas. "
+        "A deterministic three-class head passed the 3e-4 two-probe raw gate, "
+        "meaningful input-sensitivity checks, public probability/top-k "
+        "agreement, and exact repeats. Export eagerly bakes the model's own "
+        "fixed-canvas positional table because Core ML Tools 9 cannot lower "
+        "`aten._upsample_bicubic2d_aa`; the live PyTorch model is restored and "
+        "the public native-versus-Core-ML gate still passes. This proves the "
+        "graph and host classification contract, not model accuracy, a "
+        "trained LibreYOLO head, other projector sizes, arbitrary geometry, "
+        "Neural Engine placement, or device performance. The documented "
+        "`LibreDINOv2n-cls.pt` repository is not publicly downloadable and is "
+        "outside this evidence."
+    ),
+)
+_add(
+    "validated",
+    ("depth_anything",),
     ("depth",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
-)
-_add(
-    "experimental",
-    ("nafnet", "realesrgan"),
-    ("restore",),
-    ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=(
+        "The permissively licensed trained LibreDepthAnythingV2s-depth "
+        "package passed saved raw-output and public depth/repeat parity on "
+        "Apple M4."
+    ),
+    since="1.5",
     constraint=(
-        "The source image must exactly match the fixed export canvas. Re-export, "
-        "crop, or tile instead of padding an arbitrary smaller image to the canvas."
+        "FP32 CPU_ONLY prepared-graph parity covers "
+        "LibreDepthAnythingV2s-depth at its fixed 518 canvas with 1.11e-6 "
+        "maximum relative error, 0.108 relative input sensitivity, and a "
+        "98,037x sensitivity-to-error margin. The public path reloaded a "
+        "pristine checkpoint after export, independently reproduced the "
+        "OpenCV stretch oracle, and preserved square and odd 173x257 sources "
+        "within 4.14e-5 relative error with bit-exact repeats. This proves "
+        "conversion and fixed-stretch host geometry for the Apache-2.0 `s` "
+        "checkpoint, not metric depth, model accuracy, other sizes or "
+        "checkpoints, Neural Engine placement, or device performance. "
+        "Published `b`, `l`, and `g` checkpoints remain non-commercial."
     ),
 )
 _add(
-    "experimental",
-    ("dinov2", "lingbotvision", "pidnet"),
-    ("semantic",),
+    "validated",
+    ("zipdepth",),
+    ("depth",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=(
+        "The trained LibreZipDepthb-depth package passed saved raw-output "
+        "and public depth/repeat parity on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers LibreZipDepthb-depth at "
+        "its fixed 384 canvas with 1.46e-5 maximum relative error, 0.628 "
+        "relative input sensitivity, and a 43,237x sensitivity-to-error "
+        "margin. The public path reloaded a pristine checkpoint after "
+        "export, independently reproduced the OpenCV stretch oracle, and "
+        "preserved square and odd 173x257 sources within 2.40e-6 relative "
+        "error with bit-exact repeats. This proves conversion and "
+        "fixed-stretch host geometry for the `b` checkpoint, not metric "
+        "depth, model accuracy, other sizes or checkpoints, Neural Engine "
+        "placement, or device performance."
+    ),
 )
 _add(
-    "experimental",
+    "validated",
+    ("nafnet",),
+    ("restore",),
+    ("coreml",),
+    reason=(
+        "The trained LibreNAFNetl-restore-sidd package passed saved "
+        "raw-output and public restoration/repeat parity on Apple M4 after "
+        "one measured converter fusion was disabled."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers "
+        "LibreNAFNetl-restore-sidd at its fixed 256 canvas. The unmodified "
+        "coremltools 9 elementwise-to-batchnorm fusion failed the 3e-4 raw "
+        "gate at 5.07e-4. LibreYOLO therefore disables exactly "
+        "`common::fuse_elementwise_to_batchnorm`, preserves the source's 72 "
+        "mul/add affine pairs, and records pass profile "
+        "`nafnet_preserve_elementwise_affine_v1`; the resulting package "
+        "passed at 1.63e-5 maximum relative error, 1.028 relative input "
+        "sensitivity, and a 63,346x sensitivity-to-error margin. The public "
+        "fixed-256 path differed in one of 196,608 uint8 channel values by "
+        "one, with mean absolute delta 5.09e-6 and bit-exact repeats. The "
+        "source must exactly match the export canvas. This proves the SIDD "
+        "L checkpoint and fixed geometry, not restoration quality, other "
+        "weights/sizes/canvases, Neural Engine placement, or device "
+        "performance."
+    ),
+)
+_add(
+    "validated",
+    ("realesrgan",),
+    ("restore",),
+    ("coreml",),
+    reason=(
+        "The trained LibreRealESRGAN x4-t package passed saved raw-output and "
+        "public restoration/repeat parity on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers "
+        "LibreRealESRGANx4t-restore at its fixed 64 canvas with 1.79e-6 "
+        "maximum relative error, 0.851 relative input sensitivity, and a "
+        "477,097x sensitivity-to-error margin. The public default-ALL path "
+        "restored an exact 64x64 source to 256x256 RGB with maximum quantized "
+        "uint8 delta 1, mean absolute delta 2.03e-5, and bit-exact repeats. "
+        "Odd or non-native source geometry fails closed instead of silently "
+        "padding or resizing. This proves the x4-t graph and fixed-geometry "
+        "host contract, not restoration quality, other sizes/checkpoints, "
+        "arbitrary canvases, Neural Engine placement, or device performance."
+    ),
+)
+_add(
+    "validated",
+    ("dinov2",),
+    ("semantic",),
+    ("coreml",),
+    reason=(
+        "A DINOv2-S-with-registers source model with a deterministic "
+        "three-class dense head passed saved raw-output parity and the public "
+        "semantic-map/repeat gate on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY evidence covers the size-n projector and official "
+        "pretrained DINOv2-S-with-registers backbone at the fixed 518 canvas. "
+        "A deterministic three-class dense head passed the 3e-4 two-probe raw "
+        "gate, meaningful input-sensitivity checks, public semantic-map "
+        "agreement, and exact repeats. Export eagerly bakes the model's own "
+        "fixed-canvas positional table because Core ML Tools 9 cannot lower "
+        "`aten._upsample_bicubic2d_aa`; the live PyTorch model is restored and "
+        "the public native-versus-Core-ML gate still passes. This proves the "
+        "graph and host semantic contract, not model accuracy, a trained "
+        "LibreYOLO head, other projector sizes, arbitrary geometry, Neural "
+        "Engine placement, or device performance. The documented "
+        "`LibreDINOv2n.pt` repository is not publicly downloadable and is "
+        "outside this evidence."
+    ),
+)
+_add(
+    "validated",
+    ("lingbotvision",),
+    ("semantic",),
+    ("coreml",),
+    reason=_COREML_M4_RAW_REASON,
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers trained "
+        "LibreLingBotVisions-sem at a fixed 512 canvas. "
+        + _COREML_M4_RAW_SCOPE
+    ),
+)
+_add(
+    "validated",
+    ("pidnet",),
+    ("semantic",),
+    ("coreml",),
+    reason=_COREML_M4_RAW_REASON,
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers trained LibrePIDNets-sem "
+        "at a fixed 1024 canvas. "
+        + _COREML_M4_RAW_SCOPE
+    ),
+)
+_add(
+    "validated",
     ("fomo",),
     ("point",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=(
+        "A deterministically trained license-clean FOMO-S fixture passed saved "
+        "raw-output and public point/repeat parity on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers a generated FOMO-S model "
+        "at a fixed 96 canvas with 3.51e-7 maximum relative error, 7.46e-3 "
+        "relative input sensitivity, and a 21,284x sensitivity-to-error "
+        "margin. The odd non-square public path returned 29 nonempty points "
+        "with exact classes/order/XY placement, maximum score error 4.47e-8, "
+        "and bit-exact repeats through the default ALL planner. This proves "
+        "the point graph and host peak-placement contract, not task accuracy, "
+        "hosted weights, other sizes, arbitrary geometry, Neural Engine "
+        "placement, or device performance."
+    ),
 )
 _add(
-    "experimental",
+    "validated",
     ("l2cs",),
     ("gaze",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=(
+        "Generated L2CS r18, r34, r50, r101, and r152 models passed saved "
+        "two-head parity and the public face-crop gaze/repeat gate on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY evidence covers all five supported ResNet depths at "
+        "the fixed 448 face-crop canvas with 90-bin yaw and pitch heads. Each "
+        "deterministic generated graph passed the 3e-4 two-probe raw gate, "
+        "meaningful input-sensitivity checks, decoded-angle agreement within "
+        "5e-4 radians, and exact repeats. The package accepts one already "
+        "cropped face; face detection and multi-face crop orchestration remain "
+        "host operations. This proves graph and host decode fidelity, not gaze "
+        "accuracy, arbitrary checkpoints, Neural Engine placement, or device "
+        "performance. Published Gaze360-derived weights are research/"
+        "non-commercial and non-redistributable, so they were not loaded and "
+        "remain outside this evidence."
+    ),
 )
 _add(
-    "experimental",
+    "validated",
     ("dfine",),
     ("segment",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=_COREML_M4_RAW_REASON,
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph and public-result parity covers trained "
+        "LibreDFINEs/m/l/x-seg checkpoints at a fixed 640 canvas. Small and "
+        "extra-large pass the standard 3e-4 raw gate; medium and large use "
+        "narrow size-specific mask-logit gates of 4e-4 and 5e-4 after "
+        "measuring 3.405e-4 and 4.305e-4 maximum relative mask error. "
+        + _COREML_M4_RAW_SCOPE
+        + _COREML_M4_QUERY_ALIGNMENT
+    ),
 )
 _add(
-    "experimental",
+    "validated",
     ("ec",),
-    ("segment", "pose"),
+    ("segment",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=_COREML_M4_RAW_REASON,
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers trained LibreECs-seg at a "
+        "fixed 640 canvas. "
+        + _COREML_M4_RAW_SCOPE
+        + _COREML_M4_QUERY_ALIGNMENT
+    ),
 )
 _add(
-    "experimental",
+    "validated",
+    ("ec",),
+    ("pose",),
+    ("coreml",),
+    reason=_COREML_M4_RAW_REASON,
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers trained LibreECs-pose at a "
+        "fixed 640 canvas. "
+        + _COREML_M4_RAW_SCOPE
+        + _COREML_M4_QUERY_ALIGNMENT
+    ),
+)
+_add(
+    "validated",
     ("rfdetr",),
-    ("segment", "pose", "obb"),
+    ("obb",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=_COREML_M4_RAW_REASON,
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph and public-result parity covers trained "
+        "LibreRFDETRn-obb at a fixed 384 canvas and LibreRFDETRm-obb at a "
+        "fixed 576 canvas. "
+        + _COREML_M4_RAW_SCOPE
+        + _COREML_M4_QUERY_ALIGNMENT
+        + " LibreRFDETRs-obb and LibreRFDETRl-obb are explicitly rejected: "
+        "their 512- and 704-canvas M4 runs measured 0.52% and 2.66% box "
+        "divergence respectively; the large checkpoint also measured 1.68% "
+        "logit divergence."
+    ),
 )
 _add(
-    "experimental",
+    "validated",
+    ("rfdetr",),
+    ("pose",),
+    ("coreml",),
+    reason=(
+        "A fresh scoped Apple M4 rerun passed saved raw-output parity under "
+        "RF-DETR pose's enforced preserve-division CPU profile. The public "
+        "pose path was deterministic with exact classes, but one low-ranked "
+        "box measured IoU 0.9920 against the 0.995 gate."
+    ),
+    since="1.5",
+    constraint=(
+        "Only FP32, `compute_units='cpu_only'`, and conversion pass profile "
+        "`rfdetr_pose_preserve_division_v1` are supported. The profile removes "
+        "only `common::divide_to_multiply`; a trained LibreRFDETRx-pose package "
+        "at fixed 576 passed raw named-output parity (boxes, logits, and "
+        "keypoints). "
+        + _COREML_M4_RAW_GATE
+        + " The odd non-square public path repeated deterministically with "
+        "exact classes; its minimum matched box IoU was 0.9920, just below "
+        "the 0.995 public gate, so the full public keypoint assertion remains "
+        "a documented caveat. ALL/GPU exceeded the fixed 3e-4 raw parity "
+        "gate. CPU_AND_NE is excluded "
+        "because FP32 ML Programs are CPU-placed, not evidence of Neural "
+        "Engine execution. Nonconforming, tampered, missing-profile, and "
+        "legacy artifacts fail closed. This proves only this checkpoint/"
+        "profile's conversion and public contract, not pose accuracy, "
+        "arbitrary geometry, other sizes/checkpoints, or device performance."
+        + _COREML_M4_QUERY_ALIGNMENT
+    ),
+)
+_add(
+    "blocked",
+    ("rfdetr",),
+    ("segment",),
+    ("coreml",),
+    reason=(
+        "Fresh FP32 CPU_ONLY execution on Apple M4 converted and loaded, but "
+        "named outputs diverged from the prepared PyTorch graph even after "
+        "whole-query alignment (boxes 2.19e-02, logits 3.38e-02, masks "
+        "1.63e-01 relative error). Distinct near-tied encoder proposals changed "
+        "order across runtimes and were paired with different learned query "
+        "slots, causing a discontinuous decoder change. An index-biased "
+        "tie-break would also reorder valid native proposals and is not "
+        "semantics-preserving."
+    ),
+)
+_add(
+    "validated",
     ("facerec",),
     ("embed",),
     ("coreml",),
     reason=(
-        "The complete pinned 65.1M-parameter ONNX recognition head has "
-        "numeric ONNX-to-PyTorch parity, exact eager-to-trace parity, and "
-        "Core ML Tools 9 FP16/FP32 ML Program conversion evidence; macOS "
-        "runtime parity is pending."
+        "The complete pinned 65.1M-parameter recognition head passed saved "
+        "raw-output, normalized public embedding, repeat, cosine, and gallery "
+        "parity on Apple M4."
     ),
+    since="1.5",
     constraint=(
-        "Fixed batch-one aligned-face component. Face detection, five-point "
-        "OpenCV alignment, preprocessing, and L2 normalization remain host "
-        "operations. The package accepts one aligned crop and emits one raw "
-        "embedding; galleries are fingerprint-bound to the complete artifact."
+        "Only FP32 with `compute_units='cpu_only'` is supported. The official "
+        "librefacerec-l package passed two-probe raw parity at 5.71e-6 maximum "
+        "relative error, normalized embedding parity at 8.20e-7 maximum "
+        "absolute error, cosine error 2.98e-7, bit-exact raw/public repeats, "
+        "and the gallery match contract. FP16 measured 1.99e-2 raw relative "
+        "error and fails closed; non-CPU runtime requests and legacy/tampered "
+        "profile metadata also fail before a native model proxy is created. "
+        "This is a fixed batch-one aligned-face component: face detection, "
+        "five-point OpenCV alignment, preprocessing, and L2 normalization "
+        "remain host operations. The package accepts one aligned crop and "
+        "emits one raw embedding; galleries are fingerprint-bound to the "
+        "complete artifact. This proves conversion fidelity and orchestration, "
+        "not face-recognition accuracy, arbitrary checkpoints, Neural Engine "
+        "placement, or device performance."
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("eomt",),
     ("semantic", "segment", "panoptic"),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=(
+        "Every published trained EoMT Core ML profile passed saved raw-output "
+        "and task-aware public-path parity on Apple M4."
+    ),
+    since="1.5",
     constraint=(
-        "Fixed square DINOv2 S/B/L component. The graph emits compact raw "
-        "class-query logits and stride-4 mask logits. LibreYOLO preserves "
-        "EoMT's exact shortest-edge split/stitch geometry for semantic and "
-        "longest-edge top-left pad/query decoding for instance and panoptic "
-        "tasks on the host. The functional attention-mask graph has real "
-        "Core ML Tools 9 conversion evidence; macOS runtime parity is pending."
+        "FP32 CPU_ONLY prepared-graph and public-path evidence covers "
+        "LibreEoMTl-sem at 512, LibreEoMTl-seg at 640 and 1280, and "
+        "LibreEoMTs/b/l-panoptic at 640. The two-probe raw-output gate requires "
+        "maximum relative error 3e-4, minimum relative output sensitivity "
+        "1e-6, and at least 100x sensitivity-to-error margin. Public semantic "
+        "maps, instance masks/boxes/classes/scores, and whole panoptic segments "
+        "passed their task-aware assignment and repeat gates. The graph emits "
+        "compact class-query and stride-4 mask logits; exact split/stitch, "
+        "top-left padding, query decoding, and final geometry remain host "
+        "operations. This proves only the stated checkpoints and profiles, not "
+        "model accuracy, arbitrary geometry, Neural Engine placement, or "
+        "device performance."
     ),
 )
 _add(
@@ -1289,59 +1734,123 @@ _add(
     ("segformer",),
     ("semantic",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=(
+        "LibreSegformerb0-sem passed saved FP32 CPU_ONLY raw-logit parity and "
+        "the public semantic-map gate on Apple M4; its published ADE20K "
+        "checkpoint remains restricted to research or evaluation."
+    ),
     constraint=(
         "All b0-b5 eval graphs pass fixed-canvas two-probe TorchScript trace "
-        "parity. The architecture/source is permissive, but published ADE20K "
-        "weights remain restricted to research or evaluation."
+        "parity. Apple runtime evidence covers b0 at a fixed 512 canvas with "
+        "the 3e-4 raw gate and public map agreement. The architecture/source "
+        "is permissive, but published ADE20K weights remain restricted to "
+        "research or evaluation."
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("swinir",),
     ("restore",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=(
+        "All three trained SwinIR packages passed saved FP32 CPU_ONLY "
+        "raw-image parity and the public restored-image gate on Apple M4."
+    ),
+    since="1.5",
     constraint=(
         "Sizes `s`, `m`, and `l` are enabled at their native 64x64 canvas. "
         "Every full graph has bit-exact two-probe TorchScript parity and Core "
-        "ML Tools 9 FP16 ML Program conversion evidence. The exact source "
-        "canvas is required; non-native canvases and Apple runtime parity "
-        "remain pending."
+        "ML Tools 9 ML Program conversion evidence. Apple runtime evidence "
+        "covers the trained `s`, `m`, and `l` FP32 graphs at the exact 64x64 "
+        "source canvas under the 3e-4 raw gate and public restore/repeat gate. "
+        "FP16 and non-native canvases remain unproven."
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("yolonas",),
-    ("detect", "pose"),
+    ("detect",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=(
+        "A license-clean generated YOLO-NAS-S detection graph passed saved "
+        "raw-output and public detection/repeat parity on Apple M4."
+    ),
+    since="1.5",
     constraint=(
-        "Square fixed canvas with the native longest-side cap: 636-centered RGB "
-        "padding for detect; 640 top-left placement, bottom/right padding, and "
-        "BGR graph input for pose. Current evidence uses license-clean synthetic "
-        "graphs, not restricted published weights."
+        "FP32 CPU_ONLY prepared-graph parity covers a deterministic synthetic "
+        "size-S detection fixture at fixed 96 with maximum relative errors "
+        "1.79e-7 for boxes and 1.50e-6 for scores. The odd non-square public "
+        "path returned five detections with minimum matched IoU 0.9999996, "
+        "maximum score error 2.24e-8, exact classes, and bit-exact repeats. "
+        "Production geometry remains a square fixed canvas with the native "
+        "636-centered RGB longest-side cap. No restricted published weights "
+        "were loaded; this proves graph/host-contract fidelity, not model "
+        "accuracy, native-640 fidelity, other sizes, arbitrary geometry, "
+        "Neural Engine placement, or device performance."
     ),
 )
 _add(
-    "experimental",
+    "validated",
+    ("yolonas",),
+    ("pose",),
+    ("coreml",),
+    reason=(
+        "A license-clean generated YOLO-NAS-N pose graph passed saved raw-output "
+        "and public pose/repeat parity on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers a deterministic synthetic "
+        "size-N pose fixture at fixed 96 with maximum relative errors 1.91e-7 "
+        "for boxes, 2.07e-6 for scores, 1.58e-7 for keypoint XY, and 1.66e-6 "
+        "for keypoint confidence. The odd non-square public path returned five "
+        "poses with minimum matched IoU 0.9999988, maximum box error 9.16e-5 "
+        "source pixel, maximum score error 5.59e-9, maximum keypoint XY error "
+        "3.06e-5 source pixel, maximum keypoint-confidence error 1.05e-7, "
+        "exact classes, and bit-exact repeats. Production geometry remains a "
+        "square fixed canvas with 640 top-left BGR placement and bottom/right "
+        "padding. No restricted published weights were loaded; this proves "
+        "graph/host-contract fidelity, not model accuracy, native-640 "
+        "fidelity, other sizes, arbitrary geometry, Neural Engine placement, "
+        "or device performance."
+    ),
+)
+_add(
+    "validated",
     ("picosam3",),
     ("segment",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=(
+        "A deterministic license-clean PicoSAM3 ROI component passed saved "
+        "raw-output and two-ROI public segmentation/repeat parity on Apple M4."
+    ),
+    since="1.5",
     constraint=(
-        "Raw fixed batch-one 96x96 ROI component. The host expands each box "
-        "by 10%, crops and resizes the ROI, then places mask logits back into "
-        "the source image; point/text/mask prompts remain unsupported."
+        "FP32 CPU_ONLY prepared-graph parity covers the PicoSAM3-Pico fixed "
+        "batch-one 96x96 ROI component with 1.57e-6 maximum relative mask-logit "
+        "error, 0.951 relative input sensitivity, and a 608,655x "
+        "sensitivity-to-error margin. The odd non-square public path returned "
+        "exactly both requested ROIs with exact classes, box and mask IoU 1.0, "
+        "maximum score error 1.79e-7, and bit-exact repeats through the default "
+        "ALL planner. The host expands each box by 10%, crops and resizes the "
+        "ROI, then places mask logits back into the source image; point, text, "
+        "and mask prompts remain unsupported. This proves graph and host "
+        "placement fidelity, not segmentation accuracy, other checkpoints, "
+        "arbitrary profiles, Neural Engine placement, or device performance."
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("rtmdet",),
     ("segment",),
     ("coreml",),
-    reason=_COREML_EXPERIMENTAL_REASON,
+    reason=_COREML_M4_RAW_REASON,
+    since="1.5",
     constraint=(
+        "FP32 CPU_ONLY prepared-graph parity covers trained LibreRTMDett-seg "
+        "at a fixed 640 canvas. "
+        + _COREML_M4_RAW_SCOPE
+        + " "
         "Fixed batch-one canvas divisible by 32. The graph emits three class "
         "maps, three box-distance maps, three 169-parameter dynamic-kernel "
         "maps, and one stride-8 mask feature map; LibreYOLO performs per-level "
@@ -1350,135 +1859,292 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("ppocr",),
     ("ocr",),
     ("coreml",),
     reason=(
-        "A strict iOS18/macOS15 two-function ML Program package is available, "
-        "but numeric Core ML runtime parity has not yet been recorded on macOS."
+        "The trained tiny and large PP-OCR multifunction packages passed both "
+        "named-function parity and the deterministic public OCR path on Apple M4."
     ),
+    since="1.5",
     constraint=(
-        "FP32 only. The detector and recognizer use named bounded-flexible "
-        "TensorType functions; DB contours, perspective crops, reading order, "
-        "bucketing, and CTC decoding remain exact host operations. Export "
-        "requires an explicit finite rec_max_width; overflow is an error, "
-        "never silent truncation."
+        "FP32 CPU_ONLY evidence covers LibrePPOCRt-ocr and LibrePPOCRl-ocr. "
+        "Detector and recognizer outputs passed the 3e-4 two-probe raw gate "
+        "with sensitivity checks. The public OCR fixture preserved nonempty "
+        "text exactly, bounding quads within two source pixels, recognition "
+        "and detection confidence within 1e-3, and exact repeats. Both named "
+        "functions use bounded-flexible TensorType inputs; DB contours, "
+        "perspective crops, reading order, bucketing, and CTC decoding remain "
+        "host operations. Export requires a finite rec_max_width and rejects "
+        "overflow rather than truncating."
+    ),
+)
+_add(
+    "validated",
+    ("sam2",),
+    ("segment",),
+    ("coreml",),
+    reason=(
+        "All four official SAM2.1 image checkpoints passed saved-package "
+        "multifunction parity and the public encode-once/prompt-many path on "
+        "Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 with `compute_units='cpu_only'`; LibreSAM2 tiny, small, "
+        "base-plus, and large passed the fixed 1024 model-ready encoder and "
+        "all 19 admitted point/box/points+box single/multimask functions for "
+        "P=1..4. The saved packages passed named-output parity against "
+        "pristine PyTorch oracles under the 3e-4 two-probe relative gate, "
+        "meaningful input-sensitivity checks, artifact reload, and the public "
+        "cached-prompt/dispatch path. Core ML Tools 9 cannot lower SAM2's "
+        "captured `aten.where.ScalarOther`, so capture applies exactly "
+        "PyTorch's public default decomposition for that one overload and "
+        "proves the alternate captured probe bit-exact. Raw-image "
+        "preprocessing, prompt transforms, query loops, and mask upscaling "
+        "remain host operations. This validates the four released SAM2.1 "
+        "image checkpoints and P<=4 packages, not segmentation accuracy, "
+        "larger prompt bounds, video memory/tracking, Neural Engine placement, "
+        "or device performance."
     ),
 )
 _add(
     "experimental",
-    ("edgetam", "mobilesam", "sam", "sam2", "sam3"),
+    ("sam3",),
     ("segment",),
     ("coreml",),
     reason=(
-        "A strict iOS18/macOS15 seven-function ML Program package is "
-        "implemented, but numeric Core ML runtime parity has not yet been "
-        "recorded on macOS."
+        "A strict iOS18/macOS15 direct-fixed-P multifunction ML Program "
+        "package is implemented, but SAM3 saved-package runtime parity remains "
+        "pending. The Apple M4 campaign reached the gated checkpoint boundary, "
+        "but the validation account had not been granted facebook/sam3 access, "
+        "so no model graph was loaded or claimed."
     ),
     constraint=(
-        "FP32 only. One fixed model-ready image encoder and six named prompt "
+        "FP32 only. One fixed model-ready image encoder and six source prompt "
         "decoders cover points, boxes, points+boxes, and single/multimask "
-        "modes. Point count is bounded by prompt_max_points (default 16); "
-        "raw-image preprocessing, prompt transforms, query loops, and mask "
-        "upscaling remain exact host operations. SAM3 is visual-prompt-only "
-        "and converted artifacts are local-user-only under its custom license."
+        "modes. Each admitted point count is an exact fixed runtime function "
+        "bounded by prompt_max_points (default 16); sentinel padding is "
+        "forbidden. Raw-image preprocessing, prompt transforms, query loops, "
+        "and mask upscaling remain exact host operations. SAM3 is "
+        "visual-prompt-only and converted artifacts are local-user-only under "
+        "its custom license."
+    ),
+)
+_add(
+    "validated",
+    ("sam",),
+    ("segment",),
+    ("coreml",),
+    reason=(
+        "All three official SAM-1 checkpoints (ViT-B/base, ViT-L/large, and "
+        "ViT-H/huge) passed every saved multifunction graph and the public "
+        "encode-once/prompt-many path on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 with `compute_units='cpu_only'`; the fixed 1024 model-ready "
+        "encoder and all 19 admitted point/box/points+box single/multimask "
+        "functions for P=1..4 passed named-output parity against pristine "
+        "PyTorch oracles for the base, large, and huge checkpoints under the "
+        "3e-4 two-probe relative gate, meaningful input-sensitivity checks, "
+        "artifact reload, and the public cached-prompt/dispatch gate. The base "
+        "run exercised all 37 output contracts with a maximum relative error "
+        "of 1.175e-4 and a minimum 238.5x "
+        "sensitivity-to-conversion-error margin. The eager oracle is released "
+        "before Core ML proxy creation because retaining both heavyweight "
+        "runtimes can fatal-abort the macOS process; the split-process proof "
+        "and the lifecycle-reordered normal pytest both passed. Raw-image "
+        "preprocessing, prompt transforms, query loops, and mask upscaling "
+        "remain host operations. This validates the three released SAM-1 "
+        "checkpoints and P<=4 packages, not segmentation accuracy, larger "
+        "prompt bounds, Neural Engine placement, or device performance."
+    ),
+)
+_add(
+    "validated",
+    ("edgetam",),
+    ("segment",),
+    ("coreml",),
+    reason=(
+        "The exact reviewed EdgeTAM edge checkpoint passed every saved "
+        "multifunction graph and the public encode-once/prompt-many path on "
+        "Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 with `compute_units='cpu_only'`; the fixed 1024 model-ready "
+        "encoder and all 19 admitted point/box/points+box single/multimask "
+        "functions for P=1..4 passed named-output parity, pristine post-export "
+        "reload, and the public cached-prompt/repeat gate. Core ML Tools 9 "
+        "cannot lower the captured `aten.where.ScalarOther` used by EdgeTAM's "
+        "single-mask stability selection, so LibreYOLO applies exactly the "
+        "public PyTorch default decomposition for that overload and records "
+        "capture profile `edgetam_where_scalarother_v1`; the captured alternate "
+        "probe remained bit-exact. Saved-package maximum relative errors were "
+        "1.99e-6 for masks and 9.68e-7 for IoU scores. Raw-image "
+        "preprocessing, prompt transforms, query loops, and mask upscaling "
+        "remain host operations. This validates the exact released edge "
+        "checkpoint and P<=4 package, not segmentation accuracy, larger prompt "
+        "bounds, other checkpoints, Neural Engine placement, or device "
+        "performance."
+    ),
+)
+_add(
+    "validated",
+    ("mobilesam",),
+    ("segment",),
+    ("coreml",),
+    reason=(
+        "The exact reviewed MobileSAM tiny checkpoint passed every saved "
+        "multifunction graph and the public encode-once/prompt-many path on "
+        "Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "FP32 with `compute_units='cpu_only'`; the fixed model-ready encoder "
+        "and every admitted point/box/points+box single/multimask decoder "
+        "passed named-output parity for exact N=1, N=4, and N=16 packages. "
+        + _COREML_M4_RAW_GATE
+        + " Public cached-prompt and repeat gates also passed. Core ML Tools "
+        "9 on the validation M4 permits exactly "
+        "one resident function proxy for this package; the backend churns "
+        "decoder proxies because multiple resident native proxies can "
+        "fatal-abort the process. Raw-image preprocessing, prompt transforms, "
+        "query loops, and mask upscaling remain host operations. This validates "
+        "the pinned Apache-2.0 source checkpoint, LibreYOLO mirror, and "
+        "tensor-value identity chain only; other structurally compatible "
+        "states remain unknown-local, local-only, and non-redistributable. It "
+        "does not prove segmentation accuracy, arbitrary package profiles, "
+        "Neural Engine placement, or device performance."
     ),
 )
 
 # Explicit Core ML walls. A row must not disappear into get_support()'s
 # fallback because the generated compatibility table is also the work queue.
 _add(
-    "experimental",
+    "validated",
     ("birefnet",),
     ("matte",),
     ("coreml",),
     reason=(
-        "The exact `t` and `l` graphs convert with Apple's post-9.0 "
-        "torchvision::deform_conv2d ML Program lowering, but numeric runtime "
-        "and matte-quality parity have not yet been recorded on Apple Silicon."
+        "The published MIT `l` checkpoint passed saved raw-logit parity and "
+        "the public non-square matte path on Apple M4 using Apple's exact "
+        "post-9.0 torchvision::deform_conv2d lowering."
     ),
+    since="1.5",
     constraint=(
-        "Fixed 1024x1024, batch one, raw matte logits. Stable Core ML Tools "
-        "9.0 predates the required lowering; export feature-detects the Apple "
-        "converter implementation instead of trusting its version string. "
-        "Published `l` weights are MIT; `t` artifacts remain local-user-only "
-        "until their upstream weight provenance is explicit."
+        "Fixed 1024x1024, batch one, FP32 raw matte logits. The trained `l` "
+        "package passed the two-probe prepared-graph gate with "
+        "`compute_units='cpu_only'`, then independently passed "
+        "`ComputeUnit.ALL`. "
+        + _COREML_M4_RAW_GATE
+        + " An odd 173x257 public RGB image also matched the native "
+        "stretch/ImageNet preprocessing and sigmoid/bilinear matte placement "
+        "within 3e-4, with exact repeat inference. Stable Core ML Tools 9.0 "
+        "predates the required lowering; validation pinned Apple commit "
+        "`d5d4267a8849cd39367e17a2978629d3b341d973`, and export "
+        "feature-detects the converter implementation instead of trusting its "
+        "unchanged version string. The exact `t` graph also converts, but its "
+        "weights remain local-user-only and have no trained hardware proof "
+        "until upstream provenance is explicit. This proves conversion and "
+        "public-path fidelity for the stated `l` checkpoint, not matte "
+        "quality, Neural Engine placement, or device performance."
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("owlv2",),
     ("detect",),
     ("coreml",),
     reason=(
-        "The current finite class vocabulary is frozen into an image-only "
-        "detector graph. Strict TorchScript and reference preprocessing parity "
-        "are implemented; numeric Core ML runtime parity is pending."
+        "The frozen-vocabulary OWLv2-b16 and OWLv2-l14 packages passed saved "
+        "raw-output parity and the public preprocessing/postprocessing path "
+        "on Apple M4."
     ),
+    since="1.5",
     constraint=(
-        "Fixed native 960x960 (`b16`) or 1008x1008 (`l14`) FP32 TensorType "
-        "input with exact pad-before-Gaussian-resize preprocessing. The text "
-        "tower and tokenizer are intentionally absent at runtime, so changing "
-        "classes requires re-export. Published mirror provenance must be "
-        "completed before converted weights are treated as release artifacts."
+        "The `b16` checkpoint's fixed 960x960 and `l14` checkpoint's fixed "
+        "1008x1008 FP32 TensorType packages passed the two-probe prepared-graph "
+        "gate with `compute_units='cpu_only'`. "
+        + _COREML_M4_RAW_GATE
+        + " An odd non-square public image also matched exact pad-before-Gaussian-"
+        "resize preprocessing, boxes, scores, and classes through the default "
+        "runtime planner for both sizes. `half=True` fails closed because Core "
+        "ML Tools 9 FP16 runtime outputs diverge on Apple Silicon. "
+        "The text tower and tokenizer are absent from the runtime artifact, "
+        "while the current class vocabulary is frozen into it; changing classes "
+        "requires re-export. "
+        "Published mirrors are pinned to reviewed Apache-2.0 snapshots. This "
+        "does not prove detector accuracy, arbitrary geometry, Neural Engine "
+        "placement, or device performance."
+        + _COREML_M4_QUERY_ALIGNMENT
     ),
 )
 _add(
-    "experimental",
+    "blocked",
     ("grounding_dino",),
     ("detect",),
     ("coreml",),
     reason=(
-        "The current finite prompt and class vocabulary are frozen into an "
-        "image-only detector while the complete cross-modal encoder/decoder "
-        "remains in the graph. A compact representative graph completes Core "
-        "ML Tools 9 conversion; full released-checkpoint Apple runtime parity "
-        "is pending."
-    ),
-    constraint=(
-        "Sizes `t` and `b` use a fixed 800x800 batch-one RGB stretch profile, "
-        "900 queries, and at most 256 BERT tokens. The exact pre-fusion BERT "
-        "boundary, prompt tokens, masks, positions, and WordPiece ABI are "
-        "frozen; changing classes requires re-export. Fixed stretch differs "
-        "from the native keep-aspect image policy for non-square sources."
+        "Core ML Tools 9 FP16 and FP32 packages convert and execute, but "
+        "Apple runtime drift in encoder vision features can reorder nearly "
+        "tied top-k proposals before distinct learned rank queries. M4 "
+        "hardware replay reproduced material output divergence, and no "
+        "bounded tie key preserved native proposal order, so export fails "
+        "closed."
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("omdet_turbo",),
     ("detect",),
     ("coreml",),
     reason=(
         "The 51.98M-parameter image-only deployment graph derived from the "
         "pinned 115.4M checkpoint is bit-exact with the native detector for "
-        "the frozen vocabulary, traces exactly, and completes Core ML Tools "
-        "9 FP16 ML Program conversion; macOS runtime parity is pending."
+        "the frozen vocabulary, traces exactly, and passed saved raw-output "
+        "and public-path parity on Apple M4."
     ),
+    since="1.5",
     constraint=(
         "The released `t` checkpoint uses a fixed 640x640 batch-one FP32 "
-        "TensorType boundary. The current class vocabulary and task-language "
-        "embeddings are frozen; changing classes requires re-export. Exact "
-        "Torchvision-v2 uint8 bilinear-antialias stretch remains on the host; "
-        "the graph emits 900 normalized boxes and per-class logits for exact "
-        "top-900 and class-aware NMS decoding."
+        "TensorType package. It passed the two-probe prepared-graph gate with "
+        "`compute_units='cpu_only'`. "
+        + _COREML_M4_RAW_GATE
+        + " An odd non-square public image also "
+        "matched exact Torchvision-v2 uint8 bilinear-antialias stretch, boxes, "
+        "scores, and classes through the default runtime planner. `half=True` "
+        "fails closed because Core ML Tools 9 FP16 changes the top-900 query "
+        "selection and runtime outputs on Apple Silicon. The current class "
+        "vocabulary and task-language embeddings are frozen; changing classes "
+        "requires re-export. The graph emits 900 normalized boxes and per-class "
+        "logits for class-aware host NMS. This does not prove detector "
+        "accuracy, arbitrary geometry, other checkpoints, Neural Engine "
+        "placement, or device performance."
+        + _COREML_M4_QUERY_ALIGNMENT
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("depth_anything3",),
     ("depth",),
     ("coreml",),
     reason=(
-        "The full DA3MONO-LARGE raw depth/sky component converts with Core ML "
-        "Tools 9, but numeric runtime parity has not yet been recorded on macOS."
+        "The full DA3MONO-LARGE FP32 depth/sky component passed saved raw-output "
+        "and deterministic public depth parity on Apple M4."
     ),
+    since="1.5",
     constraint=(
-        "Fixed 504x504, batch one. The graph emits positive relative depth "
-        "and non-negative sky scores. LibreYOLO preserves the native sky-region "
-        "gate, random-with-replacement sampling, 0.99 quantile, reciprocal, "
-        "and final align_corners=True resize on the host. Non-square input uses "
-        "the documented fixed-stretch depth approximation."
+        "Only FP32, fixed 504x504, batch one is admitted. The two-probe raw "
+        "depth/sky component and seeded square public path passed the 3e-4 "
+        "relative gate with exact repeats. FP16 measured 2.066% relative error "
+        "on Apple M4 and fails closed. The graph emits positive relative depth "
+        "and non-negative sky scores. Sky-region gating, seeded sampling, the "
+        "0.99 quantile, reciprocal, and align_corners=True resize remain host "
+        "operations. Non-square input retains the documented fixed-stretch "
+        "approximation."
     ),
 )
 _add(
@@ -1487,39 +2153,150 @@ _add(
     ("detect",),
     ("coreml",),
     reason=(
-        "Open-vocabulary detection needs a frozen-vocabulary or bounded "
-        "text/image component contract before Core ML export can be enabled."
+        "OV-DEIM remains quarantined from Core ML work: published deployment "
+        "assets and subcomponents do not provide one clean, permissive, "
+        "provenance-complete code-and-weight chain, and the DINO lineage "
+        "crosses a custom-license boundary."
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("smolvlm2",),
     ("detect",),
     ("coreml",),
     reason=(
-        "The complete pinned 507.5M-parameter SmolVLM2-500M graph has "
-        "source-wrapper parity and completes Core ML Tools 9 conversion as "
-        "three named functions with a stateful FP16 KV cache. A real portable "
-        "bundle was rebuilt and spec-validated on Linux; macOS state/runtime "
-        "parity is pending."
+        "The pinned SmolVLM2-500M 2K and 4K portable bundles passed all three "
+        "named functions, request-local state, and repeated public inference "
+        "on Apple M4."
     ),
+    since="1.5",
     constraint=(
         "Only the exact Apache-2.0 500M snapshot and reviewed 2K/4K context "
-        "profiles are supported. The host performs pinned tokenization, fixed "
-        "2048x2048 RGB stretch into 17 512x512 crops, image-token merging, "
-        "causal controls, greedy decoding, repetition penalty, detokenization, "
-        "and result parsing. Deployment requires iOS 18 or macOS 15 and the "
-        "portable .coremlvlm bundle; 8K is rejected pending peak-memory proof."
+        "profiles are supported. CPU_ONLY M4 parity measured 0.0258% worst "
+        "vision error, exact token embeddings, and 0.0586% worst recurrent "
+        "decoder error against PyTorch, with meaningful input sensitivity. "
+        "Repeated chat and detection-result paths passed with fresh state. "
+        "Vision and decoder compute use FP32; token embedding, public function "
+        "I/O, and KV state use FP16. The host owns pinned tokenization, fixed "
+        "2048x2048 RGB stretch into 17 crops, image-token merging, causal "
+        "controls, greedy decoding, repetition penalty, detokenization, and "
+        "parsing. No execution-profile-v2 identity is registered, so explicit "
+        "compute_units='cpu_only' remains required. The portable .coremlvlm "
+        "bundle requires iOS 18 or macOS 15; 8K is rejected pending peak-memory "
+        "proof."
+    ),
+)
+_add(
+    "validated",
+    ("florence2",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "The exact MIT Florence-2-base portable bundle passed encoder, seeded "
+        "four-state decoder, beam progression, and repeated public inference "
+        "on Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "Only Florence-2-base open-vocabulary detection is admitted. The "
+        "CPU_ONLY M4 gate measured 0.0416% worst encoder-cache error and 0.2923% "
+        "worst stateful-decoder error against the prepared PyTorch graphs, with "
+        "meaningful sensitivity and deterministic repeated public requests. "
+        "The fixed 768 image, 1024-token contexts, exact three-beam host search, "
+        "pinned offline processor, cross-cache state seeding, and portable "
+        ".coremlvlm bundle require iOS 18 or macOS 15. Encoder compute is FP32, "
+        "decoder compute and function I/O are FP16, and Apple's writable state "
+        "is host-materialized as FP32. No execution-profile-v2 identity is "
+        "registered, so explicit compute_units='cpu_only' remains required. "
+        "Florence-2-large and other task tokens fail closed."
+    ),
+)
+_add(
+    "experimental",
+    ("qwen3vl",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "The exact Apache-2.0 Qwen3-VL-2B portable bundle passed all three "
+        "saved Core ML components and repeated public detection inference on "
+        "Apple M4."
+    ),
+    constraint=(
+        "Only Qwen/Qwen3-VL-2B-Instruct revision "
+        "89644892e4d85e24eaac8bacfd4f463576704203 is admitted. Its "
+        "SHA-256-pinned 4,255,140,312-byte FP32 checkpoint exports to a FP32 "
+        "vision/deep-stack package, FP16 token-embedding package, and FP16 "
+        "stateless decoder package. The CPU_ONLY M4 component gate measured "
+        "0.00779% worst vision error and 0.176% worst decoder-logit error "
+        "against prepared PyTorch graphs, with meaningful sensitivity and "
+        "matching top tokens. The 5,698,319,484-byte production bundle then "
+        "generated the exact PyTorch text prefix, class, and box on a real "
+        "image (IoU 0.99999993), followed by an exact public predict repeat. "
+        "The host owns pinned offline processing, 448-square RGB stretching, "
+        "one-image token/deep-stack scatter, left padding, the 3D position and "
+        "interleaved MRoPE tables, finite causal masking, repetition penalty, "
+        "greedy generation, EOS, detokenization, and parsing. The fixed "
+        "profile accepts one image, a 512-token context, at most 48 generated "
+        "tokens, and compute_units='cpu_only'. It recomputes the full prefix "
+        "for every token and is a fidelity-first profile, not a latency "
+        "profile. No execution-profile-v2 identity is registered, so explicit "
+        "CPU_ONLY opt-in remains required. The 4B and 8B sizes, videos, other "
+        "contexts, arbitrary checkpoints, and Neural Engine placement fail "
+        "closed."
     ),
 )
 _add(
     "blocked",
-    ("florence2", "internvl3", "kosmos2", "lfm2vl", "qwen3vl"),
+    ("internvl3",),
     ("detect",),
     ("coreml",),
     reason=(
-        "Generative vision-language inference requires tokenizer, prefill, "
-        "decode, and state/cache runtime components rather than one image graph."
+        "The official permissive architecture is usable, but the current "
+        "Transformers-compatible checkpoint lineage is Qwen-tagged rather "
+        "than a clean, provenance-complete InternVL deployment payload."
+    ),
+)
+_add(
+    "validated",
+    ("kosmos2",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "The exact MIT Kosmos-2-patch14-224 portable bundle passed all three "
+        "saved Core ML components and repeated grounded public inference on "
+        "Apple M4."
+    ),
+    since="1.5",
+    constraint=(
+        "Only microsoft/kosmos-2-patch14-224 revision "
+        "e91cfbcb4ce051b6a55bfb5f96165a3bbf5eb82c is admitted. Its "
+        "SHA-256-pinned 6,658,052,808-byte FP32 checkpoint exports to separate "
+        "vision, token-embedding, and stateless fixed-prefix decoder packages. "
+        "The CPU_ONLY M4 campaign passed the 3e-4 two-probe component gate, "
+        "meaningful input-sensitivity checks, exact native-versus-deployed "
+        "public boxes/classes/scores within the stated tolerances, and "
+        "bit-exact deployed repeats. The host owns pinned offline processing, "
+        "left padding, image/token embedding merge, greedy generation, "
+        "no-repeat trigrams, EOS, detokenization, and grounding-token parsing. "
+        "The fixed profile accepts one 224 RGB image, a 128-token context, at "
+        "most 48 generated tokens, FP32 compute/I/O, and "
+        "compute_units='cpu_only'. It recomputes the full prefix for every "
+        "token and is a fidelity-first profile, not a latency profile. No "
+        "execution-profile-v2 identity is registered, so explicit CPU_ONLY "
+        "opt-in remains required. This proves conversion and host-contract "
+        "fidelity, not model accuracy, arbitrary checkpoints or contexts, "
+        "Neural Engine placement, or device performance."
+    ),
+)
+_add(
+    "blocked",
+    ("lfm2vl",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "Published LFM2-VL weights use the LFM v1 license with a revenue "
+        "threshold, so LibreYOLO cannot treat converted artifacts as "
+        "unrestricted MIT-compatible deployment weights."
     ),
 )
 _add(
@@ -1528,8 +2305,9 @@ _add(
     ("detect", "point"),
     ("coreml",),
     reason=(
-        "LocateAnything is a generative multi-input pipeline and has no "
-        "tokenizer, state/cache, or output-decoding Core ML component contract."
+        "LocateAnything's published weights and remote-code deployment carry "
+        "NVIDIA non-commercial terms, so they cannot become a general "
+        "MIT-compatible LibreYOLO Core ML artifact."
     ),
 )
 _add(
@@ -1538,10 +2316,46 @@ _add(
     ("detect", "segment", "panoptic", "pose", "point", "depth", "ocr"),
     ("coreml",),
     reason=(
-        "SenseNova-Vision is a generative multimodal pipeline with text and "
-        "diffusion/VAE outputs; it has no stateful multi-component Core ML contract."
+        "SenseNova-Vision's published weights are CC BY-NC and its complete "
+        "multimodal diffusion/VAE deployment crosses additional custom scope; "
+        "a general MIT-compatible Core ML artifact cannot be distributed."
     ),
 )
+
+
+def _demote_unpromoted_coreml_rows() -> None:
+    """Keep broad support claims aligned with exact v2 hardware promotions."""
+    from .coreml_profiles import COREML_VALIDATED_EXECUTION_PROFILES
+
+    promoted = {
+        (profile.family, profile.task)
+        for profile in COREML_VALIDATED_EXECUTION_PROFILES.values()
+    }
+    pending_prefix = (
+        "Apple-M4 parity supports the default CPU_ONLY compatibility path. "
+        "Execution-profile v2 promotion remains pending a fresh source "
+        "identity and final deployment-ABI evidence record. "
+    )
+    for key, entry in tuple(SUPPORT.items()):
+        family, task, fmt = key
+        if (
+            fmt != "coreml"
+            or entry.tier != "validated"
+            or (family, task) in promoted
+        ):
+            continue
+        SUPPORT[key] = SupportEntry(
+            "experimental",
+            reason=(
+                "Apple-M4 parity supports the default CPU_ONLY compatibility "
+                "path; exact hash-bound execution-profile metadata is pending."
+            ),
+            since=entry.since,
+            constraint=pending_prefix + str(entry.constraint or entry.reason),
+        )
+
+
+_demote_unpromoted_coreml_rows()
 
 
 _TASK_BLOCKS = {
@@ -1571,8 +2385,8 @@ _FAMILY_BLOCKS = {
         "out of scope."
     ),
     "depth_anything3": (
-        "Depth Anything 3 currently rejects export for every format; its "
-        "depth graph has not been added to the exported-runtime contract."
+        "Depth Anything 3 export is currently limited to its host-postprocessed "
+        "Core ML depth component; every other format remains unsupported."
     ),
     "eomt": "EoMT instance and panoptic export do not yet have runtime parsing.",
     "l2cs": "The v1 L2CS gaze export contract supports ONNX only.",

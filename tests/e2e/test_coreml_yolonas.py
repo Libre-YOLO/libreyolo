@@ -8,8 +8,10 @@ accuracy or native-640 preprocessing accuracy.
 
 from __future__ import annotations
 
+import gc
 import sys
 
+import numpy as np
 import pytest
 import torch
 
@@ -28,7 +30,12 @@ pytest.importorskip(
     reason="Core ML parity requires the coremltools runtime",
 )
 
-from .test_coreml_roundtrip import _assert_model_artifact_parity  # noqa: E402
+from .test_coreml_roundtrip import (  # noqa: E402
+    _assert_model_artifact_parity,
+    _match_public_detections,
+    _pose_payload,
+    _public_non_square_source,
+)
 
 
 @pytest.mark.parametrize(
@@ -45,7 +52,7 @@ def test_coreml_yolonas_synthetic_named_output_parity(
     tmp_path,
 ):
     """Compare both saved artifacts with the exact prepared PyTorch graph."""
-    from libreyolo import LibreYOLONAS
+    from libreyolo import LibreYOLONAS, LibreYOLO
 
     torch.manual_seed(20260729)
     model = LibreYOLONAS(
@@ -71,10 +78,53 @@ def test_coreml_yolonas_synthetic_named_output_parity(
             if hasattr(head, "pose_pred"):
                 head.pose_pred.weight.mul_(200.0)
 
-    _assert_model_artifact_parity(
+    source = _public_non_square_source()
+    predict_kwargs = {
+        "conf": 1e-5,
+        "iou": 0.6 if task == "pose" else 0.45,
+        "max_det": 5,
+        "verbose": False,
+    }
+    native = model.predict(source, imgsz=96, **predict_kwargs)
+    artifact = _assert_model_artifact_parity(
         model,
         "yolonas",
         task,
         96,
         tmp_path,
     )
+    del model
+    gc.collect()
+    deployed_model = LibreYOLO(artifact)
+    deployed = deployed_model.predict(source, **predict_kwargs)
+    repeated = deployed_model.predict(source, **predict_kwargs)
+    order = _match_public_detections(
+        native,
+        deployed,
+        repeated,
+        minimum_iou=0.9999,
+        maximum_score_error=1e-5,
+    )
+    if task == "pose":
+        native_keypoints = _pose_payload(native)
+        deployed_keypoints = _pose_payload(deployed)
+        repeated_keypoints = _pose_payload(repeated)
+        np.testing.assert_array_equal(deployed_keypoints, repeated_keypoints)
+        aligned = deployed_keypoints[order]
+        assert (
+            float(
+                np.abs(
+                    native_keypoints[..., :2] - aligned[..., :2]
+                ).max()
+            )
+            <= 1e-3
+        )
+        if native_keypoints.shape[-1] == 3:
+            assert (
+                float(
+                    np.abs(
+                        native_keypoints[..., 2] - aligned[..., 2]
+                    ).max()
+                )
+                <= 1e-5
+            )

@@ -24,7 +24,7 @@ EOMT_COREML_MASK_STRIDE = 4
 EOMT_COREML_NUM_UPSCALE_BLOCKS = 2
 EOMT_COREML_ALIGN_CORNERS = False
 EOMT_COREML_ANTIALIAS = True
-EOMT_COREML_ATTENTION_MASK = "functional_concat_v1"
+EOMT_COREML_ATTENTION_MASK = "functional_concat_binary_schedule_v1"
 EOMT_COREML_PREPROCESS = {
     "semantic": "semantic_shortest_edge_split_v1",
     "segment": "coco_longest_edge_pad_top_left_v1",
@@ -69,7 +69,7 @@ def _unwrap_eomt_net(model: nn.Module) -> nn.Module:
 
 
 def _validate_attention_mask_invariants(net: nn.Module) -> None:
-    """Require EoMT's deterministic eval-time attention-mask configuration."""
+    """Require a deterministic binary eval-time attention-mask schedule."""
     eomt = net.eomt
     probabilities = getattr(eomt, "attn_mask_probs", None)
     if not torch.is_tensor(probabilities):
@@ -82,13 +82,14 @@ def _validate_attention_mask_invariants(net: nn.Module) -> None:
             "EoMT Core ML attention-mask probability count disagrees with "
             f"num_blocks: {int(probabilities.numel())} != {expected_blocks}."
         )
+    deterministic = torch.logical_or(probabilities == 0, probabilities == 1)
     if not bool(torch.isfinite(probabilities).all()) or not bool(
-        torch.equal(probabilities.detach().cpu(), torch.ones(expected_blocks))
+        deterministic.all()
     ):
         raise RuntimeError(
-            "EoMT Core ML export requires every attn_mask_probs value to equal "
-            "1. Values below one randomly disable query masks and cannot form "
-            "a deterministic deployment graph."
+            "EoMT Core ML export requires every attn_mask_probs value to be "
+            "exactly 0 or 1. Intermediate values randomly disable query masks "
+            "and cannot form a deterministic deployment graph."
         )
 
 
@@ -99,6 +100,9 @@ class EoMTCoreMLAdapter(nn.Module):
         super().__init__()
         self.model = _unwrap_eomt_net(model)
         _validate_attention_mask_invariants(self.model)
+        self._attention_mask_enabled = tuple(
+            bool(value.item()) for value in self.model.eomt.attn_mask_probs
+        )
 
     def forward(
         self,
@@ -119,7 +123,10 @@ class EoMTCoreMLAdapter(nn.Module):
                 )
                 hidden_states = torch.cat((query, hidden_states), dim=1)
 
-            if index >= first_query_layer:
+            query_block = index - first_query_layer
+            if index >= first_query_layer and self._attention_mask_enabled[
+                query_block
+            ]:
                 normalized = eomt.layernorm(hidden_states)
                 intermediate_masks, _ = eomt.predict(normalized)
                 interpolated = F.interpolate(

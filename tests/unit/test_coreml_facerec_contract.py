@@ -7,11 +7,15 @@ import importlib.metadata
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from libreyolo.backends.coreml_facerec import (
+    validate_facerec_coreml_spec,
+)
 from libreyolo.export.coreml import _stringify_metadata
 from libreyolo.export.coreml_facerec import (
     FACEREC_COREML_ARTIFACT_SCOPE,
@@ -21,9 +25,12 @@ from libreyolo.export.coreml_facerec import (
     FACEREC_COREML_OUTPUT_NAME,
     FACEREC_COREML_PREPROCESS_HASH_KEY,
     FACEREC_COREML_PREPROCESS_KEY,
+    FACEREC_COREML_REQUIRED_COMPUTE_UNITS,
     FACEREC_COREML_SOURCE_HASH_KEY,
     FACEREC_COREML_SOURCE_MANIFEST_KEY,
+    _apply_coreml_execution_profile,
     _inspect_onnx_source,
+    _official_embedder_spec,
     _official_provenance_metadata,
     _resolve_options,
     _require_exact_onnx2torch,
@@ -35,8 +42,58 @@ from libreyolo.export.coreml_facerec import (
     facerec_onnx_source_manifest,
     validate_facerec_coreml_metadata,
 )
+from libreyolo.export.coreml_profiles import (
+    COREML_EXECUTION_PROFILES,
+    COREML_EXECUTION_PROFILES_BY_ID,
+    match_coreml_execution_profile,
+    merge_coreml_execution_profile_metadata,
+)
+from libreyolo.export.coreml_identity import COREML_DEPLOYMENT_ABI_SCHEMA
 
 pytestmark = pytest.mark.unit
+
+
+def _coreml_multiarray_feature(
+    name: str,
+    shape: tuple[int, ...],
+    *,
+    dtype: int = 65568,
+):
+    array = SimpleNamespace(
+        shape=list(shape),
+        dataType=dtype,
+        WhichOneof=lambda _name: None,
+    )
+    feature_type = SimpleNamespace(
+        isOptional=False,
+        multiArrayType=array,
+        WhichOneof=lambda _name: "multiArrayType",
+    )
+    return SimpleNamespace(name=name, type=feature_type)
+
+
+def _facerec_coreml_spec(
+    *,
+    output_shape: tuple[int, ...] = (1, 512),
+    output_dtype: int = 65568,
+):
+    return SimpleNamespace(
+        description=SimpleNamespace(
+            input=[
+                _coreml_multiarray_feature(
+                    FACEREC_COREML_INPUT_NAME,
+                    (1, 3, 112, 112),
+                )
+            ],
+            output=[
+                _coreml_multiarray_feature(
+                    FACEREC_COREML_OUTPUT_NAME,
+                    output_shape,
+                    dtype=output_dtype,
+                )
+            ],
+        )
+    )
 
 
 def _external_tensor(onnx, name: str, location: str):
@@ -136,7 +193,10 @@ def _manifest_metadata() -> dict:
         "imgsz": 112,
         "imgsz_h": 112,
         "imgsz_w": 112,
-        "precision": "fp16",
+        "precision": "fp32",
+        "coreml_required_compute_units": (
+            FACEREC_COREML_REQUIRED_COMPUTE_UNITS
+        ),
         "dynamic": False,
         "facerec_contract": FACEREC_COREML_CONTRACT,
         FACEREC_COREML_PREPROCESS_KEY: json.dumps(
@@ -185,6 +245,111 @@ def _manifest_metadata() -> dict:
             ],
         },
     }
+
+
+def _official_manifest_metadata() -> dict:
+    metadata = _manifest_metadata()
+    spec = _official_embedder_spec()
+    entries = [
+        {
+            "path": str(spec["filename"]),
+            "kind": "onnx",
+            "bytes": int(spec["size_bytes"]),
+            "sha256": str(spec["sha256"]),
+        }
+    ]
+    metadata.update(
+        {
+            "size": "l",
+            "model_size": "l",
+            FACEREC_COREML_SOURCE_HASH_KEY: _source_manifest_hash(entries),
+            FACEREC_COREML_SOURCE_MANIFEST_KEY: json.dumps(
+                entries,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+    )
+    metadata.update(_official_provenance_metadata())
+    return metadata
+
+
+def _promoted_official_metadata(monkeypatch):
+    candidate = match_coreml_execution_profile(
+        "facerec",
+        "embed",
+        "l",
+        112,
+        class_count=1,
+        embedding_dim=512,
+    )
+    assert candidate is not None and not candidate.evidence_complete
+    source = _official_manifest_metadata()
+    profile = replace(
+        candidate,
+        source_kind="facerec-onnx-source-manifest-v1",
+        source_sha256=source[FACEREC_COREML_SOURCE_HASH_KEY],
+        deployment_abi_sha256="3" * 64,
+        evidence_sha256="4" * 64,
+    )
+    key = next(
+        key
+        for key, value in COREML_EXECUTION_PROFILES.items()
+        if value is candidate
+    )
+    monkeypatch.setitem(COREML_EXECUTION_PROFILES, key, profile)
+    monkeypatch.setitem(
+        COREML_EXECUTION_PROFILES_BY_ID,
+        profile.profile_id,
+        profile,
+    )
+    source.update(
+        {
+            "coreml_profile_source_kind": profile.source_kind,
+            "coreml_profile_source_sha256": profile.source_sha256,
+            "coreml_profile_abi_schema": COREML_DEPLOYMENT_ABI_SCHEMA,
+            "coreml_profile_abi_sha256": profile.deployment_abi_sha256,
+        }
+    )
+    metadata = merge_coreml_execution_profile_metadata(
+        source,
+        profile,
+        conversion_compute_units="cpu_only",
+    )
+    return _stringify_metadata(metadata), profile
+
+
+def test_converted_facerec_spec_binds_fixed_fp32_embedding_abi():
+    parsed = validate_facerec_coreml_spec(
+        _facerec_coreml_spec(),
+        _stringify_metadata(_manifest_metadata()),
+    )
+    assert parsed["input"].shape == (1, 3, 112, 112)
+    assert parsed["output"].shape == (1, 512)
+
+
+@pytest.mark.parametrize(
+    ("spec", "match"),
+    [
+        (
+            _facerec_coreml_spec(output_shape=(1, 511)),
+            "output disagrees",
+        ),
+        (
+            _facerec_coreml_spec(output_dtype=65552),
+            "output must expose FP32",
+        ),
+    ],
+)
+def test_converted_facerec_spec_rejects_name_only_abi_false_pass(
+    spec,
+    match,
+):
+    with pytest.raises(ValueError, match=match):
+        validate_facerec_coreml_spec(
+            spec,
+            _stringify_metadata(_manifest_metadata()),
+        )
 
 
 def test_source_manifest_loads_without_external_data(tmp_path, monkeypatch):
@@ -387,9 +552,8 @@ def test_export_rejects_external_mutation_during_hydration(
         model_path=str(path),
         cfg=SimpleNamespace(size=112),
     )
-    with pytest.warns(RuntimeWarning, match="experimental"):
-        with pytest.raises(RuntimeError, match="changed between"):
-            export_facerec_coreml(model, {})
+    with pytest.raises(RuntimeError, match="changed between"):
+        export_facerec_coreml(model, {})
 
 
 def test_reserved_official_name_cannot_bypass_single_file_manifest(
@@ -572,6 +736,36 @@ def test_metadata_contract_round_trips_stringified_values():
     assert parsed["embedding_dim"] == 512
 
 
+def test_official_metadata_awaits_fresh_deployment_v2_evidence():
+    with pytest.raises(NotImplementedError, match="not yet been promoted"):
+        _apply_coreml_execution_profile(
+            _official_manifest_metadata(),
+            size="l",
+            canvas=112,
+            precision="fp32",
+            compute_units="validated",
+            embedding_dim=512,
+        )
+
+    with pytest.warns(RuntimeWarning, match="awaiting"):
+        metadata, compute_units, profile = (
+            _apply_coreml_execution_profile(
+                _official_manifest_metadata(),
+                size="l",
+                canvas=112,
+                precision="fp32",
+                compute_units="cpu_only",
+                embedding_dim=512,
+            )
+        )
+    validate_facerec_coreml_metadata(metadata)
+    assert compute_units == "cpu_only"
+    assert profile is None
+    assert metadata["coreml_profile_source_kind"] == (
+        "facerec-onnx-source-manifest-v1"
+    )
+
+
 @pytest.mark.parametrize(
     ("name", "mutate"),
     [
@@ -583,7 +777,14 @@ def test_metadata_contract_round_trips_stringified_values():
             ),
         ),
         ("imgsz", lambda value: value.__setitem__("imgsz_h", 224)),
-        ("precision", lambda value: value.__setitem__("precision", "int8")),
+        ("precision", lambda value: value.__setitem__("precision", "fp16")),
+        (
+            "compute_units",
+            lambda value: value.__setitem__(
+                "coreml_required_compute_units",
+                "all",
+            ),
+        ),
         ("dynamic", lambda value: value.__setitem__("dynamic", True)),
         (
             "manifest",
@@ -641,11 +842,173 @@ def test_options_use_shared_path_normalization_and_reject_irrelevant_values():
     )
     assert destination == "artifact.mlpackage"
     assert precision == "fp32"
-    assert compute_units == "all"
+    assert compute_units == "cpu_only"
     with pytest.raises(TypeError, match="irrelevant"):
         _resolve_options(model, {"data": None})
     with pytest.raises(TypeError, match="boolean"):
         _resolve_options(model, {"half": "false"})
+    with pytest.raises(NotImplementedError, match="FP32-only"):
+        _resolve_options(model, {"half": True})
+    with pytest.raises(NotImplementedError, match="cpu_only"):
+        _resolve_options(model, {"compute_units": "all"})
+
+
+def test_direct_export_rejects_fp16_before_source_or_dependencies():
+    model = SimpleNamespace(
+        model_path="missing.onnx",
+        cfg=SimpleNamespace(size=112),
+    )
+    with pytest.raises(NotImplementedError, match="FP32-only"):
+        export_facerec_coreml(
+            model,
+            {
+                "half": True,
+                "compute_units": "cpu_only",
+            },
+        )
+
+
+def test_runtime_rejects_fp16_metadata_before_proxy(tmp_path, monkeypatch):
+    from libreyolo.backends import coreml_facerec as backend
+
+    package = tmp_path / "face.mlpackage"
+    package.mkdir()
+    metadata = _stringify_metadata(_manifest_metadata())
+    metadata["precision"] = "fp16"
+    spec = SimpleNamespace()
+    proxy_calls = []
+    fake_coremltools = SimpleNamespace(
+        utils=SimpleNamespace(load_spec=lambda _path: spec),
+        models=SimpleNamespace(
+            MLModel=lambda *args, **kwargs: proxy_calls.append((args, kwargs))
+        ),
+    )
+    monkeypatch.setattr(backend.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "coremltools", fake_coremltools)
+    monkeypatch.setattr(
+        backend,
+        "_metadata_from_spec",
+        lambda _spec: metadata,
+    )
+    monkeypatch.setattr(
+        backend,
+        "validate_facerec_coreml_spec",
+        lambda _spec, values: validate_facerec_coreml_metadata(values),
+    )
+
+    with pytest.raises(ValueError, match="precision.*fp32"):
+        backend.CoreMLFaceSession(
+            str(package),
+            compute_units="cpu_only",
+        )
+    assert proxy_calls == []
+
+
+def test_runtime_rejects_unvalidated_compute_units_before_proxy(
+    tmp_path,
+    monkeypatch,
+):
+    from libreyolo.backends import coreml_facerec as backend
+
+    package = tmp_path / "face.mlpackage"
+    package.mkdir()
+    spec = SimpleNamespace()
+    proxy_calls = []
+    fake_coremltools = SimpleNamespace(
+        utils=SimpleNamespace(load_spec=lambda _path: spec),
+        models=SimpleNamespace(
+            MLModel=lambda *args, **kwargs: proxy_calls.append((args, kwargs))
+        ),
+    )
+    monkeypatch.setattr(backend.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "coremltools", fake_coremltools)
+    monkeypatch.setattr(backend, "_metadata_from_spec", lambda _spec: {})
+    monkeypatch.setattr(
+        backend,
+        "validate_facerec_coreml_spec",
+        lambda _spec, _metadata: {},
+    )
+
+    with pytest.raises(NotImplementedError, match="cpu_only"):
+        backend.CoreMLFaceSession(str(package), compute_units="all")
+    assert proxy_calls == []
+
+
+def test_runtime_rejects_tampered_execution_profile_before_proxy(
+    tmp_path,
+    monkeypatch,
+):
+    from libreyolo.backends import coreml_facerec as backend
+
+    package = tmp_path / "face.mlpackage"
+    package.mkdir()
+    metadata, _ = _promoted_official_metadata(monkeypatch)
+    metadata["coreml_default_compute_units"] = "all"
+    spec = SimpleNamespace()
+    proxy_calls = []
+    fake_coremltools = SimpleNamespace(
+        utils=SimpleNamespace(load_spec=lambda _path: spec),
+        models=SimpleNamespace(
+            MLModel=lambda *args, **kwargs: proxy_calls.append((args, kwargs))
+        ),
+    )
+    monkeypatch.setattr(backend.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "coremltools", fake_coremltools)
+    monkeypatch.setattr(backend, "_metadata_from_spec", lambda _spec: metadata)
+    monkeypatch.setattr(
+        backend,
+        "validate_facerec_coreml_spec",
+        lambda _spec, values: validate_facerec_coreml_metadata(values),
+    )
+    from libreyolo.export import coreml_identity
+
+    monkeypatch.setattr(
+        coreml_identity,
+        "validate_coreml_deployment_abi",
+        lambda _spec, _metadata: "3" * 64,
+    )
+
+    with pytest.raises(ValueError, match="coreml_default_compute_units"):
+        backend.CoreMLFaceSession(str(package))
+    assert proxy_calls == []
+
+
+def test_runtime_rejects_accelerator_for_exact_profile_before_proxy(
+    tmp_path,
+    monkeypatch,
+):
+    from libreyolo.backends import coreml_facerec as backend
+
+    package = tmp_path / "face.mlpackage"
+    package.mkdir()
+    metadata, _ = _promoted_official_metadata(monkeypatch)
+    spec = SimpleNamespace()
+    proxy_calls = []
+    fake_coremltools = SimpleNamespace(
+        utils=SimpleNamespace(load_spec=lambda _path: spec),
+        models=SimpleNamespace(
+            MLModel=lambda *args, **kwargs: proxy_calls.append((args, kwargs))
+        ),
+    )
+    monkeypatch.setattr(backend.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "coremltools", fake_coremltools)
+    monkeypatch.setattr(backend, "_metadata_from_spec", lambda _spec: metadata)
+    monkeypatch.setattr(
+        backend,
+        "validate_facerec_coreml_spec",
+        lambda _spec, values: validate_facerec_coreml_metadata(values),
+    )
+    from libreyolo.export import coreml_identity
+
+    monkeypatch.setattr(
+        coreml_identity,
+        "validate_coreml_deployment_abi",
+        lambda _spec, _metadata: "3" * 64,
+    )
+
+    with pytest.raises(NotImplementedError, match="runtime is validated only"):
+        backend.CoreMLFaceSession(str(package), compute_units="all")
+    assert proxy_calls == []
 
 
 def test_onnx2torch_version_gate_is_exact(monkeypatch):
@@ -671,7 +1034,7 @@ def test_onnx2torch_version_gate_is_exact(monkeypatch):
     assert _require_exact_onnx2torch() is sentinel
 
 
-def test_experimental_warning_precedes_optional_import_failure(
+def test_optional_import_failure_is_actionable(
     tmp_path, monkeypatch
 ):
     onnx = pytest.importorskip("onnx")
@@ -689,6 +1052,5 @@ def test_experimental_warning_precedes_optional_import_failure(
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr("builtins.__import__", reject_onnx)
-    with pytest.warns(RuntimeWarning, match="experimental"):
-        with pytest.raises(ImportError, match="requires ONNX"):
-            export_facerec_coreml(model, {})
+    with pytest.raises(ImportError, match="requires ONNX"):
+        export_facerec_coreml(model, {})

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 import warnings
 from types import SimpleNamespace
 
@@ -226,7 +228,7 @@ def _metadata():
         "imgsz_h": 1024,
         "imgsz_w": 1024,
         "precision": "fp32",
-        "dynamic": True,
+        "dynamic": False,
     }
     metadata.update(sam_coreml_metadata(profile))
     return _stringify(metadata)
@@ -262,10 +264,14 @@ def _feature(contract):
 
 
 def _spec():
-    from libreyolo.export.coreml_sam import sam_coreml_function_contracts
+    from libreyolo.export.coreml_sam import (
+        sam_coreml_runtime_function_contracts,
+    )
 
     functions = []
-    for name, contract in sam_coreml_function_contracts(_profile()).items():
+    for name, contract in sam_coreml_runtime_function_contracts(
+        _profile()
+    ).items():
         functions.append(
             SimpleNamespace(
                 name=name,
@@ -305,7 +311,7 @@ class _Runtime:
                     dtype=np.float32,
                 )
             }
-        mask_count = 3 if self.function_name.endswith("multimask") else 1
+        mask_count = 3 if "multimask" in self.function_name else 1
         masks = np.ones((1, 1, mask_count, 256, 256), dtype=np.float32)
         scores = np.linspace(
             0.5,
@@ -319,6 +325,7 @@ class _Runtime:
 def _load(monkeypatch, tmp_path, *, metadata=None, spec=None):
     metadata = metadata or _metadata()
     spec = spec or _spec()
+    spec.description.metadata = SimpleNamespace(userDefined=metadata)
     calls = []
     loads = []
 
@@ -335,6 +342,7 @@ def _load(monkeypatch, tmp_path, *, metadata=None, spec=None):
             CPU_ONLY="CPU_ONLY",
         ),
         models=SimpleNamespace(MLModel=load_model),
+        utils=SimpleNamespace(load_spec=lambda *_args, **_kwargs: spec),
     )
     monkeypatch.setitem(sys.modules, "coremltools", fake_ct)
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -343,7 +351,11 @@ def _load(monkeypatch, tmp_path, *, metadata=None, spec=None):
 
     from libreyolo.backends.coreml import CoreMLBackend
 
-    return CoreMLBackend(str(package)), calls, loads
+    return (
+        CoreMLBackend(str(package), compute_units="cpu_only"),
+        calls,
+        loads,
+    )
 
 
 def test_multifunction_backend_caches_encoder_and_loops_queries(
@@ -351,16 +363,7 @@ def test_multifunction_backend_caches_encoder_and_loops_queries(
     tmp_path,
 ):
     backend, calls, loads = _load(monkeypatch, tmp_path)
-    assert loads == [
-        "encode_image",
-        "encode_image",
-        "decode_points_single",
-        "decode_points_multimask",
-        "decode_boxes_single",
-        "decode_boxes_multimask",
-        "decode_points_boxes_single",
-        "decode_points_boxes_multimask",
-    ]
+    assert loads == ["encode_image"]
     image = _image()
     backend.set_image(image)
     assert [name for name, _inputs in calls] == ["encode_image"]
@@ -368,9 +371,11 @@ def test_multifunction_backend_caches_encoder_and_loops_queries(
     result = backend.predict(points=[[3, 4], [10, 12]], labels=[1, 0])
     assert len(result) == 2
     assert [name for name, _inputs in calls[1:]] == [
-        "decode_points_single",
-        "decode_points_single",
+        "decode_points_single_p1",
+        "decode_points_single_p1",
     ]
+    assert loads == ["encode_image", "decode_points_single_p1"]
+    assert set(backend._sam_functions) == {"decode_points_single_p1"}
     for _name, inputs in calls[1:]:
         assert inputs["point_labels"].dtype == np.int32
         assert inputs["point_coords"].dtype == np.float32
@@ -378,6 +383,8 @@ def test_multifunction_backend_caches_encoder_and_loops_queries(
 
     backend.predict(bboxes=[1, 2, 20, 25], multimask=True)
     assert calls[-1][0] == "decode_boxes_multimask"
+    assert loads[-1] == "decode_boxes_multimask"
+    assert set(backend._sam_functions) == {"decode_boxes_multimask"}
     assert len(calls) == 4
     backend.reset_image()
     with pytest.raises(RuntimeError, match="No image set"):
@@ -388,7 +395,7 @@ def test_invalid_prompt_fails_before_any_vendor_runtime_call(
     monkeypatch,
     tmp_path,
 ):
-    backend, calls, _loads = _load(monkeypatch, tmp_path)
+    backend, calls, loads = _load(monkeypatch, tmp_path)
     image = _image()
     with pytest.raises(ValueError, match="source image bounds"):
         backend.predict(image, points=[1000, 2])
@@ -398,6 +405,144 @@ def test_invalid_prompt_fails_before_any_vendor_runtime_call(
     with pytest.raises(ValueError, match="prompt_max_points=4"):
         backend.predict(image, points=too_many)
     assert calls == []
+    assert loads == ["encode_image"]
+
+
+def test_exact_point_count_dispatch_loads_only_requested_functions(
+    monkeypatch,
+    tmp_path,
+):
+    backend, calls, loads = _load(monkeypatch, tmp_path)
+    image = _image()
+    backend.predict(
+        image,
+        points=[[[3, 4], [10, 12]]],
+        labels=[[1, 0]],
+    )
+    backend.predict(
+        image,
+        points=[[[3, 4], [10, 12], [15, 18], [20, 22]]],
+        labels=[[1, 0, 1, 0]],
+        bboxes=[[1, 2, 20, 25]],
+        multimask=True,
+    )
+    assert [name for name, _inputs in calls] == [
+        "encode_image",
+        "decode_points_single_p2",
+        "encode_image",
+        "decode_points_boxes_multimask_p4",
+    ]
+    assert loads == [
+        "encode_image",
+        "decode_points_single_p2",
+        "encode_image",
+        "decode_points_boxes_multimask_p4",
+    ]
+
+
+def test_native_runtime_cache_stays_single_entry_across_point_churn(
+    monkeypatch,
+    tmp_path,
+):
+    backend, _calls, loads = _load(monkeypatch, tmp_path)
+    image = _image()
+    backend.set_image(image)
+
+    for point_count in (1, 2, 4, 3, 1):
+        points = [
+            [float(index + 2), float(index + 3)]
+            for index in range(point_count)
+        ]
+        labels = [index % 2 for index in range(point_count)]
+        backend.predict(points=[points], labels=[labels])
+        assert set(backend._sam_functions) == {
+            f"decode_points_single_p{point_count}"
+        }
+
+    assert loads == [
+        "encode_image",
+        "decode_points_single_p1",
+        "decode_points_single_p2",
+        "decode_points_single_p4",
+        "decode_points_single_p3",
+        "decode_points_single_p1",
+    ]
+
+
+def test_concurrent_prompts_serialize_function_switch_and_prediction(
+    monkeypatch,
+    tmp_path,
+):
+    backend, _calls, loads = _load(monkeypatch, tmp_path)
+    backend.set_image(_image())
+
+    state_lock = threading.Lock()
+    active_predicts = 0
+    max_active_predicts = 0
+    load_during_predict = False
+    original_predict = _Runtime.predict
+    original_load_model = backend._sam_ct.models.MLModel
+
+    def guarded_predict(runtime, inputs):
+        nonlocal active_predicts, max_active_predicts
+        with state_lock:
+            active_predicts += 1
+            max_active_predicts = max(max_active_predicts, active_predicts)
+        try:
+            time.sleep(0.02)
+            return original_predict(runtime, inputs)
+        finally:
+            with state_lock:
+                active_predicts -= 1
+
+    def guarded_load_model(path, **kwargs):
+        nonlocal load_during_predict
+        with state_lock:
+            load_during_predict |= active_predicts > 0
+        return original_load_model(path, **kwargs)
+
+    monkeypatch.setattr(_Runtime, "predict", guarded_predict)
+    monkeypatch.setattr(
+        backend._sam_ct.models,
+        "MLModel",
+        guarded_load_model,
+    )
+    barrier = threading.Barrier(3)
+    errors = []
+
+    def predict_points():
+        try:
+            barrier.wait()
+            backend.predict(points=[3, 4])
+        except Exception as exc:  # pragma: no cover - diagnostic capture
+            errors.append(exc)
+
+    def predict_box():
+        try:
+            barrier.wait()
+            backend.predict(bboxes=[1, 2, 20, 25])
+        except Exception as exc:  # pragma: no cover - diagnostic capture
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=predict_points),
+        threading.Thread(target=predict_box),
+    ]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert max_active_predicts == 1
+    assert load_during_predict is False
+    assert len(loads) == 3
+    assert set(loads[1:]) == {
+        "decode_points_single_p1",
+        "decode_boxes_single",
+    }
+    assert len(backend._sam_functions) == 1
 
 
 def test_explicit_source_does_not_replace_cached_session(monkeypatch, tmp_path):
@@ -410,8 +555,8 @@ def test_explicit_source_does_not_replace_cached_session(monkeypatch, tmp_path):
     assert [name for name, _inputs in calls] == [
         "encode_image",
         "encode_image",
-        "decode_points_single",
-        "decode_points_single",
+        "decode_points_single_p1",
+        "decode_points_single_p1",
     ]
 
 

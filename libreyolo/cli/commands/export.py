@@ -6,17 +6,23 @@ from typing import Optional
 import typer
 
 from ..command_utils import (
+    COREML_VLM_EXPORT_ALIASES,
     exit_stage_error,
     exit_with_error,
+    get_user_provided_params,
     help_json_callback,
     load_model_or_exit,
+    resolve_export_sibling_factory,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
 
 
 def export_cmd(
-    model: str = typer.Option(..., help="Model weights (.pt)"),
+    model: str = typer.Option(
+        ...,
+        help="Model weights or a supported LibreSAM/LibreOpenVocab/LibreVLM alias",
+    ),
     format: str = typer.Option(
         "onnx",
         help=(
@@ -24,7 +30,9 @@ def export_cmd(
             "tflite (alias: litert), coreml, coreai (Apple, macOS only)"
         ),
     ),
-    imgsz: Optional[str] = typer.Option(None, help="Input image size (e.g. 640 or 640,480)"),
+    imgsz: Optional[str] = typer.Option(
+        None, help="Input image size (e.g. 640 or 640,480)"
+    ),
     batch: int = typer.Option(1, help="Export batch size"),
     half: bool = typer.Option(False, help="FP16 precision"),
     int8: bool = typer.Option(False, help="INT8 quantization"),
@@ -54,6 +62,13 @@ def export_cmd(
     data: Optional[str] = typer.Option(None, help="Calibration data for INT8"),
     fraction: float = typer.Option(1.0, help="Fraction of calibration data"),
     device: str = typer.Option("auto", help="Device for tracing"),
+    compute_units: str = typer.Option(
+        "cpu_only",
+        help=(
+            "CoreML planner: validated, cpu_only, all, cpu_and_gpu, or "
+            "cpu_and_ne"
+        ),
+    ),
     allow_download_scripts: bool = typer.Option(
         False,
         "--allow-download-scripts",
@@ -80,6 +95,22 @@ def export_cmd(
 
     fmt = format.lower()
     fmt = BaseExporter._aliases.get(fmt, fmt)
+    user_provided_params = get_user_provided_params()
+    if fmt == "coreml":
+        from libreyolo.export.coreml_profiles import (
+            normalize_coreml_compute_units,
+        )
+
+        try:
+            compute_units = normalize_coreml_compute_units(compute_units)
+        except ValueError as exc:
+            exit_with_error(out, "config_unsupported", str(exc))
+    elif "compute_units" in user_provided_params:
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "--compute-units applies only to CoreML export.",
+        )
 
     if half and int8:
         out.warning("Both half and int8 were requested. Using INT8 precision.")
@@ -89,11 +120,12 @@ def export_cmd(
         exit_with_error(
             out,
             "nms_unsupported_format",
-            "Embedded NMS (--nms) is only supported for ONNX and CoreML, "
-            f"not {fmt!r}.",
+            f"Embedded NMS (--nms) is only supported for ONNX and CoreML, not {fmt!r}.",
         )
     if nms and fmt == "onnx" and dynamic:
-        out.warning("Embedded ONNX NMS uses a fixed batch-1 graph. Using dynamic=False.")
+        out.warning(
+            "Embedded ONNX NMS uses a fixed batch-1 graph. Using dynamic=False."
+        )
         dynamic = False
     if nms and fmt == "coreml" and max_det != 300:
         exit_with_error(
@@ -103,7 +135,26 @@ def export_cmd(
             "NMS does not expose max_det.",
         )
 
-    model_path = resolve_model_or_exit(out, model)
+    sibling_factory = resolve_export_sibling_factory(model)
+    coreml_vlm_alias = (
+        fmt == "coreml" and str(model).strip().lower() in COREML_VLM_EXPORT_ALIASES
+    )
+    load_device = device
+    if coreml_vlm_alias:
+        normalized_device = str(device).strip().lower()
+        if normalized_device not in {"auto", "cpu"}:
+            exit_with_error(
+                out,
+                "config_unsupported",
+                "Core ML VLM export requires a CPU-loaded FP32 source model; "
+                f"device={device!r} is unsupported.",
+            )
+        # `auto` may select CUDA on a development workstation, but these
+        # strict conversion profiles accept CPU FP32 source tensors only.
+        load_device = "cpu"
+    model_path = (
+        model if sibling_factory is not None else resolve_model_or_exit(out, model)
+    )
 
     if allow_download_scripts and data is not None:
         out.warning(
@@ -111,22 +162,23 @@ def export_cmd(
         )
 
     # Load model
-    loaded_model = load_model_or_exit(
-        out, model=model, model_path=model_path, device=device
-    )
+    if sibling_factory is None:
+        loaded_model = load_model_or_exit(
+            out, model=model, model_path=model_path, device=load_device
+        )
+    else:
+        loaded_model = load_model_or_exit(
+            out,
+            model=model,
+            model_path=model_path,
+            device=load_device,
+            model_factory=sibling_factory,
+        )
 
-    # Core ML multifunction packages for OCR and promptable segmentation
-    # contain bounded RangeDim axes even when the CLI's generic dynamic option
-    # is left at its default. Report and forward the artifact's effective
-    # contract instead of the user's pre-resolution spelling.
-    if fmt == "coreml" and loaded_model.FAMILY in {
-        "edgetam",
-        "mobilesam",
-        "ppocr",
-        "sam",
-        "sam2",
-        "sam3",
-    }:
+    # PP-OCR is the bounded-RangeDim multifunction exception. LibreSAM source
+    # capture may be symbolic internally, but its public package materializes
+    # exact fixed-P functions and must remain dynamic=False.
+    if fmt == "coreml" and loaded_model.FAMILY == "ppocr":
         dynamic = True
 
     # Build export kwargs. The face component has a deliberately narrow
@@ -140,6 +192,8 @@ def export_cmd(
         "batch": batch,
         "device": device,
     }
+    if fmt == "coreml":
+        export_kwargs["compute_units"] = compute_units
     if not facerec_coreml:
         export_kwargs.update(
             {
@@ -162,21 +216,87 @@ def export_cmd(
         if "," in imgsz:
             parts = imgsz.split(",")
             if len(parts) != 2:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz format: {imgsz}. Use e.g. 640 or 640,480.")
+                exit_with_error(
+                    out,
+                    "invalid_imgsz",
+                    f"Invalid imgsz format: {imgsz}. Use e.g. 640 or 640,480.",
+                )
             try:
                 export_kwargs["imgsz"] = (int(parts[0]), int(parts[1]))
             except ValueError:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz values: {imgsz}. Use integer dimensions.")
+                exit_with_error(
+                    out,
+                    "invalid_imgsz",
+                    f"Invalid imgsz values: {imgsz}. Use integer dimensions.",
+                )
         else:
             try:
                 export_kwargs["imgsz"] = int(imgsz)
             except ValueError:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz: {imgsz}. Use e.g. 640 or 640,480.")
+                exit_with_error(
+                    out,
+                    "invalid_imgsz",
+                    f"Invalid imgsz: {imgsz}. Use e.g. 640 or 640,480.",
+                )
     if data is not None:
         export_kwargs["data"] = data
     if data is not None or (int8 and not facerec_coreml):
         export_kwargs["fraction"] = fraction
         export_kwargs["allow_download_scripts"] = allow_download_scripts
+
+    coreml_vlm = coreml_vlm_alias and loaded_model.FAMILY in {
+        "florence2",
+        "kosmos2",
+        "qwen3vl",
+        "smolvlm2",
+    }
+    if coreml_vlm:
+        unsupported = []
+        if half:
+            unsupported.append("half")
+        if int8:
+            unsupported.append("int8")
+        if dynamic:
+            unsupported.append("dynamic")
+        if batch != 1:
+            unsupported.append("batch")
+        if nms:
+            unsupported.append("nms")
+        if imgsz is not None:
+            unsupported.append("imgsz")
+        if opset is not None:
+            unsupported.append("opset")
+        if data is not None:
+            unsupported.append("data")
+        if verbose:
+            unsupported.append("verbose")
+        if rec_max_width is not None:
+            unsupported.append("rec_max_width")
+        if rec_batch_max != 6:
+            unsupported.append("rec_batch_max")
+        if "compute_units" in user_provided_params:
+            unsupported.append("compute_units")
+        for name in (
+            "allow_download_scripts",
+            "conf",
+            "fraction",
+            "iou",
+            "max_det",
+            "simplify",
+        ):
+            if name in user_provided_params:
+                unsupported.append(name)
+        if unsupported:
+            exit_with_error(
+                out,
+                "config_unsupported",
+                "Core ML VLM export does not accept generic graph options: "
+                f"{', '.join(unsupported)}.",
+            )
+        # Stateful VLM exporters own precision, context, state, and package
+        # policy. Generic image-graph defaults are semantically inapplicable
+        # and their strict public APIs reject them.
+        export_kwargs = {}
 
     # Run export
     out.progress(f"Exporting {model} to {fmt}...")
@@ -242,6 +362,8 @@ def export_cmd(
         "half": half,
         "int8": int8,
     }
+    if fmt == "coreml":
+        data_out["compute_units"] = compute_units
 
     if not json_output:
         data_out["_human_text"] = (

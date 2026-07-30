@@ -123,11 +123,17 @@ def test_profile_rejects_unbounded_static_lossy_and_nonvisual_variants():
             prompt_max_points=16,
             precision="fp16",
         )
-    with pytest.raises(ValueError, match="at least 2"):
+    single_point = validate_sam_coreml_profile(
+        family="edgetam",
+        size="edge",
+        prompt_max_points=1,
+    )
+    assert single_point.prompt_max_points == 1
+    with pytest.raises(ValueError, match="at least 1"):
         validate_sam_coreml_profile(
             family="edgetam",
             size="edge",
-            prompt_max_points=1,
+            prompt_max_points=0,
         )
     with pytest.raises(ValueError, match="at most 64"):
         validate_sam_coreml_profile(
@@ -168,9 +174,7 @@ def test_edgetam_function_manifest_has_seven_distinct_exact_abis():
         "preprocess_owner": "host",
         "preprocess_contract": "edgetam_square_imagenet_v1",
     }
-    assert [
-        item["name"] for item in functions["encode_image"]["outputs"]
-    ] == [
+    assert [item["name"] for item in functions["encode_image"]["outputs"]] == [
         "image_embedding_s4",
         "image_embedding_s8",
         "image_embedding_s16",
@@ -213,6 +217,97 @@ def test_edgetam_function_manifest_has_seven_distinct_exact_abis():
     assert sam_coreml_metadata(profile)["native_outputs_omitted"] == [
         "object_score_logits"
     ]
+
+
+def test_runtime_manifest_enumerates_every_direct_fixed_point_capture():
+    from libreyolo.export.coreml_sam import (
+        SAM_COREML_POINT_DISPATCH,
+        parse_sam_coreml_runtime_function,
+        sam_coreml_metadata,
+        sam_coreml_runtime_function_contracts,
+        sam_coreml_runtime_function_names,
+    )
+
+    profile = _profile(prompt_max_points=4)
+    names = sam_coreml_runtime_function_names(profile)
+    functions = sam_coreml_runtime_function_contracts(profile)
+    assert len(names) == 19
+    assert tuple(functions) == names
+    assert names == (
+        "encode_image",
+        "decode_points_single_p1",
+        "decode_points_single_p2",
+        "decode_points_single_p3",
+        "decode_points_single_p4",
+        "decode_points_multimask_p1",
+        "decode_points_multimask_p2",
+        "decode_points_multimask_p3",
+        "decode_points_multimask_p4",
+        "decode_boxes_single",
+        "decode_boxes_multimask",
+        "decode_points_boxes_single_p1",
+        "decode_points_boxes_single_p2",
+        "decode_points_boxes_single_p3",
+        "decode_points_boxes_single_p4",
+        "decode_points_boxes_multimask_p1",
+        "decode_points_boxes_multimask_p2",
+        "decode_points_boxes_multimask_p3",
+        "decode_points_boxes_multimask_p4",
+    )
+    point_contract = functions["decode_points_boxes_multimask_p4"]
+    assert point_contract["source_function"] == "decode_points_boxes_multimask"
+    assert point_contract["point_count"] == 4
+    assert point_contract["capture"] == "torch_export_fixed_points"
+    for feature in point_contract["inputs"]:
+        for axis in feature["shape"]:
+            assert axis["kind"] == "fixed"
+            if axis["axis"] == "P":
+                assert axis["value"] == 4
+    assert parse_sam_coreml_runtime_function(
+        "decode_points_single_p2",
+        profile=profile,
+    ) == ("decode_points_single", 2)
+    with pytest.raises(ValueError, match=r"\[1, 4\]"):
+        parse_sam_coreml_runtime_function(
+            "decode_points_single_p5",
+            profile=profile,
+        )
+
+    metadata = sam_coreml_metadata(profile)
+    assert metadata["coreml_function_names"] == list(names)
+    assert metadata["coreml_function_count"] == 19
+    assert metadata["sam_coreml_point_dispatch"] == SAM_COREML_POINT_DISPATCH
+
+
+def test_single_point_bound_is_a_fixed_seven_function_runtime():
+    from libreyolo.export.coreml_sam import (
+        sam_coreml_decoder_dynamic_shapes,
+        sam_coreml_function_contracts,
+        sam_coreml_runtime_function_contracts,
+        sam_coreml_runtime_function_names,
+    )
+
+    profile = _profile("mobilesam", prompt_max_points=1)
+    source = sam_coreml_function_contracts(profile)["decode_points_single"]
+    runtime_names = sam_coreml_runtime_function_names(profile)
+    runtime = sam_coreml_runtime_function_contracts(profile)
+    assert len(runtime_names) == 7
+    assert runtime_names[1] == "decode_points_single_p1"
+    assert source["inputs"][-2]["shape"][2] == {
+        "axis": "P",
+        "kind": "fixed",
+        "value": 1,
+    }
+    assert runtime["decode_points_single_p1"]["capture"] == (
+        "torch_export_fixed_points"
+    )
+    assert (
+        sam_coreml_decoder_dynamic_shapes(
+            profile,
+            "decode_points_single",
+        )
+        is None
+    )
 
 
 def test_sam3_profile_keeps_288_grid_and_local_only_license():
@@ -259,7 +354,7 @@ def test_profiles_serialize_operation_order_sensitive_host_math():
         ("edgetam", None),
         ("sam", None),
         ("sam2", None),
-        ("mobilesam", "MobileSAM"),
+        ("mobilesam", None),
     ],
 )
 def test_release_notice_gates_are_explicit(family, expected_gap):
@@ -270,6 +365,124 @@ def test_release_notice_gates_are_explicit(family, expected_gap):
         assert gap is None
     else:
         assert expected_gap in gap
+
+
+def test_mobilesam_metadata_pins_complete_checkpoint_chain():
+    from libreyolo.export.coreml_sam import sam_coreml_metadata
+
+    metadata = sam_coreml_metadata(_profile("mobilesam"))
+    weights = metadata["sam_coreml_weights"]
+    provenance = weights["checkpoint_provenance"]
+
+    assert metadata["artifact_redistributable"] is True
+    assert metadata["weights_license"] == "Apache-2.0"
+    assert metadata["release_notice_gap"] is None
+    assert weights["status"] == "reviewed_pinned"
+    assert weights["state_sha256"] == (
+        "92dc21da1d9d0ca2721ac08745d4e77c8f02b4af96b2e8de0aced98c5b4622ea"
+    )
+    assert provenance == {
+        "upstream_repo": "https://github.com/ChaoningZhang/MobileSAM",
+        "upstream_revision": "f706ad9c4eb7f219c00d9050e46328518ffb65d2",
+        "upstream_license": "Apache-2.0",
+        "upstream_checkpoint": "weights/mobile_sam.pt",
+        "upstream_checkpoint_size_bytes": 40_728_226,
+        "upstream_checkpoint_sha256": (
+            "6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f"
+        ),
+        "mirror_repo": "LibreYOLO/LibreMobileSAM",
+        "mirror_revision": "c80f272421d38fc26ef4bd0c02111b6c1f1c8cb9",
+        "mirror_checkpoint": "LibreMobileSAM.pt",
+        "mirror_checkpoint_size_bytes": 40_730_739,
+        "mirror_checkpoint_sha256": (
+            "79f09a3671f38696d45da0aed49ef382fde2efd1bc966d172ac9822b952e35fe"
+        ),
+        "state_tensor_count": 439,
+        "state_parameter_count": 10_140_231,
+        "state_tensor_sha256": (
+            "92dc21da1d9d0ca2721ac08745d4e77c8f02b4af96b2e8de0aced98c5b4622ea"
+        ),
+        "state_values_equal": True,
+    }
+
+
+def test_mobilesam_custom_state_is_explicitly_local_only():
+    from libreyolo.export.coreml_sam import (
+        inspect_sam_coreml_model,
+        sam_coreml_metadata,
+        validate_sam_coreml_metadata,
+    )
+    from libreyolo.models.mobilesam.model import MobileSAMNetwork
+
+    profile = _profile("mobilesam")
+    signature = inspect_sam_coreml_model(
+        MobileSAMNetwork().eval(),
+        profile=profile,
+    )
+    claim = signature.weights_claim
+    assert claim["status"] == "unknown_local"
+    assert claim["weights_license"] == "unknown-local"
+    assert claim["artifact_redistributable"] is False
+    assert claim["checkpoint_provenance"] is None
+    assert claim["state_sha256"] != (
+        "92dc21da1d9d0ca2721ac08745d4e77c8f02b4af96b2e8de0aced98c5b4622ea"
+    )
+
+    metadata = sam_coreml_metadata(profile, weights_claim=claim)
+    assert metadata["artifact_redistributable"] is False
+    assert metadata["weights_license"] == "unknown-local"
+    assert "local-only" in metadata["release_notice_gap"]
+    assert "checkpoint_provenance" not in metadata["sam_coreml_profile"]
+    assert "weights_license" not in metadata["sam_coreml_profile"]
+    assert validate_sam_coreml_metadata(metadata) == metadata
+    assert validate_sam_coreml_metadata(_stringify_metadata(metadata)) == metadata
+
+
+def test_mobilesam_exact_state_receives_reviewed_pinned_claim(monkeypatch):
+    import libreyolo.export.coreml_sam as coreml_sam
+    from libreyolo.models.mobilesam.model import MobileSAMNetwork
+
+    monkeypatch.setattr(
+        coreml_sam,
+        "_model_state_sha256",
+        lambda _model: (
+            "92dc21da1d9d0ca2721ac08745d4e77c8f02b4af96b2e8de0aced98c5b4622ea"
+        ),
+    )
+    signature = coreml_sam.inspect_sam_coreml_model(
+        MobileSAMNetwork().eval(),
+        profile=_profile("mobilesam"),
+    )
+    assert signature.weights_claim == coreml_sam.sam_coreml_metadata(
+        _profile("mobilesam")
+    )["sam_coreml_weights"]
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("weights_license", "Apache-2.0"),
+        ("artifact_redistributable", True),
+        ("checkpoint_provenance", {"upstream_repo": "forged"}),
+    ],
+)
+def test_mobilesam_unknown_local_claim_cannot_inherit_pinned_claims(key, value):
+    from libreyolo.export.coreml_sam import (
+        inspect_sam_coreml_model,
+        sam_coreml_metadata,
+        validate_sam_coreml_metadata,
+    )
+    from libreyolo.models.mobilesam.model import MobileSAMNetwork
+
+    profile = _profile("mobilesam")
+    claim = inspect_sam_coreml_model(
+        MobileSAMNetwork().eval(),
+        profile=profile,
+    ).weights_claim
+    metadata = sam_coreml_metadata(profile, weights_claim=claim)
+    metadata["sam_coreml_weights"][key] = value
+    with pytest.raises(ValueError, match="Unknown-local MobileSAM"):
+        validate_sam_coreml_metadata(metadata)
 
 
 def test_metadata_round_trip_is_hash_checked_and_string_safe():
@@ -283,7 +496,7 @@ def test_metadata_round_trip_is_hash_checked_and_string_safe():
     assert validate_sam_coreml_metadata(_stringify_metadata(metadata)) == metadata
 
     tampered = copy.deepcopy(metadata)
-    tampered["sam_coreml_functions"]["decode_points_single"]["inputs"][-1][
+    tampered["sam_coreml_functions"]["decode_points_single_p1"]["inputs"][-1][
         "dtype"
     ] = "int64"
     with pytest.raises(ValueError, match="exact graph ABI"):
@@ -347,6 +560,24 @@ def test_named_runtime_io_validator_enforces_dynamic_p_and_semantics():
         outputs,
         profile=profile,
     )
+    validate_sam_coreml_function_io(
+        "decode_points_boxes_multimask_p4",
+        inputs,
+        outputs,
+        profile=profile,
+    )
+
+    wrong_fixed_count, wrong_fixed_outputs = _valid_decoder_io(
+        profile,
+        point_count=3,
+    )
+    with pytest.raises(ValueError, match="requires exactly P=4"):
+        validate_sam_coreml_function_io(
+            "decode_points_boxes_multimask_p4",
+            wrong_fixed_count,
+            wrong_fixed_outputs,
+            profile=profile,
+        )
 
     bad_dtype = {**inputs, "point_labels": inputs["point_labels"].long()}
     with pytest.raises(ValueError, match="torch.int32"):
@@ -545,6 +776,61 @@ def test_mobilesam_functional_prompt_rewrite_is_eager_exact(
     torch.testing.assert_close(actual[1], expected[1], rtol=0.0, atol=0.0)
 
 
+@pytest.mark.parametrize("family", ("edgetam", "sam2"))
+def test_sam_capture_decomposes_only_unsupported_scalar_where(family):
+    from libreyolo.export.coreml import _sam_capture_decomposition_table
+
+    table = _sam_capture_decomposition_table(_profile(family))
+    assert set(table) == {torch.ops.aten.where.ScalarOther}
+    assert callable(table[torch.ops.aten.where.ScalarOther])
+    assert _sam_capture_decomposition_table(_profile("mobilesam")) == {}
+
+
+@pytest.mark.parametrize(
+    ("family", "capture_profile"),
+    (
+        ("edgetam", "edgetam_where_scalarother_v1"),
+        ("sam2", "sam2_where_scalarother_v1"),
+    ),
+)
+def test_sam_capture_decomposition_is_recorded_in_strict_metadata(
+    family,
+    capture_profile,
+):
+    from libreyolo.export.coreml_sam import (
+        sam_coreml_metadata,
+        validate_sam_coreml_metadata,
+    )
+
+    metadata = sam_coreml_metadata(_profile(family))
+    assert metadata["coreml_capture_decomposition_profile"] == capture_profile
+    assert metadata["coreml_capture_decompositions"] == [
+        "aten.where.ScalarOther"
+    ]
+    assert validate_sam_coreml_metadata(metadata) == metadata
+
+    tampered = copy.deepcopy(metadata)
+    tampered["coreml_capture_decompositions"] = []
+    with pytest.raises(ValueError, match="capture_decompositions"):
+        validate_sam_coreml_metadata(tampered)
+
+
+def test_sam_family_without_capture_decomposition_rejects_false_metadata():
+    from libreyolo.export.coreml_sam import (
+        sam_coreml_metadata,
+        validate_sam_coreml_metadata,
+    )
+
+    metadata = sam_coreml_metadata(_profile("mobilesam"))
+    assert "coreml_capture_decomposition_profile" not in metadata
+    assert "coreml_capture_decompositions" not in metadata
+
+    metadata["coreml_capture_decomposition_profile"] = "invented"
+    metadata["coreml_capture_decompositions"] = ["aten.where.ScalarOther"]
+    with pytest.raises(ValueError, match="not admitted"):
+        validate_sam_coreml_metadata(metadata)
+
+
 def test_mobilesam_dynamic_point_graph_exports_without_index_put():
     from libreyolo.export.coreml_sam import (
         SAMCoreMLDecoder,
@@ -591,6 +877,48 @@ def test_mobilesam_dynamic_point_graph_exports_without_index_put():
     torch.testing.assert_close(actual[1], expected[1], rtol=0.0, atol=0.0)
     torch.testing.assert_close(actual_one[0], expected_one[0], rtol=0.0, atol=0.0)
     torch.testing.assert_close(actual_one[1], expected_one[1], rtol=0.0, atol=0.0)
+    assert "index_put" not in str(exported.graph).lower()
+
+
+def test_mobilesam_single_point_bound_exports_fixed_graph():
+    from libreyolo.export.coreml_sam import (
+        SAMCoreMLDecoder,
+        sam_coreml_decoder_dynamic_shapes,
+    )
+
+    torch.manual_seed(20260729)
+    profile = _profile("mobilesam", prompt_max_points=1)
+    model = _ToyMobileSAM().eval()
+    decoder = SAMCoreMLDecoder(
+        model,
+        profile,
+        prompt_mode="points",
+        mask_mode="single",
+    ).eval()
+    embedding = torch.randn(1, 8, 2, 2)
+    point = torch.tensor([[[[8.0, 9.0]]]])
+    label = torch.tensor([[[1]]], dtype=torch.int32)
+    alternate_point = torch.tensor([[[[18.0, 19.0]]]])
+    alternate_label = torch.tensor([[[0]]], dtype=torch.int32)
+
+    exported = torch.export.export(
+        decoder,
+        (embedding, point, label),
+        dynamic_shapes=sam_coreml_decoder_dynamic_shapes(
+            profile,
+            "decode_points_single",
+        ),
+        strict=False,
+    ).run_decompositions({})
+    with torch.no_grad():
+        expected = decoder(embedding, alternate_point, alternate_label)
+        actual = exported.module()(
+            embedding,
+            alternate_point,
+            alternate_label,
+        )
+    torch.testing.assert_close(actual[0], expected[0], rtol=0.0, atol=0.0)
+    torch.testing.assert_close(actual[1], expected[1], rtol=0.0, atol=0.0)
     assert "index_put" not in str(exported.graph).lower()
 
 
@@ -746,7 +1074,7 @@ class _SignaturePromptEncoder(nn.Module):
 
 
 class _SignatureSAM2(nn.Module):
-    def __init__(self, *, model_type="sam2", feature_sizes=None):
+    def __init__(self, *, model_type="sam2_video", feature_sizes=None):
         super().__init__()
         self.config = SimpleNamespace(model_type=model_type)
         self.prompt_encoder = _SignaturePromptEncoder()

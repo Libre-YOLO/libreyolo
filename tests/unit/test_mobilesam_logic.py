@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 import pytest
 import torch
 from PIL import Image
@@ -117,12 +120,31 @@ def test_interactive_session_caches_embedding_tensor():
         model.reset_image()
 
 
-def test_snapshot_complete_requires_marker_and_weight(tmp_path):
+def test_snapshot_complete_requires_exact_marker_weight_and_digest(
+    tmp_path,
+    monkeypatch,
+):
     assert LibreMobileSAM._snapshot_complete(tmp_path) is False
-    (tmp_path / _SNAPSHOT_COMPLETE_MARKER).write_text("{}", encoding="utf-8")
+    marker = {
+        "repo": LibreMobileSAM.HF_REPOS["tiny"],
+        "revision": LibreMobileSAM.HF_REVISIONS["tiny"],
+    }
+    (tmp_path / _SNAPSHOT_COMPLETE_MARKER).write_text(
+        json.dumps(marker),
+        encoding="utf-8",
+    )
     assert LibreMobileSAM._snapshot_complete(tmp_path) is False
-    (tmp_path / LibreMobileSAM.WEIGHT_FILE).write_bytes(b"placeholder")
+    payload = b"exact-test-checkpoint"
+    monkeypatch.setattr(LibreMobileSAM, "WEIGHT_SIZE", len(payload))
+    monkeypatch.setattr(
+        LibreMobileSAM,
+        "WEIGHT_SHA256",
+        hashlib.sha256(payload).hexdigest(),
+    )
+    (tmp_path / LibreMobileSAM.WEIGHT_FILE).write_bytes(payload)
     assert LibreMobileSAM._snapshot_complete(tmp_path) is True
+    (tmp_path / LibreMobileSAM.WEIGHT_FILE).write_bytes(payload + b"!")
+    assert LibreMobileSAM._snapshot_complete(tmp_path) is False
 
 
 def test_init_model_loads_wrapped_checkpoint(tmp_path):

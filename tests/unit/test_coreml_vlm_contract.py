@@ -11,8 +11,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-import torch.nn as nn
 from PIL import Image
+from torch import nn
 
 from libreyolo.export import coreml_vlm
 from libreyolo.export.coreml_vlm import (
@@ -465,6 +465,8 @@ def test_fixed_square_processor_bridge_validates_and_casts_host_inputs():
 
 def test_metadata_roundtrip_and_hash_tamper_fail_closed():
     metadata = smolvlm2_500m_coreml_metadata()
+    assert metadata["coreml_execution_profile_status"] == "experimental"
+    assert "coreml_execution_profile" not in metadata
     stringified = stringify_coreml_vlm_metadata(metadata)
 
     validated = validate_coreml_vlm_metadata(stringified)
@@ -477,6 +479,12 @@ def test_metadata_roundtrip_and_hash_tamper_fail_closed():
         weights["sha256"]
         == "b9bfd456c9472c0acd5719d6e514c4b859891af205ee1a736552fd3497b8b0c3"
     )
+    assert stringified["precision"] == "mixed"
+    assert stringified["vision_compute_precision"] == "fp32"
+    assert stringified["token_embedding_compute_precision"] == "fp16"
+    assert stringified["decoder_compute_precision"] == "fp32"
+    assert stringified["function_io_precision"] == "fp16"
+    assert stringified["state_precision"] == "fp16"
     assert stringified["conversion_source_precision"] == "fp32"
 
     bad = dict(stringified)
@@ -488,8 +496,13 @@ def test_metadata_roundtrip_and_hash_tamper_fail_closed():
 
     missing = dict(stringified)
     del missing["processor"]
-    with pytest.raises(ValueError, match="missing 'processor'"):
+    with pytest.raises(ValueError, match=r"missing=\['processor'\]"):
         validate_coreml_vlm_metadata(missing)
+
+    extra = dict(stringified)
+    extra["unreviewed_metadata"] = "must-not-survive"
+    with pytest.raises(ValueError, match="extra=.*unreviewed_metadata"):
+        validate_coreml_vlm_metadata(extra)
 
 
 def test_processor_snapshot_revision_version_missing_and_hash_guards(
@@ -682,6 +695,28 @@ def test_exact_model_config_rejects_numerically_relevant_drift():
         coreml_vlm.validate_smolvlm2_500m_model(model)
 
 
+def test_export_default_rejects_before_toolchain_or_conversion(
+    tmp_path,
+    monkeypatch,
+):
+    touched = []
+    monkeypatch.setattr(
+        coreml_vlm,
+        "require_coreml_vlm_transformers_toolchain",
+        lambda: touched.append("toolchain"),
+    )
+
+    with pytest.raises(NotImplementedError, match="exact Apple-M4"):
+        coreml_vlm.export_smolvlm2_500m_coreml_package(
+            nn.Identity(),
+            processor_dir=tmp_path,
+            processor_revision=coreml_vlm.SMOLVLM2_500M_REVISION,
+            output_path=tmp_path / "blocked.mlpackage",
+        )
+
+    assert touched == []
+
+
 @pytest.mark.parametrize("conversion_fails", [False, True])
 def test_export_restores_every_module_training_flag(
     tmp_path,
@@ -743,6 +778,7 @@ def test_export_restores_every_module_training_flag(
                 processor_dir=tmp_path,
                 processor_revision=coreml_vlm.SMOLVLM2_500M_REVISION,
                 output_path=tmp_path / "smol.mlpackage",
+                compute_units="cpu_only",
             )
     else:
         coreml_vlm.export_smolvlm2_500m_coreml_package(
@@ -750,6 +786,7 @@ def test_export_restores_every_module_training_flag(
             processor_dir=tmp_path,
             processor_revision=coreml_vlm.SMOLVLM2_500M_REVISION,
             output_path=tmp_path / "smol.mlpackage",
+            compute_units="cpu_only",
         )
 
     assert tuple(module.training for module in model.modules()) == expected
@@ -781,6 +818,7 @@ def test_export_rejects_half_source_graph_before_coremltools(
             processor_dir=tmp_path,
             processor_revision=coreml_vlm.SMOLVLM2_500M_REVISION,
             output_path=tmp_path / "blocked.mlpackage",
+            compute_units="cpu_only",
         )
 
 
@@ -987,6 +1025,28 @@ def test_function_description_validation_pins_ranges_dtypes_and_state():
         )
 
 
+def test_package_publication_fails_closed_without_atomic_rename(
+    monkeypatch,
+    tmp_path,
+):
+    source = tmp_path / "staged.mlpackage"
+    destination = tmp_path / "published.mlpackage"
+    source.mkdir()
+    monkeypatch.setattr(coreml_vlm.os, "name", "posix")
+    monkeypatch.setattr(coreml_vlm.sys, "platform", "unsupported")
+    monkeypatch.setattr(
+        coreml_vlm.ctypes,
+        "CDLL",
+        lambda *_args, **_kwargs: SimpleNamespace(),
+    )
+
+    with pytest.raises(RuntimeError, match="atomic no-replace"):
+        coreml_vlm._publish_directory_no_replace(source, destination)
+
+    assert source.is_dir()
+    assert not destination.exists()
+
+
 def test_package_builder_uses_native_multifunction_and_no_overwrite(
     tmp_path,
     monkeypatch,
@@ -1068,6 +1128,16 @@ def test_package_builder_uses_native_multifunction_and_no_overwrite(
         "validate_coreml_vlm_multifunction_spec",
         lambda *_args, **_kwargs: None,
     )
+
+    def fake_write_metadata(_ct, _model, package_path, values):
+        metadata_store[str(package_path)] = dict(values)
+        metadata_store["latest"] = dict(values)
+
+    monkeypatch.setattr(
+        coreml_vlm,
+        "_write_coreml_vlm_metadata_in_place",
+        fake_write_metadata,
+    )
     # The fake model has no real protobuf; individual descriptions above cover
     # exact ABI validation.
     output = tmp_path / "smol.mlpackage"
@@ -1082,6 +1152,7 @@ def test_package_builder_uses_native_multifunction_and_no_overwrite(
             output_path=tmp_path / "mismatched.mlpackage",
             profile=smolvlm2_500m_coreml_profile(2048),
             metadata=metadata,
+            compute_units="cpu_only",
             coremltools_module=fake_ct,
         )
     result = build_coreml_vlm_multifunction_package(
@@ -1089,6 +1160,7 @@ def test_package_builder_uses_native_multifunction_and_no_overwrite(
         output_path=output,
         profile=profile,
         metadata=metadata,
+        compute_units="cpu_only",
         coremltools_module=fake_ct,
     )
 
@@ -1101,8 +1173,68 @@ def test_package_builder_uses_native_multifunction_and_no_overwrite(
             output_path=output,
             profile=profile,
             metadata=metadata,
+            compute_units="cpu_only",
             coremltools_module=fake_ct,
         )
+
+    raced = tmp_path / "raced.mlpackage"
+    sentinel = raced / "winner.txt"
+
+    def lose_publication_race(_source, destination):
+        destination.mkdir()
+        sentinel.write_text("competitor", encoding="utf-8")
+        raise FileExistsError("simulated package publication race")
+
+    monkeypatch.setattr(
+        coreml_vlm,
+        "_publish_directory_no_replace",
+        lose_publication_race,
+    )
+    with pytest.raises(FileExistsError, match="publication race"):
+        build_coreml_vlm_multifunction_package(
+            components,
+            output_path=raced,
+            profile=profile,
+            metadata=metadata,
+            compute_units="cpu_only",
+            coremltools_module=fake_ct,
+        )
+    assert sentinel.read_text(encoding="utf-8") == "competitor"
+
+
+def test_metadata_update_replaces_only_model_protobuf(tmp_path):
+    package = tmp_path / "model.mlpackage"
+    model_file = package / "Data" / "com.apple.CoreML" / "model.mlmodel"
+    weight_file = package / "Data" / "com.apple.CoreML" / "weights" / "weight.bin"
+    model_file.parent.mkdir(parents=True)
+    weight_file.parent.mkdir()
+    model_file.write_bytes(b"old protobuf")
+    weight_file.write_bytes(b"weight sentinel")
+    spec = SimpleNamespace(
+        description=SimpleNamespace(
+            metadata=SimpleNamespace(userDefined={}),
+        )
+    )
+    model = SimpleNamespace(get_spec=lambda: spec)
+
+    def save_spec(value, path):
+        Path(path).write_text(
+            json.dumps(dict(value.description.metadata.userDefined)),
+            encoding="utf-8",
+        )
+
+    fake_ct = SimpleNamespace(utils=SimpleNamespace(save_spec=save_spec))
+    coreml_vlm._write_coreml_vlm_metadata_in_place(
+        fake_ct,
+        model,
+        package,
+        {"contract": "v1"},
+    )
+
+    assert json.loads(model_file.read_text(encoding="utf-8")) == {
+        "contract": "v1"
+    }
+    assert weight_file.read_bytes() == b"weight sentinel"
 
 
 @pytest.mark.skipif(

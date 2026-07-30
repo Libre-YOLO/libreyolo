@@ -152,7 +152,7 @@
       "l": 504
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": null,
     "available": true
   },
@@ -285,7 +285,7 @@
       "edge": 1024
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "sam",
     "available": true
   },
@@ -383,7 +383,7 @@
       "large": 768
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "vlm",
     "available": true
   },
@@ -461,7 +461,7 @@
       "224": 224
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "vlm",
     "available": true
   },
@@ -584,7 +584,7 @@
       "tiny": 1024
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "sam",
     "available": true
   },
@@ -759,7 +759,7 @@
       "8b": 1024
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "vlm",
     "available": true
   },
@@ -994,7 +994,7 @@
       "huge": 1024
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "sam",
     "available": true
   },
@@ -1017,7 +1017,7 @@
       "large": 1024
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "sam",
     "available": true
   },
@@ -1034,7 +1034,7 @@
       "large": 1008
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "sam",
     "available": true
   },

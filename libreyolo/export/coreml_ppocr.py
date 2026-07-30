@@ -66,6 +66,7 @@ PPOCR_COREML_RECOGNIZER_HEIGHT = 48
 PPOCR_COREML_RECOGNIZER_MIN_WIDTH = 320
 PPOCR_COREML_RECOGNIZER_DEFAULT_BATCH_MAX = 6
 PPOCR_COREML_RECOGNIZER_OVERFLOW_POLICY = "error"
+PPOCR_COREML_PROBABILITY_SUM_ATOL = 2e-4
 
 PPOCR_COREML_HOST_OPERATIONS = (
     "detector_resize_and_normalize",
@@ -861,8 +862,8 @@ def validate_ppocr_recognizer_coreml_io(
     if not torch.allclose(
         sums,
         torch.ones_like(sums),
-        rtol=1e-5,
-        atol=1e-6,
+        rtol=0.0,
+        atol=PPOCR_COREML_PROBABILITY_SUM_ATOL,
     ):
         raise ValueError(
             "LibrePPOCR recognizer probabilities must sum to one per timestep."

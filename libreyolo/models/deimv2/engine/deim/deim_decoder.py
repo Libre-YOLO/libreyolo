@@ -6,9 +6,7 @@ Modified from D-FINE (https://github.com/Peterande/D-FINE/)
 Copyright (c) 2024 D-FINE Authors. All Rights Reserved.
 """
 
-import math
 import copy
-import functools
 from collections import OrderedDict
 
 import torch
@@ -252,7 +250,9 @@ class TransformerDecoder(nn.Module):
             # Refine bounding box corners using FDR, integrating previous layer's corrections
             pred_corners = bbox_head[i](output + output_detach) + pred_corners_undetach
             inter_ref_bbox = distance2bbox(
-                ref_points_initial, integral(pred_corners, project), reg_scale
+                ref_points_initial,
+                integral(pred_corners, project.unsqueeze(0)),
+                reg_scale,
             )
 
             if self.training or i == self.eval_idx:
