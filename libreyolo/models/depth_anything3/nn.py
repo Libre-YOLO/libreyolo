@@ -32,6 +32,7 @@ class LibreDepthAnything3Net(nn.Module):
 
     def __init__(self) -> None:
         super().__init__()
+        self.export = False
         self.backbone = DinoV2(
             name="vitl",
             out_layers=[4, 11, 17, 23],
@@ -96,6 +97,12 @@ class LibreDepthAnything3Net(nn.Module):
         features, _ = self.backbone(x.unsqueeze(1), export_feat_layers=[])
         output = self.head(features, height, width, patch_start_idx=0)
         depth = output["depth"]
+        if getattr(self, "export", False):
+            # The sky heuristic contains tensor-dependent branching and a
+            # quantile. Export its two dense inputs and reproduce that exact
+            # postprocess in the runtime backend instead of freezing one
+            # example's branch into the graph.
+            return depth[:, 0].unsqueeze(1), output["sky"][:, 0].unsqueeze(1)
         if "sky" in output:
             depth = self._apply_mono_sky(depth, output["sky"])
         inverse_depth = torch.reciprocal(depth.clamp_min(self.INVERSE_DEPTH_EPS))

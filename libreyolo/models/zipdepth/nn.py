@@ -181,6 +181,8 @@ class ChannelAttention(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Mean reduction is exactly AdaptiveAvgPool2d(1), while also lowering
+        # to an operator provided by the ExecuTorch 1.2 portable runtime.
         pooled = x.mean(dim=(-2, -1), keepdim=True)
         return x * self.fc(pooled)
 
@@ -331,11 +333,9 @@ class MinimalCrossScale(nn.Module):
         self, x_high: torch.Tensor, x_low: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         low_up = F.interpolate(self.low_to_high(x_low), size=x_high.shape[2:], mode="nearest")
-        high_down = F.avg_pool2d(
-            self.high_to_low(x_high),
-            kernel_size=2,
-            stride=2,
-        )
+        # Valid ZipDepth inputs keep adjacent stages at an exact 2:1 spatial
+        # ratio, making this identical to adaptive pooling to x_low's shape.
+        high_down = F.avg_pool2d(self.high_to_low(x_high), kernel_size=2, stride=2)
         return x_high + low_up * 0.3, x_low + high_down * 0.3
 
 

@@ -68,12 +68,17 @@ def test_experimental_export_warns_in_preflight():
 def test_executorch_realtime_support_is_evidence_backed():
     validated = {
         ("convnext", "classify"),
+        ("depth_anything", "depth"),
         ("dexined", "edge"),
+        ("dinov2", "classify"),
         ("ec", "detect"),
         ("ec", "pose"),
         ("ec", "segment"),
         ("efficientnetv2", "classify"),
         ("fomo", "point"),
+        ("l2cs", "gaze"),
+        ("lingbotvision", "semantic"),
+        ("moge2", "normal"),
         ("mobilenetv4", "classify"),
         ("nafnet", "restore"),
         ("picodet", "detect"),
@@ -84,6 +89,9 @@ def test_executorch_realtime_support_is_evidence_backed():
         ("rtdetrv2", "detect"),
         ("rtdetrv4", "detect"),
         ("rfdetr", "detect"),
+        ("rfdetr", "obb"),
+        ("rfdetr", "pose"),
+        ("rfdetr", "segment"),
         ("teed", "edge"),
         ("yolo1", "detect"),
         ("yolo2", "detect"),
@@ -96,14 +104,23 @@ def test_executorch_realtime_support_is_evidence_backed():
         ("yolonas", "detect"),
         ("yolonas", "pose"),
         ("yolox", "detect"),
+        ("zipdepth", "depth"),
     }
     for family, task in validated:
         assert get_support(family, task, "executorch").tier == "validated"
 
-    assert get_support("rtmdet", "detect", "executorch").tier == "blocked"
+    assert get_support("rtmdet", "detect", "executorch").tier == "experimental"
     assert get_support("dfine", "detect", "executorch").tier == "blocked"
     assert get_support("deim", "detect", "executorch").tier == "blocked"
     assert get_support("deimv2", "detect", "executorch").tier == "blocked"
+    assert get_support("swinir", "restore", "executorch").tier == "blocked"
+    assert get_support("dinov2", "semantic", "executorch").tier == "experimental"
+    assert get_support("dinov2", "embed", "executorch").tier == "experimental"
+    assert get_support("depth_anything3", "depth", "executorch").tier == "experimental"
+    assert get_support("segformer", "semantic", "executorch").tier == "experimental"
+    assert get_support("eomt", "semantic", "executorch").tier == "blocked"
+    assert get_support("birefnet", "matte", "executorch").tier == "blocked"
+    assert get_support("feynobg", "matte", "executorch").tier == "experimental"
 
 
 def test_tflite_support_keys_use_canonical_tasks():

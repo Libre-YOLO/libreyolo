@@ -7,10 +7,11 @@ import importlib.util
 import numpy as np
 import pytest
 import torch
+import torch.nn.functional as F
 
 from libreyolo.models.depth_anything.model import LibreDepthAnythingV2
 from libreyolo.models.zipdepth.model import LibreZipDepth
-from libreyolo.models.zipdepth.nn import LibreZipDepthNet
+from libreyolo.models.zipdepth.nn import LibreZipDepthNet, MinimalCrossScale
 from libreyolo.models.zipdepth.utils import (
     compute_input_hw,
     make_divisible,
@@ -116,6 +117,18 @@ def test_forward_returns_full_resolution_map(size):
         out = net(torch.rand(1, 3, 96, 128))
     assert out.shape == (1, 1, 96, 128)
     assert float(out.min()) >= 0.0
+
+
+def test_cross_scale_fixed_pool_matches_adaptive_reference():
+    layer = MinimalCrossScale(dim_high=8, dim_low=16).eval()
+    high = torch.rand(1, 8, 16, 20)
+    low = torch.rand(1, 16, 8, 10)
+    with torch.no_grad():
+        _, actual_low = layer(high, low)
+        expected_down = F.adaptive_avg_pool2d(
+            layer.high_to_low(high), low.shape[2:]
+        )
+    torch.testing.assert_close(actual_low, low + expected_down * 0.3)
 
 
 def test_postprocess_resizes_to_original_canvas():

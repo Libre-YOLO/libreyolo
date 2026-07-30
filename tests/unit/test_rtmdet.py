@@ -68,6 +68,36 @@ def test_share_conv_aliasing():
         assert id(head.reg_convs[0][i].conv) == id(head.reg_convs[1][i].conv)
 
 
+def test_export_context_unshares_only_the_temporary_rtmdet_copy():
+    from libreyolo.export.exporter import ExecuTorchExporter
+
+    wrapper = LibreRTMDet(None, size="t", nb_classes=2, device="cpu")
+    original_head = wrapper.model.head
+
+    with ExecuTorchExporter(wrapper)._model_context(
+        torch.device("cpu"), False, False, 1, (64, 64)
+    ) as (prepared, _):
+        for index in range(original_head.stacked_convs):
+            assert (
+                id(prepared.head.cls_convs[0][index].conv)
+                != id(prepared.head.cls_convs[1][index].conv)
+            )
+            assert (
+                id(prepared.head.reg_convs[0][index].conv)
+                != id(prepared.head.reg_convs[1][index].conv)
+            )
+            assert (
+                id(original_head.cls_convs[0][index].conv)
+                == id(original_head.cls_convs[1][index].conv)
+            )
+
+    for index in range(original_head.stacked_convs):
+        assert (
+            id(original_head.cls_convs[0][index].conv)
+            == id(original_head.cls_convs[1][index].conv)
+        )
+
+
 def test_grid_priors_corner_offset():
     """``_make_grid_priors`` uses MlvlPointGenerator(offset=0) — corners, not centers.
 

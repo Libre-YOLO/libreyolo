@@ -15,13 +15,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | deim | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
 | depth_anything | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
-| depth_anything3 | depth |  |  |  |  |  |  |  |  |  |
+| depth_anything3 | depth |  |  | exp |  |  |  |  |  |  |
 | dexined | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | dfine | detect | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ |  | exp | ✓ |  |  |  |  |
-| dinov2 | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
+| dinov2 | semantic | ✓ | ✓ | exp | ✓ | ✓ |  |  |  |  |
 | dinov2 | classify | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | exp |
-| dinov2 | embed |  |  |  |  |  |  |  |  |  |
+| dinov2 | embed |  |  | exp |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |
@@ -38,12 +38,12 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | kosmos2 | detect |  |  |  |  |  |  |  |  |  |
 | l2cs | gaze | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |  |  |
-| lingbotvision | semantic | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
+| lingbotvision | semantic | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |
-| moge2 | normal | ✓ |  |  |  |  |  |  |  |  |
+| moge2 | normal | ✓ |  | ✓ |  |  |  |  |  |  |
 | nafnet | restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |  |
@@ -62,13 +62,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | rtdetr | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  | exp | ✓ |
 | rtdetrv2 | detect | ✓ | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | rtdetrv4 | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
-| rtmdet | detect | ✓ | ✓ |  | ✓ | ✓ |  |  |  | ✓ |
+| rtmdet | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  |  | ✓ |
 | rtmdet | segment |  |  |  |  |  |  |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |  |  |
 | sam3 | segment |  |  |  |  |  |  |  |  |  |
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |  |
-| segformer | semantic | ✓ | ✓ |  |  | ✓ |  |  |  |  |
+| segformer | semantic | ✓ | ✓ | exp |  | ✓ |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  |  | ✓ |
 | siglip2 | embed |  |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
@@ -164,6 +164,7 @@ A check mark applies only under any constraint listed here.
 - `l2cs` / `gaze` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed 448x448 face-crop input
 - `lingbotvision` / `semantic` / `onnx`: fixed 512x512 input
 - `lingbotvision` / `semantic` / `torchscript`: fixed 512x512 input
+- `lingbotvision` / `semantic` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `lingbotvision` / `semantic` / `openvino`: fixed family-native export canvas
 - `lingbotvision` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
 - `mobilenetv4` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
@@ -172,6 +173,7 @@ A check mark applies only under any constraint listed here.
 - `mobilenetv4` / `classify` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; two-input raw parity, factory reload, metadata, and public predict parity
 - `mobilenetv4` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `moge2` / `normal` / `onnx`: fixed square batch-1 export canvas divisible by 14; exported inference rejects non-square sources rather than stretching image-plane geometry; the official MIT ViT-S/B/L normal checkpoints are covered by FP32 same-canvas native-versus-ONNX angular parity below 0.1 degree
+- `moge2` / `normal` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape
 - `nafnet` / `restore` / `onnx`: fixed-resolution export canvas
 - `nafnet` / `restore` / `torchscript`: fixed-resolution export canvas
 - `nafnet` / `restore` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
@@ -332,7 +334,6 @@ A check mark applies only under any constraint listed here.
 - `depth_anything` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `depth_anything3` / `depth` / `onnx`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `torchscript`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
-- `depth_anything3` / `depth` / `executorch`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `tensorrt`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `openvino`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `ncnn`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
@@ -352,7 +353,6 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `segment` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
-- `dinov2` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `dinov2` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `dinov2` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
@@ -360,15 +360,14 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export is not implemented for this format.
-- `dinov2` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `executorch`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `openvino`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `ncnn`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `tflite`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `coreml`: Embedding export is not implemented in v1; use the native predict()/embed() API.
-- `dinov2` / `embed` / `coreai`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `dinov2` / `embed` / `onnx`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `torchscript`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `tensorrt`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `openvino`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `ncnn`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `tflite`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `coreml`: LibreDINOv2 embedding export currently supports ExecuTorch only.
+- `dinov2` / `embed` / `coreai`: LibreDINOv2 embedding export currently supports ExecuTorch only.
 - `ec` / `detect` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_LAYERNORMALIZATION custom operation that LiteRT 2.1.2 cannot prepare.
 - `ec` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -390,7 +389,7 @@ A check mark applies only under any constraint listed here.
 - `edgetam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `efficientnetv2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `eomt` / `semantic` / `executorch`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `semantic` / `executorch`: Strict torch.export capture fails on a data-dependent symbolic expression in the mask path before XNNPACK lowering.
 - `eomt` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
@@ -470,7 +469,6 @@ A check mark applies only under any constraint listed here.
 - `lfm2vl` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
-- `lingbotvision` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `lingbotvision` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `lingbotvision` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `lingbotvision` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
@@ -503,7 +501,6 @@ A check mark applies only under any constraint listed here.
 - `mobilesam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `moge2` / `normal` / `torchscript`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
-- `moge2` / `normal` / `executorch`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `tensorrt`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `openvino`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `ncnn`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
@@ -592,7 +589,6 @@ A check mark applies only under any constraint listed here.
 - `rtdetrv4` / `detect` / `ncnn`: NCNN export is not supported for RT-DETRv4: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rtdetrv4` / `detect` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError at the native 640x640 canvas.
 - `rtdetrv4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `rtmdet` / `detect` / `executorch`: ExecuTorch 1.2 XNNPACK lowering fails in FuseBatchNormPass because the generated graph has a duplicate fused parameter name.
 - `rtmdet` / `detect` / `ncnn`: PNNX 20260526 reports an unregistered nn.Conv2d layer and leaves the RTMDet NCNN graph without usable input blobs.
 - `rtmdet` / `detect` / `tflite`: onnx2tf 2.6.7 exports, reloads, and preserves raw output parity, but at the native 640x640 canvas public boxes fall to 0.911 IoU with 29.9 px coordinate drift.
 - `rtmdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -641,7 +637,6 @@ A check mark applies only under any constraint listed here.
 - `sam3dbody` / `mesh` / `tflite`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `coreml`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `coreai`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
-- `segformer` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `tensorrt`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `ncnn`: PNNX leaves unsupported pnnx.Expression nodes in the SegFormer graph; the generated NCNN network reports 'network graph not ready' and has no runnable input blob.
 - `segformer` / `semantic` / `tflite`: onnx2tf 2.6.7 emits a flatbuffer, but LiteRT 2.1.2 cannot prepare its attention reshape (1024 input elements versus 256 output elements).

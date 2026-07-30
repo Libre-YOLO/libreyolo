@@ -149,13 +149,18 @@ _add(
     ),
 )
 _add(
-    "blocked",
+    "experimental",
     ("rtmdet",),
     ("detect",),
     ("executorch",),
     reason=(
-        "ExecuTorch 1.2 XNNPACK lowering fails in FuseBatchNormPass because "
-        "the generated graph has a duplicate fused parameter name."
+        "The export-only graph unshares RTMDet's cross-level head convolutions "
+        "to avoid duplicate XNNPACK batch-norm fusion parameter names. Full "
+        "conversion, runtime execution, input sensitivity, deterministic "
+        "random-weight raw parity, and detection parsing are covered."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(
@@ -300,6 +305,105 @@ _add(
     since="1.3",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    ("lingbotvision",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK semantic-mask parity is covered by the "
+        "external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("dinov2",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "The real pretrained DINOv2 backbone has full XNNPACK conversion, "
+        "runtime execution, input sensitivity, deterministic random-head raw "
+        "parity, and semantic result parsing coverage. A permissive trained "
+        "LibreDINOv2 semantic checkpoint is not available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 518x518 input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("dinov2",),
+    ("embed",),
+    ("executorch",),
+    reason=(
+        "The real pretrained DINOv2 backbone has full XNNPACK conversion, "
+        "runtime execution, input sensitivity, embedding-vector parity, "
+        "normalization, and result parsing coverage."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 224x224 input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("segformer",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "The b0 graph has full XNNPACK conversion, runtime execution, input "
+        "sensitivity, deterministic random-weight logits parity, and semantic "
+        "result parsing coverage. Published pretrained weights are "
+        "non-commercial and are not used by this validation."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape "
+        "divisible by 32"
+    ),
+)
+_add(
+    "experimental",
+    ("depth_anything3",),
+    ("depth",),
+    ("executorch",),
+    reason=(
+        "The fixed-canvas graph exports raw depth and sky maps so LibreYOLO's "
+        "runtime can apply the tensor-dependent sky correction and inverse-depth "
+        "contract outside the portable graph. Conversion, runtime execution, "
+        "raw-map parity, input sensitivity, and depth result parsing are covered."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape "
+        "divisible by 14"
+    ),
+)
+_add(
+    "blocked",
+    ("eomt",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "Strict torch.export capture fails on a data-dependent symbolic "
+        "expression in the mask path before XNNPACK lowering."
+    ),
+)
+_add(
+    "validated",
+    ("moge2",),
+    ("normal",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK angular normal-map parity is covered by "
+        "the external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape"
     ),
 )
 _add(
@@ -540,13 +644,20 @@ _add(
 )
 _add(
     "blocked",
-    ("clip", "siglip2", "dinov2"),
+    ("clip", "siglip2"),
     ("embed",),
     EXPORT_FORMATS,
     reason=(
         "Embedding export is not implemented in v1; use the native "
         "predict()/embed() API."
     ),
+)
+_add(
+    "blocked",
+    ("dinov2",),
+    ("embed",),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "executorch"),
+    reason="LibreDINOv2 embedding export currently supports ExecuTorch only.",
 )
 _add(
     "blocked",
