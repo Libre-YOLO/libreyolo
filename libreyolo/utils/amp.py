@@ -28,3 +28,8 @@ def torch_amp_dtype(value: str):
 
     canonical = normalize_amp_dtype(value)
     return torch.float16 if canonical == "float16" else torch.bfloat16
+
+
+def amp_uses_grad_scaler(value: str) -> bool:
+    """Return whether the AMP dtype needs dynamic loss scaling."""
+    return normalize_amp_dtype(value) == "float16"

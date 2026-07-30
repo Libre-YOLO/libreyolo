@@ -19,7 +19,11 @@ import torch.nn as nn
 from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 
-from libreyolo.utils.amp import normalize_amp_dtype, torch_amp_dtype
+from libreyolo.utils.amp import (
+    amp_uses_grad_scaler,
+    normalize_amp_dtype,
+    torch_amp_dtype,
+)
 
 from .artifacts import TrainingArtifactsCallback, TrainingStatusCallback
 from .callbacks import (
@@ -118,6 +122,13 @@ class BaseTrainer(ABC):
         self.config.max_det = int(getattr(self.config, "max_det", 300))
         if self.config.max_det < 1:
             raise ValueError(f"max_det must be >= 1, got {self.config.max_det}")
+        self.config.eval_max_det = getattr(self.config, "eval_max_det", None)
+        if self.config.eval_max_det is not None:
+            self.config.eval_max_det = int(self.config.eval_max_det)
+            if self.config.eval_max_det < 1:
+                raise ValueError(
+                    f"eval_max_det must be >= 1, got {self.config.eval_max_det}"
+                )
         self.model = model
         self.wrapper_model = wrapper_model
         self.callbacks = TrainCallbackList(callbacks)
@@ -1469,7 +1480,7 @@ class BaseTrainer(ABC):
             # FP16 needs loss scaling. BF16's wider exponent range does not,
             # but a disabled scaler keeps the optimizer path shared.
             self.scaler = GradScaler(
-                "cuda", enabled=amp_torch_dtype == torch.float16
+                "cuda", enabled=amp_uses_grad_scaler(self.config.amp_dtype)
             )
             if is_main_process():
                 logger.info(
@@ -2491,6 +2502,7 @@ class BaseTrainer(ABC):
                 conf_thres=0.001,
                 iou_thres=0.65,
                 max_det=getattr(self.config, "max_det", 300),
+                eval_max_det=getattr(self.config, "eval_max_det", None),
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
                 amp_dtype=getattr(self.config, "amp_dtype", "float16"),

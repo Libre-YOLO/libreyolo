@@ -32,6 +32,8 @@ from typing import Optional, Sequence
 import torch
 from torch.profiler import record_function
 
+from libreyolo.utils.amp import normalize_amp_dtype, torch_amp_dtype
+
 # Inference phase order for the shared analysis (`analyze_trace`'s _ORDER also
 # lists these so per-phase tables read pre -> forward -> post).
 _STAGES = ("preprocess", "forward", "postprocess")
@@ -54,6 +56,7 @@ class InferenceProfiler:
         batch: int = 1,
         imgsz: Optional[int] = None,
         half: bool = False,
+        amp_dtype: str = "float16",
         trace: bool = True,
         save_dir: Optional[Path] = None,
         logger=None,
@@ -65,6 +68,7 @@ class InferenceProfiler:
         self.batch = max(1, int(batch))
         self.imgsz = imgsz
         self.half = bool(half)
+        self.amp_dtype = normalize_amp_dtype(amp_dtype)
         self.trace = bool(trace)
         self.save_dir = Path(save_dir) if save_dir else None
         self.logger = logger
@@ -96,7 +100,9 @@ class InferenceProfiler:
         x = stacked.to(self.device)
         with torch.no_grad():
             if self.half and self._is_cuda:
-                with torch.autocast("cuda"):
+                with torch.autocast(
+                    "cuda", dtype=torch_amp_dtype(self.amp_dtype)
+                ):
                     return self.model._forward(x)
             return self.model._forward(x)
 
@@ -297,6 +303,7 @@ class InferenceProfiler:
         meta = dict(self.meta)
         meta.update({
             "batch": self.batch, "imgsz": imgsz, "half": self.half,
+            "amp_dtype": self.amp_dtype,
             "device": str(self.device), "conf": conf, "iou": iou,
             "max_det": max_det, "mode": "inference",
         })

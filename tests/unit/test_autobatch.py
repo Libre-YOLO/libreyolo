@@ -8,6 +8,7 @@ CUDA internals.
 
 from __future__ import annotations
 
+from inspect import Parameter, signature
 from unittest.mock import patch
 
 import pytest
@@ -23,6 +24,14 @@ from libreyolo.training.autobatch import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_amp_dtype_is_additive_keyword_only_api():
+    assert signature(autobatch).parameters["amp_dtype"].kind is Parameter.KEYWORD_ONLY
+    assert (
+        signature(resolve_auto_batch).parameters["amp_dtype"].kind
+        is Parameter.KEYWORD_ONLY
+    )
 
 
 # =============================================================================

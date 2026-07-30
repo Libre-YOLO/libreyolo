@@ -22,7 +22,9 @@ class ValidationConfig:
         imgsz: Image size for validation. Accepts an int (square) or (height, width) tuple.
         conf_thres: Confidence threshold. Use 0.0 or a low value for mAP calculation.
         iou_thres: IoU threshold for NMS.
-        max_det: Maximum detections per image.
+        max_det: Maximum predictions per image after postprocessing.
+        eval_max_det: Optional maximum detections used by COCO evaluation.
+            None preserves pycocotools' default AP@100 behavior.
         iou_thresholds: IoU thresholds for mAP calculation (default: 0.50 to 0.95).
         device: Device to use ("auto", "cuda", "mps", "cpu").
         save_dir: Directory to save results.
@@ -46,6 +48,7 @@ class ValidationConfig:
     conf_thres: float = 0.001
     iou_thres: float = 0.6
     max_det: int = 300
+    eval_max_det: Optional[int] = field(default=None, kw_only=True)
 
     # Metrics
     # NOTE: iou_thresholds is only honored on the OBB validation path. The COCO
@@ -79,7 +82,7 @@ class ValidationConfig:
 
     # Precision
     half: bool = False
-    amp_dtype: str = "float16"
+    amp_dtype: str = field(default="float16", kw_only=True)
     allow_download_scripts: bool = False
 
     # TTA
@@ -136,6 +139,17 @@ class ValidationConfig:
 
         if self.max_det < 1:
             raise ValueError(f"max_det must be >= 1, got {self.max_det}")
+        if self.eval_max_det is not None:
+            self.eval_max_det = int(self.eval_max_det)
+            if self.eval_max_det < 1:
+                raise ValueError(
+                    f"eval_max_det must be >= 1, got {self.eval_max_det}"
+                )
+
+    @property
+    def effective_eval_max_det(self) -> int:
+        """Return the explicit COCO cap or pycocotools' historical default."""
+        return 100 if self.eval_max_det is None else self.eval_max_det
 
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> "ValidationConfig":

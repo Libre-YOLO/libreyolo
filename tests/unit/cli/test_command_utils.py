@@ -401,6 +401,7 @@ def test_val_forwards_protocol_cap_and_amp_dtype(monkeypatch):
             "half=true",
             "amp_dtype=bf16",
             "max_det=500",
+            "eval_max_det=500",
             "--json",
         ],
     )
@@ -409,6 +410,7 @@ def test_val_forwards_protocol_cap_and_amp_dtype(monkeypatch):
     assert captured["half"] is True
     assert captured["amp_dtype"] == "bfloat16"
     assert captured["max_det"] == 500
+    assert captured["eval_max_det"] == 500
 
 
 def test_val_rejects_invalid_max_det():
@@ -428,6 +430,25 @@ def test_val_rejects_invalid_max_det():
     data = json.loads(result.stdout)
     assert data["error"] == "config_type_error"
     assert "max_det must be >= 1" in data["message"]
+
+
+def test_val_rejects_invalid_eval_max_det():
+    app = _make_app([("val", val.val_cmd), ("info", special.info_cmd)])
+    result = runner.invoke(
+        app,
+        [
+            "val",
+            "data=rf100vl.yaml",
+            "model=LibreYOLO9t.pt",
+            "eval_max_det=0",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_type_error"
+    assert "eval_max_det must be >= 1" in data["message"]
 
 
 def test_val_json_reports_segmentation_metric_groups(monkeypatch):

@@ -435,6 +435,7 @@ def _build_rfdetr_train_kwargs(
         "amp": "amp",
         "amp_dtype": "amp_dtype",
         "max_det": "max_det",
+        "eval_max_det": "eval_max_det",
         "lora": "lora",
         "freeze": "freeze",
         "log_interval": "log_interval",

@@ -186,6 +186,7 @@ class FOMOTrainer(BaseTrainer):
                 conf_thres=0.001,
                 iou_thres=0.65,
                 max_det=self.config.max_det,
+                eval_max_det=self.config.eval_max_det,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
                 amp_dtype=self.config.amp_dtype,

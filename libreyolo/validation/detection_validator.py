@@ -308,6 +308,11 @@ class DetectionValidator(BaseValidator):
 
         return resolve_default_coco_image_dir(data_path, self.config.split, json_file)
 
+    def _coco_max_det(self) -> int:
+        """Resolve the opt-in evaluator cap without coupling it to NMS."""
+        value = getattr(self.config, "eval_max_det", None)
+        return 100 if value is None else int(value)
+
     def _init_metrics(self) -> None:
         from libreyolo.data import load_data_config
         from libreyolo.data.yolo_coco_api import YOLOCocoAPI
@@ -340,7 +345,7 @@ class DetectionValidator(BaseValidator):
                 coco_api,
                 iou_type="bbox",
                 label_to_category_id=self._coco_label_to_category_id,
-                max_det=self.config.max_det,
+                max_det=self._coco_max_det(),
             )
             if self.config.verbose:
                 logger.info(
@@ -406,7 +411,7 @@ class DetectionValidator(BaseValidator):
             **self._coco_api_kwargs(),
         )
         self.coco_evaluator = COCOEvaluator(
-            coco_api, iou_type="bbox", max_det=self.config.max_det
+            coco_api, iou_type="bbox", max_det=self._coco_max_det()
         )
 
         if self.config.verbose:
@@ -985,7 +990,7 @@ class SegmentationValidator(DetectionValidator):
             self.bbox_evaluator.coco_gt,
             iou_type="segm",
             label_to_category_id=self._coco_label_to_category_id,
-            max_det=self.config.max_det,
+            max_det=self._coco_max_det(),
         )
 
     def _update_metrics(

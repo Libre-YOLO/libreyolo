@@ -151,7 +151,12 @@ class COCOEvaluator:
         coco_eval.params.maxDets = sorted({1, 10, 100, self.max_det})
         coco_eval.evaluate()
         coco_eval.accumulate()
-        coco_eval.stats = self._standard_stats(coco_eval)
+        if self.max_det == 100:
+            # Preserve the historical/default path literally. This makes the
+            # default output subject to pycocotools' own summarize semantics.
+            coco_eval.summarize()
+        else:
+            coco_eval.stats = self._standard_stats(coco_eval)
         self._last_coco_eval = coco_eval  # kept for per-class AP access
 
         # stats layout: [mAP, mAP50, mAP75, AP_s, AP_m, AP_l,
@@ -164,8 +169,12 @@ class COCOEvaluator:
         # under the honest ``map_5095`` / ``ar_100`` keys below; the legacy
         # ``precision`` / ``recall`` keys are kept as aliases for backward
         # compatibility and must not be plotted as a distinct P/R.
-        map_5095 = float(coco_eval.stats[0])
-        ar_100 = self._summarize_metric(coco_eval, ap=False, max_det=100)
+        map_5095 = self._summarize_metric(
+            coco_eval, ap=True, max_det=self.max_det, empty=0.0
+        )
+        ar_100 = self._summarize_metric(
+            coco_eval, ap=False, max_det=100, empty=0.0
+        )
         ar_max_det = float(coco_eval.stats[8])
         return {
             "max_det": float(self.max_det),
@@ -234,6 +243,7 @@ class COCOEvaluator:
         max_det: int,
         iou_thr: Optional[float] = None,
         area: str = "all",
+        empty: float = -1.0,
     ) -> float:
         """Read one metric from COCOeval's accumulated precision/recall arrays."""
         params = coco_eval.params
@@ -258,7 +268,7 @@ class COCOEvaluator:
                 iou_indices = np.flatnonzero(np.isclose(params.iouThrs, iou_thr))
                 values = values[iou_indices]
             values = values[:, :, area_indices, max_det_indices]
-        return self._mean_valid(values, empty=-1.0)
+        return self._mean_valid(values, empty=empty)
 
     def _standard_stats(self, coco_eval) -> np.ndarray:
         """Build COCO's 12 detection metrics at the configured maximum."""

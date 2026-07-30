@@ -94,10 +94,11 @@ def autobatch(
     model: nn.Module,
     imgsz: Union[int, Tuple[int, int]] = 640,
     amp: bool = True,
-    amp_dtype: str = "float16",
     fraction: float = _DEFAULT_FRACTION,
     default: int = 16,
     max_probe: int = _DEFAULT_MAX_PROBE,
+    *,
+    amp_dtype: str = "float16",
 ) -> int:
     """Estimate the optimal *global* batch size for the given model and image size.
 
@@ -111,10 +112,10 @@ def autobatch(
         model: Model already resident on the target CUDA device.
         imgsz: Input size — an int (square) or (height, width) tuple.
         amp: Whether AMP (autocast) will be used during training.
-        amp_dtype: CUDA autocast dtype used when AMP is enabled.
         fraction: Target fraction of *total* VRAM to occupy (default 0.60).
         default: Fallback batch size for non-CUDA devices or probe failures.
         max_probe: Largest batch size to probe (default 64; set to nbs).
+        amp_dtype: CUDA autocast dtype used when AMP is enabled.
 
     Returns:
         Estimated optimal global batch size — a power of 2, always ≥ 1.
@@ -248,11 +249,12 @@ def resolve_auto_batch(
     model: nn.Module,
     imgsz: Union[int, Tuple[int, int]] = 640,
     amp: bool = True,
-    amp_dtype: str = "float16",
     fraction: float = _DEFAULT_FRACTION,
     world_size: int = 1,
     default: int = 16,
     nbs: int | None = None,
+    *,
+    amp_dtype: str = "float16",
 ) -> int:
     """Run ``autobatch`` on rank 0 and broadcast the result to all ranks.
 
@@ -268,12 +270,12 @@ def resolve_auto_batch(
         model: Model on the target device (not yet DDP-wrapped).
         imgsz: Input size — an int (square) or (height, width) tuple.
         amp: Whether AMP is active.
-        amp_dtype: CUDA autocast dtype used when AMP is active.
         fraction: Target fraction of total VRAM (default 0.60).
         world_size: Number of DDP ranks (1 for single-GPU).
         default: Fallback when CUDA is unavailable.
         nbs: Nominal batch size — caps the global batch and sets the probe
             limit so per-GPU capacity never exceeds nbs.
+        amp_dtype: CUDA autocast dtype used when AMP is active.
 
     Returns:
         Global batch size, divisible by *world_size* and ≥ 1.

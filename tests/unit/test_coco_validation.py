@@ -249,6 +249,85 @@ def test_coco_evaluator_dense_image_proves_ap500_exceeds_ap100():
 
 
 @pytest.mark.unit
+def test_coco_evaluator_default_is_bit_exact_stock_pycocotools():
+    """The opt-in evaluator cap must not rebaseline default AP@100 users."""
+    from pycocotools.cocoeval import COCOeval
+
+    from libreyolo.validation import COCOEvaluator
+
+    coco, predictions = _dense_coco_fixture(125)
+    evaluator = COCOEvaluator(
+        coco,
+        iou_type="bbox",
+        label_to_category_id={0: 1},
+    )
+    evaluator.update(predictions, image_id=1)
+
+    reference_dt = coco.loadRes(evaluator.results)
+    reference = COCOeval(coco, reference_dt, "bbox")
+    reference.params.imgIds = [1]
+    reference.evaluate()
+    reference.accumulate()
+    reference.summarize()
+
+    metrics = evaluator.compute()
+    actual = evaluator._last_coco_eval
+
+    assert actual.params.maxDets == reference.params.maxDets == [1, 10, 100]
+    np.testing.assert_array_equal(actual.stats, reference.stats)
+    assert metrics["mAP"] == float(reference.stats[0])
+    assert metrics["mAP50"] == float(reference.stats[1])
+    assert metrics["mAP75"] == float(reference.stats[2])
+    assert metrics["AR100"] == float(reference.stats[8])
+    reference_map_values = reference.eval["precision"][:, :, :, 0, -1]
+    reference_ar_values = reference.eval["recall"][:, :, 0, -1]
+    assert metrics["map_5095"] == float(
+        reference_map_values[reference_map_values > -1].mean()
+    )
+    assert metrics["ar_100"] == float(
+        reference_ar_values[reference_ar_values > -1].mean()
+    )
+
+
+@pytest.mark.unit
+def test_coco_evaluator_preserves_zero_legacy_aliases_without_valid_gt():
+    """Undefined legacy aliases remain 0.0, matching pre-change behavior."""
+    pytest.importorskip("pycocotools")
+    from pycocotools.coco import COCO
+
+    from libreyolo.validation import COCOEvaluator
+
+    coco = COCO()
+    coco.dataset = {
+        "info": {},
+        "licenses": [],
+        "images": [
+            {"id": 1, "file_name": "empty.jpg", "width": 32, "height": 32}
+        ],
+        "annotations": [],
+        "categories": [{"id": 1, "name": "object"}],
+    }
+    coco.createIndex()
+    evaluator = COCOEvaluator(coco, label_to_category_id={0: 1})
+    evaluator.update(
+        {
+            "boxes": [[1.0, 1.0, 5.0, 5.0]],
+            "scores": [0.9],
+            "classes": [0],
+        },
+        image_id=1,
+    )
+
+    metrics = evaluator.compute()
+
+    assert metrics["map_5095"] == 0.0
+    assert metrics["ar_100"] == 0.0
+    assert metrics["precision"] == 0.0
+    assert metrics["recall"] == 0.0
+    assert metrics["mAP"] == -1.0
+
+
+@pytest.mark.unit
 def test_detection_validator_uses_explicit_coco_json_paths(tmp_path):
     pytest.importorskip("pycocotools")
     from libreyolo.data.dataset import COCODataset
@@ -301,6 +380,10 @@ def test_detection_validator_uses_explicit_coco_json_paths(tmp_path):
         imgsz=64,
         batch_size=1,
         num_workers=0,
+        verbose=False,
+        save_plots=False,
+        max_det=300,
+        eval_max_det=None,
     )
     validator.model = SimpleNamespace(
         _get_input_size=lambda: 64,
@@ -316,6 +399,13 @@ def test_detection_validator_uses_explicit_coco_json_paths(tmp_path):
     assert loader.dataset.json_file == str(ann_dir / "valid.json")
     assert loader.dataset.name == str(image_dir)
     assert loader.dataset._image_path(0) == image_dir / "sample.jpg"
+
+    validator._init_metrics()
+    assert validator.coco_evaluator.max_det == 100
+
+    validator.config.eval_max_det = 500
+    validator._init_metrics()
+    assert validator.coco_evaluator.max_det == 500
 
 
 @pytest.mark.unit

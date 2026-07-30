@@ -170,8 +170,11 @@ class TrainConfig:
     exist_ok: bool = False
     save_period: int = 10
     eval_interval: int = 10
-    # Prediction and COCO-evaluation cap used by validation during training.
+    # Prediction/NMS cap used by validation during training.
     max_det: int = 300
+    # Optional COCO evaluator cap. None preserves pycocotools' historical
+    # maxDets=[1, 10, 100] behavior independently of the prediction cap.
+    eval_max_det: Optional[int] = None
     save_plots: bool = False
 
     # System
@@ -210,6 +213,12 @@ class TrainConfig:
         )
         if self.max_det < 1:
             raise ValueError(f"max_det must be >= 1, got {self.max_det}")
+        if self.eval_max_det is not None:
+            self.eval_max_det = int(self.eval_max_det)
+            if self.eval_max_det < 1:
+                raise ValueError(
+                    f"eval_max_det must be >= 1, got {self.eval_max_det}"
+                )
 
     @classmethod
     def from_kwargs(cls, **kwargs):

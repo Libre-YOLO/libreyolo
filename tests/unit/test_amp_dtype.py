@@ -1,5 +1,6 @@
 """Contract tests for explicit automatic mixed-precision dtypes."""
 
+from inspect import Parameter, signature
 from types import SimpleNamespace
 
 import pytest
@@ -7,7 +8,11 @@ import torch
 
 from libreyolo.training.config import TrainConfig
 from libreyolo.training.trainer import BaseTrainer
-from libreyolo.utils.amp import normalize_amp_dtype, torch_amp_dtype
+from libreyolo.utils.amp import (
+    amp_uses_grad_scaler,
+    normalize_amp_dtype,
+    torch_amp_dtype,
+)
 from libreyolo.validation.config import ValidationConfig
 
 
@@ -32,6 +37,20 @@ def test_invalid_amp_dtype_fails_in_train_and_validation_configs():
         TrainConfig(amp_dtype="float32")
     with pytest.raises(ValueError, match="amp_dtype"):
         ValidationConfig(data="unused.yaml", amp_dtype="float32")
+
+
+@pytest.mark.unit
+def test_new_validation_options_do_not_shift_legacy_positional_api():
+    parameters = signature(ValidationConfig).parameters
+
+    assert parameters["amp_dtype"].kind is Parameter.KEYWORD_ONLY
+    assert parameters["eval_max_det"].kind is Parameter.KEYWORD_ONLY
+
+
+@pytest.mark.unit
+def test_only_float16_amp_enables_grad_scaling():
+    assert amp_uses_grad_scaler("float16") is True
+    assert amp_uses_grad_scaler("bf16") is False
 
 
 @pytest.mark.unit

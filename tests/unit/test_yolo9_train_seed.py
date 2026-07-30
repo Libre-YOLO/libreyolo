@@ -16,6 +16,7 @@ def test_seed_is_applied_before_class_head_rebuild(monkeypatch):
         pass
 
     samples = []
+    ambient_samples = []
     model = object.__new__(LibreYOLO9)
     model.nb_classes = 80
 
@@ -36,6 +37,7 @@ def test_seed_is_applied_before_class_head_rebuild(monkeypatch):
 
     for ambient_seed in (1, 999):
         torch.manual_seed(ambient_seed)
+        ambient_samples.append(torch.rand(4))
         with pytest.raises(_HeadObserved):
             LibreYOLO9.train.__wrapped__(
                 model,
@@ -45,3 +47,4 @@ def test_seed_is_applied_before_class_head_rebuild(monkeypatch):
             )
 
     assert torch.equal(samples[0], samples[1])
+    assert not torch.equal(ambient_samples[0], ambient_samples[1])

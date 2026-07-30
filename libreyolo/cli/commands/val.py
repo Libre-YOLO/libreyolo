@@ -46,7 +46,11 @@ def val_cmd(
     ),
     conf: float = typer.Option(0.001, help="Confidence threshold"),
     iou: float = typer.Option(0.6, help="NMS IoU threshold"),
-    max_det: int = typer.Option(300, help="Max detections per image"),
+    max_det: int = typer.Option(300, help="Max predictions per image after NMS"),
+    eval_max_det: Optional[int] = typer.Option(
+        None,
+        help="COCO evaluator cap (default: pycocotools AP@100)",
+    ),
     half: bool = typer.Option(False, help="FP16 inference"),
     amp_dtype: str = typer.Option(
         "float16", help="CUDA autocast dtype when half=true: float16 or bfloat16"
@@ -91,6 +95,10 @@ def val_cmd(
         amp_dtype = normalize_amp_dtype(amp_dtype)
         if max_det < 1:
             raise ValueError(f"max_det must be >= 1, got {max_det}")
+        if eval_max_det is not None and eval_max_det < 1:
+            raise ValueError(
+                f"eval_max_det must be >= 1, got {eval_max_det}"
+            )
     except ValueError as exc:
         exit_with_error(out, "config_type_error", str(exc))
     model_path = resolve_model_or_exit(out, model)
@@ -129,6 +137,7 @@ def val_cmd(
             half=half,
             amp_dtype=amp_dtype,
             max_det=max_det,
+            eval_max_det=eval_max_det,
         )
     except FileNotFoundError as e:
         exit_with_error(out, "data_not_found", str(e))

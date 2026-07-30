@@ -315,7 +315,11 @@ def train_cmd(
     val: bool = typer.Option(True, help="Validate during training"),
     eval_interval: int = typer.Option(10, help="Validate every N epochs"),
     max_det: int = typer.Option(
-        300, help="Maximum detections per image during validation"
+        300, help="Maximum predictions per image after validation NMS"
+    ),
+    eval_max_det: Optional[int] = typer.Option(
+        None,
+        help="COCO evaluator cap (default: pycocotools AP@100)",
     ),
     save_plots: bool = typer.Option(
         False, help="Save final validation plots during training"
@@ -366,6 +370,10 @@ def train_cmd(
         amp_dtype = normalize_amp_dtype(amp_dtype)
         if max_det < 1:
             raise ValueError(f"max_det must be >= 1, got {max_det}")
+        if eval_max_det is not None and eval_max_det < 1:
+            raise ValueError(
+                f"eval_max_det must be >= 1, got {eval_max_det}"
+            )
         mosaic_scale_val = (
             ast.literal_eval(mosaic_scale)
             if isinstance(mosaic_scale, str)
@@ -516,6 +524,7 @@ def train_cmd(
         "ema_decay": ema_decay,
         "eval_interval": eval_interval,
         "max_det": max_det,
+        "eval_max_det": eval_max_det,
         "save_plots": save_plots,
         "patience": patience,
         "project": project,
@@ -608,6 +617,8 @@ def train_cmd(
                 resolved_config["freeze"] = params["freeze"]
             if normalized_task is not None:
                 resolved_config["task"] = normalized_task
+        if params["eval_max_det"] is not None:
+            resolved_config["eval_max_det"] = params["eval_max_det"]
 
         data_out = {
             "valid": True,
