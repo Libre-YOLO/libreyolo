@@ -373,6 +373,28 @@ _PROFILES = (
         class_count=80,
     ),
     _profile(
+        "dinov2",
+        "classify",
+        "n",
+        224,
+        "official DINOv2-S backbone + deterministic 3-class head",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "4390537a7178ab0a8d31f965db078e38"
+            "9ee05fd3f0da88634ec5596abad538b6"
+        ),
+        deployment_abi_sha256=(
+            "799817c7e3b4e1a30c0c34267fe696a"
+            "1ec4ddbcf90ac8e3e39152a3d7d8fd709"
+        ),
+        evidence_sha256=(
+            "80bfed8300bd3fb0e631e9718e62c4b2"
+            "d356155f38b645a18cdf1a40a56dd347"
+        ),
+        class_count=3,
+        classification_activation="softmax",
+    ),
+    _profile(
         "ec",
         "detect",
         "s",

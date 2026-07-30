@@ -1439,8 +1439,14 @@ def test_coreml_artifact_matches_prepared_trained_model(
 def test_coreml_dinov2_source_model_raw_and_public_parity(task, imgsz, tmp_path):
     """Prove the DINOv2 graph when the unpublished LibreYOLO head is unavailable."""
     from libreyolo import LibreDINOv2
+    from libreyolo.export.support import get_support
 
     torch.manual_seed(0)
+    requested_compute_units = (
+        "validated"
+        if get_support("dinov2", task, "coreml").tier == "validated"
+        else "cpu_only"
+    )
     model = LibreDINOv2(
         model_path=None,
         size="n",
@@ -1455,7 +1461,7 @@ def test_coreml_dinov2_source_model_raw_and_public_parity(task, imgsz, tmp_path)
         task,
         imgsz,
         tmp_path,
-        compute_units="cpu_only",
+        compute_units=requested_compute_units,
     )
     _assert_generic_public_path(
         model,
@@ -1463,7 +1469,7 @@ def test_coreml_dinov2_source_model_raw_and_public_parity(task, imgsz, tmp_path)
         family="dinov2",
         task=task,
         imgsz=imgsz,
-        compute_units="cpu_only",
+        compute_units=requested_compute_units,
     )
 
 

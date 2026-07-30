@@ -223,6 +223,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("depth_anything3", "depth", "l"),
         ("dfine", "detect", "n"),
         ("dfine", "segment", "n"),
+        ("dinov2", "classify", "n"),
         ("ec", "detect", "s"),
         ("ec", "pose", "s"),
         ("ec", "segment", "s"),
