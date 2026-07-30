@@ -30,6 +30,29 @@ def _require_executorch(monkeypatch):
     monkeypatch.setenv("PATH", f"{bundled.parent}{os.pathsep}{os.environ['PATH']}")
 
 
+def _detections(result) -> np.ndarray:
+    """Return postprocessed detection rows for list and scalar Results APIs."""
+    if isinstance(result, list):
+        result = result[0]
+    return result.boxes.data.detach().cpu().numpy()
+
+
+def _box_iou(first: np.ndarray, second: np.ndarray) -> float:
+    x1 = max(first[0], second[0])
+    y1 = max(first[1], second[1])
+    x2 = min(first[2], second[2])
+    y2 = min(first[3], second[3])
+    intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    first_area = max(0.0, first[2] - first[0]) * max(
+        0.0, first[3] - first[1]
+    )
+    second_area = max(0.0, second[2] - second[0]) * max(
+        0.0, second[3] - second[1]
+    )
+    union = first_area + second_area - intersection
+    return float(intersection / union) if union else 0.0
+
+
 @pytest.mark.parametrize(
     ("family", "imgsz"),
     [("yolo9", 64), ("rfdetr", 384)],
@@ -118,6 +141,73 @@ def test_detection_flagship_raw_parity_and_predict(
     result = backend.predict(image)
     assert isinstance(result, Results)
     assert result.boxes is not None
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
+@pytest.mark.parametrize(
+    ("family", "weights_env", "imgsz"),
+    [
+        ("yolo9", "LIBREYOLO_EXECUTORCH_YOLO9_WEIGHTS", 640),
+        ("rfdetr", "LIBREYOLO_EXECUTORCH_RFDETR_WEIGHTS", 384),
+    ],
+)
+def test_trained_detection_parity(
+    tmp_path, monkeypatch, family, weights_env, imgsz
+):
+    """Match trained native and ExecuTorch post-NMS detections on real images."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get(weights_env)
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            f"set {weights_env} and LIBREYOLO_EXECUTORCH_IMAGES "
+            "to a newline-separated list of at least two images"
+        )
+
+    weights = Path(weights_value)
+    images = [Path(value) for value in image_values if value.strip()]
+    if not weights.is_file() or any(not image.is_file() for image in images):
+        pytest.skip("staged trained-checkpoint parity inputs are unavailable")
+
+    native = LibreYOLO(str(weights), device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / f"{family}.pte"),
+        imgsz=imgsz,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image in images:
+        expected = _detections(
+            native.predict(str(image), conf=0.25, iou=0.6)
+        )
+        actual = _detections(
+            runtime.predict(str(image), conf=0.25, iou=0.6)
+        )
+        assert len(expected) > 0
+        assert len(actual) == len(expected)
+
+        remaining = set(range(len(actual)))
+        for expected_row in expected:
+            same_class = [
+                index
+                for index in remaining
+                if int(actual[index, 5]) == int(expected_row[5])
+            ]
+            assert same_class
+            match = max(
+                same_class,
+                key=lambda index: _box_iou(expected_row, actual[index]),
+            )
+            remaining.remove(match)
+            assert _box_iou(expected_row, actual[match]) >= 0.95
+            assert abs(float(expected_row[4] - actual[match, 4])) <= 0.01
 
 
 def test_failed_export_restores_yolo9_state(tmp_path, monkeypatch):

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator, Literal
+from typing import Literal
 
 from ..tasks import TASKS
 
@@ -70,16 +71,19 @@ _add(
     since="1.3",
 )
 _add(
-    "experimental",
+    "validated",
     ("yolo9", "rfdetr"),
     ("detect",),
     ("executorch",),
     reason=(
-        "Fixed-shape batch-1 FP32 export, XNNPACK runtime execution, random-weight "
-        "raw parity, and predict plumbing are covered. A trained-checkpoint "
-        "matched-detection parity record is still required for validated status."
+        "Runtime and raw-output parity are covered in "
+        "tests/e2e/test_executorch.py; trained-checkpoint detection parity is "
+        "covered by its external-data flagship test."
     ),
-    constraint="ExecuTorch 1.3, XNNPACK, CPU, FP32, batch 1, fixed input shape",
+    since="1.3",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
 )
 _add(
     "validated",

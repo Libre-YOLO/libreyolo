@@ -55,7 +55,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | qwen3vl | detect |  |  |  |  |  |  |  |  |  |
 | realesrgan | restore | ✓ | ✓ | exp | exp | exp | ✓ | ✓ |  | ✓ |
 | resnet | classify | ✓ | ✓ | exp | exp | exp | ✓ | ✓ |  | ✓ |
-| rfdetr | detect | ✓ | ✓ | exp | ✓ | ✓ |  | exp | exp | ✓ |
+| rfdetr | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  | exp | exp | ✓ |
 | rfdetr | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | rfdetr | pose | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | rfdetr | obb | ✓ | ✓ | exp | exp | exp |  |  |  |  |
@@ -79,7 +79,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | yolo3 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
 | yolo4 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
 | yolo7 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
-| yolo9 | detect | ✓ | ✓ | exp | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
+| yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
 | yolo9_e2e | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
 | yolo9_p2 | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
 | yolonas | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
@@ -142,6 +142,7 @@ A check mark applies only under any constraint listed here.
 - `realesrgan` / `restore` / `tflite`: fixed-resolution export canvas
 - `realesrgan` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `resnet` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `rfdetr` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `rfdetr` / `detect` / `coreai`: fixed export canvas; trained LibreRFDETRn weights are covered on macOS 27 against the graph the exporter itself prepares, using direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin. Conversion needed _rebake_rfdetr_pos_embed in export/coreai.py: the backbone bakes its position embedding for its configured 384 canvas, so exporting at any other size left an antialiased bicubic in the graph and the converter has no lowering for aten._upsample_bicubic2d_aa. The rebake re-runs the model's OWN baking path for the actual canvas, so the interpolation happens eagerly, outside the graph, computing exactly what it computed before. NOTE the reference. This family is verified against the exporter's prepared graph, not against ONNX, and the difference is not a detail: at a 640 canvas the rfdetr ONNX artifact disagrees with that same prepared graph by 9.3e-01. Core AI's rebake preserves the antialiased resize the eager model performs, whereas the ONNX path disables antialiasing (the model checks torch.onnx.is_in_onnx_export). Which artifact is right is an ONNX question and is not settled here, but ONNX cannot be used as the reference for this family at a non-native canvas.
 - `rfdetr` / `segment` / `onnx`: fixed task-native input resolution
 - `rfdetr` / `segment` / `torchscript`: fixed task-native input resolution
@@ -162,6 +163,7 @@ A check mark applies only under any constraint listed here.
 - `yolo3` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
 - `yolo4` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
 - `yolo7` / `detect` / `coreai`: fixed 640x640 export canvas; trained LibreYOLO7b weights are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; the export decoder uses direct arange grids because Core AI 0.4.1 mislowers the equivalent cumulative-sum expression
+- `yolo9` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo9` / `detect` / `coreai`: fixed export canvas; trained LibreYOLO9t weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `yolo9_e2e` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `yolo9_p2` / `detect` / `coreai`: fixed 640x640 export canvas; a deterministic YOLO9-P2-T model initialized from the SHA-256-pinned, permissively licensed trained LibreYOLO9t checkpoint is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion, not P2 task accuracy, and does not depend on the restricted VisDrone research-preview checkpoint
