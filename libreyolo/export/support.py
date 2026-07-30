@@ -322,16 +322,17 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("dinov2",),
     ("semantic",),
     ("executorch",),
     reason=(
         "The real pretrained DINOv2 backbone has full XNNPACK conversion, "
         "runtime execution, input sensitivity, deterministic random-head raw "
-        "parity, and semantic result parsing coverage. A permissive trained "
-        "LibreDINOv2 semantic checkpoint is not available."
+        "parity, and public semantic-mask parity above 95% pixel agreement. "
+        "This validates conversion compatibility, not trained task accuracy."
     ),
+    since="1.6",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 518x518 input shape"
     ),
@@ -351,23 +352,25 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("segformer",),
     ("semantic",),
     ("executorch",),
     reason=(
         "The b0 graph has full XNNPACK conversion, runtime execution, input "
-        "sensitivity, deterministic random-weight logits parity, and semantic "
-        "result parsing coverage. Published pretrained weights are "
-        "non-commercial and are not used by this validation."
+        "sensitivity, deterministic random-weight logits parity, and public "
+        "semantic-mask parity above 95% pixel agreement. This validates "
+        "conversion compatibility, not trained task accuracy; published "
+        "pretrained weights are non-commercial and are not used."
     ),
+    since="1.6",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape "
         "divisible by 32"
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("depth_anything3",),
     ("depth",),
     ("executorch",),
@@ -375,8 +378,10 @@ _add(
         "The fixed-canvas graph exports raw depth and sky maps so LibreYOLO's "
         "runtime can apply the tensor-dependent sky correction and inverse-depth "
         "contract outside the portable graph. Conversion, runtime execution, "
-        "raw-map parity, input sensitivity, and depth result parsing are covered."
+        "raw-map parity, input sensitivity, and public depth-map parity above "
+        "40 dB PSNR are covered."
     ),
+    since="1.6",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape "
         "divisible by 14"
@@ -1078,10 +1083,23 @@ _add(
     "blocked",
     ("teed", "dexined"),
     ("edge",),
-    ("ncnn", "tflite", "coreai", "coreml"),
+    ("ncnn", "coreai", "coreml"),
     reason=(
         "This edge runtime has no parity-valid artifact for the requested format."
     ),
+)
+_add(
+    "validated",
+    ("teed", "dexined"),
+    ("edge",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.6.7 and LiteRT 2.1.2 cover artifact reload, two-image raw "
+        "edge-probability parity with a 20x signal/error guard, metadata, and "
+        "public edge-map parity above 40 dB PSNR."
+    ),
+    since="1.6",
+    constraint="LiteRT 2.1.2 CPU FP32, batch 1, fixed input shape",
 )
 _add(
     "validated",
@@ -1830,6 +1848,22 @@ _add(
     constraint="fixed square input divisible by 32",
 )
 _add(
+    "validated",
+    ("segformer",),
+    ("semantic",),
+    ("tensorrt",),
+    reason=(
+        "A deterministic input-sensitive b0 fixture covers TensorRT 10.16 "
+        "FP32 conversion, artifact reload, two-image raw-logit parity with a "
+        "20x signal/error guard, metadata, and public semantic-mask parity "
+        "above 95% pixel agreement."
+    ),
+    since="1.6",
+    constraint=(
+        "TensorRT 10.16 FP32, batch 1, fixed square input divisible by 32"
+    ),
+)
+_add(
     "blocked",
     ("segformer",),
     ("semantic",),
@@ -2081,6 +2115,23 @@ _add(
         "rejects non-square sources rather than stretching image-plane geometry; "
         "the official MIT ViT-S/B/L normal checkpoints are covered by FP32 "
         "same-canvas native-versus-ONNX angular parity below 0.1 degree"
+    ),
+)
+_add(
+    "validated",
+    ("moge2",),
+    ("normal",),
+    ("torchscript", "openvino", "tensorrt"),
+    reason=(
+        "A deterministic input-sensitive ViT-S fixture covers conversion, "
+        "artifact reload, two-image raw normal-map parity with a 20x "
+        "signal/error guard, metadata, unit-vector normalization, and public "
+        "angular parity below 0.1 degree."
+    ),
+    since="1.6",
+    constraint=(
+        "FP32, batch 1, fixed square input divisible by 14; TensorRT evidence "
+        "uses TensorRT 10.16 and OpenVINO evidence uses OpenVINO 2026.2"
     ),
 )
 _add(

@@ -69,8 +69,10 @@ def test_executorch_realtime_support_is_evidence_backed():
     validated = {
         ("convnext", "classify"),
         ("depth_anything", "depth"),
+        ("depth_anything3", "depth"),
         ("dexined", "edge"),
         ("dinov2", "classify"),
+        ("dinov2", "semantic"),
         ("ec", "detect"),
         ("ec", "pose"),
         ("ec", "segment"),
@@ -88,6 +90,7 @@ def test_executorch_realtime_support_is_evidence_backed():
         ("rtdetr", "detect"),
         ("rtdetrv2", "detect"),
         ("rtdetrv4", "detect"),
+        ("segformer", "semantic"),
         ("rfdetr", "detect"),
         ("rfdetr", "obb"),
         ("rfdetr", "pose"),
@@ -114,10 +117,7 @@ def test_executorch_realtime_support_is_evidence_backed():
     assert get_support("deim", "detect", "executorch").tier == "blocked"
     assert get_support("deimv2", "detect", "executorch").tier == "blocked"
     assert get_support("swinir", "restore", "executorch").tier == "blocked"
-    assert get_support("dinov2", "semantic", "executorch").tier == "experimental"
     assert get_support("dinov2", "embed", "executorch").tier == "experimental"
-    assert get_support("depth_anything3", "depth", "executorch").tier == "experimental"
-    assert get_support("segformer", "semantic", "executorch").tier == "experimental"
     assert get_support("eomt", "semantic", "executorch").tier == "blocked"
     assert get_support("birefnet", "matte", "executorch").tier == "blocked"
     assert get_support("feynobg", "matte", "executorch").tier == "experimental"
@@ -407,6 +407,28 @@ def test_round22_promotes_nine_edge_gaze_and_classify_cells():
     assert "2.2x" in hold.reason
 
 
+def test_round23_promotes_nine_normal_semantic_depth_and_edge_cells():
+    validated = {
+        ("moge2", "normal", "torchscript"),
+        ("moge2", "normal", "openvino"),
+        ("moge2", "normal", "tensorrt"),
+        ("segformer", "semantic", "executorch"),
+        ("segformer", "semantic", "tensorrt"),
+        ("dinov2", "semantic", "executorch"),
+        ("depth_anything3", "depth", "executorch"),
+        ("teed", "edge", "tflite"),
+        ("dexined", "edge", "tflite"),
+    }
+    for family, task, format in validated:
+        entry = get_support(family, task, format)
+        assert entry.tier == "validated"
+        assert "parity" in entry.reason
+
+    hold = get_support("rtmdet", "detect", "executorch")
+    assert hold.tier == "experimental"
+    assert "detection parsing" in hold.reason
+
+
 def test_round13_records_ten_measured_tflite_holds():
     measured_holds = {
         ("yolo1", "detect"): "ONNX_EINSUM",
@@ -529,6 +551,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("lingbotvision", "semantic"),
         ("l2cs", "gaze"),
         ("mobilenetv4", "classify"),
+        ("moge2", "normal"),
         ("nafnet", "restore"),
         ("picodet", "detect"),
         ("pidnet", "semantic"),

@@ -579,7 +579,12 @@ def test_dinov2_semantic_runtime_parity(tmp_path, monkeypatch):
     image = np.random.default_rng(44).integers(
         0, 256, (518, 518, 3), dtype=np.uint8
     )
-    assert runtime.predict(image).semantic_mask is not None
+    expected_result = _scalar_result(model.predict(image, imgsz=518))
+    actual_result = _scalar_result(runtime.predict(image))
+    expected_mask = expected_result.semantic_mask.data.detach().cpu().numpy()
+    actual_mask = actual_result.semantic_mask.data.detach().cpu().numpy()
+    assert actual_mask.shape == expected_mask.shape
+    assert float(np.mean(actual_mask == expected_mask)) > 0.95
 
 
 @pytest.mark.experimental_backend

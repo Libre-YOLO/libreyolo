@@ -26,6 +26,7 @@ def test_teed_architecture_shape_parameter_count_and_detection():
         (2, 1, 32, 48),
     ]
     assert sum(parameter.numel() for parameter in core.parameters()) == 58_910
+    assert isinstance(core.block_cat.PSconv1, torch.nn.Identity)
     assert LibreTEED.can_load(core.state_dict())
     assert LibreTEED.detect_size(core.state_dict()) == "t"
 
@@ -157,14 +158,7 @@ def test_onnx_edge_runtime_parity(tmp_path, model_class, size):
     ("model_class", "size"),
     [(LibreTEED, "t"), (LibreDexiNed, "b")],
 )
-def test_edge_export_rejects_batch_and_non_onnx_formats(tmp_path, model_class, size):
+def test_edge_export_rejects_non_batch_one(model_class, size):
     model = model_class(None, size=size, device="cpu")
     with pytest.raises(ValueError, match="batch-1"):
         model.export(format="onnx", batch=2, imgsz=32)
-    with pytest.raises(NotImplementedError, match="ONNX-only"):
-        model.export(
-            format="torchscript",
-            output_path=str(tmp_path / "edge.torchscript"),
-            imgsz=32,
-            dynamic=False,
-        )

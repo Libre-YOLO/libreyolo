@@ -8,7 +8,7 @@ directory and the repository ``THIRD_PARTY_NOTICES.txt``.
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def smish(value: torch.Tensor) -> torch.Tensor:
@@ -40,7 +40,9 @@ class DoubleFusion(nn.Module):
             padding=1,
             groups=in_channels,
         )
-        self.PSconv1 = nn.PixelShuffle(1)
+        # PixelShuffle(1) is an exact identity, but ONNX represents it as
+        # DepthToSpace and LiteRT rejects the converter's custom op.
+        self.PSconv1 = nn.Identity()
         self.DWconv2 = nn.Conv2d(
             24,
             24,
@@ -230,4 +232,4 @@ class TEEDCore(nn.Module):
         return outputs
 
 
-__all__ = ["TEEDCore", "Smish", "smish"]
+__all__ = ["Smish", "TEEDCore", "smish"]

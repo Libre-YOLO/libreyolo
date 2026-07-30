@@ -149,7 +149,7 @@ class TFLiteBackend(BaseBackend):
             # must not affect unrelated outputs. Prefer explicit sidecar layout
             # metadata once the converter can emit it consistently.
             if (
-                self.task in {"semantic", "point", "depth", "matte"}
+                self.task in {"semantic", "point", "depth", "matte", "edge"}
                 and output.ndim == 4
                 and output.shape[-1] in {1, self.nb_classes, self.nb_classes + 1}
             ):

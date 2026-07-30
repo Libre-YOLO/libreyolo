@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from libreyolo.export.exporter import BaseExporter, TFLiteExporter
 from libreyolo.export.support import get_support
@@ -340,6 +340,36 @@ def test_tflite_backend_restores_yolonas_channel_first_outputs():
 
     assert scores.shape == (1, 5, 3)
     assert boxes.shape == (1, 5, 4)
+
+
+def test_tflite_backend_restores_edge_channel_first_output():
+    from libreyolo.backends.tflite import TFLiteBackend
+
+    class _Interpreter:
+        def set_tensor(self, index, value):
+            self.input = (index, value)
+
+        def invoke(self):
+            return None
+
+        def get_tensor(self, index):
+            return np.arange(8 * 8, dtype=np.float32).reshape(1, 8, 8, 1)
+
+    backend = TFLiteBackend.__new__(TFLiteBackend)
+    backend.interpreter = _Interpreter()
+    backend.input_details = [
+        {"index": 0, "shape": np.array([1, 8, 8, 3]), "dtype": np.float32}
+    ]
+    backend.output_details = [{"index": 1, "dtype": np.float32}]
+    backend.model_family = "dexined"
+    backend.task = "edge"
+    backend.nb_classes = 1
+
+    (edges,) = backend._run_inference(
+        np.zeros((1, 3, 8, 8), dtype=np.float32)
+    )
+
+    assert edges.shape == (1, 1, 8, 8)
 
 
 def test_intermediate_onnx_removed_when_tflite_helper_fails(monkeypatch, tmp_path):
