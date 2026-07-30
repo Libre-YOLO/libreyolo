@@ -28,7 +28,12 @@ class ValidationConfig:
         iou_thresholds: IoU thresholds for mAP calculation (default: 0.50 to 0.95).
         device: Device to use ("auto", "cuda", "mps", "cpu").
         save_dir: Directory to save results.
-        save_json: Whether to save predictions in COCO JSON format.
+        save_json: Whether to write the detections as a standard COCO
+            results JSON (list of image_id/category_id/bbox/score entries,
+            loadable by pycocotools loadRes) using the original dataset
+            image and category ids. Detection writes save_dir/predictions.json;
+            segmentation writes predictions_bbox.json and predictions_masks.json.
+            Tasks without COCO detections ignore the flag (OBB logs a warning).
         save_plots: Whether to save validation plots (metrics bar, per-class AP,
             confusion matrix, sample images). Default False.
         verbose: Whether to print detailed metrics.
