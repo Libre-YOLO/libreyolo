@@ -701,6 +701,112 @@ _add(
     ),
 )
 _add(
+    "experimental",
+    ("dfine",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "A published Apache-2.0 trained checkpoint exports and reloads, but "
+        "public top-k class membership changes after TensorRT 10.16 FP32 "
+        "conversion."
+    ),
+)
+_add(
+    "experimental",
+    ("dfine",),
+    ("segment",),
+    ("tensorrt",),
+    reason=(
+        "A published Apache-2.0 trained segmentation checkpoint exports and "
+        "reloads, but public top-k class membership changes after TensorRT "
+        "10.16 FP32 conversion."
+    ),
+)
+_add(
+    "experimental",
+    ("deim",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "A published Apache-2.0 trained checkpoint exports, reloads, and "
+        "passes public predict parity, but normalized raw output error is "
+        "0.41%, above the 0.1% promotion gate."
+    ),
+)
+_add(
+    "experimental",
+    ("rtdetrv2",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "A deterministic synthetic fixture exports and reloads, but matched "
+        "public boxes drift by at least 8 pixels and fall to 0.231 IoU."
+    ),
+)
+_add(
+    "experimental",
+    ("ec",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "A published Apache-2.0 trained checkpoint exports, reloads, and "
+        "passes public predict parity, but normalized raw output error is "
+        "1.2%, above the 0.1% promotion gate."
+    ),
+)
+_add(
+    "experimental",
+    ("ec",),
+    ("pose",),
+    ("tensorrt",),
+    reason=(
+        "A published Apache-2.0 trained pose checkpoint exports and reloads, "
+        "but matched public boxes fall to 0.920 IoU with 1.43-pixel "
+        "coordinate drift."
+    ),
+)
+_add(
+    "experimental",
+    ("ec",),
+    ("segment",),
+    ("tensorrt",),
+    reason=(
+        "A published Apache-2.0 trained segmentation checkpoint exports and "
+        "reloads, but public top-k class membership changes."
+    ),
+)
+_add(
+    "experimental",
+    ("rfdetr",),
+    ("segment",),
+    ("tensorrt",),
+    reason=(
+        "A published Apache-2.0 trained segmentation checkpoint exports and "
+        "reloads, but public top-k class membership changes."
+    ),
+)
+_add(
+    "experimental",
+    ("rfdetr",),
+    ("pose",),
+    ("tensorrt",),
+    reason=(
+        "A published Apache-2.0 trained pose checkpoint exports and reloads, "
+        "but matched public boxes fall to 0.704 IoU with 41.4-pixel "
+        "coordinate drift."
+    ),
+)
+_add(
+    "experimental",
+    ("rfdetr",),
+    ("obb",),
+    ("tensorrt",),
+    reason=(
+        "A deterministic synthetic OBB fixture exports and reloads, but "
+        "public top-k class membership changes."
+    ),
+)
+_add(
     "validated",
     ("yolo2", "yolo3", "yolo4"),
     ("detect",),

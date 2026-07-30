@@ -234,6 +234,25 @@ def test_round11_promotes_three_trained_tensorrt_detectors_and_records_holds():
         assert reason_fragment in entry.reason
 
 
+def test_round12_records_ten_measured_tensorrt_holds():
+    measured_holds = {
+        ("dfine", "detect"): "top-k class membership",
+        ("dfine", "segment"): "top-k class membership",
+        ("deim", "detect"): "0.41%",
+        ("rtdetrv2", "detect"): "0.231 IoU",
+        ("ec", "detect"): "1.2%",
+        ("ec", "pose"): "0.920 IoU",
+        ("ec", "segment"): "top-k class membership",
+        ("rfdetr", "segment"): "top-k class membership",
+        ("rfdetr", "pose"): "0.704 IoU",
+        ("rfdetr", "obb"): "top-k class membership",
+    }
+    for (family, task), reason_fragment in measured_holds.items():
+        entry = get_support(family, task, "tensorrt")
+        assert entry.tier == "experimental"
+        assert reason_fragment in entry.reason
+
+
 @pytest.mark.parametrize(
     ("family", "task", "format", "reason_fragment"),
     [
