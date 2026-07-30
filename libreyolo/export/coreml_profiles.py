@@ -423,6 +423,19 @@ _PROFILES = (
         "edge",
         1024,
         "LibreEdgeTAM edge",
+        source_kind="pytorch-captured-bundle-state-v1",
+        source_sha256=(
+            "4848ef1304b9f0853d3541b5410ba309"
+            "8b70d687402a27cc8eba7ad5bf527700"
+        ),
+        deployment_abi_sha256=(
+            "8e63255331b255388b9e4d98bdc6a8e31"
+            "8be6aaf4956198ac12131174ae09f81"
+        ),
+        evidence_sha256=(
+            "ec9f6fa7b71a3b68e5bbc9734fd939ec"
+            "a855af6131aba9193d65e658ca06b15e"
+        ),
         capture_decomposition_profile="edgetam_where_scalarother_v1",
         capture_decompositions=("aten.where.ScalarOther",),
         prompt_max_points=4,

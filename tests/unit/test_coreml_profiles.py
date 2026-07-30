@@ -225,6 +225,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("ec", "detect", "s"),
         ("ec", "pose", "s"),
         ("ec", "segment", "s"),
+        ("edgetam", "segment", "edge"),
         ("efficientnetv2", "classify", "b0"),
         ("fomo", "point", "s"),
         ("lingbotvision", "semantic", "s"),
