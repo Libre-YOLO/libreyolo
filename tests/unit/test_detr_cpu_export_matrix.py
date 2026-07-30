@@ -40,10 +40,11 @@ _ONNX_QUERY_ALIGNED = {
     "LibreRTDETRv2",
     "LibreRTDETRv4",
 }
+# RT-DETRv2/v4 public parity uses trained checkpoints in the Round 16 e2e suite.
+# Repeating their 640px native predict pass here makes the Windows unit gate
+# disproportionately slow without adding a distinct contract.
 _ONNX_PREDICT_PARITY = {
     "LibreDEIM",
-    "LibreRTDETRv2",
-    "LibreRTDETRv4",
 }
 
 
