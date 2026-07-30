@@ -29,7 +29,7 @@ below is the runner.
 | Per-domain means | published alongside (7 domains) | our addition |
 | Split discipline | train on `train`, select on `valid`, report on `test` | Roboflow reference code |
 | Selection | validate every epoch, EMA weights, keep best AP50:95 | Roboflow reference code |
-| Epoch budget | cap 100, early stopping patience 20 | LibreYOLO policy (reference runs a fixed 100; disclosed deviation) |
+| Epoch budget | fixed 100, early stopping DISABLED (`patience: 0`) | Roboflow reference code; the harness enforces it |
 | Effective batch | 16 (physical batch x gradient accumulation) | Roboflow reference code |
 | Precision | fp32; bf16 only via explicit `amp_dtype`; never fp16 autocast | LibreYOLO policy |
 | Eval thresholds | conf 0.001; NMS IoU 0.65 for NMS families, identical at selection and final eval; DETR families are NMS-free top-k | LibreYOLO policy |
@@ -56,9 +56,36 @@ va-bench rf100vl-train --data-dir ./rf100-vl --weights-root ./rf100vl-weights --
 va-bench rf100vl --all --data-dir ./rf100-vl --weights-root ./rf100vl-weights
 ```
 
-- Dataset download: add `--download` (wraps the `rf100vl` pip package; needs
-  a free `ROBOFLOW_API_KEY` in the env; about 40 GB). The harness writes a
-  version lock and replays recorded versions; it never re-resolves latest.
+- **Dataset, fast path (use this on rented boxes).** Pull the pre-built copy at
+  [`LibreYOLO/rf100-vl`](https://huggingface.co/datasets/LibreYOLO/rf100-vl):
+  100 per-dataset tars, already cleaned, plus `versions.json`, `NOTICE`, and
+  `licenses.json`. No `ROBOFLOW_API_KEY`, and version-pinned so two boxes
+  cannot silently score different data.
+
+  ```bash
+  pip install "huggingface_hub[hf_transfer]"
+  export HF_HUB_ENABLE_HF_TRANSFER=1        # THIS is the speed lever
+  python -c "from huggingface_hub import snapshot_download; \
+    snapshot_download('LibreYOLO/rf100-vl', repo_type='dataset', \
+                      local_dir='rf100-vl', max_workers=8)"
+  cd rf100-vl && for f in *.tar; do tar xf "$f" && rm "$f"; done
+  ```
+
+  Be precise about what makes it fast: `HF_HUB_ENABLE_HF_TRANSFER=1` (the Rust
+  downloader) plus few large files instead of 164k small ones. An HF token is
+  NOT required for a public dataset and does not raise throughput, but staying
+  logged in (`huggingface-cli login`, or `HF_TOKEN` in the env) gets the higher
+  authenticated rate limit, which is worth having when several boxes pull at
+  once. Measured: Roboflow serves ~2.2 MB/s from a home line and ~16 MB/s from
+  a datacenter, so the canonical path costs 45 min to 5.6 h; the tars are minutes.
+
+- **Dataset, canonical path.** `--download` wraps the `rf100vl` pip package and
+  needs a free `ROBOFLOW_API_KEY`; about 40 GB. Use it to REBUILD the HF copy,
+  to verify it, or if the HF copy is unavailable. The harness writes a version
+  lock and replays recorded versions; it never re-resolves latest.
+  The HF copy is a temporary redistribution (all 100 datasets are MIT, checked
+  individually and cross-validated against the READMEs inside the exports); if
+  it ever disappears, this path still works unchanged.
 - Weights contract: training places `best.pt` at
   `<weights_root>/<dataset>/<weight_file>`; eval resolves exactly that path.
 - A capability guard aborts training on any libreyolo build without
@@ -87,9 +114,16 @@ detections), per-run `stats.json` (recipe sha, best epoch, seed, dataset
 version, wall time), the recipe JSON, the dataset version lock, and the
 final submission JSON.
 
+The eval verb writes predictions itself (`<fingerprint>.predictions.json.gz`
+beside each per-dataset result, path recorded in the submission). It is on by
+default; do not turn it off for a run you intend to publish, because it is the
+only thing that makes the claim below true.
+
 - Upload the per-model artifact folder to a Hugging Face dataset repo under
   the LibreYOLO org (one folder per model). Anyone can then rescore from the
   JSONs with pycocotools, no GPU needed; that is the reproducibility story.
+  Verified end to end: a stock-pycocotools rescore of a saved dump, importing
+  no harness code, reproduced the harness AP to four decimals.
 - The leaderboard submission goes to the `vision-analysis` repo through its
   `submit-benchmark-results` flow (validate, rebuild, PR, deploy). See the
   `benchmark-on-visionanalysis` skill for the handoff.
