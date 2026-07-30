@@ -254,6 +254,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("sam", "segment", "base"),
         ("sam2", "segment", "tiny"),
         ("siglip2", "classify", "b16"),
+        ("swinir", "restore", "s"),
         ("yolo1", "detect", "b"),
         ("yolo2", "detect", "b"),
         ("yolo3", "detect", "b"),

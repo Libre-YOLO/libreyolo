@@ -1114,6 +1114,27 @@ _PROFILES = (
         classification_activation="sigmoid",
     ),
     _profile(
+        "swinir",
+        "restore",
+        "s",
+        64,
+        "LibreSwinIRs-restore",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "2e84f1dfdd503becab6a7f4dbe488a4e"
+            "66cb400a916a00f3cc43a1e765e3166a"
+        ),
+        deployment_abi_sha256=(
+            "c8e01279b3f0e13668e24113bf4565ba"
+            "9f859087e0c9caec388120677d0f53f4"
+        ),
+        evidence_sha256=(
+            "5f4b6b361da7dc876f7a8957df2852ac"
+            "419c929c70a1c2c3001f7456e2e2bb3b"
+        ),
+        class_count=1,
+    ),
+    _profile(
         "yolo1",
         "detect",
         "b",
