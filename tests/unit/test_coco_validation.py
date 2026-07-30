@@ -327,6 +327,116 @@ def test_coco_evaluator_preserves_zero_legacy_aliases_without_valid_gt():
     assert metrics["mAP"] == -1.0
 
 
+def _imperfect_coco_fixture():
+    """Dense fixture with the top-scored box misplaced so mAP is non-trivial."""
+    coco, predictions = _dense_coco_fixture(8)
+    predictions["boxes"][0] = [50.0, 50.0, 52.0, 52.0]
+    return coco, predictions
+
+
+@pytest.mark.unit
+def test_detection_validator_save_json_disabled_writes_no_file(tmp_path):
+    from libreyolo.validation import COCOEvaluator
+    from libreyolo.validation.detection_validator import DetectionValidator
+
+    coco, predictions = _dense_coco_fixture(4)
+    evaluator = COCOEvaluator(coco, iou_type="bbox", label_to_category_id={0: 1})
+    evaluator.update(predictions, image_id=1)
+
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.config = SimpleNamespace(verbose=False, save_json=False)
+    validator.save_dir = tmp_path
+    validator.coco_evaluator = evaluator
+
+    metrics = validator._compute_metrics()
+
+    assert metrics["metrics/mAP50-95"] == pytest.approx(1.0)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.unit
+def test_detection_validator_save_json_round_trips_reported_map(tmp_path):
+    from pycocotools.cocoeval import COCOeval
+
+    from libreyolo.validation import COCOEvaluator
+    from libreyolo.validation.detection_validator import DetectionValidator
+
+    coco, predictions = _imperfect_coco_fixture()
+    evaluator = COCOEvaluator(coco, iou_type="bbox", label_to_category_id={0: 1})
+    evaluator.update(predictions, image_id=1)
+
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.config = SimpleNamespace(verbose=False, save_json=True)
+    validator.save_dir = tmp_path
+    validator.coco_evaluator = evaluator
+
+    # Snapshot the entries fed to the evaluator; pycocotools loadRes mutates
+    # the originals in place during compute.
+    expected = [dict(entry) for entry in evaluator.results]
+    metrics = validator._compute_metrics()
+
+    json_path = tmp_path / "predictions.json"
+    assert json_path.exists()
+    saved = json.loads(json_path.read_text(encoding="utf-8"))
+    assert saved == expected
+    assert all(
+        set(entry) == {"image_id", "category_id", "bbox", "score"} for entry in saved
+    )
+    assert {entry["category_id"] for entry in saved} == {1}
+
+    reloaded = coco.loadRes(str(json_path))
+    reference = COCOeval(coco, reloaded, "bbox")
+    reference.params.imgIds = [1]
+    reference.evaluate()
+    reference.accumulate()
+    reference.summarize()
+
+    assert 0.0 < metrics["metrics/mAP50-95"] < 1.0
+    assert metrics["metrics/mAP50-95"] == float(reference.stats[0])
+    assert metrics["metrics/mAP50"] == float(reference.stats[1])
+
+
+@pytest.mark.unit
+def test_coco_evaluator_save_json_writes_empty_file_without_predictions(tmp_path):
+    pytest.importorskip("pycocotools")
+    from pycocotools.coco import COCO
+
+    from libreyolo.validation import COCOEvaluator
+
+    coco = COCO()
+    coco.dataset = {
+        "info": {},
+        "licenses": [],
+        "images": [
+            {"id": 1, "file_name": "empty.jpg", "width": 32, "height": 32}
+        ],
+        "annotations": [],
+        "categories": [{"id": 1, "name": "object"}],
+    }
+    coco.createIndex()
+    evaluator = COCOEvaluator(coco, label_to_category_id={0: 1})
+
+    json_path = tmp_path / "predictions.json"
+    metrics = evaluator.compute(save_json=str(json_path))
+
+    assert metrics["mAP"] == 0.0
+    assert json.loads(json_path.read_text(encoding="utf-8")) == []
+
+
+@pytest.mark.unit
+def test_save_json_stays_in_legacy_positional_config_layout():
+    from inspect import Parameter, signature
+
+    from libreyolo.validation.config import ValidationConfig
+
+    parameters = signature(ValidationConfig).parameters
+
+    # save_json predates the kw_only convention; converting it now would
+    # shift every later positional field, so its slot stays pinned.
+    assert parameters["save_json"].default is False
+    assert parameters["save_json"].kind is Parameter.POSITIONAL_OR_KEYWORD
+
+
 @pytest.mark.unit
 def test_detection_validator_uses_explicit_coco_json_paths(tmp_path):
     pytest.importorskip("pycocotools")

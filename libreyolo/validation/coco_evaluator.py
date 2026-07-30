@@ -2,6 +2,7 @@
 
 import json
 import logging
+from pathlib import Path
 from typing import Dict, Mapping, Optional
 
 import numpy as np
@@ -122,15 +123,19 @@ class COCOEvaluator:
 
         Args:
             save_json: Optional path to save predictions in COCO JSON format.
+                Written even when no predictions were accumulated.
         """
+        if save_json:
+            # Written first: an opted-in run must produce the file even when
+            # there are no predictions or evaluation fails below, and loadRes
+            # mutates the result dicts in place (adds id/area/segmentation).
+            with open(save_json, "w") as f:
+                json.dump(self.results, f, indent=2)
+            logger.info("Saved predictions to %s", Path(save_json).resolve())
+
         if len(self.results) == 0:
             logger.warning("No predictions to evaluate")
             return self._empty_metrics()
-
-        if save_json:
-            with open(save_json, "w") as f:
-                json.dump(self.results, f, indent=2)
-            logger.info("Saved predictions to %s", save_json)
 
         try:
             from pycocotools.coco import COCO  # noqa: F401

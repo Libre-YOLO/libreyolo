@@ -413,6 +413,61 @@ def test_val_forwards_protocol_cap_and_amp_dtype(monkeypatch):
     assert captured["eval_max_det"] == 500
 
 
+def test_val_forwards_save_json(monkeypatch):
+    app = _make_app([("val", val.val_cmd), ("info", special.info_cmd)])
+    captured = {}
+
+    class _DetectModel:
+        FAMILY = "yolo9"
+        task = "detect"
+        size = "t"
+        device = "cuda:0"
+
+        def val(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "metrics/mAP50": 0.5,
+                "metrics/mAP50-95": 0.25,
+                "metrics/precision": 0.4,
+                "metrics/recall": 0.3,
+            }
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.val.resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.val.load_model_or_exit",
+        lambda out, model, model_path, device: _DetectModel(),
+    )
+    monkeypatch.setattr(
+        "libreyolo.utils.general.increment_path",
+        lambda path, exist_ok=False, mkdir=False: Path(path),
+    )
+
+    result = runner.invoke(
+        app,
+        ["val", "data=rf100vl.yaml", "model=LibreYOLO9t.pt", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert captured["save_json"] is False
+
+    result = runner.invoke(
+        app,
+        [
+            "val",
+            "data=rf100vl.yaml",
+            "model=LibreYOLO9t.pt",
+            "save_json=true",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["save_json"] is True
+
+
 def test_val_rejects_invalid_max_det():
     app = _make_app([("val", val.val_cmd), ("info", special.info_cmd)])
     result = runner.invoke(
