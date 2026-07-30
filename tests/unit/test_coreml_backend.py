@@ -2143,7 +2143,7 @@ def _promoted_yolo9_metadata(monkeypatch):
         640,
         class_count=80,
     )
-    assert candidate is not None and not candidate.evidence_complete
+    assert candidate is not None and candidate.evidence_complete
     profile = replace(
         candidate,
         source_kind="test-source-v1",
