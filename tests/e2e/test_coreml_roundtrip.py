@@ -2336,6 +2336,9 @@ def test_coreml_picosam3_trained_roi_component_parity(tmp_path):
 def test_coreml_ppocr_trained_multifunction_parity(weights, tmp_path):
     """Gate both named functions and the deterministic public OCR pipeline."""
     from libreyolo import LibreYOLO
+    from libreyolo.export.coreml_profiles import (
+        match_coreml_execution_profile,
+    )
     from libreyolo.export.coreml_ppocr import (
         PPOCR_COREML_DETECTOR_INPUT,
         PPOCR_COREML_DETECTOR_OUTPUT,
@@ -2345,6 +2348,18 @@ def test_coreml_ppocr_trained_multifunction_parity(weights, tmp_path):
     )
 
     model = LibreYOLO(weights, device="cpu")
+    profile = match_coreml_execution_profile(
+        "ppocr",
+        "ocr",
+        model.size,
+        960,
+        class_count=1,
+    )
+    requested_compute_units = (
+        "validated"
+        if profile is not None and profile.evidence_complete
+        else "cpu_only"
+    )
     det_inputs = [
         torch.linspace(-2.0, 2.0, 3 * 64 * 96).reshape(1, 3, 64, 96),
         torch.linspace(2.0, -2.0, 3 * 96 * 64).reshape(1, 3, 96, 64),
@@ -2382,7 +2397,7 @@ def test_coreml_ppocr_trained_multifunction_parity(weights, tmp_path):
         rec_batch_max=6,
         rec_max_width=2048,
         output_path=str(tmp_path / f"{Path(weights).stem}.mlpackage"),
-        compute_units="cpu_only",
+        compute_units=requested_compute_units,
     )
     detector = ct.models.MLModel(
         artifact,
@@ -2470,7 +2485,10 @@ def test_coreml_ppocr_trained_multifunction_parity(weights, tmp_path):
     del detector, recognizer, model
     gc.collect()
 
-    deployed_model = LibreYOLO(artifact)
+    deployed_model = LibreYOLO(
+        artifact,
+        compute_units=requested_compute_units,
+    )
     deployed = deployed_model.predict(
         str(fixture),
         conf=0.3,
