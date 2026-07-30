@@ -21,7 +21,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | dfine | segment | ✓ | ✓ |  | exp | ✓ |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | dinov2 | classify | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | exp |
-| dinov2 | embed | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| dinov2 | embed | ✓ | ✓ | exp | exp | exp |  | ✓ |  |  |
 | ec | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |
@@ -70,7 +70,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |  |
 | segformer | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  |  | ✓ |
-| siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
+| siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
 | swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
@@ -146,6 +146,7 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `classify` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed 224x224 input
 - `dinov2` / `embed` / `onnx`: FP32, batch 1, fixed 224x224 input
 - `dinov2` / `embed` / `torchscript`: FP32, batch 1, fixed 224x224 input
+- `dinov2` / `embed` / `tflite`: onnx2tf 2.6.7, LiteRT 2.1.2 CPU FP32, batch 1, fixed square input
 - `ec` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `ec` / `detect` / `openvino`: fixed export canvas
 - `ec` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
@@ -257,6 +258,7 @@ A check mark applies only under any constraint listed here.
 - `siglip2` / `embed` / `executorch`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
 - `siglip2` / `embed` / `tensorrt`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
 - `siglip2` / `embed` / `openvino`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
+- `siglip2` / `embed` / `tflite`: onnx2tf 2.6.7, LiteRT 2.1.2 CPU FP32, batch 1, fixed square input
 - `swinir` / `restore` / `onnx`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `torchscript`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `tensorrt`: FP32 with a fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas.
@@ -336,8 +338,8 @@ A check mark applies only under any constraint listed here.
 - `clip` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `clip` / `classify` / `tflite`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `clip` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `clip` / `embed` / `ncnn`: No parity-valid embedding artifact is available for this runtime.
-- `clip` / `embed` / `tflite`: No parity-valid embedding artifact is available for this runtime.
+- `clip` / `embed` / `ncnn`: PNNX 20260526 leaves unsupported pnnx.Expression nodes in the CLIP attention graph, so the generated NCNN network has no runnable input.
+- `clip` / `embed` / `tflite`: onnx2tf 2.6.7 emits a LiteRT graph whose TRANSPOSE receives a rank-5 permutation for a rank-4 tensor.
 - `clip` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `clip` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
 - `convnext` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -356,7 +358,7 @@ A check mark applies only under any constraint listed here.
 - `depth_anything3` / `depth` / `tflite`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `coreml`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `coreai`: The model raises NotImplementedError for every format: depth export is out of scope per ADR 0006, the depth task contract. Depth Anything V2 exports and validates at 5.2e-06, so this is specific to the V3 family and not a Core AI limitation.
-- `dexined` / `edge` / `ncnn`: This edge runtime has no parity-valid artifact for the requested format.
+- `dexined` / `edge` / `ncnn`: PNNX 20260526 leaves an unsupported Tensor.index channel-reversal node, so the generated NCNN network has no runnable input.
 - `dexined` / `edge` / `coreml`: This edge runtime has no parity-valid artifact for the requested format.
 - `dexined` / `edge` / `coreai`: This edge runtime has no parity-valid artifact for the requested format.
 - `dfine` / `detect` / `executorch`: Strict capture reaches an unsupported ContextVar read in deformable attention. Forcing the manual exported grid-sample path permits serialization, but ExecuTorch 1.2 runtime execution still fails with an invalid delegated tensor dimension order.
@@ -368,15 +370,14 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `segment` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
-- `dinov2` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
-- `dinov2` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
+- `dinov2` / `semantic` / `ncnn`: PNNX 20260526 cannot lower the DINOv2 attention graph's batch-axis broadcasts and leaves an unsupported pnnx.Expression node.
+- `dinov2` / `semantic` / `tflite`: onnx2tf 2.6.7 flatbuffer-direct lowering cannot lower the backbone's cubic Resize because its input C/H/W signature remains dynamic.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `dinov2` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export is not implemented for this format.
-- `dinov2` / `embed` / `ncnn`: No parity-valid embedding artifact is available for this runtime.
-- `dinov2` / `embed` / `tflite`: No parity-valid embedding artifact is available for this runtime.
+- `dinov2` / `embed` / `ncnn`: PNNX 20260526 cannot lower the DINOv2 attention graph's batch-axis broadcasts and leaves an unsupported pnnx.Expression node.
 - `dinov2` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `dinov2` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
 - `ec` / `detect` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
@@ -655,8 +656,7 @@ A check mark applies only under any constraint listed here.
 - `siglip2` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `tflite`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `siglip2` / `embed` / `ncnn`: No parity-valid embedding artifact is available for this runtime.
-- `siglip2` / `embed` / `tflite`: No parity-valid embedding artifact is available for this runtime.
+- `siglip2` / `embed` / `ncnn`: PNNX 20260526 leaves unsupported pnnx.Expression nodes in the SigLIP2 attention graph, so the generated NCNN network has no runnable input.
 - `siglip2` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `siglip2` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
 - `smolvlm2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
@@ -672,7 +672,7 @@ A check mark applies only under any constraint listed here.
 - `swinir` / `restore` / `ncnn`: PNNX writes NCNN artifacts after reporting unsupported 5-rank Permute operations, but the NCNN runtime process exits while loading or executing the resulting graph.
 - `swinir` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `swinir` / `restore` / `coreai`: The export process DIES rather than hangs, and the kill point moves between runs, which is the signature of memory exhaustion rather than a stuck loop. One run reached 'Step 3/3: Optimizing and writing the asset' before stopping; a later run of the same graph at the same 128 canvas died inside to_coreai() before returning, in both cases with a leaked-semaphore warning and no traceback. Window attention unrolls into a very large number of small ops, so the converter's peak memory is the prime suspect on a 16 GB machine. Next steps: watch RSS during conversion, try the smallest available size at a 64 canvas, and check the system log for a memory kill. Do NOT assume optimize() is at fault; an earlier note said so on the strength of a single run and the second run contradicted it.
-- `teed` / `edge` / `ncnn`: This edge runtime has no parity-valid artifact for the requested format.
+- `teed` / `edge` / `ncnn`: PNNX 20260526 leaves an unsupported Tensor.index channel-reversal node, so the generated NCNN network has no runnable input.
 - `teed` / `edge` / `coreml`: This edge runtime has no parity-valid artifact for the requested format.
 - `teed` / `edge` / `coreai`: This edge runtime has no parity-valid artifact for the requested format.
 - `yolo1` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_EINSUM custom operation that LiteRT 2.1.2 cannot prepare at the native 448x448 canvas.

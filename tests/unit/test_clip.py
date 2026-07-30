@@ -338,8 +338,9 @@ class TestScope:
         with pytest.raises(NotImplementedError):
             tiny_clip.export(format="torchscript")
 
+    @pytest.mark.parametrize("format", ["onnx", "tflite"])
     def test_embed_export_routes_to_shared_export(
-        self, tiny_clip_embed, monkeypatch
+        self, tiny_clip_embed, monkeypatch, format
     ):
         captured = {}
 
@@ -348,8 +349,12 @@ class TestScope:
             return f"clip-embed.{format}"
 
         monkeypatch.setattr(BaseModel, "export", fake_export)
-        assert tiny_clip_embed.export("onnx", dynamic=False) == "clip-embed.onnx"
-        assert captured == {"format": "onnx", "opset": 17, "dynamic": False}
+        if format == "tflite":
+            with pytest.raises(NotImplementedError, match="currently supports"):
+                tiny_clip_embed.export(format, dynamic=False)
+            return
+        assert tiny_clip_embed.export(format, dynamic=False) == f"clip-embed.{format}"
+        assert captured == {"format": format, "opset": 17, "dynamic": False}
 
     def test_frozen_onnx_roundtrip(self, tiny_clip, tmp_path):
         pytest.importorskip("onnx")

@@ -703,9 +703,52 @@ _add(
 )
 _add(
     "blocked",
+    ("clip",),
+    ("embed",),
+    ("ncnn",),
+    reason=(
+        "PNNX 20260526 leaves unsupported pnnx.Expression nodes in the CLIP "
+        "attention graph, so the generated NCNN network has no runnable input."
+    ),
+)
+_add(
+    "blocked",
+    ("clip",),
+    ("embed",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.6.7 emits a LiteRT graph whose TRANSPOSE receives a rank-5 "
+        "permutation for a rank-4 tensor."
+    ),
+)
+_add(
+    "blocked",
+    ("siglip2",),
+    ("embed",),
+    ("ncnn",),
+    reason=(
+        "PNNX 20260526 leaves unsupported pnnx.Expression nodes in the SigLIP2 "
+        "attention graph, so the generated NCNN network has no runnable input."
+    ),
+)
+_add(
+    "validated",
+    ("siglip2",),
+    ("embed",),
+    ("tflite",),
+    reason=(
+        "A deterministic input-sensitive image-tower fixture covers onnx2tf "
+        "conversion, LiteRT reload, two-input raw embedding parity with a 20x "
+        "signal/error guard, metadata, normalization, and public embedding parity."
+    ),
+    since="1.6",
+    constraint="onnx2tf 2.6.7, LiteRT 2.1.2 CPU FP32, batch 1, fixed square input",
+)
+_add(
+    "blocked",
     ("clip", "siglip2"),
     ("embed",),
-    ("ncnn", "tflite", "coreml", "coreai"),
+    ("coreml", "coreai"),
     reason="No parity-valid embedding artifact is available for this runtime.",
 )
 _add(
@@ -745,7 +788,30 @@ _add(
     "blocked",
     ("dinov2",),
     ("embed",),
-    ("ncnn", "tflite", "coreml", "coreai"),
+    ("ncnn",),
+    reason=(
+        "PNNX 20260526 cannot lower the DINOv2 attention graph's batch-axis "
+        "broadcasts and leaves an unsupported pnnx.Expression node."
+    ),
+)
+_add(
+    "validated",
+    ("dinov2",),
+    ("embed",),
+    ("tflite",),
+    reason=(
+        "The pretrained Apache-2.0 backbone covers onnx2tf conversion, LiteRT "
+        "reload, two-input raw embedding parity with a 20x signal/error guard, "
+        "metadata, normalization, and public embedding parity."
+    ),
+    since="1.6",
+    constraint="onnx2tf 2.6.7, LiteRT 2.1.2 CPU FP32, batch 1, fixed square input",
+)
+_add(
+    "blocked",
+    ("dinov2",),
+    ("embed",),
+    ("coreml", "coreai"),
     reason="No parity-valid embedding artifact is available for this runtime.",
 )
 _add(
@@ -1167,7 +1233,17 @@ _add(
     "blocked",
     ("teed", "dexined"),
     ("edge",),
-    ("ncnn", "coreai", "coreml"),
+    ("ncnn",),
+    reason=(
+        "PNNX 20260526 leaves an unsupported Tensor.index channel-reversal node, "
+        "so the generated NCNN network has no runnable input."
+    ),
+)
+_add(
+    "blocked",
+    ("teed", "dexined"),
+    ("edge",),
+    ("coreai", "coreml"),
     reason=(
         "This edge runtime has no parity-valid artifact for the requested format."
     ),
@@ -2077,7 +2153,7 @@ _add(
 )
 _add(
     "blocked",
-    ("dinov2", "eomt", "lingbotvision"),
+    ("eomt", "lingbotvision"),
     ("semantic",),
     ("ncnn", "tflite"),
     reason=(
@@ -2199,6 +2275,26 @@ _add(
         "rejects non-square sources rather than stretching image-plane geometry; "
         "the official MIT ViT-S/B/L normal checkpoints are covered by FP32 "
         "same-canvas native-versus-ONNX angular parity below 0.1 degree"
+    ),
+)
+_add(
+    "blocked",
+    ("dinov2",),
+    ("semantic",),
+    ("ncnn",),
+    reason=(
+        "PNNX 20260526 cannot lower the DINOv2 attention graph's batch-axis "
+        "broadcasts and leaves an unsupported pnnx.Expression node."
+    ),
+)
+_add(
+    "blocked",
+    ("dinov2",),
+    ("semantic",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.6.7 flatbuffer-direct lowering cannot lower the backbone's "
+        "cubic Resize because its input C/H/W signature remains dynamic."
     ),
 )
 _add(

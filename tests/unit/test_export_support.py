@@ -132,6 +132,9 @@ def test_tflite_support_keys_use_canonical_tasks():
     assert get_support("yolo3", "detect", "tflite").tier == "blocked"
     assert get_support("rfdetr", "detect", "tflite").tier == "blocked"
     assert get_support("rfdetr", "segment", "tflite").tier == "blocked"
+    assert get_support("dinov2", "embed", "tflite").tier == "validated"
+    assert get_support("siglip2", "embed", "tflite").tier == "validated"
+    assert get_support("clip", "embed", "tflite").tier == "blocked"
 
 
 @pytest.mark.parametrize("format", ["onnx", "torchscript"])

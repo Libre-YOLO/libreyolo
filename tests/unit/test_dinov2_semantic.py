@@ -382,7 +382,10 @@ class TestDINOv2Embed:
         assert model.embed([image_a, image_b]).shape == (2, 6)
         assert not hasattr(model, "embed_text")
 
-    def test_train_val_are_out_of_scope_and_embed_export_routes(self, monkeypatch):
+    @pytest.mark.parametrize("format", ["onnx", "tflite"])
+    def test_train_val_are_out_of_scope_and_embed_export_routes(
+        self, monkeypatch, format
+    ):
         from libreyolo.models.base.model import BaseModel
         from libreyolo.models.dinov2.model import LibreDINOv2
 
@@ -401,8 +404,10 @@ class TestDINOv2Embed:
             return f"dinov2-embed.{format}"
 
         monkeypatch.setattr(BaseModel, "export", fake_export)
-        assert model.export(format="onnx", dynamic=False) == "dinov2-embed.onnx"
-        assert captured == {"format": "onnx", "opset": 17, "dynamic": False}
+        assert model.export(format=format, dynamic=False) == (
+            f"dinov2-embed.{format}"
+        )
+        assert captured == {"format": format, "opset": 17, "dynamic": False}
 
     def test_classify_unsupported_export_keeps_classify_error(self):
         from libreyolo.models.dinov2.model import LibreDINOv2

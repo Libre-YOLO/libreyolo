@@ -837,11 +837,12 @@ class LibreDINOv2(BaseModel):
                 "executorch",
                 "tensorrt",
                 "openvino",
+                "tflite",
             }:
                 return super().export(format=format, opset=opset, **kwargs)
             raise NotImplementedError(
                 "LibreDINOv2 task='embed' export currently supports ONNX, "
-                "TorchScript, ExecuTorch, TensorRT, and OpenVINO only."
+                "TorchScript, ExecuTorch, TensorRT, OpenVINO, and TFLite only."
             )
         if self.task == "classify" and format.lower() in {
             "onnx",

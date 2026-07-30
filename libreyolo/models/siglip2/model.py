@@ -531,12 +531,13 @@ class LibreSigLIP2(BaseModel):
                 "executorch",
                 "tensorrt",
                 "openvino",
+                "tflite",
             }:
                 kwargs.setdefault("opset", 17)
                 return super().export(format=format, **kwargs)
             raise NotImplementedError(
                 "LibreSigLIP2 task='embed' export currently supports ONNX, "
-                "TorchScript, ExecuTorch, TensorRT, and OpenVINO only."
+                "TorchScript, ExecuTorch, TensorRT, OpenVINO, and TFLite only."
             )
         if format.lower() not in {"onnx", "coreai"}:
             raise NotImplementedError(
