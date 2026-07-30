@@ -232,6 +232,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("lingbotvision", "semantic", "s"),
         ("mobilenetv4", "classify", "s"),
         ("mobilesam", "segment", "tiny"),
+        ("omdet_turbo", "detect", "t"),
         ("picodet", "detect", "s"),
         ("picosam3", "segment", "pico"),
         ("pidnet", "semantic", "s"),

@@ -605,6 +605,16 @@ def test_direct_export_preparation_pins_canvas_and_metadata(monkeypatch):
     from libreyolo.export.exporter import CoreMLExporter
 
     calls = []
+    profile_calls = []
+
+    def fake_profile_resolver(compute_units, **kwargs):
+        profile_calls.append((compute_units, kwargs))
+        return "cpu_only", None
+
+    monkeypatch.setattr(
+        "libreyolo.export.coreml_profiles.resolve_coreml_export_compute_units",
+        fake_profile_resolver,
+    )
     monkeypatch.setattr(
         CoreMLExporter,
         "_validate",
@@ -653,6 +663,8 @@ def test_direct_export_preparation_pins_canvas_and_metadata(monkeypatch):
     assert metadata["omdet_turbo_vocabulary_sha256"] == (
         omdet_turbo_coreml_vocabulary_hash(model.names)
     )
+    assert profile_calls[0][0] == "cpu_only"
+    assert profile_calls[0][1]["defer_source_validation"] is True
     assert calls == [
         {
             "half": False,
@@ -672,6 +684,7 @@ def test_direct_export_restores_live_model_state(
     monkeypatch,
     conversion_fails,
 ):
+    export_calls = []
     live_model = nn.Linear(2, 2).to(dtype=torch.float64).train()
     wrapper = SimpleNamespace(
         model=live_model,
@@ -707,6 +720,7 @@ def test_direct_export_restores_live_model_state(
     )
 
     def fake_export(*args, **kwargs):
+        export_calls.append(kwargs)
         if conversion_fails:
             raise RuntimeError("conversion failed")
         return "frozen.mlpackage"
@@ -726,6 +740,7 @@ def test_direct_export_restores_live_model_state(
 
     assert next(live_model.parameters()).dtype == torch.float64
     assert live_model.training is True
+    assert export_calls[0]["_requested_compute_units"] == "cpu_only"
 
 
 @pytest.mark.parametrize(

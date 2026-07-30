@@ -1765,8 +1765,14 @@ def test_coreml_omdet_turbo_t_frozen_vocabulary_raw_and_public_path(tmp_path):
         postprocess_omdet_turbo_coreml_outputs,
         preprocess_omdet_turbo_coreml_image,
     )
+    from libreyolo.export.support import get_support
 
     labels = ["person", "dog", "remote control"]
+    requested_compute_units = (
+        "validated"
+        if get_support("omdet_turbo", "detect", "coreml").tier == "validated"
+        else "cpu_only"
+    )
     model = LibreOpenVocab("omdet-turbo", device="cpu")
     model.set_classes(labels)
     adapter = build_omdet_turbo_frozen_coreml_adapter(
@@ -1830,7 +1836,7 @@ def test_coreml_omdet_turbo_t_frozen_vocabulary_raw_and_public_path(tmp_path):
         format="coreml",
         half=False,
         output_path=str(tmp_path / "omdet-turbo-t.mlpackage"),
-        compute_units="cpu_only",
+        compute_units=requested_compute_units,
     )
 
     runtime, contract, names = _load_artifact(artifact)
@@ -1853,7 +1859,10 @@ def test_coreml_omdet_turbo_t_frozen_vocabulary_raw_and_public_path(tmp_path):
         max_det=300,
         verbose=False,
     )
-    deployed_model = LibreYOLO(artifact)
+    deployed_model = LibreYOLO(
+        artifact,
+        compute_units=requested_compute_units,
+    )
     deployed = deployed_model.predict(
         source,
         conf=0.3,

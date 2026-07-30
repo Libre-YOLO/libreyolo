@@ -615,6 +615,19 @@ _PROFILES = (
         "t",
         640,
         "LibreOMDetTurbot",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "d47e4a6efe32dad755a1ec1731adb409"
+            "525a4b1d042f76e861116250d803b74a"
+        ),
+        deployment_abi_sha256=(
+            "733150881ac06a2d37cc906da94cef84"
+            "b1de4997917b94035cb2a8c88e08b01a"
+        ),
+        evidence_sha256=(
+            "32b7e22176b7f461ad0fc699dab53988"
+            "35fc13107bef262a22073f938f0b45a2"
+        ),
         runtime_all=True,
         class_count=3,
     ),
