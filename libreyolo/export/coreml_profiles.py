@@ -910,6 +910,27 @@ _PROFILES = (
         class_count=1,
     ),
     _profile(
+        "ppocr",
+        "ocr",
+        "l",
+        960,
+        "LibrePPOCRl-ocr multifunction det/rec package",
+        source_kind="pytorch-module-state-v1",
+        source_sha256=(
+            "143aa035f49dea3279aacf29d6dff0a1"
+            "0ae1e647ea143e6e3203a34501eeba96"
+        ),
+        deployment_abi_sha256=(
+            "33e3cd6221348185d3a4dcb55677c874"
+            "7c6fda88c66e75692ace188b658f9489"
+        ),
+        evidence_sha256=(
+            "258cf460c5ec386f857842b05414b313"
+            "ba84633ec29ea47138896a686b0ed0df"
+        ),
+        class_count=1,
+    ),
+    _profile(
         "realesrgan",
         "restore",
         "x4t",

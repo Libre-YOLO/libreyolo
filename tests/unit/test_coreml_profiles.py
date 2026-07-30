@@ -246,6 +246,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("picodet", "detect", "s"),
         ("picosam3", "segment", "pico"),
         ("pidnet", "semantic", "s"),
+        ("ppocr", "ocr", "l"),
         ("ppocr", "ocr", "t"),
         ("realesrgan", "restore", "x4t"),
         ("rfdetr", "detect", "n"),
