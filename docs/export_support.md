@@ -106,6 +106,7 @@ A check mark applies only under any constraint listed here.
 - `clip` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `convnext` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `convnext` / `classify` / `openvino`: fixed family-native input resolution
+- `convnext` / `classify` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; two-input raw parity, factory reload, metadata, and public predict parity
 - `convnext` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `deim` / `detect` / `onnx`: DETR query rows are aligned as an unordered set for parity
 - `deim` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
@@ -132,6 +133,7 @@ A check mark applies only under any constraint listed here.
 - `ec` / `segment` / `openvino`: fixed 640x640 input
 - `efficientnetv2` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `efficientnetv2` / `classify` / `openvino`: fixed family-native input resolution
+- `efficientnetv2` / `classify` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; two-input raw parity, factory reload, metadata, and public predict parity
 - `efficientnetv2` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `eomt` / `semantic` / `onnx`: fixed 512x512 input
 - `eomt` / `semantic` / `torchscript`: fixed 512x512 input
@@ -140,6 +142,7 @@ A check mark applies only under any constraint listed here.
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
 - `fomo` / `point` / `tensorrt`: FP32 with a fixed 96x96 input
 - `fomo` / `point` / `openvino`: fixed square input
+- `fomo` / `point` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed 96x96 input; two-input raw parity, factory reload, metadata, and public predict parity
 - `fomo` / `point` / `coreai`: native 96 canvas; a deterministic model state trained from scratch for eight steps on synthetic tensors is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion and the existing heatmap contract, not point-localization accuracy
 - `l2cs` / `gaze` / `onnx`: head-only contract: each input image is one face crop
 - `l2cs` / `gaze` / `torchscript`: head-only contract: each input image is one face crop
@@ -149,29 +152,32 @@ A check mark applies only under any constraint listed here.
 - `lingbotvision` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
 - `mobilenetv4` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `mobilenetv4` / `classify` / `openvino`: fixed family-native input resolution
+- `mobilenetv4` / `classify` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; two-input raw parity, factory reload, metadata, and public predict parity
 - `mobilenetv4` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `moge2` / `normal` / `onnx`: fixed square batch-1 export canvas divisible by 14; exported inference rejects non-square sources rather than stretching image-plane geometry; the official MIT ViT-S/B/L normal checkpoints are covered by FP32 same-canvas native-versus-ONNX angular parity below 0.1 degree
 - `nafnet` / `restore` / `onnx`: fixed-resolution export canvas
 - `nafnet` / `restore` / `torchscript`: fixed-resolution export canvas
 - `nafnet` / `restore` / `tensorrt`: FP32 with a fixed-resolution export canvas
 - `nafnet` / `restore` / `openvino`: fixed-resolution export canvas
-- `nafnet` / `restore` / `ncnn`: fixed-resolution export canvas
+- `nafnet` / `restore` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; two-input raw parity, factory reload, metadata, and public predict parity
 - `nafnet` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `picodet` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `picodet` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `picodet` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `picosam3` / `segment` / `onnx`: raw fixed-96 ROI contract: roi_image -> mask_logits
 - `pidnet` / `semantic` / `openvino`: fixed square input
+- `pidnet` / `semantic` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed export canvas; two-input raw parity, factory reload, metadata, and public predict parity
 - `pidnet` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
-- `realesrgan` / `restore` / `onnx`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
-- `realesrgan` / `restore` / `torchscript`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
+- `realesrgan` / `restore` / `onnx`: dynamic spatial input
+- `realesrgan` / `restore` / `torchscript`: fixed-resolution export canvas
 - `realesrgan` / `restore` / `tensorrt`: FP32 with a fixed-resolution export canvas
 - `realesrgan` / `restore` / `openvino`: fixed-resolution export canvas
-- `realesrgan` / `restore` / `ncnn`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
+- `realesrgan` / `restore` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; two-input raw parity, factory reload, metadata, and public predict parity
 - `realesrgan` / `restore` / `tflite`: fixed-resolution export canvas
 - `realesrgan` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `resnet` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `resnet` / `classify` / `openvino`: fixed family-native input resolution
+- `resnet` / `classify` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; two-input raw parity, factory reload, metadata, and public predict parity
 - `resnet` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `rfdetr` / `detect` / `coreai`: fixed export canvas; trained LibreRFDETRn weights are covered on macOS 27 against the graph the exporter itself prepares, using direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin. Conversion needed _rebake_rfdetr_pos_embed in export/coreai.py: the backbone bakes its position embedding for its configured 384 canvas, so exporting at any other size left an antialiased bicubic in the graph and the converter has no lowering for aten._upsample_bicubic2d_aa. The rebake re-runs the model's OWN baking path for the actual canvas, so the interpolation happens eagerly, outside the graph, computing exactly what it computed before. NOTE the reference. This family is verified against the exporter's prepared graph, not against ONNX, and the difference is not a detail: at a 640 canvas the rfdetr ONNX artifact disagrees with that same prepared graph by 9.3e-01. Core AI's rebake preserves the antialiased resize the eager model performs, whereas the ONNX path disables antialiasing (the model checks torch.onnx.is_in_onnx_export). Which artifact is right is an ONNX question and is not settled here, but ONNX cannot be used as the reference for this family at a non-native canvas.
 - `rfdetr` / `segment` / `onnx`: fixed task-native input resolution
@@ -216,6 +222,7 @@ A check mark applies only under any constraint listed here.
 - `yolo4` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
 - `yolo7` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo7` / `detect` / `coreai`: fixed 640x640 export canvas; trained LibreYOLO7b weights are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; the export decoder uses direct arange grids because Core AI 0.4.1 mislowers the equivalent cumulative-sum expression
+- `yolo9` / `detect` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed export canvas; trained MIT checkpoint covered by two-input raw parity, factory reload, metadata, and non-square public predict parity
 - `yolo9` / `detect` / `coreai`: fixed export canvas; trained LibreYOLO9t weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `yolo9_e2e` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo9_e2e` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
@@ -230,7 +237,7 @@ A check mark applies only under any constraint listed here.
 - `zipdepth` / `depth` / `onnx`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `torchscript`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `openvino`: fixed-resolution export canvas
-- `zipdepth` / `depth` / `ncnn`: fixed-resolution export canvas
+- `zipdepth` / `depth` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; two-input raw parity, factory reload, metadata, and public predict parity
 - `zipdepth` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 
 ## Blocked combinations

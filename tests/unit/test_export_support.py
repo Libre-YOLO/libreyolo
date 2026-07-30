@@ -212,6 +212,26 @@ def test_round16_promotes_rtdetrv2_and_rtdetrv4_onnx():
         assert "non-square public predict parity" in entry.constraint
 
 
+def test_round17_records_ten_ncnn_cpu_fp32_parity_cells():
+    cases = (
+        ("mobilenetv4", "classify"),
+        ("convnext", "classify"),
+        ("efficientnetv2", "classify"),
+        ("resnet", "classify"),
+        ("fomo", "point"),
+        ("pidnet", "semantic"),
+        ("realesrgan", "restore"),
+        ("nafnet", "restore"),
+        ("zipdepth", "depth"),
+        ("yolo9", "detect"),
+    )
+    for family, task in cases:
+        entry = get_support(family, task, "ncnn")
+        assert entry.tier == "validated"
+        assert "PNNX/NCNN 20260526 CPU FP32" in entry.constraint
+        assert "public predict parity" in entry.constraint
+
+
 def test_round10_promotes_three_tensorrt_detectors():
     for family in ("yolo2", "yolo3", "yolo4"):
         entry = get_support(family, "detect", "tensorrt")

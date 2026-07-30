@@ -1,7 +1,9 @@
 """Unit tests for the ncnn export module."""
 
+import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -184,6 +186,41 @@ class TestNCNNMetadataYAML:
 
         assert runtime_metadata["crop_pct"] == pytest.approx(0.95)
         assert runtime_metadata["interpolation"] == "bicubic"
+
+
+def test_ncnn_cpu_backend_disables_implicit_fp16_runtime(monkeypatch, tmp_path):
+    from libreyolo.backends.ncnn import NcnnBackend
+
+    class FakeNet:
+        def __init__(self):
+            self.opt = SimpleNamespace(
+                use_fp16_arithmetic=True,
+                use_fp16_packed=True,
+                use_fp16_storage=True,
+            )
+
+        def load_param(self, _path):
+            return 0
+
+        def load_model(self, _path):
+            return 0
+
+        def input_names(self):
+            return ("in0",)
+
+        def output_names(self):
+            return ("out0",)
+
+    fake_ncnn = SimpleNamespace(Net=FakeNet, build_with_gpu=False)
+    monkeypatch.setitem(sys.modules, "ncnn", fake_ncnn)
+    (tmp_path / "model.ncnn.param").write_text("7767517\n")
+    (tmp_path / "model.ncnn.bin").write_bytes(b"")
+
+    backend = NcnnBackend(tmp_path, device="cpu")
+
+    assert backend.net.opt.use_fp16_arithmetic is False
+    assert backend.net.opt.use_fp16_packed is False
+    assert backend.net.opt.use_fp16_storage is False
 
 
 class TestNCNNExportValidation:

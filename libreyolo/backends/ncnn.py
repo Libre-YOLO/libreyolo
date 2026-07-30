@@ -114,6 +114,14 @@ class NcnnBackend(BaseBackend):
         self.net = _ncnn.Net()
         if use_vulkan and hasattr(_ncnn, "build_with_gpu") and _ncnn.build_with_gpu:
             self.net.opt.use_vulkan_compute = True
+        if not use_vulkan:
+            # ncnn's Python runtime enables FP16 arithmetic and storage by
+            # default even for an FP32 graph. Keep CPU inference aligned with
+            # the export precision contract; otherwise high-magnitude semantic
+            # logits can intermittently overflow to NaN.
+            self.net.opt.use_fp16_arithmetic = False
+            self.net.opt.use_fp16_packed = False
+            self.net.opt.use_fp16_storage = False
         self.net.load_param(str(param_path))
         self.net.load_model(str(bin_path))
 

@@ -65,8 +65,20 @@ _add(
     "validated",
     ("yolo9",),
     ("detect",),
-    ("onnx", "torchscript", "ncnn", "tflite"),
+    ("onnx", "torchscript", "tflite"),
     since="1.3",
+)
+_add(
+    "validated",
+    ("yolo9",),
+    ("detect",),
+    ("ncnn",),
+    since="1.3",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with a fixed export canvas; trained MIT "
+        "checkpoint covered by two-input raw parity, factory reload, metadata, "
+        "and non-square public predict parity"
+    ),
 )
 _add(
     "validated",
@@ -405,9 +417,21 @@ _add(
     "validated",
     ("nafnet",),
     ("restore",),
-    ("onnx", "torchscript", "ncnn"),
+    ("onnx", "torchscript"),
     since="1.4",
     constraint="fixed-resolution export canvas",
+)
+_add(
+    "validated",
+    ("nafnet",),
+    ("restore",),
+    ("ncnn",),
+    since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; "
+        "two-input raw parity, factory reload, metadata, and public predict "
+        "parity"
+    ),
 )
 _add(
     "validated",
@@ -439,9 +463,29 @@ _add(
     "validated",
     ("realesrgan",),
     ("restore",),
-    ("onnx", "torchscript", "ncnn"),
+    ("onnx",),
     since="1.4",
-    constraint="ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas",
+    constraint="dynamic spatial input",
+)
+_add(
+    "validated",
+    ("realesrgan",),
+    ("restore",),
+    ("torchscript",),
+    since="1.4",
+    constraint="fixed-resolution export canvas",
+)
+_add(
+    "validated",
+    ("realesrgan",),
+    ("restore",),
+    ("ncnn",),
+    since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; "
+        "two-input raw parity, factory reload, metadata, and public predict "
+        "parity"
+    ),
 )
 _add(
     "validated",
@@ -490,6 +534,10 @@ _add(
     ("semantic",),
     ("ncnn",),
     since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with a fixed export canvas; two-input raw "
+        "parity, factory reload, metadata, and public predict parity"
+    ),
 )
 _add(
     "validated",
@@ -497,6 +545,10 @@ _add(
     ("point",),
     ("ncnn",),
     since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with a fixed 96x96 input; two-input raw "
+        "parity, factory reload, metadata, and public predict parity"
+    ),
 )
 _add(
     "validated",
@@ -533,9 +585,21 @@ _add(
     "validated",
     ("zipdepth",),
     ("depth",),
-    ("onnx", "torchscript", "ncnn"),
+    ("onnx", "torchscript"),
     since="1.4",
     constraint="fixed-resolution export canvas",
+)
+_add(
+    "validated",
+    ("zipdepth",),
+    ("depth",),
+    ("ncnn",),
+    since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; "
+        "two-input raw parity, factory reload, metadata, and public predict "
+        "parity"
+    ),
 )
 _add(
     "validated",
@@ -1286,8 +1350,20 @@ _add(
     "validated",
     ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
     ("classify",),
-    ("ncnn", "tflite"),
+    ("tflite",),
     since="1.4",
+)
+_add(
+    "validated",
+    ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
+    ("classify",),
+    ("ncnn",),
+    since="1.4",
+    constraint=(
+        "PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; "
+        "two-input raw parity, factory reload, metadata, and public predict "
+        "parity"
+    ),
 )
 _add(
     "blocked",
