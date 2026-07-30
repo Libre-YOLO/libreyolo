@@ -229,6 +229,7 @@ def test_registry_separates_conversion_candidates_from_promoted_profiles():
         ("fomo", "point", "s"),
         ("lingbotvision", "semantic", "s"),
         ("mobilenetv4", "classify", "s"),
+        ("mobilesam", "segment", "tiny"),
         ("picodet", "detect", "s"),
         ("pidnet", "semantic", "s"),
         ("realesrgan", "restore", "x4t"),
@@ -363,7 +364,7 @@ def test_each_mobile_sam_prompt_bound_has_a_distinct_candidate(
     )
     assert profile is not None
     assert profile.prompt_max_points == prompt_max_points
-    assert not profile.evidence_complete
+    assert profile.evidence_complete is (prompt_max_points == 4)
 
 
 @pytest.mark.parametrize(

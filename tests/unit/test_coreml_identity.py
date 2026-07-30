@@ -11,12 +11,15 @@ from libreyolo.export.coreml_identity import (
     COREML_DEPLOYMENT_ABI_SCHEMA,
     COREML_PROFILE_ABI_SHA256_KEY,
     COREML_PROFILE_SOURCE_BYTE_COUNT_KEY,
+    COREML_PROFILE_SOURCE_GRAPH_SHA256_KEY,
     COREML_PROFILE_SOURCE_SHA256_KEY,
     bind_coreml_deployment_abi,
     canonical_json_sha256,
     coreml_contract_abi_manifest,
     coreml_contract_abi_sha256,
     coreml_deployment_abi_sha256,
+    pytorch_captured_bundle_source_identity,
+    pytorch_captured_graph_sha256,
     pytorch_module_source_identity,
     pytorch_traced_source_identity,
     validate_coreml_deployment_abi,
@@ -259,6 +262,46 @@ def test_traced_source_identity_is_stable_across_fresh_processes():
         text=True,
     ).strip()
     assert first == second
+
+
+def test_captured_bundle_identity_binds_named_torchscript_and_export_graphs():
+    module = _TinyGraph(1.25).eval()
+    probe = torch.ones(1, 2, 3)
+    traced = torch.jit.trace(module, probe)
+    exported = torch.export.export(module, (probe,), strict=False)
+    traced_sha256 = pytorch_captured_graph_sha256(traced)
+    exported_sha256 = pytorch_captured_graph_sha256(exported)
+
+    first = pytorch_captured_bundle_source_identity(
+        module,
+        {
+            "trace": traced_sha256,
+            "export": exported_sha256,
+        },
+    )
+    reordered = pytorch_captured_bundle_source_identity(
+        module,
+        {
+            "export": exported_sha256,
+            "trace": traced_sha256,
+        },
+    )
+    assert first == reordered
+    assert len(first[COREML_PROFILE_SOURCE_GRAPH_SHA256_KEY]) == 64
+
+    changed = pytorch_captured_bundle_source_identity(
+        module,
+        {
+            "trace": pytorch_captured_graph_sha256(
+                torch.jit.trace(_TinyGraph(2.0).eval(), probe)
+            ),
+            "export": exported_sha256,
+        },
+    )
+    assert (
+        changed[COREML_PROFILE_SOURCE_SHA256_KEY]
+        != first[COREML_PROFILE_SOURCE_SHA256_KEY]
+    )
 
 
 def test_single_function_abi_hash_accepts_native_and_serialized_metadata():

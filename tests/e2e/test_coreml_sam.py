@@ -211,8 +211,14 @@ def converted_sam_case(request, tmp_path_factory):
 
     from libreyolo import LibreSAM
     from libreyolo.export.coreml_sam import validate_sam_coreml_profile
+    from libreyolo.export.support import get_support
 
     model = LibreSAM(alias, device="cpu")
+    requested_compute_units = (
+        "validated"
+        if get_support(family, "segment", "coreml").tier == "validated"
+        else "cpu_only"
+    )
     profile = validate_sam_coreml_profile(
         family=family,
         size=size,
@@ -224,7 +230,7 @@ def converted_sam_case(request, tmp_path_factory):
             format="coreml",
             output_path=str(output_dir / f"{family}.mlpackage"),
             prompt_max_points=PROMPT_MAX_POINTS,
-            compute_units="cpu_only",
+            compute_units=requested_compute_units,
         )
     )
     assert artifact.is_dir()
@@ -234,7 +240,7 @@ def converted_sam_case(request, tmp_path_factory):
     # test owns its pristine oracle lifetime and releases it before loading a
     # Core ML proxy; mixing both heavyweight runtimes causes excessive RSS and
     # can trigger native tensor-lifetime failures on macOS.
-    return family, alias, profile, artifact
+    return family, alias, profile, artifact, requested_compute_units
 
 
 def test_saved_sam_multifunction_graph_parity(converted_sam_case):
@@ -249,7 +255,9 @@ def test_saved_sam_multifunction_graph_parity(converted_sam_case):
         wrap_sam_coreml_components,
     )
 
-    family, alias, profile, artifact = converted_sam_case
+    family, alias, profile, artifact, _requested_compute_units = (
+        converted_sam_case
+    )
     runtime_names = sam_coreml_runtime_function_names(profile)
     contracts = sam_coreml_runtime_function_contracts(profile)
     images = (
@@ -478,7 +486,9 @@ def test_public_sam_coreml_cached_prompt_path(converted_sam_case):
     )
     from libreyolo.export.coreml_sam import wrap_sam_coreml_components
 
-    _family, alias, profile, artifact = converted_sam_case
+    _family, alias, profile, artifact, requested_compute_units = (
+        converted_sam_case
+    )
     model = LibreSAM(alias, device="cpu")
     components = wrap_sam_coreml_components(
         model.model,
@@ -532,7 +542,10 @@ def test_public_sam_coreml_cached_prompt_path(converted_sam_case):
     )
     gc.collect()
 
-    backend = LibreSAM(str(artifact), compute_units="cpu_only")
+    backend = LibreSAM(
+        str(artifact),
+        compute_units=requested_compute_units,
+    )
     backend.set_image(image)
     result = backend.predict(points=point, labels=[1])
     if bool(expected_mask.any()):

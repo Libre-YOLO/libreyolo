@@ -533,6 +533,29 @@ _PROFILES = (
             "tiny",
             1024,
             "LibreMobileSAM tiny",
+            source_kind=(
+                "pytorch-captured-bundle-state-v1"
+                if prompt_max_points == 4
+                else None
+            ),
+            source_sha256=(
+                "4d4c7f724325c515afb96c1dd6dafce9"
+                "99c7c1a567e8606cd4e054dbad10b48f"
+                if prompt_max_points == 4
+                else None
+            ),
+            deployment_abi_sha256=(
+                "4735fa16ee0e76579b5cfc7601cee9cd5"
+                "7961e55cf0c47b5a9391fc6ea881888"
+                if prompt_max_points == 4
+                else None
+            ),
+            evidence_sha256=(
+                "7c7bc483c72cc8c9c2963e16bcd4aad3"
+                "aefc2e14afa8442d3f765f63efd133d6"
+                if prompt_max_points == 4
+                else None
+            ),
             prompt_max_points=prompt_max_points,
             class_count=1,
         )

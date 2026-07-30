@@ -23,9 +23,9 @@ import os
 import shutil
 import tempfile
 import warnings
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -3161,6 +3161,77 @@ def _sam_capture_component(
     return captured
 
 
+def _sam_captured_bundle_source_identity(
+    nn_model: nn.Module,
+    *,
+    components: Mapping[str, nn.Module],
+    probes: Mapping[
+        str,
+        tuple[
+            tuple[torch.Tensor, ...],
+            tuple[torch.Tensor, ...],
+            dict[str, torch.Tensor],
+        ],
+    ],
+    profile: Any,
+) -> dict[str, Any]:
+    """Fingerprint every fixed runtime graph before planner promotion."""
+    from .coreml_identity import (
+        pytorch_captured_bundle_source_identity,
+        pytorch_captured_graph_sha256,
+    )
+    from .coreml_sam import (
+        SAM_COREML_FUNCTION_NAMES,
+        sam_coreml_function_contracts,
+        sam_coreml_runtime_function_name,
+    )
+
+    graph_sha256_by_name: dict[str, str] = {}
+    contracts = sam_coreml_function_contracts(profile)
+    for function_name in SAM_COREML_FUNCTION_NAMES:
+        prompt_mode = contracts[function_name].get("prompt_mode")
+        if prompt_mode in ("points", "points_boxes"):
+            for point_count in range(1, profile.prompt_max_points + 1):
+                runtime_name = sam_coreml_runtime_function_name(
+                    function_name,
+                    point_count=point_count,
+                )
+                fixed_probes = _sam_build_fixed_point_probes(
+                    components[function_name],
+                    function_name=function_name,
+                    point_count=point_count,
+                    profile=profile,
+                    source_probes=probes[function_name],
+                )
+                captured = _sam_capture_component(
+                    components[function_name],
+                    function_name=function_name,
+                    profile=profile,
+                    probes=fixed_probes,
+                )
+                graph_sha256_by_name[runtime_name] = (
+                    pytorch_captured_graph_sha256(captured)
+                )
+                del captured
+            continue
+
+        captured = _sam_capture_component(
+            components[function_name],
+            function_name=function_name,
+            profile=profile,
+            probes=probes[function_name],
+        )
+        graph_sha256_by_name[function_name] = (
+            pytorch_captured_graph_sha256(captured)
+        )
+        del captured
+
+    return pytorch_captured_bundle_source_identity(
+        nn_model,
+        graph_sha256_by_name,
+    )
+
+
 def _sam_coreml_tensor_type(ct: Any, feature: dict[str, Any]) -> Any:
     dtype = np.float32 if feature["dtype"] == "float32" else np.int32
     shape: list[Any] = []
@@ -3268,7 +3339,6 @@ def _export_sam_coreml_impl(
         COREML_PROFILE_SOURCE_KIND_KEY,
         COREML_PROFILE_SOURCE_SHA256_KEY,
         bind_coreml_deployment_abi,
-        pytorch_module_source_identity,
         validate_coreml_deployment_abi,
     )
     from .coreml_profiles import (
@@ -3307,9 +3377,20 @@ def _export_sam_coreml_impl(
             "dynamic": False,
         }
     )
-    execution_profile = None
-    source_identity = pytorch_module_source_identity(nn_model.eval())
+    components = wrap_sam_coreml_components(nn_model.eval(), profile=profile)
+    probes = _sam_validate_and_build_probes(
+        components,
+        profile=profile,
+        dummy=dummy,
+    )
+    source_identity = _sam_captured_bundle_source_identity(
+        nn_model.eval(),
+        components=components,
+        probes=probes,
+        profile=profile,
+    )
     prepared.update(source_identity)
+    execution_profile = None
     if has_candidate_execution_profile:
         resolved_compute_units, execution_profile = (
             resolve_coreml_export_compute_units(
@@ -3336,13 +3417,6 @@ def _export_sam_coreml_impl(
                 "conversion planner after source preparation."
             )
     validate_sam_coreml_metadata(prepared)
-
-    components = wrap_sam_coreml_components(nn_model.eval(), profile=profile)
-    probes = _sam_validate_and_build_probes(
-        components,
-        profile=profile,
-        dummy=dummy,
-    )
 
     import coremltools as ct
 

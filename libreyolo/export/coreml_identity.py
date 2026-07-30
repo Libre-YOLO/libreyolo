@@ -20,6 +20,9 @@ COREML_PROFILE_ABI_SHA256_KEY = "coreml_profile_abi_sha256"
 
 COREML_PYTORCH_SOURCE_KIND = "pytorch-module-state-v1"
 COREML_PYTORCH_TRACED_SOURCE_KIND = "pytorch-traced-graph-state-v2"
+COREML_PYTORCH_CAPTURED_BUNDLE_SOURCE_KIND = (
+    "pytorch-captured-bundle-state-v1"
+)
 COREML_CONTRACT_ABI_SCHEMA = "coreml-contract-abi-v1"
 COREML_DEPLOYMENT_ABI_SCHEMA = "coreml-deployment-abi-v2"
 
@@ -441,6 +444,115 @@ def pytorch_traced_source_identity(
     return state
 
 
+def pytorch_captured_graph_sha256(captured: Any) -> str:
+    """Hash one TorchScript or ``torch.export`` graph deterministically."""
+    if getattr(captured, "inlined_graph", None) is not None:
+        payload = _normalized_torchscript_graph(captured)
+    else:
+        graph_module = getattr(captured, "graph_module", None)
+        graph = getattr(graph_module, "graph", None)
+        if graph_module is None or graph is None:
+            raise TypeError(
+                "Core ML captured-graph identity requires a TorchScript "
+                "module or torch.export.ExportedProgram."
+            )
+        graph_text = "\n".join(
+            line.rstrip() for line in str(graph).splitlines()
+        ).strip()
+        graph_code = "\n".join(
+            line.rstrip() for line in str(graph_module.code).splitlines()
+        ).strip()
+        if not graph_text.startswith("graph(") or "return" not in graph_text:
+            raise RuntimeError(
+                "torch.export returned an invalid graph for Core ML source "
+                "identity."
+            )
+        range_constraints = getattr(captured, "range_constraints", {})
+        payload = canonical_json_bytes(
+            {
+                "kind": "torch-exported-program-v1",
+                "graph": graph_text,
+                "code": graph_code,
+                "graph_signature": str(
+                    getattr(captured, "graph_signature", "")
+                ),
+                "range_constraints": sorted(
+                    (str(key), str(value))
+                    for key, value in range_constraints.items()
+                ),
+            }
+        )
+    return hashlib.sha256(payload).hexdigest()
+
+
+def pytorch_captured_bundle_source_identity(
+    module: Any,
+    graph_sha256_by_name: Mapping[str, str],
+) -> dict[str, Any]:
+    """Bind live tensor state to every named graph in a component bundle."""
+    if not isinstance(graph_sha256_by_name, Mapping) or not (
+        graph_sha256_by_name
+    ):
+        raise ValueError(
+            "Core ML component-bundle identity requires at least one graph."
+        )
+    graphs = []
+    for raw_name, raw_sha256 in graph_sha256_by_name.items():
+        name = str(raw_name).strip()
+        if not name:
+            raise ValueError(
+                "Core ML component-bundle graph names must be non-empty."
+            )
+        graphs.append(
+            (
+                name,
+                require_lower_sha256(
+                    raw_sha256,
+                    key=f"graph_sha256_by_name[{name!r}]",
+                ),
+            )
+        )
+    graphs.sort()
+    if len({name for name, _ in graphs}) != len(graphs):
+        raise ValueError(
+            "Core ML component-bundle graph names must be unique."
+        )
+
+    state = pytorch_module_source_identity(module)
+    graph_manifest_sha256 = canonical_json_sha256(graphs)
+    digest = hashlib.sha256()
+    digest.update(b"libreyolo-coreml-pytorch-captured-bundle-state-v1\0")
+    digest.update(
+        canonical_json_bytes(
+            {
+                "state_kind": state[COREML_PROFILE_SOURCE_KIND_KEY],
+                "state_sha256": state[COREML_PROFILE_SOURCE_SHA256_KEY],
+                "tensor_count": state[
+                    COREML_PROFILE_SOURCE_TENSOR_COUNT_KEY
+                ],
+                "tensor_bytes": state[COREML_PROFILE_SOURCE_BYTE_COUNT_KEY],
+                "module_count": state[
+                    "coreml_profile_source_module_count"
+                ],
+                "graph_manifest_sha256": graph_manifest_sha256,
+                "graphs": graphs,
+            }
+        )
+    )
+    state.update(
+        {
+            COREML_PROFILE_SOURCE_KIND_KEY: (
+                COREML_PYTORCH_CAPTURED_BUNDLE_SOURCE_KIND
+            ),
+            COREML_PROFILE_SOURCE_SHA256_KEY: digest.hexdigest(),
+            COREML_PROFILE_SOURCE_GRAPH_SHA256_KEY: (
+                graph_manifest_sha256
+            ),
+        }
+    )
+    return state
+
+
 __all__ = [
     "COREML_CONTRACT_ABI_SCHEMA",
     "COREML_DEPLOYMENT_ABI_SCHEMA",
@@ -451,6 +563,7 @@ __all__ = [
     "COREML_PROFILE_SOURCE_KIND_KEY",
     "COREML_PROFILE_SOURCE_SHA256_KEY",
     "COREML_PROFILE_SOURCE_TENSOR_COUNT_KEY",
+    "COREML_PYTORCH_CAPTURED_BUNDLE_SOURCE_KIND",
     "COREML_PYTORCH_SOURCE_KIND",
     "COREML_PYTORCH_TRACED_SOURCE_KIND",
     "bind_coreml_deployment_abi",
@@ -460,6 +573,8 @@ __all__ = [
     "coreml_contract_abi_sha256",
     "coreml_deployment_abi_manifest",
     "coreml_deployment_abi_sha256",
+    "pytorch_captured_bundle_source_identity",
+    "pytorch_captured_graph_sha256",
     "pytorch_module_source_identity",
     "pytorch_traced_source_identity",
     "require_lower_sha256",
