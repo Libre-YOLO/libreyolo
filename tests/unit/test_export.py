@@ -402,6 +402,28 @@ class TestExporterFormats:
 
         assert device == torch.device("cpu")
 
+    @pytest.mark.parametrize("imgsz", [384, (384, 384)])
+    def test_rfdetr_obb_executorch_accepts_native_canvas_forms(
+        self, monkeypatch, imgsz
+    ):
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.models.rfdetr.model import LibreRFDETR
+
+        model = object.__new__(LibreRFDETR)
+        model.task = "obb"
+        model._validate_imgsz = lambda value, **_: value
+        model._get_input_size = lambda: 384
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return "model.pte"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+
+        assert model.export("executorch", imgsz=imgsz) == "model.pte"
+        assert captured["imgsz"] == imgsz
+
     @pytest.mark.parametrize("device_arg", ["0", 0])
     def test_export_normalizes_bare_numeric_device(self, device_arg):
         wrapper = _make_wrapper(model_name="yolo9")

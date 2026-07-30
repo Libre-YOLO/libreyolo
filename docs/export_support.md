@@ -72,7 +72,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | siglip2 | classify | ✓ |  |  |  |  |  |  |  | ✓ |
 | siglip2 | embed |  |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
-| swinir | restore | exp | exp | exp | exp | exp | exp |  |  |  |
+| swinir | restore | exp | exp |  | exp | exp | exp |  |  |  |
 | teed | edge | ✓ |  | exp |  |  |  |  |  |  |
 | yolo1 | detect | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
@@ -85,7 +85,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | yolonas | detect | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
 | yolonas | pose | ✓ | ✓ | exp | exp | exp | ✓ |  |  |  |
 | yolox | detect | ✓ | ✓ | ✓ | exp | exp | ✓ | ✓ | exp | ✓ |
-| zipdepth | depth | ✓ | ✓ | exp | exp | exp | ✓ |  |  | ✓ |
+| zipdepth | depth | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 
 ## Parity thresholds
 
@@ -193,6 +193,7 @@ A check mark applies only under any constraint listed here.
 - `yolox` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `zipdepth` / `depth` / `onnx`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `torchscript`: fixed-resolution export canvas
+- `zipdepth` / `depth` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `zipdepth` / `depth` / `ncnn`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 
@@ -581,6 +582,7 @@ A check mark applies only under any constraint listed here.
 - `smolvlm2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `swinir` / `restore` / `executorch`: The trained lightweight x4 model captures, lowers, and serializes, but ExecuTorch 1.2 runtime execution fails because alias_copy receives tensors with mixed dimension orders.
 - `swinir` / `restore` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `swinir` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `swinir` / `restore` / `coreai`: The export process DIES rather than hangs, and the kill point moves between runs, which is the signature of memory exhaustion rather than a stuck loop. One run reached 'Step 3/3: Optimizing and writing the asset' before stopping; a later run of the same graph at the same 128 canvas died inside to_coreai() before returning, in both cases with a leaked-semaphore warning and no traceback. Window attention unrolls into a very large number of small ops, so the converter's peak memory is the prime suspect on a 16 GB machine. Next steps: watch RSS during conversion, try the smallest available size at a 64 canvas, and check the system log for a memory kill. Do NOT assume optimize() is at fault; an earlier note said so on the strength of a single run and the second run contradicted it.

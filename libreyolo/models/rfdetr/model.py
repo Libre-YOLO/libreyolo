@@ -1142,10 +1142,12 @@ class LibreRFDETR(BaseModel):
                 kwargs["imgsz"],
                 name="RF-DETR export imgsz",
             )
+        export_imgsz = kwargs.get("imgsz", self._get_input_size())
+        native_obb_canvas = export_imgsz in {384, (384, 384)}
         if (
             str(format).lower() == "executorch"
             and self._is_obb
-            and kwargs.get("imgsz", self._get_input_size()) != 384
+            and not native_obb_canvas
         ):
             raise ValueError(
                 "RF-DETR OBB ExecuTorch export currently requires imgsz=384. "

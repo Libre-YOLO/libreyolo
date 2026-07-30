@@ -589,27 +589,40 @@ def test_trained_semantic_parity(
 
 @pytest.mark.external_data
 @pytest.mark.flagship_nightly
-def test_trained_depth_anything_parity(tmp_path, monkeypatch):
-    """Match a trained Depth Anything V2 map on its fixed export canvas."""
+@pytest.mark.parametrize(
+    ("family", "weights_env", "imgsz"),
+    [
+        (
+            "depth_anything",
+            "LIBREYOLO_EXECUTORCH_DEPTH_ANYTHING_WEIGHTS",
+            518,
+        ),
+        ("zipdepth", "LIBREYOLO_EXECUTORCH_ZIPDEPTH_WEIGHTS", 384),
+    ],
+)
+def test_trained_depth_parity(
+    tmp_path, monkeypatch, family, weights_env, imgsz
+):
+    """Match a trained depth map on its fixed export canvas."""
     _require_executorch(monkeypatch)
 
     from PIL import Image
 
     from libreyolo import LibreYOLO
 
-    weights_value = os.environ.get("LIBREYOLO_EXECUTORCH_DEPTH_ANYTHING_WEIGHTS")
+    weights_value = os.environ.get(weights_env)
     image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
     if not weights_value or len(image_values) < 2:
         pytest.skip(
-            "set LIBREYOLO_EXECUTORCH_DEPTH_ANYTHING_WEIGHTS and "
-            "LIBREYOLO_EXECUTORCH_IMAGES to at least two images"
+            f"set {weights_env} and LIBREYOLO_EXECUTORCH_IMAGES "
+            "to at least two images"
         )
 
     native = LibreYOLO(weights_value, device="cpu")
     artifact = native.export(
         "executorch",
-        output_path=str(tmp_path / "depth_anything.pte"),
-        imgsz=518,
+        output_path=str(tmp_path / f"{family}.pte"),
+        imgsz=imgsz,
         batch=1,
         dynamic=False,
     )
@@ -617,9 +630,9 @@ def test_trained_depth_anything_parity(tmp_path, monkeypatch):
 
     for image_path in image_values:
         image = np.asarray(
-            Image.open(image_path).convert("RGB").resize((518, 518))
+            Image.open(image_path).convert("RGB").resize((imgsz, imgsz))
         )
-        expected = native.predict(image, imgsz=518).depth_map.data.numpy()
+        expected = native.predict(image, imgsz=imgsz).depth_map.data.numpy()
         actual = runtime.predict(image).depth_map.data.numpy()
         np.testing.assert_allclose(actual, expected, rtol=1e-3, atol=1e-4)
 

@@ -91,6 +91,7 @@ def test_executorch_realtime_support_is_evidence_backed():
         ("yolo9", "detect"),
         ("yolo9_e2e", "detect"),
         ("yolox", "detect"),
+        ("zipdepth", "depth"),
     }
     for family, task in validated:
         assert get_support(family, task, "executorch").tier == "validated"
@@ -109,6 +110,7 @@ def test_executorch_realtime_support_is_evidence_backed():
     assert get_support("nafnet", "restore", "executorch").tier == "experimental"
     assert get_support("fomo", "point", "executorch").tier == "experimental"
     assert get_support("rfdetr", "obb", "executorch").tier == "experimental"
+    assert get_support("swinir", "restore", "executorch").tier == "blocked"
 
 
 def test_tflite_support_keys_use_canonical_tasks():

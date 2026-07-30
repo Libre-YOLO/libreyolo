@@ -245,8 +245,33 @@ _add(
     ),
 )
 _add(
+    "blocked",
+    ("swinir",),
+    ("restore",),
+    ("executorch",),
+    reason=(
+        "The trained lightweight x4 model captures, lowers, and serializes, "
+        "but ExecuTorch 1.2 runtime execution fails because alias_copy receives "
+        "tensors with mixed dimension orders."
+    ),
+)
+_add(
     "validated",
     ("depth_anything",),
+    ("depth",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK depth-map parity is covered by the "
+        "external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    ("zipdepth",),
     ("depth",),
     ("executorch",),
     reason=(
