@@ -559,6 +559,10 @@ class DDetect(nn.Module):
             torch.tensor(stride) if stride else torch.zeros(self.nl)
         )
         self.register_buffer("stride", stride_tensor, persistent=False)
+        # Preserve the architecture's fixed stride values as Python scalars for
+        # graph export. Iterating over the tensor buffer and calling float()
+        # introduces aten.item/sym_float nodes that edge runtimes cannot lower.
+        self._stride_values = tuple(float(value) for value in stride_tensor.tolist())
 
         self._loss_fn = None
 
@@ -652,7 +656,7 @@ class DDetect(nn.Module):
         anchor_points = []
         stride_scale = []
         dtype, device = feats[0].dtype, feats[0].device
-        for feat, stride in zip(feats, self.stride):
+        for feat, stride in zip(feats, self._stride_values):
             _, _, h, w = feat.shape
             shift_x = torch.arange(end=w, device=device, dtype=dtype) + 0.5
             shift_y = torch.arange(end=h, device=device, dtype=dtype) + 0.5
@@ -661,7 +665,7 @@ class DDetect(nn.Module):
                 torch.stack([shift_x, shift_y], dim=-1).reshape(-1, 2)
             )
             stride_scale.append(
-                torch.full((h * w, 1), float(stride), dtype=dtype, device=device)
+                torch.full((h * w, 1), stride, dtype=dtype, device=device)
             )
         return torch.cat(anchor_points), torch.cat(stride_scale)
 

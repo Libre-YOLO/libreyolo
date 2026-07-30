@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator, Literal
+from typing import Literal
 
 from ..tasks import TASKS
 
@@ -11,6 +12,7 @@ Tier = Literal["validated", "experimental", "blocked"]
 EXPORT_FORMATS = (
     "onnx",
     "torchscript",
+    "executorch",
     "tensorrt",
     "openvino",
     "ncnn",
@@ -67,6 +69,206 @@ _add(
     ("detect",),
     ("onnx", "torchscript", "ncnn", "tflite"),
     since="1.3",
+)
+_add(
+    "validated",
+    ("yolo9", "rfdetr"),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "Runtime and raw-output parity are covered in "
+        "tests/e2e/test_executorch.py; trained-checkpoint detection parity is "
+        "covered by its external-data flagship test."
+    ),
+    since="1.3",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    (
+        "ec",
+        "picodet",
+        "rtdetr",
+        "rtdetrv2",
+        "rtdetrv4",
+        "yolo1",
+        "yolo2",
+        "yolo3",
+        "yolo4",
+        "yolo7",
+        "yolo9_e2e",
+        "yolox",
+    ),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK export, runtime execution, and matched "
+        "post-NMS detection parity are covered by the external-data flagship "
+        "test in tests/e2e/test_executorch.py."
+    ),
+    since="1.3",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "blocked",
+    ("dfine",),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "Strict capture reaches an unsupported ContextVar read in deformable "
+        "attention. Forcing the manual exported grid-sample path permits "
+        "serialization, but ExecuTorch 1.2 runtime execution still fails with "
+        "an invalid delegated tensor dimension order."
+    ),
+)
+_add(
+    "blocked",
+    ("deim",),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "The trained nano model captures, lowers, and serializes, but "
+        "ExecuTorch 1.2 runtime execution fails with an invalid delegated "
+        "tensor dimension order."
+    ),
+)
+_add(
+    "blocked",
+    ("rtmdet",),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "ExecuTorch 1.2 XNNPACK lowering fails in FuseBatchNormPass because "
+        "the generated graph has a duplicate fused parameter name."
+    ),
+)
+_add(
+    "blocked",
+    ("deimv2",),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "The trained atto model captures, lowers, and serializes, but the "
+        "ExecuTorch 1.2 runtime process terminates while executing forward."
+    ),
+)
+_add(
+    "experimental",
+    ("yolo9_p2", "yolonas"),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "and deterministic random-weight raw parity are covered. A permissive "
+        "trained-checkpoint detection parity record is not available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("ec",),
+    ("pose", "segment"),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "deterministic random-weight raw parity, and task result parsing are "
+        "covered. Trained-checkpoint task parity is not yet available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; "
+        "EC segmentation requires a canvas large enough for its top-300 query selection"
+    ),
+)
+_add(
+    "experimental",
+    ("yolonas",),
+    ("pose",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "deterministic random-weight raw parity, and keypoint result parsing "
+        "are covered. Trained-checkpoint pose parity is not yet available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("convnext",),
+    ("classify",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "and deterministic random-weight logits parity are covered. "
+        "Trained-checkpoint classification parity is not yet available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("nafnet", "realesrgan"),
+    ("restore",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "deterministic random-weight image parity, and restored-image result "
+        "parsing are covered. Trained-checkpoint restoration parity is not "
+        "yet available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("fomo",),
+    ("point",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "deterministic random-weight heatmap parity, and point result parsing "
+        "are covered. Trained-checkpoint localization parity is not yet available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape"
+    ),
+)
+_add(
+    "validated",
+    ("efficientnetv2", "mobilenetv4", "resnet"),
+    ("classify",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK logits cosine and top-1 parity are covered "
+        "by the external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.3",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    ("pidnet",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK semantic-mask parity is covered by the "
+        "external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.3",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
 )
 _add(
     "validated",
@@ -354,10 +556,25 @@ _add(
     constraint="fixed-resolution batch-1 edge-probability canvas",
 )
 _add(
+    "experimental",
+    ("teed", "dexined"),
+    ("edge",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "and deterministic random-weight parity are covered. Redistributable "
+        "trained checkpoints are unavailable, so task-accuracy parity has not "
+        "been established."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
     "blocked",
     ("teed", "dexined"),
     ("edge",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "executorch"}),
     reason=(
         "The edge exported-runtime contract is ONNX-only in v1; add runtime "
         "parity before enabling another format."

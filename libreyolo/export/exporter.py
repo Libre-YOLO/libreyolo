@@ -202,6 +202,26 @@ class _SemanticExportWrapper(torch.nn.Module):
         return output
 
 
+class _YOLONASExportWrapper(torch.nn.Module):
+    """Expose decoded YOLO-NAS tensors without training-only auxiliaries."""
+
+    def __init__(self, model: torch.nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        output = self.model(x)
+        # Eager and torch.export capture return ``(decoded, raw)``. ONNX
+        # tracing already returns ``decoded`` directly, so accept both forms.
+        if (
+            isinstance(output, tuple)
+            and len(output) == 2
+            and isinstance(output[0], tuple)
+        ):
+            return output[0]
+        return output
+
+
 # =============================================================================
 # BaseExporter ABC
 # =============================================================================
@@ -806,6 +826,10 @@ class BaseExporter(ABC):
             nn_model = YOLO7ExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "yolonas":
+            nn_model = _YOLONASExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family in {"rtdetr", "rtdetrv2", "rtdetrv4"}:
             nn_model = _RTDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
@@ -1308,6 +1332,86 @@ class TorchScriptExporter(BaseExporter):
     def _export(self, nn_model, dummy, *, output_path, metadata, **kwargs):
         return export_torchscript(
             nn_model, dummy, output_path=output_path, metadata=metadata
+        )
+
+
+class ExecuTorchExporter(BaseExporter):
+    """Fixed-shape, batch-1, FP32 ExecuTorch export with XNNPACK delegation."""
+
+    format_name = "executorch"
+    suffix = ".pte"
+    requires_onnx = False
+    supports_int8 = False
+    supports_fp16 = False
+    apply_model_half = False
+
+    def __call__(
+        self, *, dynamic: bool = False, batch: int = 1, **kwargs
+    ) -> str:
+        """Reject unsupported shapes before the destructive LoRA merge."""
+        if batch != 1:
+            raise ValueError(
+                f"ExecuTorch v1 requires batch=1, got batch={batch}."
+            )
+        if dynamic:
+            raise ValueError("ExecuTorch v1 requires dynamic=False.")
+        return super().__call__(dynamic=False, batch=1, **kwargs)
+
+    def _resolve_params(self, output_path, imgsz, device, half, int8):
+        if device is not None and str(device).lower() not in {"auto", "cpu"}:
+            raise ValueError("ExecuTorch XNNPACK export requires device='cpu'.")
+        return super()._resolve_params(
+            output_path, imgsz, torch.device("cpu"), half, int8
+        )
+
+    def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
+        delegate = str(kwargs.get("delegate", "xnnpack")).lower()
+        if delegate != "xnnpack":
+            raise ValueError(
+                "ExecuTorch v1 supports delegate='xnnpack' only, "
+                f"got {delegate!r}."
+            )
+        super()._preflight(half=half, int8=int8, data=data, **kwargs)
+        from .executorch import check_executorch_available
+
+        check_executorch_available()
+
+    def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
+        meta = super()._build_metadata(
+            precision, False, onnx_path, imgsz=imgsz
+        )
+        crop_pct = getattr(self.model, "crop_pct", None)
+        interpolation = getattr(self.model, "interpolation", None)
+        if crop_pct is not None:
+            meta["crop_pct"] = float(crop_pct)
+        if interpolation is not None:
+            meta["interpolation"] = str(interpolation)
+        return meta
+
+    def _export(
+        self,
+        nn_model,
+        dummy,
+        *,
+        output_path,
+        metadata,
+        dynamic,
+        delegate="xnnpack",
+        **kwargs,
+    ):
+        if dummy.shape[0] != 1:
+            raise ValueError(
+                f"ExecuTorch v1 requires batch=1, got batch={dummy.shape[0]}."
+            )
+        if dynamic:
+            raise ValueError("ExecuTorch v1 requires dynamic=False.")
+        from .executorch import export_executorch
+
+        return export_executorch(
+            nn_model,
+            dummy,
+            output_path=output_path,
+            metadata=metadata,
         )
 
 
