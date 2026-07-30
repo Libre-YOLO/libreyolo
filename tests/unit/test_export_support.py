@@ -353,6 +353,43 @@ def test_round15_records_rtdetrv4_tensorrt_hold():
     assert "50.4-pixel" in entry.reason
 
 
+def test_round21_records_six_trained_openvino_holds():
+    measured_holds = {
+        ("deim", "detect"): "17.9x",
+        ("rtdetrv2", "detect"): "93.94%",
+        ("ec", "pose"): "0.916",
+        ("rfdetr", "segment"): "69.0%",
+        ("rfdetr", "pose"): "72.75%",
+        ("rfdetr", "obb"): "91.25%",
+    }
+    for (family, task), reason_fragment in measured_holds.items():
+        entry = get_support(family, task, "openvino")
+        assert entry.tier == "experimental"
+        assert reason_fragment in entry.reason
+
+
+def test_round22_promotes_nine_edge_gaze_and_classify_cells():
+    validated = {
+        ("teed", "edge", "torchscript"),
+        ("teed", "edge", "openvino"),
+        ("teed", "edge", "tensorrt"),
+        ("dexined", "edge", "torchscript"),
+        ("dexined", "edge", "openvino"),
+        ("dexined", "edge", "tensorrt"),
+        ("l2cs", "gaze", "openvino"),
+        ("l2cs", "gaze", "tensorrt"),
+        ("dinov2", "classify", "openvino"),
+    }
+    for family, task, format in validated:
+        entry = get_support(family, task, format)
+        assert entry.tier == "validated"
+        assert "parity" in entry.reason
+
+    hold = get_support("dinov2", "classify", "tensorrt")
+    assert hold.tier == "experimental"
+    assert "2.2x" in hold.reason
+
+
 def test_round13_records_ten_measured_tflite_holds():
     measured_holds = {
         ("yolo1", "detect"): "ONNX_EINSUM",
@@ -462,8 +499,10 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
     assert validated == {
         ("convnext", "classify"),
         ("depth_anything", "depth"),
+        ("dexined", "edge"),
         ("dfine", "detect"),
         ("dfine", "segment"),
+        ("dinov2", "classify"),
         ("dinov2", "semantic"),
         ("ec", "detect"),
         ("ec", "segment"),
@@ -471,6 +510,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("eomt", "semantic"),
         ("fomo", "point"),
         ("lingbotvision", "semantic"),
+        ("l2cs", "gaze"),
         ("mobilenetv4", "classify"),
         ("nafnet", "restore"),
         ("picodet", "detect"),
@@ -483,6 +523,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
             ("rtdetrv4", "detect"),
             ("segformer", "semantic"),
             ("swinir", "restore"),
+            ("teed", "edge"),
             ("yolo1", "detect"),
         ("yolo2", "detect"),
         ("yolo3", "detect"),

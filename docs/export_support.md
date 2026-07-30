@@ -16,11 +16,11 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
 | depth_anything | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | depth_anything3 | depth |  |  |  |  |  |  |  |  |  |
-| dexined | edge | ✓ |  | ✓ |  |  |  |  |  |  |
+| dexined | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | dfine | detect | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ |  | exp | ✓ |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
-| dinov2 | classify | ✓ | ✓ | ✓ |  |  |  |  |  | exp |
+| dinov2 | classify | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | exp |
 | dinov2 | embed |  |  |  |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
@@ -36,7 +36,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |  |
-| l2cs | gaze | ✓ | ✓ | ✓ |  |  |  |  |  |  |
+| l2cs | gaze | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |  |  |
 | lingbotvision | semantic | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |  |
@@ -73,7 +73,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | siglip2 | embed |  |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
 | swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |  |  |
-| teed | edge | ✓ |  | ✓ |  |  |  |  |  |  |
+| teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  | ✓ |
 | yolo3 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
@@ -117,7 +117,10 @@ A check mark applies only under any constraint listed here.
 - `depth_anything` / `depth` / `openvino`: fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `dexined` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
+- `dexined` / `edge` / `torchscript`: TorchScript CPU FP32, batch 1, fixed input shape
 - `dexined` / `edge` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
+- `dexined` / `edge` / `tensorrt`: TensorRT 10.16 FP32, batch 1, fixed input shape
+- `dexined` / `edge` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed input shape
 - `dfine` / `detect` / `openvino`: fixed export canvas
 - `dfine` / `detect` / `coreai`: fixed export canvas; trained LibreDFINEn weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `dfine` / `segment` / `openvino`: fixed export canvas
@@ -128,6 +131,7 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `classify` / `onnx`: fixed 224x224 input
 - `dinov2` / `classify` / `torchscript`: fixed 224x224 input
 - `dinov2` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
+- `dinov2` / `classify` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed 224x224 input
 - `ec` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `ec` / `detect` / `openvino`: fixed export canvas
 - `ec` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
@@ -156,6 +160,8 @@ A check mark applies only under any constraint listed here.
 - `l2cs` / `gaze` / `onnx`: head-only contract: each input image is one face crop
 - `l2cs` / `gaze` / `torchscript`: head-only contract: each input image is one face crop
 - `l2cs` / `gaze` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 448x448 face crop
+- `l2cs` / `gaze` / `tensorrt`: TensorRT 10.16 FP32, batch 1, fixed 448x448 face-crop input
+- `l2cs` / `gaze` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed 448x448 face-crop input
 - `lingbotvision` / `semantic` / `onnx`: fixed 512x512 input
 - `lingbotvision` / `semantic` / `torchscript`: fixed 512x512 input
 - `lingbotvision` / `semantic` / `openvino`: fixed family-native export canvas
@@ -231,7 +237,10 @@ A check mark applies only under any constraint listed here.
 - `swinir` / `restore` / `openvino`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `tflite`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `teed` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
+- `teed` / `edge` / `torchscript`: TorchScript CPU FP32, batch 1, fixed input shape
 - `teed` / `edge` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
+- `teed` / `edge` / `tensorrt`: TensorRT 10.16 FP32, batch 1, fixed input shape
+- `teed` / `edge` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed input shape
 - `yolo1` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo1` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
@@ -330,13 +339,10 @@ A check mark applies only under any constraint listed here.
 - `depth_anything3` / `depth` / `tflite`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `coreml`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `coreai`: The model raises NotImplementedError for every format: depth export is out of scope per ADR 0006, the depth task contract. Depth Anything V2 exports and validates at 5.2e-06, so this is specific to the V3 family and not a Core AI limitation.
-- `dexined` / `edge` / `torchscript`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `dexined` / `edge` / `tensorrt`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `dexined` / `edge` / `openvino`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `dexined` / `edge` / `ncnn`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `dexined` / `edge` / `tflite`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `dexined` / `edge` / `coreml`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `dexined` / `edge` / `coreai`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
+- `dexined` / `edge` / `ncnn`: This edge runtime has no parity-valid artifact for the requested format.
+- `dexined` / `edge` / `tflite`: This edge runtime has no parity-valid artifact for the requested format.
+- `dexined` / `edge` / `coreml`: This edge runtime has no parity-valid artifact for the requested format.
+- `dexined` / `edge` / `coreai`: This edge runtime has no parity-valid artifact for the requested format.
 - `dfine` / `detect` / `executorch`: Strict capture reaches an unsupported ContextVar read in deformable attention. Forcing the manual exported grid-sample path permits serialization, but ExecuTorch 1.2 runtime execution still fails with an invalid delegated tensor dimension order.
 - `dfine` / `detect` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dfine` / `detect` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
@@ -351,8 +357,6 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `dinov2` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `dinov2` / `classify` / `tensorrt`: LibreDINOv2 classify export is not implemented for this format.
-- `dinov2` / `classify` / `openvino`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export is not implemented for this format.
@@ -453,12 +457,10 @@ A check mark applies only under any constraint listed here.
 - `kosmos2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
-- `l2cs` / `gaze` / `tensorrt`: The L2CS gaze export contract supports ONNX, TorchScript, and ExecuTorch only.
-- `l2cs` / `gaze` / `openvino`: The L2CS gaze export contract supports ONNX, TorchScript, and ExecuTorch only.
-- `l2cs` / `gaze` / `ncnn`: The L2CS gaze export contract supports ONNX, TorchScript, and ExecuTorch only.
-- `l2cs` / `gaze` / `tflite`: The L2CS gaze export contract supports ONNX, TorchScript, and ExecuTorch only.
-- `l2cs` / `gaze` / `coreml`: The L2CS gaze export contract supports ONNX, TorchScript, and ExecuTorch only.
-- `l2cs` / `gaze` / `coreai`: The model itself refuses: 'LibreL2CS export to coreai is not implemented. The gaze export contract supports ONNX, TorchScript, and ExecuTorch only.' That is a model-side decision, unchanged by opening the support gate, so nothing about Core AI is being tested here.
+- `l2cs` / `gaze` / `ncnn`: The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.
+- `l2cs` / `gaze` / `tflite`: The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.
+- `l2cs` / `gaze` / `coreml`: The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.
+- `l2cs` / `gaze` / `coreai`: The model itself refuses: 'LibreL2CS export to coreai is not implemented. The gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.' That is a model-side decision, unchanged by opening the support gate, so nothing about Core AI is being tested here.
 - `lfm2vl` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
@@ -674,13 +676,10 @@ A check mark applies only under any constraint listed here.
 - `swinir` / `restore` / `ncnn`: PNNX writes NCNN artifacts after reporting unsupported 5-rank Permute operations, but the NCNN runtime process exits while loading or executing the resulting graph.
 - `swinir` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `swinir` / `restore` / `coreai`: The export process DIES rather than hangs, and the kill point moves between runs, which is the signature of memory exhaustion rather than a stuck loop. One run reached 'Step 3/3: Optimizing and writing the asset' before stopping; a later run of the same graph at the same 128 canvas died inside to_coreai() before returning, in both cases with a leaked-semaphore warning and no traceback. Window attention unrolls into a very large number of small ops, so the converter's peak memory is the prime suspect on a 16 GB machine. Next steps: watch RSS during conversion, try the smallest available size at a 64 canvas, and check the system log for a memory kill. Do NOT assume optimize() is at fault; an earlier note said so on the strength of a single run and the second run contradicted it.
-- `teed` / `edge` / `torchscript`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `teed` / `edge` / `tensorrt`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `teed` / `edge` / `openvino`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `teed` / `edge` / `ncnn`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `teed` / `edge` / `tflite`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `teed` / `edge` / `coreml`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `teed` / `edge` / `coreai`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
+- `teed` / `edge` / `ncnn`: This edge runtime has no parity-valid artifact for the requested format.
+- `teed` / `edge` / `tflite`: This edge runtime has no parity-valid artifact for the requested format.
+- `teed` / `edge` / `coreml`: This edge runtime has no parity-valid artifact for the requested format.
+- `teed` / `edge` / `coreai`: This edge runtime has no parity-valid artifact for the requested format.
 - `yolo1` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_EINSUM custom operation that LiteRT 2.1.2 cannot prepare at the native 448x448 canvas.
 - `yolo1` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo2` / `detect` / `tflite`: LiteRT 2.1.2 cannot prepare the onnx2tf 2.6.7 artifact because a RESHAPE maps 4,225 input elements to one output element.

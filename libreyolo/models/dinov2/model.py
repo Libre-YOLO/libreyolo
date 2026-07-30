@@ -838,6 +838,8 @@ class LibreDINOv2(BaseModel):
             "onnx",
             "torchscript",
             "executorch",
+            "tensorrt",
+            "openvino",
             "coreai",
         }:
             return super().export(format=format, opset=opset, **kwargs)
@@ -845,5 +847,5 @@ class LibreDINOv2(BaseModel):
             return super().export(format=format, opset=opset, **kwargs)
         raise NotImplementedError(
             "LibreDINOv2 classify export currently supports ONNX, TorchScript, "
-            "ExecuTorch, and Core AI only."
+            "ExecuTorch, TensorRT, OpenVINO, and Core AI only."
         )

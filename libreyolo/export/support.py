@@ -496,12 +496,32 @@ _add(
     "blocked",
     ("dinov2",),
     ("classify",),
-    tuple(
-        fmt
-        for fmt in EXPORT_FORMATS
-        if fmt not in {"onnx", "torchscript", "executorch", "coreai"}
-    ),
+    ("ncnn", "tflite", "coreml"),
     reason="LibreDINOv2 classify export is not implemented for this format.",
+)
+_add(
+    "validated",
+    ("dinov2",),
+    ("classify",),
+    ("openvino",),
+    reason=(
+        "A deterministic input-sensitive fixture covers conversion, artifact "
+        "reload, raw-logit parity, metadata, and public probability cosine "
+        "plus top-1 parity."
+    ),
+    since="1.6",
+    constraint="OpenVINO 2026.2 CPU FP32, batch 1, fixed 224x224 input",
+)
+_add(
+    "experimental",
+    ("dinov2",),
+    ("classify",),
+    ("tensorrt",),
+    reason=(
+        "A deterministic input-sensitive fixture exports, reloads, and runs, "
+        "but changed-input logits carry only 2.2x more native signal than "
+        "TensorRT 10.16 FP32 conversion error; validation requires more than 20x."
+    ),
 )
 _add(
     "validated",
@@ -947,11 +967,49 @@ _add(
     "blocked",
     ("teed", "dexined"),
     ("edge",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "executorch"}),
+    ("ncnn", "tflite", "coreai", "coreml"),
     reason=(
-        "The edge exported-runtime contract is ONNX-only in v1; add runtime "
-        "parity before enabling another format."
+        "This edge runtime has no parity-valid artifact for the requested format."
     ),
+)
+_add(
+    "validated",
+    ("teed", "dexined"),
+    ("edge",),
+    ("torchscript",),
+    reason=(
+        "Deterministic input-sensitive fixtures cover conversion, artifact "
+        "reload, two-image raw edge-probability parity, metadata, and public "
+        "edge-map parity above 40 dB PSNR."
+    ),
+    since="1.6",
+    constraint="TorchScript CPU FP32, batch 1, fixed input shape",
+)
+_add(
+    "validated",
+    ("teed", "dexined"),
+    ("edge",),
+    ("openvino",),
+    reason=(
+        "Deterministic input-sensitive fixtures cover conversion, artifact "
+        "reload, two-image raw edge-probability parity, metadata, and public "
+        "edge-map parity above 40 dB PSNR."
+    ),
+    since="1.6",
+    constraint="OpenVINO 2026.2 CPU FP32, batch 1, fixed input shape",
+)
+_add(
+    "validated",
+    ("teed", "dexined"),
+    ("edge",),
+    ("tensorrt",),
+    reason=(
+        "Deterministic input-sensitive fixtures cover conversion, artifact "
+        "reload, two-image raw edge-probability parity, metadata, and public "
+        "edge-map parity above 40 dB PSNR."
+    ),
+    since="1.6",
+    constraint="TensorRT 10.16 FP32, batch 1, fixed input shape",
 )
 _add(
     "validated",
@@ -1529,8 +1587,9 @@ _add(
     ("detect",),
     ("openvino",),
     reason=(
-        "After Hungarian query alignment, exactly 95% of boxes meet the "
-        "converted-runtime tolerance; validation requires more than 95%."
+        "The trained artifact reaches the elementwise tolerance, but its "
+        "input signal is only 17.9x the conversion error; validation requires "
+        "more than 20x."
     ),
 )
 _add(
@@ -1549,8 +1608,8 @@ _add(
     ("detect",),
     ("openvino",),
     reason=(
-        "After Hungarian query alignment, 92.3% of boxes meet the "
-        "converted-runtime tolerance."
+        "After Hungarian query alignment, only 93.94% of trained raw elements "
+        "meet the converted-runtime tolerance."
     ),
 )
 _add(
@@ -1612,8 +1671,8 @@ _add(
     ("pose",),
     ("openvino",),
     reason=(
-        "After Hungarian query alignment, 93.92% of pose values meet the "
-        "converted-runtime tolerance."
+        "Raw parity passes after Hungarian query alignment, but trained public "
+        "boxes fall to 0.916 matched IoU."
     ),
 )
 _add(
@@ -1630,9 +1689,9 @@ _add(
     ("segment", "pose", "obb"),
     ("openvino",),
     reason=(
-        "After Hungarian query alignment, the measured converted-runtime "
-        "match rates remain below validation: segment 87%, OBB 86.17%, "
-        "and pose 79%."
+        "After Hungarian query alignment, measured converted-runtime element "
+        "match rates remain below validation: trained segment 69.0%, trained "
+        "pose 72.75%, and input-sensitive OBB 91.25%."
     ),
 )
 _add(
@@ -2150,10 +2209,35 @@ _add(
     ("coreai",),
     reason=(
         "The model itself refuses: 'LibreL2CS export to coreai is not "
-        "implemented. The gaze export contract supports ONNX, TorchScript, and "
-        "ExecuTorch only.' That is a model-side decision, unchanged by opening "
-        "the support gate, so nothing about Core AI is being tested here."
+        "implemented. The gaze export contract supports ONNX, TorchScript, "
+        "ExecuTorch, TensorRT, and OpenVINO only.' That is a model-side "
+        "decision, unchanged by opening the support gate, so nothing about "
+        "Core AI is being tested here."
     ),
+)
+_add(
+    "validated",
+    ("l2cs",),
+    ("gaze",),
+    ("openvino",),
+    reason=(
+        "A deterministic input-sensitive fixture covers conversion, artifact "
+        "reload, two-head raw-logit parity, metadata, and public gaze-angle parity."
+    ),
+    since="1.6",
+    constraint="OpenVINO 2026.2 CPU FP32, batch 1, fixed 448x448 face-crop input",
+)
+_add(
+    "validated",
+    ("l2cs",),
+    ("gaze",),
+    ("tensorrt",),
+    reason=(
+        "A deterministic input-sensitive fixture covers conversion, artifact "
+        "reload, two-head raw-logit parity, metadata, and public gaze-angle parity."
+    ),
+    since="1.6",
+    constraint="TensorRT 10.16 FP32, batch 1, fixed 448x448 face-crop input",
 )
 _add(
     "blocked",
@@ -2204,8 +2288,8 @@ _FAMILY_BLOCKS = {
     ),
     "eomt": "EoMT instance and panoptic export do not yet have runtime parsing.",
     "l2cs": (
-        "The L2CS gaze export contract supports ONNX, TorchScript, and "
-        "ExecuTorch only."
+        "The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, "
+        "TensorRT, and OpenVINO only."
     ),
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
