@@ -292,6 +292,7 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
         ("ec_segment", 128),
         ("fomo_point", 64),
         ("realesrgan_restore", 32),
+        ("rfdetr_obb", 384),
         ("yolonas_pose", 64),
     ],
 )
@@ -305,6 +306,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         LibreFOMO,
         LibreNAFNet,
         LibreRealESRGAN,
+        LibreRFDETR,
         LibreYOLO,
         LibreYOLONAS,
     )
@@ -324,6 +326,9 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         ),
         "realesrgan_restore": lambda: LibreRealESRGAN(
             None, size="x4t", device="cpu"
+        ),
+        "rfdetr_obb": lambda: LibreRFDETR(
+            {}, size="n", task="obb", nb_classes=2, device="cpu"
         ),
         "yolonas_pose": lambda: LibreYOLONAS(
             None, size="n", task="pose", device="cpu"
@@ -387,6 +392,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         "ec_segment": "masks",
         "fomo_point": "points",
         "realesrgan_restore": "restored",
+        "rfdetr_obb": "obb",
         "yolonas_pose": "keypoints",
     }[case]
     assert getattr(result, expected_attribute) is not None
@@ -479,6 +485,7 @@ def test_trained_detection_parity(
         ("mobilenetv4", "LIBREYOLO_EXECUTORCH_MOBILENETV4_WEIGHTS"),
         ("efficientnetv2", "LIBREYOLO_EXECUTORCH_EFFICIENTNETV2_WEIGHTS"),
         ("resnet", "LIBREYOLO_EXECUTORCH_RESNET_WEIGHTS"),
+        ("convnext", "LIBREYOLO_EXECUTORCH_CONVNEXT_WEIGHTS"),
     ],
 )
 def test_trained_classification_parity(
@@ -527,18 +534,31 @@ def test_trained_classification_parity(
 
 @pytest.mark.external_data
 @pytest.mark.flagship_nightly
-def test_trained_pidnet_semantic_parity(tmp_path, monkeypatch):
-    """Match trained PIDNet semantic maps after public postprocessing."""
+@pytest.mark.parametrize(
+    ("family", "weights_env", "imgsz"),
+    [
+        ("pidnet", "LIBREYOLO_EXECUTORCH_PIDNET_WEIGHTS", 1024),
+        (
+            "lingbotvision",
+            "LIBREYOLO_EXECUTORCH_LINGBOTVISION_WEIGHTS",
+            512,
+        ),
+    ],
+)
+def test_trained_semantic_parity(
+    tmp_path, monkeypatch, family, weights_env, imgsz
+):
+    """Match trained semantic maps after public postprocessing."""
     _require_executorch(monkeypatch)
 
     from libreyolo import LibreYOLO
 
-    weights_value = os.environ.get("LIBREYOLO_EXECUTORCH_PIDNET_WEIGHTS")
+    weights_value = os.environ.get(weights_env)
     image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
     if not weights_value or len(image_values) < 2:
         pytest.skip(
-            "set LIBREYOLO_EXECUTORCH_PIDNET_WEIGHTS and "
-            "LIBREYOLO_EXECUTORCH_IMAGES to at least two images"
+            f"set {weights_env} and LIBREYOLO_EXECUTORCH_IMAGES "
+            "to at least two images"
         )
 
     weights = Path(weights_value)
@@ -549,8 +569,8 @@ def test_trained_pidnet_semantic_parity(tmp_path, monkeypatch):
     native = LibreYOLO(str(weights), device="cpu")
     artifact = native.export(
         "executorch",
-        output_path=str(tmp_path / "pidnet.pte"),
-        imgsz=1024,
+        output_path=str(tmp_path / f"{family}.pte"),
+        imgsz=imgsz,
         batch=1,
         dynamic=False,
     )
@@ -565,6 +585,154 @@ def test_trained_pidnet_semantic_parity(tmp_path, monkeypatch):
         )
         assert expected.shape == actual.shape
         assert float(np.mean(expected == actual)) >= 0.95
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
+def test_trained_depth_anything_parity(tmp_path, monkeypatch):
+    """Match a trained Depth Anything V2 map on its fixed export canvas."""
+    _require_executorch(monkeypatch)
+
+    from PIL import Image
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get("LIBREYOLO_EXECUTORCH_DEPTH_ANYTHING_WEIGHTS")
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            "set LIBREYOLO_EXECUTORCH_DEPTH_ANYTHING_WEIGHTS and "
+            "LIBREYOLO_EXECUTORCH_IMAGES to at least two images"
+        )
+
+    native = LibreYOLO(weights_value, device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / "depth_anything.pte"),
+        imgsz=518,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image_path in image_values:
+        image = np.asarray(
+            Image.open(image_path).convert("RGB").resize((518, 518))
+        )
+        expected = native.predict(image, imgsz=518).depth_map.data.numpy()
+        actual = runtime.predict(image).depth_map.data.numpy()
+        np.testing.assert_allclose(actual, expected, rtol=1e-3, atol=1e-4)
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
+def test_trained_realesrgan_parity(tmp_path, monkeypatch):
+    """Match trained x4 restoration and enforce the fixed-canvas contract."""
+    _require_executorch(monkeypatch)
+
+    from PIL import Image
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get("LIBREYOLO_EXECUTORCH_REALESRGAN_WEIGHTS")
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            "set LIBREYOLO_EXECUTORCH_REALESRGAN_WEIGHTS and "
+            "LIBREYOLO_EXECUTORCH_IMAGES to at least two images"
+        )
+
+    native = LibreYOLO(weights_value, device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / "realesrgan.pte"),
+        imgsz=64,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image_path in image_values:
+        image = np.asarray(
+            Image.open(image_path).convert("RGB").resize((64, 64))
+        )
+        expected = native.predict(image, imgsz=64).restored.data.numpy()
+        actual = runtime.predict(image).restored.data.numpy()
+        assert actual.shape == expected.shape == (256, 256, 3)
+        assert int(
+            np.max(np.abs(actual.astype(np.int16) - expected.astype(np.int16)))
+        ) <= 1
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
+@pytest.mark.parametrize(
+    ("task", "weights_env", "imgsz"),
+    [
+        ("segment", "LIBREYOLO_EXECUTORCH_RFDETR_SEG_WEIGHTS", 312),
+        ("pose", "LIBREYOLO_EXECUTORCH_RFDETR_POSE_WEIGHTS", 576),
+    ],
+)
+def test_trained_rfdetr_task_parity(
+    tmp_path, monkeypatch, task, weights_env, imgsz
+):
+    """Match trained RF-DETR boxes plus its task-specific output."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get(weights_env)
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            f"set {weights_env} and LIBREYOLO_EXECUTORCH_IMAGES "
+            "to at least two images"
+        )
+
+    native = LibreYOLO(weights_value, device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / f"rfdetr_{task}.pte"),
+        imgsz=imgsz,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image_path in image_values:
+        from PIL import Image
+
+        expected = native.predict(
+            image_path, imgsz=imgsz, conf=0.25, iou=0.6, max_det=100
+        )
+        actual = runtime.predict(
+            image_path, conf=0.25, iou=0.6, max_det=100
+        )
+        width, height = Image.open(image_path).size
+        expected_boxes = expected.boxes.data.numpy().copy()
+        expected_boxes[:, [0, 2]] = np.clip(
+            expected_boxes[:, [0, 2]], 0, width
+        )
+        expected_boxes[:, [1, 3]] = np.clip(
+            expected_boxes[:, [1, 3]], 0, height
+        )
+        np.testing.assert_allclose(
+            actual.boxes.data.numpy(),
+            expected_boxes,
+            rtol=1e-3,
+            atol=1e-3,
+        )
+        if task == "segment":
+            assert float(
+                (actual.masks.data == expected.masks.data).float().mean()
+            ) >= 0.999
+        else:
+            np.testing.assert_allclose(
+                actual.keypoints.data.numpy(),
+                expected.keypoints.data.numpy(),
+                rtol=1e-3,
+                atol=1e-3,
+            )
 
 
 def test_failed_export_restores_yolo9_state(tmp_path, monkeypatch):

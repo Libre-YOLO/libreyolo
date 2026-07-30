@@ -68,7 +68,10 @@ def test_experimental_export_warns_in_preflight():
 def test_executorch_realtime_support_is_evidence_backed():
     validated = {
         ("ec", "detect"),
+        ("convnext", "classify"),
+        ("depth_anything", "depth"),
         ("efficientnetv2", "classify"),
+        ("lingbotvision", "semantic"),
         ("mobilenetv4", "classify"),
         ("picodet", "detect"),
         ("pidnet", "semantic"),
@@ -77,6 +80,9 @@ def test_executorch_realtime_support_is_evidence_backed():
         ("rtdetrv2", "detect"),
         ("rtdetrv4", "detect"),
         ("rfdetr", "detect"),
+        ("rfdetr", "pose"),
+        ("rfdetr", "segment"),
+        ("realesrgan", "restore"),
         ("yolo1", "detect"),
         ("yolo2", "detect"),
         ("yolo3", "detect"),
@@ -100,10 +106,9 @@ def test_executorch_realtime_support_is_evidence_backed():
     assert get_support("ec", "pose", "executorch").tier == "experimental"
     assert get_support("ec", "segment", "executorch").tier == "experimental"
     assert get_support("yolonas", "pose", "executorch").tier == "experimental"
-    assert get_support("convnext", "classify", "executorch").tier == "experimental"
     assert get_support("nafnet", "restore", "executorch").tier == "experimental"
-    assert get_support("realesrgan", "restore", "executorch").tier == "experimental"
     assert get_support("fomo", "point", "executorch").tier == "experimental"
+    assert get_support("rfdetr", "obb", "executorch").tier == "experimental"
 
 
 def test_tflite_support_keys_use_canonical_tasks():

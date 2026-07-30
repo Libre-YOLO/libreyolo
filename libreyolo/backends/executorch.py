@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 class ExecuTorchBackend(BaseBackend):
     """Run a fixed-shape ``.pte`` program through the ExecuTorch Python runtime."""
 
+    fixed_input_shape = True
+
     def __init__(
         self,
         model_path: str,

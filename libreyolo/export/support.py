@@ -200,22 +200,22 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("convnext",),
     ("classify",),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "and deterministic random-weight logits parity are covered. "
-        "Trained-checkpoint classification parity is not yet available."
+        "Trained-checkpoint XNNPACK logits cosine and top-1 parity are covered "
+        "by the external-data flagship test in tests/e2e/test_executorch.py."
     ),
+    since="1.4",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(
     "experimental",
-    ("nafnet", "realesrgan"),
+    ("nafnet",),
     ("restore",),
     ("executorch",),
     reason=(
@@ -226,6 +226,80 @@ _add(
     ),
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    ("realesrgan",),
+    ("restore",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK image parity and fixed-canvas result "
+        "cropping are covered by the external-data flagship test in "
+        "tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed export canvas; "
+        "inputs larger than the canvas are rejected"
+    ),
+)
+_add(
+    "validated",
+    ("depth_anything",),
+    ("depth",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK depth-map parity is covered by the "
+        "external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    ("lingbotvision",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK semantic-mask parity is covered by the "
+        "external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    ("rfdetr",),
+    ("pose", "segment"),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK boxes and pose-keypoint or instance-mask "
+        "parity are covered by the external-data flagship test in "
+        "tests/e2e/test_executorch.py."
+    ),
+    since="1.4",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "experimental",
+    ("rfdetr",),
+    ("obb",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, deterministic "
+        "random-weight raw parity, and oriented-box result parsing are "
+        "covered. A permissive trained OBB checkpoint is not available."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed native 384x384 "
+        "input shape; other sizes retain an unsupported antialiased bicubic op"
     ),
 )
 _add(

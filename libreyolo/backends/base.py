@@ -407,7 +407,9 @@ class BaseBackend(ABC):
             Tuple of (input_tensor, original_img, original_size, ratio).
         """
         if self.task == "restore" or self.model_family == "nafnet":
-            if self.model_family == "realesrgan":
+            if self.model_family == "realesrgan" and not getattr(
+                self, "fixed_input_shape", False
+            ):
                 return self._preprocess_restore_native(image, color_format)
             return self._preprocess_restore(image, effective_imgsz, color_format)
         if self.task == "depth":
