@@ -9,7 +9,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | Family | Task | onnx | torchscript | executorch | tensorrt | openvino | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | birefnet | matte | exp | ✓ |  |  |  |  |  |  |  |
-| clip | classify | ✓ |  |  |  |  |  |  |  | ✓ |
+| clip | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | clip | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | deim | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
@@ -69,7 +69,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | sam3 | segment |  |  |  |  |  |  |  |  |  |
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |  |
 | segformer | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
-| siglip2 | classify | ✓ |  |  |  |  |  |  |  | ✓ |
+| siglip2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  | ✓ |
 | siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
 | swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |  |  |
@@ -103,6 +103,10 @@ A check mark applies only under any constraint listed here.
 
 - `birefnet` / `matte` / `torchscript`: fixed 1024x1024 input
 - `clip` / `classify` / `onnx`: frozen-class labels and fixed input resolution
+- `clip` / `classify` / `torchscript`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
+- `clip` / `classify` / `executorch`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
+- `clip` / `classify` / `tensorrt`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
+- `clip` / `classify` / `openvino`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
 - `clip` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `clip` / `embed` / `onnx`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
 - `clip` / `embed` / `torchscript`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
@@ -252,6 +256,11 @@ A check mark applies only under any constraint listed here.
 - `segformer` / `semantic` / `tensorrt`: TensorRT 10.16 FP32, batch 1, fixed square input divisible by 32
 - `segformer` / `semantic` / `openvino`: fixed square input divisible by 32
 - `siglip2` / `classify` / `onnx`: frozen-class labels and fixed input resolution
+- `siglip2` / `classify` / `torchscript`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
+- `siglip2` / `classify` / `executorch`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
+- `siglip2` / `classify` / `tensorrt`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
+- `siglip2` / `classify` / `openvino`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
+- `siglip2` / `classify` / `tflite`: onnx2tf 2.6.7, LiteRT 2.1.2 CPU FP32, batch 1, fixed square input, class set frozen at export time, single-label softmax mode
 - `siglip2` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `siglip2` / `embed` / `onnx`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
 - `siglip2` / `embed` / `torchscript`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
@@ -331,13 +340,9 @@ A check mark applies only under any constraint listed here.
 - `birefnet` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `birefnet` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `birefnet` / `matte` / `coreai`: The decoder needs torchvision deform_conv2d, which the Core AI converter cannot lower ('unable to handle call function op: deform_conv2d.default'). The same operator already blocks the NCNN path. An encoder-only contract is the realistic route, matching the seam the CUDA graph work used.
-- `clip` / `classify` / `torchscript`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `clip` / `classify` / `executorch`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `clip` / `classify` / `tensorrt`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `clip` / `classify` / `openvino`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `clip` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `clip` / `classify` / `tflite`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `clip` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `clip` / `classify` / `ncnn`: No parity-valid frozen-class artifact is available for this runtime.
+- `clip` / `classify` / `tflite`: onnx2tf 2.6.7 emits a LiteRT graph whose TRANSPOSE receives a rank-5 permutation for a rank-4 tensor.
+- `clip` / `classify` / `coreml`: No parity-valid frozen-class artifact is available for this runtime.
 - `clip` / `embed` / `ncnn`: PNNX 20260526 leaves unsupported pnnx.Expression nodes in the CLIP attention graph, so the generated NCNN network has no runnable input.
 - `clip` / `embed` / `tflite`: onnx2tf 2.6.7 emits a LiteRT graph whose TRANSPOSE receives a rank-5 permutation for a rank-4 tensor.
 - `clip` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
@@ -649,13 +654,8 @@ A check mark applies only under any constraint listed here.
 - `segformer` / `semantic` / `tflite`: onnx2tf 2.6.7 emits a flatbuffer, but LiteRT 2.1.2 cannot prepare its attention reshape (1024 input elements versus 256 output elements).
 - `segformer` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `coreai`: The SegFormer Core AI capture path has not been assessed. Its published weights are non-commercial regardless of export format.
-- `siglip2` / `classify` / `torchscript`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `siglip2` / `classify` / `executorch`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `siglip2` / `classify` / `tensorrt`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `siglip2` / `classify` / `openvino`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `siglip2` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `siglip2` / `classify` / `tflite`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
-- `siglip2` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `siglip2` / `classify` / `ncnn`: No parity-valid frozen-class artifact is available for this runtime.
+- `siglip2` / `classify` / `coreml`: No parity-valid frozen-class artifact is available for this runtime.
 - `siglip2` / `embed` / `ncnn`: PNNX 20260526 leaves unsupported pnnx.Expression nodes in the SigLIP2 attention graph, so the generated NCNN network has no runnable input.
 - `siglip2` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `siglip2` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.

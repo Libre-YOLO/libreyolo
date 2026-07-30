@@ -630,14 +630,53 @@ _add(
     constraint="frozen-class labels and fixed input resolution",
 )
 _add(
+    "validated",
+    ("clip", "siglip2"),
+    ("classify",),
+    ("torchscript", "executorch", "tensorrt", "openvino"),
+    reason=(
+        "A deterministic input-sensitive frozen-class fixture covers artifact "
+        "reload, two-input raw-logit parity with a 20x signal/error guard, "
+        "metadata, class names, and public softmax/top-1 parity."
+    ),
+    since="1.6",
+    constraint=(
+        "batch 1, fixed square input, class set frozen at export time; "
+        "SigLIP2 uses single-label softmax mode"
+    ),
+)
+_add(
+    "validated",
+    ("siglip2",),
+    ("classify",),
+    ("tflite",),
+    reason=(
+        "A deterministic input-sensitive frozen-class fixture covers onnx2tf "
+        "conversion, LiteRT reload, two-input raw-logit parity with a 20x "
+        "signal/error guard, metadata, class names, and public softmax/top-1 parity."
+    ),
+    since="1.6",
+    constraint=(
+        "onnx2tf 2.6.7, LiteRT 2.1.2 CPU FP32, batch 1, fixed square input, "
+        "class set frozen at export time, single-label softmax mode"
+    ),
+)
+_add(
+    "blocked",
+    ("clip",),
+    ("classify",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.6.7 emits a LiteRT graph whose TRANSPOSE receives a rank-5 "
+        "permutation for a rank-4 tensor."
+    ),
+)
+_add(
     "blocked",
     ("clip", "siglip2"),
     ("classify",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreai"}),
-    reason=(
-        "Frozen-class vision-language export is ONNX-only in v1; re-export "
-        "the frozen ONNX graph for a different deployment runtime."
-    ),
+    ("ncnn", "coreml"),
+    reason="No parity-valid frozen-class artifact is available for this runtime.",
 )
 _add(
     "blocked",

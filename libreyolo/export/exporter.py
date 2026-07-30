@@ -899,6 +899,32 @@ class BaseExporter(ABC):
             nn_model = _ImageEmbeddingExportWrapper(image_tower).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family in {"clip", "siglip2"} and task == "classify":
+            text_embeds = getattr(self.model, "_text_embeds", None)
+            if text_embeds is None:
+                raise RuntimeError(
+                    "No classes set; call set_classes() before export()."
+                )
+            scale = float(nn_model.logit_scale.exp().detach().cpu())
+            weight = (scale * text_embeds).detach().to(device, torch.float32)
+            if family == "clip":
+                from ..models.clip.export import _FrozenCLIPClassifier
+
+                nn_model = _FrozenCLIPClassifier(nn_model.visual, weight).to(device)
+            else:
+                from ..models.siglip2.export import _FrozenSigLIP2Classifier
+
+                bias = nn_model.logit_bias.detach().to(
+                    device=device,
+                    dtype=torch.float32,
+                )
+                nn_model = _FrozenSigLIP2Classifier(
+                    nn_model.vision_model,
+                    weight,
+                    bias.reshape(()),
+                ).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "rfdetr":
             from ..models.rfdetr.nn import RFDETRExportWrapper
 

@@ -363,8 +363,32 @@ class TestScope:
         with pytest.raises(NotImplementedError):
             tiny_siglip2.train(data="anything")
 
-    def test_export_non_onnx_raises(self, tiny_siglip2):
+    @pytest.mark.parametrize(
+        "format",
+        ["torchscript", "executorch", "tensorrt", "openvino", "tflite"],
+    )
+    def test_classify_export_routes_to_shared_export(
+        self, tiny_siglip2, monkeypatch, format
+    ):
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return f"siglip2-classify.{format}"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+        assert tiny_siglip2.export(format, dynamic=False) == (
+            f"siglip2-classify.{format}"
+        )
+        assert captured == {"format": format, "opset": 17, "dynamic": False}
+
+    def test_classify_export_rejects_unvalidated_runtime(self, tiny_siglip2):
         with pytest.raises(NotImplementedError):
+            tiny_siglip2.export(format="ncnn")
+
+    def test_classify_export_rejects_multi_label_runtime(self, tiny_siglip2):
+        tiny_siglip2.multi_label = True
+        with pytest.raises(NotImplementedError, match="multi-label"):
             tiny_siglip2.export(format="torchscript")
 
     @pytest.mark.parametrize("format", ["onnx", "tflite"])

@@ -334,9 +334,27 @@ class TestScope:
         with pytest.raises(NotImplementedError):
             tiny_clip.train(data="anything")
 
-    def test_export_non_onnx_raises(self, tiny_clip):
+    @pytest.mark.parametrize(
+        "format",
+        ["torchscript", "executorch", "tensorrt", "openvino"],
+    )
+    def test_classify_export_routes_to_shared_export(
+        self, tiny_clip, monkeypatch, format
+    ):
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return f"clip-classify.{format}"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+        assert tiny_clip.export(format, dynamic=False) == f"clip-classify.{format}"
+        assert captured == {"format": format, "opset": 17, "dynamic": False}
+
+    @pytest.mark.parametrize("format", ["ncnn", "tflite"])
+    def test_classify_export_rejects_unvalidated_runtime(self, tiny_clip, format):
         with pytest.raises(NotImplementedError):
-            tiny_clip.export(format="torchscript")
+            tiny_clip.export(format=format)
 
     @pytest.mark.parametrize("format", ["onnx", "tflite"])
     def test_embed_export_routes_to_shared_export(

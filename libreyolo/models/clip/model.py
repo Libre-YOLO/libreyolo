@@ -477,11 +477,23 @@ class LibreCLIP(BaseModel):
                 "LibreCLIP task='embed' export currently supports ONNX, "
                 "TorchScript, ExecuTorch, TensorRT, and OpenVINO only."
             )
+        if format.lower() in {
+            "torchscript",
+            "executorch",
+            "tensorrt",
+            "openvino",
+        }:
+            if self._text_embeds is None:
+                raise RuntimeError(
+                    "No classes set; call set_classes() before export()."
+                )
+            kwargs.setdefault("opset", 17)
+            return super().export(format=format, **kwargs)
         if format.lower() not in {"onnx", "coreai"}:
             raise NotImplementedError(
-                f"LibreCLIP export to {format!r} is not implemented; only 'onnx' "
-                "and 'coreai' (frozen-class) are supported. Open-vocabulary export (two towers "
-                "+ tokenizer) is out of scope for v1."
+                f"LibreCLIP export to {format!r} is not implemented. "
+                "Open-vocabulary export (two towers + tokenizer) is out of "
+                "scope for v1."
             )
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() before export().")

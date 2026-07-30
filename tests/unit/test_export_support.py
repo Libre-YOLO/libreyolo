@@ -135,6 +135,8 @@ def test_tflite_support_keys_use_canonical_tasks():
     assert get_support("dinov2", "embed", "tflite").tier == "validated"
     assert get_support("siglip2", "embed", "tflite").tier == "validated"
     assert get_support("clip", "embed", "tflite").tier == "blocked"
+    assert get_support("siglip2", "classify", "tflite").tier == "validated"
+    assert get_support("clip", "classify", "tflite").tier == "blocked"
 
 
 @pytest.mark.parametrize("format", ["onnx", "torchscript"])
@@ -559,6 +561,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         if fmt == "openvino" and entry.tier == "validated"
     }
     assert validated == {
+        ("clip", "classify"),
         ("clip", "embed"),
         ("convnext", "classify"),
         ("depth_anything", "depth"),
@@ -585,12 +588,13 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("rfdetr", "detect"),
         ("rtmdet", "detect"),
         ("rtdetr", "detect"),
-            ("rtdetrv4", "detect"),
-            ("segformer", "semantic"),
-            ("siglip2", "embed"),
-            ("swinir", "restore"),
-            ("teed", "edge"),
-            ("yolo1", "detect"),
+        ("rtdetrv4", "detect"),
+        ("segformer", "semantic"),
+        ("siglip2", "classify"),
+        ("siglip2", "embed"),
+        ("swinir", "restore"),
+        ("teed", "edge"),
+        ("yolo1", "detect"),
         ("yolo2", "detect"),
         ("yolo3", "detect"),
         ("yolo4", "detect"),
