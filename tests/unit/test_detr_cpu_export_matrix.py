@@ -19,10 +19,9 @@ _DETR_CASES = (
     ("LibreRTDETRv4", "s", 640),
 )
 _ONNX_PARITY_GAPS = {
-    "LibreDEIM": "8.7% of selected boxes exceed the ONNX tolerance",
-    "LibreDEIMv2": "ONNX top-k selection causes score and box drift",
-    "LibreRTDETRv2": "9% of selected boxes exceed the ONNX tolerance",
-    "LibreRTDETRv4": "7.3% of selected boxes exceed the ONNX tolerance",
+    "LibreDEIMv2": "only 43.7% of aligned score values meet tolerance",
+    "LibreRTDETRv2": "only 41% of predict boxes match after top-100 selection",
+    "LibreRTDETRv4": "only 80% of predict boxes match after top-100 selection",
 }
 _OPENVINO_PARITY_GAPS = {
     "LibreDEIM": "exactly 95% of aligned boxes meet tolerance; validation requires more than 95%",
@@ -35,7 +34,19 @@ _OPENVINO_PARITY_GAPS = {
 # float drift (macOS CI vs Linux) reorders a handful of near-tied queries.
 # Alignment removes that ordering sensitivity while keeping the numeric
 # tolerance intact — a genuinely wrong box still fails after alignment.
-_ONNX_QUERY_ALIGNED = {"LibreEC", "LibreDFINE"}
+_ONNX_QUERY_ALIGNED = {
+    "LibreDFINE",
+    "LibreDEIM",
+    "LibreDEIMv2",
+    "LibreEC",
+    "LibreRTDETRv2",
+    "LibreRTDETRv4",
+}
+_ONNX_PREDICT_PARITY = {
+    "LibreDEIM",
+    "LibreRTDETRv2",
+    "LibreRTDETRv4",
+}
 
 
 def _export_cases():
@@ -80,6 +91,37 @@ def _align_query_outputs(actual, expected):
     return tuple(aligned)
 
 
+def _assert_detect_predict_parity(native_result, converted_result):
+    native = native_result.boxes.data.cpu().numpy()
+    converted = converted_result.boxes.data.cpu().numpy()
+    assert converted.shape == native.shape
+    if native.shape[0] == 0:
+        return
+
+    cost = np.square(
+        converted[:, None, :4] - native[None, :, :4]
+    ).sum(axis=-1)
+    converted_indices, native_indices = linear_sum_assignment(cost)
+    converted_order = converted_indices[np.argsort(native_indices)]
+    converted = converted[converted_order]
+    box_match = np.isclose(
+        converted[:, :4],
+        native[:, :4],
+        rtol=2e-3,
+        atol=1.0,
+    ).all(axis=-1)
+    score_match = np.isclose(
+        converted[:, 4],
+        native[:, 4],
+        rtol=2e-3,
+        atol=2e-2,
+    )
+    class_match = converted[:, 5] == native[:, 5]
+    assert float(box_match.mean()) > 0.95
+    assert float(score_match.mean()) > 0.95
+    assert float(class_match.mean()) > 0.95
+
+
 @pytest.mark.parametrize(
     ("class_name", "size", "imgsz", "format"),
     _export_cases(),
@@ -102,9 +144,8 @@ def test_detr_detect_raw_parity(tmp_path, class_name, size, imgsz, format):
     with exporter._model_context("cpu", False, False, 1, (imgsz, imgsz)) as (
         wrapped,
         _,
-    ):
-        with torch.no_grad():
-            native = wrapped(tensor)
+    ), torch.no_grad():
+        native = wrapped(tensor)
     if isinstance(native, torch.Tensor):
         native = (native,)
 
@@ -131,11 +172,13 @@ def test_detr_detect_raw_parity(tmp_path, class_name, size, imgsz, format):
             row_match = np.isclose(actual_output, expected, rtol=rtol, atol=atol).all(
                 axis=-1
             )
-            assert float(row_match.mean()) > 0.95
+            match_rate = float(row_match.mean())
+            assert match_rate > 0.95, f"box row match rate: {match_rate:.4f}"
             continue
         if converted:
             element_match = np.isclose(actual_output, expected, rtol=rtol, atol=atol)
-            assert float(element_match.mean()) > 0.95
+            match_rate = float(element_match.mean())
+            assert match_rate > 0.95, f"element match rate: {match_rate:.4f}"
             continue
         np.testing.assert_allclose(
             actual_output,
@@ -143,13 +186,22 @@ def test_detr_detect_raw_parity(tmp_path, class_name, size, imgsz, format):
             rtol=rtol,
             atol=atol,
         )
-    if format == "openvino":
+    if format == "openvino" or (
+        format == "onnx" and class_name in _ONNX_PREDICT_PARITY
+    ):
         image = np.random.default_rng(51).integers(
             0, 256, size=(72, 96, 3), dtype=np.uint8
         )
-        result = backend.predict(image, conf=0.99)
-        assert result.boxes is not None
-        assert result.orig_shape == (72, 96)
+        result = backend.predict(image, conf=0.0, max_det=100)
+        assert result.boxes is not None and result.orig_shape == (72, 96)
+        if format == "onnx":
+            native_result = model.predict(
+                image,
+                imgsz=imgsz,
+                conf=0.0,
+                max_det=100,
+            )
+            _assert_detect_predict_parity(native_result, result)
 
 
 _TASK_HEAD_CASES = (
@@ -203,9 +255,8 @@ def test_detr_task_head_raw_parity(tmp_path, class_name, size, task, imgsz, form
     with exporter._model_context("cpu", False, False, 1, (imgsz, imgsz)) as (
         wrapped,
         _,
-    ):
-        with torch.no_grad():
-            native = wrapped(tensor)
+    ), torch.no_grad():
+        native = wrapped(tensor)
     if isinstance(native, torch.Tensor):
         native = (native,)
 
@@ -300,9 +351,8 @@ def test_rfdetr_task_raw_parity(tmp_path, size, task, imgsz, nb_classes, format)
     with exporter._model_context("cpu", False, False, 1, (imgsz, imgsz)) as (
         wrapped,
         _,
-    ):
-        with torch.no_grad():
-            native = wrapped(tensor)
+    ), torch.no_grad():
+        native = wrapped(tensor)
     if isinstance(native, torch.Tensor):
         native = (native,)
 

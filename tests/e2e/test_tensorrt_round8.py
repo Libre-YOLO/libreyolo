@@ -257,14 +257,7 @@ def _assert_predict_parity(case, native_model, backend, image) -> None:
     raise AssertionError(f"Unhandled Round 8 task: {case.task}")
 
 
-@requires_tensorrt
-@pytest.mark.slow
-@pytest.mark.parametrize(
-    "case",
-    ROUND8_VALIDATED_CASES,
-    ids=lambda case: case.class_name,
-)
-def test_tensorrt_round8_raw_and_predict_parity(tmp_path, case):
+def _run_tensorrt_case(tmp_path, case):
     from libreyolo import LibreYOLO
 
     torch.manual_seed(0)
@@ -315,6 +308,17 @@ def test_tensorrt_round8_raw_and_predict_parity(tmp_path, case):
 
     del backend, model
     torch.cuda.empty_cache()
+
+
+@requires_tensorrt
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "case",
+    ROUND8_VALIDATED_CASES,
+    ids=lambda case: case.class_name,
+)
+def test_tensorrt_round8_raw_and_predict_parity(tmp_path, case):
+    _run_tensorrt_case(tmp_path, case)
 
 
 @requires_tensorrt

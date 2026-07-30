@@ -8,18 +8,18 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 
 | Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| birefnet | matte | exp | ✓ | exp |  |  |  |  |  |
+| birefnet | matte | exp | ✓ |  |  |  |  |  |  |
 | clip | classify | ✓ |  |  |  |  |  |  | ✓ |
 | clip | embed |  |  |  |  |  |  |  |  |
 | convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
-| deim | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
+| deim | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
 | depth_anything | depth | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | depth_anything3 | depth |  |  |  |  |  |  |  |  |
 | dexined | edge | ✓ |  |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ | exp | ✓ |  |  |  |  |
-| dinov2 | semantic | ✓ | ✓ | exp | ✓ |  |  |  |  |
+| dinov2 | semantic | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | dinov2 | classify | ✓ | ✓ |  |  |  |  |  | exp |
 | dinov2 | embed |  |  |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
@@ -27,10 +27,10 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | ec | segment | ✓ | ✓ | exp | ✓ |  |  |  |  |
 | edgetam | segment |  |  |  |  |  |  |  |  |
 | efficientnetv2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
-| eomt | semantic | ✓ | ✓ | exp | ✓ |  |  |  |  |
+| eomt | semantic | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |
-| feynobg | matte | exp | ✓ | exp |  |  |  |  |  |
+| feynobg | matte | exp | ✓ |  |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |
@@ -107,6 +107,7 @@ A check mark applies only under any constraint listed here.
 - `convnext` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `convnext` / `classify` / `openvino`: fixed family-native input resolution
 - `convnext` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `deim` / `detect` / `onnx`: DETR query rows are aligned as an unordered set for parity
 - `deim` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `deimv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `depth_anything` / `depth` / `tensorrt`: FP32 with a fixed input resolution divisible by 14
@@ -118,6 +119,7 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `segment` / `openvino`: fixed export canvas
 - `dinov2` / `semantic` / `onnx`: fixed 518x518 input
 - `dinov2` / `semantic` / `torchscript`: fixed 518x518 input
+- `dinov2` / `semantic` / `tensorrt`: FP32 with a fixed family-native export canvas
 - `dinov2` / `semantic` / `openvino`: fixed family-native export canvas
 - `dinov2` / `classify` / `onnx`: fixed 224x224 input
 - `dinov2` / `classify` / `torchscript`: fixed 224x224 input
@@ -133,6 +135,7 @@ A check mark applies only under any constraint listed here.
 - `efficientnetv2` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `eomt` / `semantic` / `onnx`: fixed 512x512 input
 - `eomt` / `semantic` / `torchscript`: fixed 512x512 input
+- `eomt` / `semantic` / `tensorrt`: FP32 with a fixed family-native export canvas
 - `eomt` / `semantic` / `openvino`: fixed family-native export canvas
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
 - `fomo` / `point` / `tensorrt`: FP32 with a fixed 96x96 input
@@ -224,6 +227,7 @@ A check mark applies only under any constraint listed here.
 
 ## Blocked combinations
 
+- `birefnet` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `birefnet` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `birefnet` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
 - `birefnet` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
@@ -332,6 +336,7 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `panoptic` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreml`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreai`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `feynobg` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `feynobg` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `feynobg` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
 - `feynobg` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.

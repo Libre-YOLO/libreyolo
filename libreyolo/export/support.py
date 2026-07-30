@@ -297,6 +297,17 @@ _add(
     ),
 )
 _add(
+    "blocked",
+    ("birefnet", "feynobg"),
+    ("matte",),
+    ("tensorrt",),
+    reason=(
+        "TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot "
+        "parse it because ModulatedDeformConv2d is absent from the plugin "
+        "registry."
+    ),
+)
+_add(
     "validated",
     ("birefnet",),
     ("matte",),
@@ -338,13 +349,22 @@ _add(
     constraint="fixed family-native export canvas",
 )
 _add(
+    "validated",
+    ("dinov2", "eomt"),
+    ("semantic",),
+    ("tensorrt",),
+    since="1.6",
+    constraint="FP32 with a fixed family-native export canvas",
+)
+_add(
     "experimental",
-    ("dinov2", "eomt", "lingbotvision"),
+    ("lingbotvision",),
     ("semantic",),
     ("tensorrt",),
     reason=(
-        "The dense-logits contract is wired, but the project has not yet "
-        "recorded TensorRT runtime parity for these families."
+        "TensorRT 10.16 FP32 exports, reloads, and predicts, but repeated "
+        "builds produced raw-logit cosine as low as 0.9842, below the 0.999 "
+        "promotion gate."
     ),
 )
 _add(
@@ -541,6 +561,17 @@ _add(
     ("openvino",),
     since="1.6",
     constraint="fixed-resolution export canvas",
+)
+_add(
+    "experimental",
+    ("zipdepth",),
+    ("depth",),
+    ("tensorrt",),
+    reason=(
+        "TensorRT 10.16 FP32 exports, reloads, and predicts, but repeated "
+        "builds produced raw depth PSNR as low as 30.27 dB, below the 40 dB "
+        "promotion gate."
+    ),
 )
 _add(
     "blocked",
@@ -789,6 +820,14 @@ _add(
 )
 _add(
     "validated",
+    ("deim",),
+    ("detect",),
+    ("onnx",),
+    since="1.6",
+    constraint="DETR query rows are aligned as an unordered set for parity",
+)
+_add(
+    "validated",
     ("dfine", "ec", "rtdetr", "rtdetrv4"),
     ("detect",),
     ("openvino",),
@@ -827,31 +866,33 @@ _add(
 )
 _add(
     "experimental",
-    ("deim",),
-    ("detect",),
-    ("onnx",),
-    reason="Runtime parity leaves 8.7% of selected boxes outside tolerance.",
-)
-_add(
-    "experimental",
     ("deimv2",),
     ("detect",),
     ("onnx",),
-    reason="ONNX top-k selection changes score and box queries beyond tolerance.",
+    reason=(
+        "After Hungarian query alignment, only 43.7% of score values meet "
+        "tolerance because ONNX top-k selects a different query set."
+    ),
 )
 _add(
     "experimental",
     ("rtdetrv2",),
     ("detect",),
     ("onnx",),
-    reason="Runtime parity leaves 9% of selected boxes outside tolerance.",
+    reason=(
+        "Raw outputs pass after unordered-query alignment, but only 41% of "
+        "public predict() boxes match after top-100 selection."
+    ),
 )
 _add(
     "experimental",
     ("rtdetrv4",),
     ("detect",),
     ("onnx",),
-    reason="Runtime parity leaves 7.3% of selected boxes outside tolerance.",
+    reason=(
+        "Raw outputs pass after unordered-query alignment, but only 80% of "
+        "public predict() boxes match after top-100 selection."
+    ),
 )
 _add(
     "validated",

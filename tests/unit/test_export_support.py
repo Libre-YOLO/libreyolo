@@ -60,7 +60,7 @@ def test_ncnn_detr_families_fail_in_preflight(family):
 
 
 def test_experimental_export_warns_in_preflight():
-    exporter = OnnxExporter(_wrapper("deim"))
+    exporter = OnnxExporter(_wrapper("deimv2"))
     with pytest.warns(RuntimeWarning, match="experimental"):
         exporter._preflight(half=False, int8=False, data=None)
 
@@ -167,6 +167,43 @@ def test_round8_tensorrt_fp32_parity_promotes_nine_cells():
     pidnet = get_support("pidnet", "semantic", "tensorrt")
     assert pidnet.tier == "experimental"
     assert "0.9970" in pidnet.reason
+
+
+def test_round9_promotes_three_parity_cells_and_records_seven_gaps():
+    deim = get_support("deim", "detect", "onnx")
+    assert deim.tier == "validated"
+    assert "unordered set" in deim.constraint
+
+    for family, task in {
+        ("dinov2", "semantic"),
+        ("eomt", "semantic"),
+    }:
+        entry = get_support(family, task, "tensorrt")
+        assert entry.tier == "validated"
+        assert "FP32" in entry.constraint
+
+    lingbot = get_support("lingbotvision", "semantic", "tensorrt")
+    assert lingbot.tier == "experimental"
+    assert "0.9842" in lingbot.reason
+
+    zipdepth = get_support("zipdepth", "depth", "tensorrt")
+    assert zipdepth.tier == "experimental"
+    assert "30.27 dB" in zipdepth.reason
+
+    expected_gaps = {
+        "deimv2": "43.7%",
+        "rtdetrv2": "41%",
+        "rtdetrv4": "80%",
+    }
+    for family, measured in expected_gaps.items():
+        entry = get_support(family, "detect", "onnx")
+        assert entry.tier == "experimental"
+        assert measured in entry.reason
+
+    for family in ("birefnet", "feynobg"):
+        entry = get_support(family, "matte", "tensorrt")
+        assert entry.tier == "blocked"
+        assert "ModulatedDeformConv2d" in entry.reason
 
 
 @pytest.mark.parametrize(
