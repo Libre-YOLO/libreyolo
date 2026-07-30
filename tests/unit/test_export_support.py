@@ -67,16 +67,24 @@ def test_experimental_export_warns_in_preflight():
 
 def test_executorch_realtime_support_is_evidence_backed():
     validated = {
+        ("convnext", "classify"),
+        ("dexined", "edge"),
         ("ec", "detect"),
+        ("ec", "pose"),
+        ("ec", "segment"),
         ("efficientnetv2", "classify"),
+        ("fomo", "point"),
         ("mobilenetv4", "classify"),
+        ("nafnet", "restore"),
         ("picodet", "detect"),
         ("pidnet", "semantic"),
+        ("realesrgan", "restore"),
         ("resnet", "classify"),
         ("rtdetr", "detect"),
         ("rtdetrv2", "detect"),
         ("rtdetrv4", "detect"),
         ("rfdetr", "detect"),
+        ("teed", "edge"),
         ("yolo1", "detect"),
         ("yolo2", "detect"),
         ("yolo3", "detect"),
@@ -84,6 +92,9 @@ def test_executorch_realtime_support_is_evidence_backed():
         ("yolo7", "detect"),
         ("yolo9", "detect"),
         ("yolo9_e2e", "detect"),
+        ("yolo9_p2", "detect"),
+        ("yolonas", "detect"),
+        ("yolonas", "pose"),
         ("yolox", "detect"),
     }
     for family, task in validated:
@@ -93,17 +104,6 @@ def test_executorch_realtime_support_is_evidence_backed():
     assert get_support("dfine", "detect", "executorch").tier == "blocked"
     assert get_support("deim", "detect", "executorch").tier == "blocked"
     assert get_support("deimv2", "detect", "executorch").tier == "blocked"
-    assert get_support("teed", "edge", "executorch").tier == "experimental"
-    assert get_support("dexined", "edge", "executorch").tier == "experimental"
-    assert get_support("yolonas", "detect", "executorch").tier == "experimental"
-    assert get_support("yolo9_p2", "detect", "executorch").tier == "experimental"
-    assert get_support("ec", "pose", "executorch").tier == "experimental"
-    assert get_support("ec", "segment", "executorch").tier == "experimental"
-    assert get_support("yolonas", "pose", "executorch").tier == "experimental"
-    assert get_support("convnext", "classify", "executorch").tier == "experimental"
-    assert get_support("nafnet", "restore", "executorch").tier == "experimental"
-    assert get_support("realesrgan", "restore", "executorch").tier == "experimental"
-    assert get_support("fomo", "point", "executorch").tier == "experimental"
 
 
 def test_tflite_support_keys_use_canonical_tasks():

@@ -157,87 +157,107 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("yolo9_p2", "yolonas"),
     ("detect",),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "and deterministic random-weight raw parity are covered. A permissive "
-        "trained-checkpoint detection parity record is not available."
+        "Deterministic input-sensitive fixtures cover XNNPACK conversion, "
+        "runtime execution, per-output raw parity, metadata, and matched "
+        "public post-NMS detection parity."
     ),
+    since="1.6",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("ec",),
-    ("pose", "segment"),
+    ("pose",),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "deterministic random-weight raw parity, and task result parsing are "
-        "covered. Trained-checkpoint task parity is not yet available."
+        "Deterministic input-sensitive fixtures cover XNNPACK conversion, "
+        "runtime execution, per-output raw parity, metadata, and public "
+        "postprocessing parity for boxes plus keypoints."
     ),
+    since="1.6",
     constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; "
-        "EC segmentation requires a canvas large enough for its top-300 query selection"
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(
-    "experimental",
+    "validated",
+    ("ec",),
+    ("segment",),
+    ("executorch",),
+    reason=(
+        "A deterministic input-sensitive fixture covers XNNPACK conversion, "
+        "runtime execution, per-output raw parity, metadata, and public "
+        "postprocessing parity for boxes plus masks."
+    ),
+    since="1.6",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1; fixed input shape large "
+        "enough for the top-300 query selection"
+    ),
+)
+_add(
+    "validated",
     ("yolonas",),
     ("pose",),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "deterministic random-weight raw parity, and keypoint result parsing "
-        "are covered. Trained-checkpoint pose parity is not yet available."
+        "A deterministic input-sensitive fixture covers XNNPACK conversion, "
+        "runtime execution, per-output raw parity, metadata, and matched "
+        "public box and keypoint parity."
     ),
+    since="1.6",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("convnext",),
     ("classify",),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "and deterministic random-weight logits parity are covered. "
-        "Trained-checkpoint classification parity is not yet available."
+        "A deterministic input-sensitive fixture covers XNNPACK conversion, "
+        "runtime execution, per-output logits parity, metadata, and public "
+        "probability cosine plus top-1 parity."
     ),
+    since="1.6",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("nafnet", "realesrgan"),
     ("restore",),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "deterministic random-weight image parity, and restored-image result "
-        "parsing are covered. Trained-checkpoint restoration parity is not "
-        "yet available."
+        "Deterministic input-sensitive fixtures cover XNNPACK conversion, "
+        "runtime execution, per-output image parity, metadata, and public "
+        "restored-image parity above 40 dB PSNR."
     ),
+    since="1.6",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("fomo",),
     ("point",),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "deterministic random-weight heatmap parity, and point result parsing "
-        "are covered. Trained-checkpoint localization parity is not yet available."
+        "A deterministic input-sensitive fixture covers XNNPACK conversion, "
+        "runtime execution, per-output heatmap parity, metadata, and matched "
+        "public point-coordinate and confidence parity."
     ),
+    since="1.6",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape"
     ),
@@ -812,16 +832,15 @@ _add(
     constraint="fixed-resolution batch-1 edge-probability canvas",
 )
 _add(
-    "experimental",
+    "validated",
     ("teed", "dexined"),
     ("edge",),
     ("executorch",),
     reason=(
-        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
-        "and deterministic random-weight parity are covered. Redistributable "
-        "trained checkpoints are unavailable, so task-accuracy parity has not "
-        "been established."
+        "Deterministic input-sensitive fixtures cover XNNPACK conversion, "
+        "runtime execution, two-image edge-probability parity, and metadata."
     ),
+    since="1.6",
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),

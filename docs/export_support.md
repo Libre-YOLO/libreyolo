@@ -11,20 +11,20 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | birefnet | matte | exp | ✓ | exp |  |  |  |  |  |  |
 | clip | classify | ✓ |  |  |  |  |  |  |  | ✓ |
 | clip | embed |  |  |  |  |  |  |  |  |  |
-| convnext | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ | ✓ |  | ✓ |
+| convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | deim | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
 | depth_anything | depth | ✓ | ✓ | exp | ✓ | ✓ |  |  |  | ✓ |
 | depth_anything3 | depth |  |  |  |  |  |  |  |  |  |
-| dexined | edge | ✓ |  | exp |  |  |  |  |  |  |
+| dexined | edge | ✓ |  | ✓ |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ | exp | exp | ✓ |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
 | dinov2 | classify | ✓ | ✓ |  |  |  |  |  |  | exp |
 | dinov2 | embed |  |  |  |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
-| ec | pose | ✓ | ✓ | exp | exp | exp |  |  |  |  |
-| ec | segment | ✓ | ✓ | exp | exp | ✓ |  |  |  |  |
+| ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
+| ec | segment | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |
 | edgetam | segment |  |  |  |  |  |  |  |  |  |
 | efficientnetv2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | eomt | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
@@ -32,7 +32,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | eomt | panoptic |  |  |  |  |  |  |  |  |  |
 | feynobg | matte | exp | ✓ | exp |  |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |  |
-| fomo | point | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  |  | ✓ |
+| fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |  |
@@ -44,7 +44,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |
 | moge2 | normal | ✓ |  |  |  |  |  |  |  |  |
-| nafnet | restore | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  |  | ✓ |
+| nafnet | restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |  |  |
@@ -53,7 +53,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | pidnet | semantic | ✓ | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | ppocr | ocr |  |  |  |  |  |  |  |  |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |  |  |
-| realesrgan | restore | ✓ | ✓ | exp | ✓ | ✓ | ✓ | ✓ |  | ✓ |
+| realesrgan | restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | resnet | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | exp | ✓ |
 | rfdetr | segment | ✓ | ✓ | exp | exp | exp |  |  |  |  |
@@ -73,7 +73,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | siglip2 | embed |  |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
 | swinir | restore | ✓ | ✓ | exp | ✓ | ✓ |  | ✓ |  |  |
-| teed | edge | ✓ |  | exp |  |  |  |  |  |  |
+| teed | edge | ✓ |  | ✓ |  |  |  |  |  |  |
 | yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  | ✓ |
 | yolo3 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
@@ -81,9 +81,9 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | yolo7 | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
 | yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
 | yolo9_e2e | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
-| yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ | exp |  |  | ✓ |
-| yolonas | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | ✓ |  | ✓ |
-| yolonas | pose | ✓ | ✓ | exp | exp | ✓ | ✓ |  |  |  |
+| yolo9_p2 | detect | ✓ | ✓ | ✓ | exp | ✓ | exp |  |  | ✓ |
+| yolonas | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
+| yolonas | pose | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  |  |
 | yolox | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ | ✓ | exp | ✓ |
 | zipdepth | depth | ✓ | ✓ | exp | exp | ✓ | ✓ |  |  | ✓ |
 
@@ -104,6 +104,7 @@ A check mark applies only under any constraint listed here.
 - `birefnet` / `matte` / `torchscript`: fixed 1024x1024 input
 - `clip` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `clip` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `convnext` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `convnext` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `convnext` / `classify` / `openvino`: fixed family-native input resolution
 - `convnext` / `classify` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; two-input raw parity, factory reload, metadata, and public predict parity
@@ -115,6 +116,7 @@ A check mark applies only under any constraint listed here.
 - `depth_anything` / `depth` / `openvino`: fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `dexined` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
+- `dexined` / `edge` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `dfine` / `detect` / `openvino`: fixed export canvas
 - `dfine` / `detect` / `coreai`: fixed export canvas; trained LibreDFINEn weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `dfine` / `segment` / `openvino`: fixed export canvas
@@ -129,8 +131,10 @@ A check mark applies only under any constraint listed here.
 - `ec` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `ec` / `pose` / `onnx`: fixed 640x640 input
 - `ec` / `pose` / `torchscript`: fixed 640x640 input
+- `ec` / `pose` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `ec` / `segment` / `onnx`: fixed 640x640 input
 - `ec` / `segment` / `torchscript`: fixed 640x640 input
+- `ec` / `segment` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1; fixed input shape large enough for the top-300 query selection
 - `ec` / `segment` / `openvino`: fixed 640x640 input
 - `efficientnetv2` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `efficientnetv2` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
@@ -142,6 +146,7 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `semantic` / `tensorrt`: FP32 with a fixed family-native export canvas
 - `eomt` / `semantic` / `openvino`: fixed family-native export canvas
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
+- `fomo` / `point` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape
 - `fomo` / `point` / `tensorrt`: FP32 with a fixed 96x96 input
 - `fomo` / `point` / `openvino`: fixed square input
 - `fomo` / `point` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed 96x96 input; two-input raw parity, factory reload, metadata, and public predict parity
@@ -160,6 +165,7 @@ A check mark applies only under any constraint listed here.
 - `moge2` / `normal` / `onnx`: fixed square batch-1 export canvas divisible by 14; exported inference rejects non-square sources rather than stretching image-plane geometry; the official MIT ViT-S/B/L normal checkpoints are covered by FP32 same-canvas native-versus-ONNX angular parity below 0.1 degree
 - `nafnet` / `restore` / `onnx`: fixed-resolution export canvas
 - `nafnet` / `restore` / `torchscript`: fixed-resolution export canvas
+- `nafnet` / `restore` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `nafnet` / `restore` / `tensorrt`: FP32 with a fixed-resolution export canvas
 - `nafnet` / `restore` / `openvino`: fixed-resolution export canvas
 - `nafnet` / `restore` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; two-input raw parity, factory reload, metadata, and public predict parity
@@ -176,6 +182,7 @@ A check mark applies only under any constraint listed here.
 - `pidnet` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
 - `realesrgan` / `restore` / `onnx`: dynamic spatial input
 - `realesrgan` / `restore` / `torchscript`: fixed-resolution export canvas
+- `realesrgan` / `restore` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `realesrgan` / `restore` / `tensorrt`: FP32 with a fixed-resolution export canvas
 - `realesrgan` / `restore` / `openvino`: fixed-resolution export canvas
 - `realesrgan` / `restore` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; two-input raw parity, factory reload, metadata, and public predict parity
@@ -218,6 +225,7 @@ A check mark applies only under any constraint listed here.
 - `swinir` / `restore` / `openvino`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `tflite`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `teed` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
+- `teed` / `edge` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo1` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo1` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
@@ -248,12 +256,15 @@ A check mark applies only under any constraint listed here.
 - `yolo9_e2e` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo9_e2e` / `detect` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with permissively licensed trained checkpoints; two-input raw parity, factory reload, metadata, and public predict parity
 - `yolo9_e2e` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `yolo9_p2` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo9_p2` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo9_p2` / `detect` / `coreai`: fixed 640x640 export canvas; a deterministic YOLO9-P2-T model initialized from the SHA-256-pinned, permissively licensed trained LibreYOLO9t checkpoint is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion, not P2 task accuracy, and does not depend on the restricted VisDrone research-preview checkpoint
+- `yolonas` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolonas` / `detect` / `openvino`: fixed export canvas
 - `yolonas` / `detect` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with deterministic synthetic trained fixtures; two-input raw parity, factory reload, metadata, and public predict parity; pose additionally validates matched keypoints; this validates conversion, not task accuracy
 - `yolonas` / `detect` / `tflite`: fixed export canvas
 - `yolonas` / `detect` / `coreai`: fixed 96x96 export canvas with pre-shaped canonical RGB tensors; a deterministic, license-clean synthetic YOLO-NAS-S state is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; the state receives 12 native training steps and a 20x regression-head scale to make both exported outputs non-degenerate; this validates conversion, not detection accuracy, raw-image preprocessing, or native-640 behavior, and does not convert restricted official weights
+- `yolonas` / `pose` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolonas` / `pose` / `openvino`: fixed export canvas
 - `yolonas` / `pose` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with deterministic synthetic trained fixtures; two-input raw parity, factory reload, metadata, and public predict parity; pose additionally validates matched keypoints; this validates conversion, not task accuracy
 - `yolox` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
