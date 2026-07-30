@@ -253,6 +253,12 @@ def test_round12_records_ten_measured_tensorrt_holds():
         assert reason_fragment in entry.reason
 
 
+def test_round15_records_rtdetrv4_tensorrt_hold():
+    entry = get_support("rtdetrv4", "detect", "tensorrt")
+    assert entry.tier == "experimental"
+    assert "50.4-pixel" in entry.reason
+
+
 def test_round13_records_ten_measured_tflite_holds():
     measured_holds = {
         ("yolo1", "detect"): "ONNX_EINSUM",

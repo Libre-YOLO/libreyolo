@@ -746,6 +746,18 @@ _add(
 )
 _add(
     "experimental",
+    ("rtdetrv4",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "A deterministic synthetic fixture exports, reloads, and predicts, "
+        "but repeated TensorRT 10.16 FP32 builds change public top-k class "
+        "membership or box geometry; a measured reconstruction reached "
+        "0 IoU with 50.4-pixel coordinate drift."
+    ),
+)
+_add(
+    "experimental",
     ("ec",),
     ("detect",),
     ("tensorrt",),
