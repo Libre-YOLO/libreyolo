@@ -143,6 +143,49 @@ def test_detection_flagship_raw_parity_and_predict(
     assert result.boxes is not None
 
 
+@pytest.mark.experimental_backend
+@pytest.mark.parametrize(
+    ("family", "class_name", "size"),
+    [
+        ("teed", "LibreTEED", "t"),
+        ("dexined", "LibreDexiNed", "b"),
+    ],
+)
+def test_edge_map_runtime_parity(
+    tmp_path, monkeypatch, family, class_name, size
+):
+    """Prove edge-map conversion and parity without restricted checkpoints."""
+    _require_executorch(monkeypatch)
+
+    import libreyolo
+    from libreyolo import LibreYOLO
+
+    torch.manual_seed(7)
+    model_class = getattr(libreyolo, class_name)
+    model = model_class(None, size=size, device="cpu")
+    first = np.random.default_rng(7).integers(
+        0, 256, (40, 64, 3), dtype=np.uint8
+    )
+    second = np.random.default_rng(8).integers(
+        0, 256, (40, 64, 3), dtype=np.uint8
+    )
+    expected = model.predict(first, imgsz=64).edges.data.numpy()
+
+    artifact = model.export(
+        "executorch",
+        output_path=str(tmp_path / f"{family}.pte"),
+        imgsz=64,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+    actual = runtime.predict(first).edges.data.numpy()
+    changed = runtime.predict(second).edges.data.numpy()
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-4, atol=2e-4)
+    assert float(np.max(np.abs(actual - changed))) > 1e-4
+
+
 @pytest.mark.external_data
 @pytest.mark.flagship_nightly
 @pytest.mark.parametrize(
@@ -150,6 +193,11 @@ def test_detection_flagship_raw_parity_and_predict(
     [
         ("yolo9", "LIBREYOLO_EXECUTORCH_YOLO9_WEIGHTS", 640),
         ("rfdetr", "LIBREYOLO_EXECUTORCH_RFDETR_WEIGHTS", 384),
+        ("yolox", "LIBREYOLO_EXECUTORCH_YOLOX_WEIGHTS", 416),
+        ("picodet", "LIBREYOLO_EXECUTORCH_PICODET_WEIGHTS", 320),
+        ("yolo9_e2e", "LIBREYOLO_EXECUTORCH_YOLO9_E2E_WEIGHTS", 640),
+        ("ec", "LIBREYOLO_EXECUTORCH_EC_WEIGHTS", 640),
+        ("rtdetr", "LIBREYOLO_EXECUTORCH_RTDETR_WEIGHTS", 640),
     ],
 )
 def test_trained_detection_parity(
@@ -208,6 +256,102 @@ def test_trained_detection_parity(
             remaining.remove(match)
             assert _box_iou(expected_row, actual[match]) >= 0.95
             assert abs(float(expected_row[4] - actual[match, 4])) <= 0.01
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
+@pytest.mark.parametrize(
+    ("family", "weights_env"),
+    [
+        ("mobilenetv4", "LIBREYOLO_EXECUTORCH_MOBILENETV4_WEIGHTS"),
+        ("efficientnetv2", "LIBREYOLO_EXECUTORCH_EFFICIENTNETV2_WEIGHTS"),
+        ("resnet", "LIBREYOLO_EXECUTORCH_RESNET_WEIGHTS"),
+    ],
+)
+def test_trained_classification_parity(
+    tmp_path, monkeypatch, family, weights_env
+):
+    """Match trained native and ExecuTorch logits and top-1 predictions."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get(weights_env)
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            f"set {weights_env} and LIBREYOLO_EXECUTORCH_IMAGES "
+            "to a newline-separated list of at least two images"
+        )
+
+    weights = Path(weights_value)
+    images = [Path(value) for value in image_values if value.strip()]
+    if not weights.is_file() or any(not image.is_file() for image in images):
+        pytest.skip("staged trained-checkpoint parity inputs are unavailable")
+
+    native = LibreYOLO(str(weights), device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / f"{family}.pte"),
+        imgsz=224,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image in images:
+        native_result = native.predict(str(image))
+        runtime_result = runtime.predict(str(image))
+        expected = native_result.probs.data.detach().cpu().numpy()
+        actual = runtime_result.probs.data.detach().cpu().numpy()
+        cosine = float(
+            np.dot(expected, actual)
+            / (np.linalg.norm(expected) * np.linalg.norm(actual))
+        )
+        assert cosine >= 0.999
+        assert int(np.argmax(actual)) == int(np.argmax(expected))
+
+
+@pytest.mark.external_data
+@pytest.mark.flagship_nightly
+def test_trained_pidnet_semantic_parity(tmp_path, monkeypatch):
+    """Match trained PIDNet semantic maps after public postprocessing."""
+    _require_executorch(monkeypatch)
+
+    from libreyolo import LibreYOLO
+
+    weights_value = os.environ.get("LIBREYOLO_EXECUTORCH_PIDNET_WEIGHTS")
+    image_values = os.environ.get("LIBREYOLO_EXECUTORCH_IMAGES", "").splitlines()
+    if not weights_value or len(image_values) < 2:
+        pytest.skip(
+            "set LIBREYOLO_EXECUTORCH_PIDNET_WEIGHTS and "
+            "LIBREYOLO_EXECUTORCH_IMAGES to at least two images"
+        )
+
+    weights = Path(weights_value)
+    images = [Path(value) for value in image_values if value.strip()]
+    if not weights.is_file() or any(not image.is_file() for image in images):
+        pytest.skip("staged trained-checkpoint parity inputs are unavailable")
+
+    native = LibreYOLO(str(weights), device="cpu")
+    artifact = native.export(
+        "executorch",
+        output_path=str(tmp_path / "pidnet.pte"),
+        imgsz=1024,
+        batch=1,
+        dynamic=False,
+    )
+    runtime = LibreYOLO(artifact)
+
+    for image in images:
+        expected = (
+            native.predict(str(image)).semantic_mask.data.detach().cpu().numpy()
+        )
+        actual = (
+            runtime.predict(str(image)).semantic_mask.data.detach().cpu().numpy()
+        )
+        assert expected.shape == actual.shape
+        assert float(np.mean(expected == actual)) >= 0.95
 
 
 def test_failed_export_restores_yolo9_state(tmp_path, monkeypatch):

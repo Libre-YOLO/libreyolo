@@ -65,6 +65,29 @@ def test_experimental_export_warns_in_preflight():
         exporter._preflight(half=False, int8=False, data=None)
 
 
+def test_executorch_realtime_support_is_evidence_backed():
+    validated = {
+        ("ec", "detect"),
+        ("efficientnetv2", "classify"),
+        ("mobilenetv4", "classify"),
+        ("picodet", "detect"),
+        ("pidnet", "semantic"),
+        ("resnet", "classify"),
+        ("rtdetr", "detect"),
+        ("rfdetr", "detect"),
+        ("yolo9", "detect"),
+        ("yolo9_e2e", "detect"),
+        ("yolox", "detect"),
+    }
+    for family, task in validated:
+        assert get_support(family, task, "executorch").tier == "validated"
+
+    assert get_support("rtmdet", "detect", "executorch").tier == "blocked"
+    assert get_support("deimv2", "detect", "executorch").tier == "blocked"
+    assert get_support("teed", "edge", "executorch").tier == "experimental"
+    assert get_support("dexined", "edge", "executorch").tier == "experimental"
+
+
 def test_tflite_support_keys_use_canonical_tasks():
     from libreyolo.export.tflite import supported_tflite_exports
 
@@ -267,6 +290,7 @@ def test_generated_export_docs_are_current():
         capture_output=True,
         text=True,
         env=env,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 

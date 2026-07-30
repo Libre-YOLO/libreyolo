@@ -87,6 +87,69 @@ _add(
 )
 _add(
     "validated",
+    ("ec", "picodet", "rtdetr", "yolo9_e2e", "yolox"),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK export, runtime execution, and matched "
+        "post-NMS detection parity are covered by the external-data flagship "
+        "test in tests/e2e/test_executorch.py."
+    ),
+    since="1.3",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "blocked",
+    ("rtmdet",),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "ExecuTorch 1.2 XNNPACK lowering fails in FuseBatchNormPass because "
+        "the generated graph has a duplicate fused parameter name."
+    ),
+)
+_add(
+    "blocked",
+    ("deimv2",),
+    ("detect",),
+    ("executorch",),
+    reason=(
+        "The trained atto model captures, lowers, and serializes, but the "
+        "ExecuTorch 1.2 runtime process terminates while executing forward."
+    ),
+)
+_add(
+    "validated",
+    ("efficientnetv2", "mobilenetv4", "resnet"),
+    ("classify",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK logits cosine and top-1 parity are covered "
+        "by the external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.3",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
+    ("pidnet",),
+    ("semantic",),
+    ("executorch",),
+    reason=(
+        "Trained-checkpoint XNNPACK semantic-mask parity is covered by the "
+        "external-data flagship test in tests/e2e/test_executorch.py."
+    ),
+    since="1.3",
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
+    "validated",
     ("yolo9",),
     ("detect",),
     ("tensorrt", "openvino"),
@@ -371,10 +434,25 @@ _add(
     constraint="fixed-resolution batch-1 edge-probability canvas",
 )
 _add(
+    "experimental",
+    ("teed", "dexined"),
+    ("edge",),
+    ("executorch",),
+    reason=(
+        "Full XNNPACK conversion, runtime execution, two-input sensitivity, "
+        "and deterministic random-weight parity are covered. Redistributable "
+        "trained checkpoints are unavailable, so task-accuracy parity has not "
+        "been established."
+    ),
+    constraint=(
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
+    ),
+)
+_add(
     "blocked",
     ("teed", "dexined"),
     ("edge",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "executorch"}),
     reason=(
         "The edge exported-runtime contract is ONNX-only in v1; add runtime "
         "parity before enabling another format."
