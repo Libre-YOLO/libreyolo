@@ -618,15 +618,12 @@ _add(
     constraint="FP32 with a fixed export canvas",
 )
 _add(
-    "experimental",
-    ("yolo1",),
+    "validated",
+    ("yolo1", "picodet", "rtmdet"),
     ("detect",),
     ("tensorrt",),
-    reason=(
-        "TensorRT 10.16 FP32 exports, reloads, and clears strict two-input raw "
-        "parity, but near-tied synthetic predictions change the public top-k "
-        "class set. Trained-weight predict parity is still required."
-    ),
+    since="1.6",
+    constraint="TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448",
 )
 _add(
     "experimental",
@@ -634,31 +631,73 @@ _add(
     ("detect",),
     ("tensorrt",),
     reason=(
-        "TensorRT 10.16 FP32 exports, reloads, and clears the two-input raw "
-        "gate, but the synthetic public top-k class set drifts. Trained-weight "
-        "predict parity is still required."
+        "TensorRT 10.16 FP32 exports and reloads, but the permissively licensed "
+        "trained checkpoint changes the public top-k class membership."
     ),
 )
 _add(
     "experimental",
-    ("yolo9_e2e", "yolo9_p2"),
+    ("yolo9_e2e",),
     ("detect",),
     ("tensorrt",),
     reason=(
-        "TensorRT 10.16 FP32 exports and reloads, but a deliberately "
-        "image-sensitive synthetic head exposes raw numeric drift beyond the "
-        "detector parity tolerance."
+        "Repeated TensorRT 10.16 FP32 engine builds with the permissively "
+        "licensed trained checkpoint alternate between public top-k class "
+        "drift and parity."
     ),
 )
 _add(
     "experimental",
-    ("yolox", "picodet", "rtmdet"),
+    ("yolo9_p2",),
     ("detect",),
     ("tensorrt",),
     reason=(
-        "TensorRT 10.16 FP32 exports and reloads, but the deterministic random "
-        "fixture is too input-insensitive to support a numeric promotion. A "
-        "permissively licensed trained-weight parity gate is required."
+        "TensorRT 10.16 FP32 exports and reloads, but the pinned permissive "
+        "YOLO9 transfer fixture changes the public top-k class membership."
+    ),
+)
+_add(
+    "experimental",
+    ("yolox",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "The permissively licensed trained checkpoint exports, reloads, and "
+        "passes public predict parity, but normalized raw error is 1.6% and "
+        "image signal is only 2.1 times the conversion error."
+    ),
+)
+_add(
+    "experimental",
+    ("rtdetr",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "The permissively licensed trained checkpoint exports, reloads, and "
+        "passes public predict parity, but normalized raw outputs drift by "
+        "17% to 38% after TensorRT 10.16 conversion."
+    ),
+)
+_add(
+    "experimental",
+    ("yolonas",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "A deterministic synthetic trained fixture exports, reloads, and "
+        "passes public predict parity, but image signal is only 4 to 5 times "
+        "the TensorRT conversion error."
+    ),
+)
+_add(
+    "experimental",
+    ("yolonas",),
+    ("pose",),
+    ("tensorrt",),
+    reason=(
+        "A deterministic synthetic trained fixture exports, reloads, and "
+        "passes public predict parity, but image signal is only 2 to 6 times "
+        "the TensorRT conversion error."
     ),
 )
 _add(

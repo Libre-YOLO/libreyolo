@@ -206,23 +206,30 @@ def test_round9_promotes_three_parity_cells_and_records_seven_gaps():
         assert "ModulatedDeformConv2d" in entry.reason
 
 
-def test_round10_promotes_three_tensorrt_detectors_and_records_seven_holds():
+def test_round10_promotes_three_tensorrt_detectors():
     for family in ("yolo2", "yolo3", "yolo4"):
         entry = get_support(family, "detect", "tensorrt")
         assert entry.tier == "validated"
         assert "FP32" in entry.constraint
 
-    measured_holds = {
-        "yolo1": "top-k class set",
-        "yolo7": "top-k class set",
-        "yolo9_e2e": "raw numeric drift",
-        "yolo9_p2": "raw numeric drift",
-        "yolox": "trained-weight parity",
-        "picodet": "trained-weight parity",
-        "rtmdet": "trained-weight parity",
-    }
-    for family, reason_fragment in measured_holds.items():
+
+def test_round11_promotes_three_trained_tensorrt_detectors_and_records_holds():
+    for family in ("yolo1", "picodet", "rtmdet"):
         entry = get_support(family, "detect", "tensorrt")
+        assert entry.tier == "validated"
+        assert "TensorRT 10.16 FP32" in entry.constraint
+
+    measured_holds = {
+        ("yolo7", "detect"): "trained checkpoint",
+        ("yolo9_e2e", "detect"): "trained checkpoint",
+        ("yolo9_p2", "detect"): "transfer fixture",
+        ("yolox", "detect"): "1.6%",
+        ("rtdetr", "detect"): "17% to 38%",
+        ("yolonas", "detect"): "4 to 5 times",
+        ("yolonas", "pose"): "2 to 6 times",
+    }
+    for (family, task), reason_fragment in measured_holds.items():
+        entry = get_support(family, task, "tensorrt")
         assert entry.tier == "experimental"
         assert reason_fragment in entry.reason
 

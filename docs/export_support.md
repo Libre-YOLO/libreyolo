@@ -48,7 +48,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |  |
-| picodet | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
+| picodet | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |  |
 | pidnet | semantic | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | ppocr | ocr |  |  |  |  |  |  |  |  |
@@ -62,7 +62,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | rtdetr | detect | ✓ | ✓ | exp | ✓ |  |  | exp | ✓ |
 | rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
 | rtdetrv4 | detect | exp | ✓ | exp | ✓ |  |  |  | ✓ |
-| rtmdet | detect | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
+| rtmdet | detect | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | rtmdet | segment |  |  |  |  |  |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |  |
@@ -74,7 +74,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |
 | swinir | restore | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ |  |  |  |  |  |  |  |
-| yolo1 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
+| yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | yolo3 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | yolo4 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
@@ -157,6 +157,7 @@ A check mark applies only under any constraint listed here.
 - `nafnet` / `restore` / `openvino`: fixed-resolution export canvas
 - `nafnet` / `restore` / `ncnn`: fixed-resolution export canvas
 - `nafnet` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `picodet` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `picodet` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `picodet` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `picosam3` / `segment` / `onnx`: raw fixed-96 ROI contract: roi_image -> mask_logits
@@ -184,6 +185,7 @@ A check mark applies only under any constraint listed here.
 - `rtdetrv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `rtdetrv4` / `detect` / `openvino`: fixed export canvas
 - `rtdetrv4` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `rtmdet` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `rtmdet` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `rtmdet` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `segformer` / `semantic` / `onnx`: fixed square input divisible by 32
@@ -197,6 +199,7 @@ A check mark applies only under any constraint listed here.
 - `swinir` / `restore` / `openvino`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `tflite`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `teed` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
+- `yolo1` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `ncnn`: fixed 448x448 input
 - `yolo1` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
