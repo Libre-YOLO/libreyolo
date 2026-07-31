@@ -63,18 +63,20 @@ va-bench rf100vl --all --data-dir ./rf100-vl --weights-root ./rf100vl-weights
   cannot silently score different data.
 
   ```bash
-  pip install "huggingface_hub[hf_transfer]"
-  export HF_HUB_ENABLE_HF_TRANSFER=1        # THIS is the speed lever
+  pip install huggingface_hub
   python -c "from huggingface_hub import snapshot_download; \
     snapshot_download('LibreYOLO/rf100-vl', repo_type='dataset', \
                       local_dir='rf100-vl', max_workers=8)"
   cd rf100-vl && for f in *.tar; do tar xf "$f" && rm "$f"; done
   ```
 
-  Be precise about what makes it fast: `HF_HUB_ENABLE_HF_TRANSFER=1` (the Rust
-  downloader) plus few large files instead of 164k small ones. An HF token is
-  NOT required for a public dataset and does not raise throughput, but staying
-  logged in (`huggingface-cli login`, or `HF_TOKEN` in the env) gets the higher
+  What makes it fast is few large files instead of 164k small ones, served by
+  the hub's default (Xet-backed) transfer. Do not cargo-cult the old
+  `huggingface_hub[hf_transfer]` extra or `HF_HUB_ENABLE_HF_TRANSFER=1`: on
+  huggingface_hub 1.x the extra installs nothing and the env var is ignored
+  (both only mattered on hub 0.x). An HF token is NOT required for a public
+  dataset and does not raise throughput, but staying logged in
+  (`huggingface-cli login`, or `HF_TOKEN` in the env) gets the higher
   authenticated rate limit, which is worth having when several boxes pull at
   once. Measured: Roboflow serves ~2.2 MB/s from a home line and ~16 MB/s from
   a datacenter, so the canonical path costs 45 min to 5.6 h; the tars are minutes.
