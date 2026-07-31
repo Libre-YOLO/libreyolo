@@ -500,3 +500,35 @@ def test_create_dataloader_uses_sampler_visible_size():
     )
 
     assert len(loader) == 1
+
+
+def test_create_dataloader_persistent_workers_opt_in():
+    import dataclasses
+
+    import torch
+
+    from libreyolo.training.config import TrainConfig
+
+    fields = {f.name: f for f in dataclasses.fields(TrainConfig)}
+    assert fields["persistent_workers"].default is False
+
+    class _Tiny(torch.utils.data.Dataset):
+        def __len__(self):
+            return 4
+
+        def __getitem__(self, index):
+            return index
+
+    # Constructing with zero workers must silently drop the flag (PyTorch
+    # rejects persistent_workers without workers); with workers it sticks.
+    loader = create_dataloader(
+        _Tiny(), batch_size=2, num_workers=0, persistent_workers=True
+    )
+    assert loader.persistent_workers is False
+    loader = create_dataloader(
+        _Tiny(), batch_size=2, num_workers=2, persistent_workers=True
+    )
+    assert loader.persistent_workers is True
+    # Default stays off: historical behavior is unchanged.
+    loader = create_dataloader(_Tiny(), batch_size=2, num_workers=2)
+    assert loader.persistent_workers is False

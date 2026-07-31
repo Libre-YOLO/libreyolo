@@ -186,6 +186,13 @@ class TrainConfig:
 
     # System
     workers: int = 4
+    # Keep dataloader workers alive across epochs instead of respawning them
+    # every epoch. Off by default: respawned workers are re-seeded per epoch,
+    # so an interrupted-and-resumed run replays the same augmentation stream,
+    # and historical behavior is preserved. Turning it on removes the
+    # per-epoch worker startup cost, which is significant on Windows (spawn
+    # start method) and for short epochs on small datasets.
+    persistent_workers: bool = False
     # Image caching to speed dataloading across epochs. Accepts False (off),
     # True/'ram' (decoded images in RAM), or 'disk' (decoded images as .npy
     # beside each source image). 'disk' is the safest choice with dataloader

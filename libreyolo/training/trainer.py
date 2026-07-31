@@ -877,6 +877,7 @@ class BaseTrainer(ABC):
             shuffle=True,
             pin_memory=self.device.type == "cuda",
             sampler=sampler,
+            persistent_workers=self.config.persistent_workers,
         )
 
         if is_main_process():
@@ -989,6 +990,8 @@ class BaseTrainer(ABC):
             sampler=sampler,
             num_workers=self.config.workers,
             pin_memory=self.device.type == "cuda",
+            persistent_workers=self.config.persistent_workers
+            and self.config.workers > 0,
             collate_fn=collate_fn,
             drop_last=visible_samples >= per_rank_batch,
         )
@@ -1101,6 +1104,8 @@ class BaseTrainer(ABC):
             sampler=sampler,
             num_workers=self.config.workers,
             pin_memory=self.device.type == "cuda",
+            persistent_workers=self.config.persistent_workers
+            and self.config.workers > 0,
             collate_fn=semantic_collate_fn,
             drop_last=visible_samples >= per_rank_batch,
         )
@@ -1180,6 +1185,8 @@ class BaseTrainer(ABC):
             sampler=sampler,
             num_workers=self.config.workers,
             pin_memory=self.device.type == "cuda",
+            persistent_workers=self.config.persistent_workers
+            and self.config.workers > 0,
             collate_fn=depth_collate_fn,
             drop_last=visible_samples >= per_rank_batch,
         )
@@ -1247,6 +1254,8 @@ class BaseTrainer(ABC):
             sampler=sampler,
             num_workers=self.config.workers,
             pin_memory=self.device.type == "cuda",
+            persistent_workers=self.config.persistent_workers
+            and self.config.workers > 0,
             collate_fn=restore_collate_fn,
             drop_last=visible_samples >= per_rank_batch,
         )

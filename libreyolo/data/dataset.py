@@ -1018,6 +1018,7 @@ def create_dataloader(
     shuffle: bool = True,
     pin_memory: bool = True,
     sampler=None,
+    persistent_workers: bool = False,
 ):
     """
     Create a DataLoader for YOLOX training.
@@ -1047,4 +1048,5 @@ def create_dataloader(
         pin_memory=pin_memory,
         collate_fn=yolox_collate_fn,
         drop_last=drop_last,
+        persistent_workers=persistent_workers and num_workers > 0,
     )
