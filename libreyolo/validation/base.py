@@ -46,6 +46,7 @@ class BaseValidator(ABC):
             "preprocess": 0.0,
             "inference": 0.0,
             "postprocess": 0.0,
+            "val_loss": 0.0,
             "total": 0.0,
         }
         self.save_dir: Optional[Path] = None
@@ -96,6 +97,7 @@ class BaseValidator(ABC):
             "preprocess": 0.0,
             "inference": 0.0,
             "postprocess": 0.0,
+            "val_loss": 0.0,
             "total": 0.0,
         }
 
@@ -136,8 +138,12 @@ class BaseValidator(ABC):
 
                 # Optional family-specific metrics (for example validation
                 # loss) consume the raw forward output before postprocessing
-                # mutates or discards model-specific tensors.
+                # mutates or discards model-specific tensors. Timed into its
+                # own bucket so the cost of an optional metric is visible
+                # rather than hiding in the gap between the other timers.
+                t_loss = time.time()
                 self._update_batch_metrics(preds, images, targets)
+                self.speed["val_loss"] += time.time() - t_loss
 
                 t3 = time.time()
                 detections = self._postprocess_predictions(preds, batch)
@@ -174,6 +180,8 @@ class BaseValidator(ABC):
             metrics["speed/postprocess_ms"] = (
                 self.speed["postprocess"] / self.seen * 1000
             )
+            if self.speed.get("val_loss"):
+                metrics["speed/val_loss_ms"] = self.speed["val_loss"] / self.seen * 1000
             metrics["speed/total_ms"] = ms_per_image
             metrics["speed/total_s"] = self.speed["total"]
             metrics["speed/images_seen"] = self.seen

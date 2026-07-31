@@ -54,22 +54,26 @@ class YOLO9Trainer(BaseTrainer):
         return f"YOLOv9-{self.config.size}"
 
     def validate_validation_loss_config(self) -> None:
-        if not getattr(self.config, "val_loss", False):
-            return
-
         from .nn import DDetect, LibreYOLO9Model
 
+        # yolo9_e2e and yolo9_p2 subclass this trainer and YOLO9Config, so the
+        # auto default reaches them too. They compute their objective at a
+        # different head boundary, so they resolve to disabled rather than
+        # failing a run nobody configured.
         task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
-        standard_model = (
-            self.get_model_family() == "yolo9"
+        supported = (
+            task == "detect"
+            and self.get_model_family() == "yolo9"
             and type(self.model) is LibreYOLO9Model
             and type(self.model.head) is DDetect
         )
-        if task != "detect" or not standard_model:
-            raise ValueError(
+        self.val_loss_enabled = self.resolve_val_loss(
+            supported=supported,
+            unsupported_message=(
                 "val_loss=True currently supports standard YOLO9 detection only; "
                 "YOLO9-E2E, YOLO9-P2, and non-detect tasks are not supported"
-            )
+            ),
+        )
 
     def build_validation_loss_adapter(self, model: torch.nn.Module):
         from .validation_loss import YOLO9ValidationLoss

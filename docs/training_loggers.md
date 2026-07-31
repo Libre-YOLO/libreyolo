@@ -66,11 +66,11 @@ backend package raises at construction with the install command.
 
 ### Validation loss for detection
 
-Standard YOLO9 and RF-DETR detection training can opt in to validation loss:
-
-```python
-model.train(data="coco8.yaml", val_loss=True)
-```
+Standard YOLO9 and RF-DETR detection training report validation loss without
+any configuration. Validation mAP tells you what the model scores; validation
+loss tells you what the objective it is actually optimizing does on held-out
+data, and it moves earlier and more smoothly than mAP when a run starts to
+overfit.
 
 The validator reuses the model output already produced for mAP; it does not
 run a second network forward. YOLO9 reports `val/loss`, `val/loss/box`,
@@ -80,12 +80,36 @@ the same main, auxiliary-decoder, and encoder terms as training. The always-on
 artifact names are the corresponding `metrics/loss...` keys, and
 `libreyolo monitor` overlays `metrics/loss` with `train/loss`.
 
-This option is off by default because target assignment adds work and memory
-to validation. It runs under `torch.no_grad()` with the evaluation/EMA model,
-and distributed training computes it locally on rank 0 without collectives.
-Best-checkpoint selection remains based on the configured accuracy metric.
-YOLO9-E2E, YOLO9-P2, augmented validation, and non-detection tasks are not
-supported by this first implementation and raise a clear configuration error.
+`val_loss` is tri-state. Leave it unset for the automatic behavior above, pass
+`val_loss=False` to skip the work, or pass `val_loss=True` to require it:
+
+```python
+model.train(data="coco8.yaml", val_loss=False)  # skip it
+model.train(data="coco8.yaml", val_loss=True)   # require it, or fail
+```
+
+Unset resolves to enabled only where the objective is implemented, so
+YOLO9-E2E, YOLO9-P2, and the non-detection RF-DETR tasks simply do not report
+it. An explicit `val_loss=True` on one of those raises instead, because a
+requested metric that silently never appears is worse than a failed run.
+
+It runs under `torch.no_grad()` with the evaluation/EMA model, and distributed
+training computes it locally on rank 0 without collectives. Best-checkpoint
+selection remains based on the configured accuracy metric. The per-image cost
+is reported as `speed/val_loss_ms` alongside the other validation timings.
+
+Two caveats worth knowing:
+
+- Early in from-scratch training the number is unreliable, because an
+  untrained model's BatchNorm running statistics are still far from its batch
+  statistics, so the evaluation-mode forward produces extreme activations. Under
+  mixed precision that forward overflows; the validator detects the non-finite
+  result, skips the metric for that pass, and logs why rather than writing NaN
+  into the metric history. Training from pretrained weights, or with
+  `amp=False`, gives a usable number from the first epoch.
+- The value is comparable across epochs of the same run, not against the
+  training loss. Validation uses the EMA weights, unaugmented data, and
+  evaluation-mode behavior, and RF-DETR additionally uses a single query group.
 
 ### TensorBoard
 

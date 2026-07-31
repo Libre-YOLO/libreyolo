@@ -14,10 +14,12 @@ from libreyolo.models.rfdetr.trainer import RFDETRTrainer
 from libreyolo.models.rfdetr.validation_loss import RFDETRValidationLoss
 from libreyolo.models.yolo9 import loss as yolo9_loss_module
 from libreyolo.models.yolo9.loss import YOLO9Loss
+from libreyolo.models.yolo9.trainer import YOLO9Trainer
 from libreyolo.models.yolo9.validation_loss import YOLO9ValidationLoss
 from libreyolo.models.yolo9_e2e.trainer import YOLO9E2ETrainer
 from libreyolo.models.yolo9_p2.trainer import YOLO9P2Trainer
-from libreyolo.training.config import YOLO9Config
+from libreyolo.training.config import TrainConfig, YOLO9Config
+from libreyolo.training.trainer import BaseTrainer
 from libreyolo.training.loggers.base import epoch_metrics
 from libreyolo.ui.train_monitor_page import INDEX_HTML
 from libreyolo.validation.config import ValidationConfig
@@ -58,9 +60,132 @@ def _validator(adapter: _Adapter, *, augment: bool = False) -> DetectionValidato
     return DetectionValidator(model, config, loss_adapter=adapter)
 
 
-def test_validation_loss_is_opt_in_by_default():
-    assert YOLO9Config().val_loss is False
-    assert RFDETRConfig().val_loss is False
+def test_validation_loss_defaults_to_auto():
+    """Unset means auto: enabled wherever the family implements it."""
+    assert TrainConfig().val_loss is None
+    assert YOLO9Config().val_loss is None
+    assert RFDETRConfig().val_loss is None
+
+
+def _resolved(trainer_class, *, task, model, val_loss):
+    trainer = trainer_class.__new__(trainer_class)
+    trainer.config = SimpleNamespace(val_loss=val_loss)
+    trainer.wrapper_model = SimpleNamespace(task=task)
+    trainer.model = model
+    trainer.validate_validation_loss_config()
+    return trainer.val_loss_enabled
+
+
+def _yolo9_model():
+    from libreyolo.models.yolo9.nn import LibreYOLO9Model
+
+    return LibreYOLO9Model(config="t", nb_classes=80, img_size=640)
+
+
+@pytest.mark.parametrize(
+    "trainer_class,task",
+    [
+        (YOLO9E2ETrainer, "detect"),
+        (YOLO9P2Trainer, "detect"),
+        (YOLO9Trainer, "segment"),
+    ],
+)
+def test_auto_default_disables_unsupported_yolo9_variants(trainer_class, task):
+    """Regression: the auto default must never break a run nobody configured.
+
+    yolo9_e2e and yolo9_p2 subclass YOLO9Config, so a plain ``True`` default
+    would have raised at setup for every one of their runs.
+    """
+    assert (
+        _resolved(trainer_class, task=task, model=SimpleNamespace(), val_loss=None)
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    "task", ["segment", "pose", "obb", "classify", "semantic"]
+)
+def test_auto_default_disables_non_detection_rfdetr_tasks(task):
+    """RFDETRConfig serves every RF-DETR task, so auto must stay silent."""
+    assert (
+        _resolved(RFDETRTrainer, task=task, model=SimpleNamespace(), val_loss=None)
+        is False
+    )
+
+
+def test_auto_default_enables_standard_yolo9_detection():
+    assert (
+        _resolved(YOLO9Trainer, task="detect", model=_yolo9_model(), val_loss=None)
+        is True
+    )
+
+
+def test_explicit_false_disables_supported_family():
+    assert (
+        _resolved(YOLO9Trainer, task="detect", model=_yolo9_model(), val_loss=False)
+        is False
+    )
+
+
+def test_unsupported_family_rejects_explicit_request():
+    """A family with no adapter must fail loudly rather than drop the request."""
+
+    trainer = SimpleNamespace(
+        config=SimpleNamespace(val_loss=True),
+        get_model_family=lambda: "yolox",
+        val_loss_enabled=None,
+    )
+    trainer.resolve_val_loss = BaseTrainer.resolve_val_loss.__get__(trainer)
+    trainer.validate_validation_loss_config = (
+        BaseTrainer.validate_validation_loss_config.__get__(trainer)
+    )
+    with pytest.raises(ValueError, match="not supported by yolox"):
+        trainer.validate_validation_loss_config()
+
+    trainer.config = SimpleNamespace(val_loss=None)
+    trainer.validate_validation_loss_config()
+    assert trainer.val_loss_enabled is False
+
+
+def test_non_finite_loss_is_discarded_and_reported(caplog):
+    """A NaN must never reach the metric history."""
+
+    class _NanAdapter:
+        max_labels = 100
+
+        def __call__(self, predictions, targets, *, image_size):
+            del predictions, targets, image_size
+            return {"loss": torch.tensor(float("nan")), "loss/box": 1.0}
+
+    validator = _validator(_NanAdapter())
+    validator._update_batch_metrics(
+        {}, torch.zeros(1, 3, 16, 16), torch.zeros(1, 2, 5)
+    )
+
+    assert validator._validation_loss_metrics() == {}
+    assert "non-finite validation loss" in caplog.text
+    assert "amp=False" in caplog.text
+
+
+def test_infinite_loss_is_also_discarded():
+    class _InfAdapter:
+        max_labels = 100
+
+        def __call__(self, predictions, targets, *, image_size):
+            del predictions, targets, image_size
+            return {"loss": torch.tensor(float("inf"))}
+
+    validator = _validator(_InfAdapter())
+    validator._update_batch_metrics(
+        {}, torch.zeros(1, 3, 16, 16), torch.zeros(1, 2, 5)
+    )
+    assert validator._validation_loss_metrics() == {}
+
+
+def test_validation_loss_time_has_its_own_speed_bucket():
+    """The cost of an optional metric must be visible, not hidden in a gap."""
+    validator = _validator(_Adapter())
+    assert "val_loss" in validator.speed
 
 
 @pytest.mark.parametrize("trainer_class", [YOLO9E2ETrainer, YOLO9P2Trainer])

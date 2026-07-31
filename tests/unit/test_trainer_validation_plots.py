@@ -146,6 +146,8 @@ def test_trainer_passes_opt_in_loss_adapter_to_detection_validator(monkeypatch):
     trainer.save_dir = SimpleNamespace()
     trainer._scalar_mapping = lambda values: values
     trainer.build_validation_loss_adapter = lambda model: adapter
+    # setup() normally resolves the tri-state config into this flag.
+    trainer.val_loss_enabled = True
 
     result = trainer._run_validation(0)
 

@@ -1,6 +1,7 @@
 """Detection validator for LibreYOLO."""
 
 import logging
+from math import isfinite
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple, TYPE_CHECKING
 
@@ -478,6 +479,7 @@ class DetectionValidator(BaseValidator):
                     image_size=(int(images.shape[-2]), int(images.shape[-1])),
                 )
             scalars = self._validation_loss_scalars(values)
+            self._require_finite_validation_loss(scalars)
         except Exception as exc:
             # Validation loss is auxiliary to the established COCO metrics. A
             # family adapter failure must not discard mAP or best-checkpoint
@@ -504,6 +506,27 @@ class DetectionValidator(BaseValidator):
                 self._validation_loss_totals.get(name, 0.0) + value
             )
         self._validation_loss_batches += 1
+
+    @staticmethod
+    def _require_finite_validation_loss(scalars: Mapping[str, float]) -> None:
+        """Reject a non-finite loss before it reaches the metric history.
+
+        A NaN here is almost never arithmetic in the loss: it means the forward
+        already overflowed under AMP, which happens while a from-scratch model's
+        BatchNorm running statistics are still far from its batch statistics.
+        The averages are unusable at that point, and a NaN written to
+        results.csv, metrics.jsonl and the loss chart is worse than no number,
+        so this routes into the same disable-and-warn path as an adapter crash.
+        """
+        bad = sorted(name for name, value in scalars.items() if not isfinite(value))
+        if bad:
+            raise ValueError(
+                f"non-finite validation loss for {', '.join(bad)}. The model "
+                "forward overflowed under mixed precision, which is expected "
+                "early in from-scratch training before BatchNorm statistics "
+                "settle. Train with amp=False to compute validation in float32, "
+                "or start from pretrained weights."
+            )
 
     @staticmethod
     def _validation_loss_scalars(

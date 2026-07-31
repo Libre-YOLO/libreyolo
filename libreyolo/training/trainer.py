@@ -131,6 +131,9 @@ class BaseTrainer(ABC):
                 )
         self.model = model
         self.wrapper_model = wrapper_model
+        # Resolved during setup() by validate_validation_loss_config; the
+        # config value alone is tri-state and must not be read directly.
+        self.val_loss_enabled = False
         self.callbacks = TrainCallbackList(callbacks)
         for logger_callback in resolve_loggers(loggers):
             self.callbacks.append(logger_callback)
@@ -284,12 +287,31 @@ class BaseTrainer(ABC):
     def on_setup(self):
         """Called after model is on device, before data setup (e.g. bias init)."""
 
+    def resolve_val_loss(self, *, supported: bool, unsupported_message: str) -> bool:
+        """Turn the tri-state ``val_loss`` config into a decision for this run.
+
+        ``None`` (auto) follows ``supported``, so a family that implements
+        validation loss gets it without the caller asking and every other
+        family/task combination stays silent. An explicit ``True`` that the
+        family cannot honour raises: the caller asked for a number we would
+        otherwise never report, and silently dropping it is how a request
+        becomes a mystery.
+        """
+        requested = getattr(self.config, "val_loss", None)
+        if requested is None:
+            return supported
+        if requested and not supported:
+            raise ValueError(unsupported_message)
+        return bool(requested)
+
     def validate_validation_loss_config(self) -> None:
-        """Fail early when a family does not implement ``val_loss=True``."""
-        if getattr(self.config, "val_loss", False):
-            raise ValueError(
+        """Resolve ``val_loss`` for a family that does not implement it."""
+        self.val_loss_enabled = self.resolve_val_loss(
+            supported=False,
+            unsupported_message=(
                 f"val_loss=True is not supported by {self.get_model_family()} training"
-            )
+            ),
+        )
 
     def build_validation_loss_adapter(self, model: nn.Module):
         """Build the family adapter used by rank-0 training validation."""
@@ -2647,7 +2669,7 @@ class BaseTrainer(ABC):
                 else:
                     validator_cls = DetectionValidator
                 validator_kwargs = {}
-                if task == "detect" and getattr(self.config, "val_loss", False):
+                if task == "detect" and getattr(self, "val_loss_enabled", False):
                     try:
                         validator_kwargs["loss_adapter"] = (
                             self.build_validation_loss_adapter(eval_pytorch_model)
