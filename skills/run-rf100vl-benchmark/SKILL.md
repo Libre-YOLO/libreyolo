@@ -139,7 +139,12 @@ default; do not turn it off for a run you intend to publish, because it is the
 only thing that makes the claim below true.
 
 - Upload the per-model artifact folder to a Hugging Face dataset repo under
-  the LibreYOLO org (one folder per model). Anyone can then rescore from the
+  the LibreYOLO org (one folder per model) with `va-bench sync-artifacts`.
+  Create the results repo by hand first, then use a **fine-grained token
+  scoped to that one repo with write access only**; the uploader treats
+  `create_repo` as best-effort precisely so such a token works. Pass
+  `--eval-dir` or the per-dataset predictions are not collected, and those are
+  what make the claim below true. Anyone can then rescore from the
   JSONs with pycocotools, no GPU needed; that is the reproducibility story.
   Verified end to end: a stock-pycocotools rescore of a saved dump, importing
   no harness code, reproduced the harness AP to four decimals.
@@ -154,6 +159,22 @@ Account setup, 2FA, launch, exec, tail, pull, guard, and destroy discipline:
 follow `skills/launch-serverless-gpu-job` (Vast section). This section adds
 only the RF100-VL specifics.
 
+- **Image, tested end to end:**
+  `vastai/pytorch:2.11.0-cu128-cuda-12.9-mini-py312-2026-06-15`. A Vast image
+  takes their well-travelled key-injection path; a plain `pytorch/pytorch`
+  works on many hosts but on others sshd refuses your key with `bad ownership
+  or modes for file /root/.ssh/authorized_keys` and there is no way in to fix
+  it. The cu128 build matters just as much: their default tag cannot run a
+  5090 (`no kernel image is available for execution on the device`). The
+  interpreter is `/venv/main/bin/python`, not `python`.
+- **Accept or reject the host in 60 seconds, before installing anything.**
+  `deploy/vast/accept-box.sh` in the harness repo checks GPUs, torch kernels
+  for those GPUs, a real matmul, huggingface.co, PyPI, and disk. Six rented
+  hosts in one evening produced five distinct infrastructure failures, none of
+  them visible on the offer card, including two whose networks could not reach
+  huggingface.co. That failure is the nastiest: `snapshot_download` does not
+  error, it hangs silently while the meter runs. Budget about a dollar for the
+  host search and destroy duds immediately.
 - Workload shape: independent single-GPU jobs, batch 16 at 640 px, under 12
   GB VRAM for most families. No interconnect requirement, so interruptible
   consumer boxes dominate datacenter cards on price per GPU-hour.
@@ -173,7 +194,14 @@ only the RF100-VL specifics.
   before `destroy`.
 - Local-first rule: the whole flow must pass on a local GPU (one dataset,
   then the rf20vl pilot) before renting anything. Credits are for the
-  campaign, not for debugging.
+  campaign, not for debugging. Corollary proven in practice: when a variable
+  changes (a new image, a new provider), test it on ONE cheap GPU first. A
+  single-GPU box settled an image question for about 15 cents that had
+  already cost several dollars of guessing on 8-GPU boxes.
+- Human-flown first: `docs/rf100vl-operator-runbook.md` in the harness repo is
+  every command from rent to destroy, for a person, with what healthy output
+  looks like and where the money goes. Automation is for flows someone has
+  already flown by hand.
 - Rough sizing: 0.5 to 1 consumer-GPU-hour per dataset for YOLO-family
   models, 1 to 2.5 for DETR-family; a full 100-dataset pass per family lands
   roughly between 30 and 200 GPU-hours depending on family.
