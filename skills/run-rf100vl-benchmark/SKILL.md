@@ -54,7 +54,18 @@ va-bench rf100vl-train --data-dir ./rf100-vl --weights-root ./rf100vl-weights --
 # per-dataset test-split eval: cached and resumable, emits one
 # va.submission.v1 JSON with a per-dataset rf100vl block
 va-bench rf100vl --all --data-dir ./rf100-vl --weights-root ./rf100vl-weights
+
+# or both plus checks and rendering as ONE resumable command:
+# preflight -> train -> eval -> markdown report beside the submission
+va-bench rf100vl-campaign --model yolov9t --data-dir ./rf100-vl \
+  --weights-root ./rf100vl-weights --gpus 0,1,2,3,4,5,6,7
 ```
+
+Supporting verbs: `rf100vl-preflight` (validate the box BEFORE spending
+GPU-hours: capabilities, data-vs-lock, splits, recipe, torch-vs-GPU sm
+support, disk), `rf100vl-dash` (live localhost dashboard: per-GPU lanes,
+dataset grid, loss/mAP curves, log tails; SSH-tunnel it from rented boxes),
+`rf100vl-report` (submission JSON to markdown report or leaderboard).
 
 - **Dataset, fast path (use this on rented boxes).** Pull the pre-built copy at
   [`LibreYOLO/rf100-vl`](https://huggingface.co/datasets/LibreYOLO/rf100-vl):
