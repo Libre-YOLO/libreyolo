@@ -1122,7 +1122,11 @@ def build_model(args: Any):
     return model
 
 
-def build_criterion_and_postprocessors(args: Any):
+def build_criterion_and_postprocessors(
+    args: Any,
+    *,
+    distributed_normalize: bool = True,
+):
     device = torch.device(args.device)
     matcher = build_matcher(args)
     weight_dict = {"loss_ce": args.cls_loss_coef, "loss_bbox": args.bbox_loss_coef}
@@ -1175,6 +1179,7 @@ def build_criterion_and_postprocessors(args: Any):
             mask_point_sample_ratio=args.mask_point_sample_ratio,
             use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
+            distributed_normalize=distributed_normalize,
         )
     else:
         criterion = SetCriterion(
@@ -1190,6 +1195,7 @@ def build_criterion_and_postprocessors(args: Any):
             ia_bce_loss=args.ia_bce_loss,
             use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
+            distributed_normalize=distributed_normalize,
         )
     criterion.to(device)
     postprocess = PostProcess(num_select=args.num_select)

@@ -64,6 +64,29 @@ start. A backend failure mid-run (server down, auth expired) disables
 the logger with a warning; training is never interrupted. A missing
 backend package raises at construction with the install command.
 
+### Validation loss for detection
+
+Standard YOLO9 and RF-DETR detection training can opt in to validation loss:
+
+```python
+model.train(data="coco8.yaml", val_loss=True)
+```
+
+The validator reuses the model output already produced for mAP; it does not
+run a second network forward. YOLO9 reports `val/loss`, `val/loss/box`,
+`val/loss/cls`, and `val/loss/dfl`. RF-DETR reports `val/loss`,
+`val/loss/ce`, `val/loss/bbox`, and `val/loss/giou`, with the total covering
+the same main, auxiliary-decoder, and encoder terms as training. The always-on
+artifact names are the corresponding `metrics/loss...` keys, and
+`libreyolo monitor` overlays `metrics/loss` with `train/loss`.
+
+This option is off by default because target assignment adds work and memory
+to validation. It runs under `torch.no_grad()` with the evaluation/EMA model,
+and distributed training computes it locally on rank 0 without collectives.
+Best-checkpoint selection remains based on the configured accuracy metric.
+YOLO9-E2E, YOLO9-P2, augmented validation, and non-detection tasks are not
+supported by this first implementation and raise a clear configuration error.
+
 ### TensorBoard
 
 ```

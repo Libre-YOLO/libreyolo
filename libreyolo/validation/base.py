@@ -134,6 +134,11 @@ class BaseValidator(ABC):
                 preds = self._inference(images)
                 self.speed["inference"] += time.time() - t2
 
+                # Optional family-specific metrics (for example validation
+                # loss) consume the raw forward output before postprocessing
+                # mutates or discards model-specific tensors.
+                self._update_batch_metrics(preds, images, targets)
+
                 t3 = time.time()
                 detections = self._postprocess_predictions(preds, batch)
                 self.speed["postprocess"] += time.time() - t3
@@ -231,6 +236,14 @@ class BaseValidator(ABC):
 
     def _save_plots(self, metrics: Dict[str, float]) -> None:
         """Override in subclasses to save validation plots."""
+
+    def _update_batch_metrics(
+        self,
+        predictions: Any,
+        images: torch.Tensor,
+        targets: Any,
+    ) -> None:
+        """Update optional metrics that consume raw per-batch predictions."""
 
     def _print_results(self, metrics: Dict[str, float]) -> None:
         logger.info("=" * 50)

@@ -226,6 +226,7 @@ class SetCriterion(nn.Module):
         # byte-identical when keypoints are disabled.
         use_grouppose_keypoints: bool = False,
         num_keypoints_per_class=None,
+        distributed_normalize: bool = True,
     ):
         """Create the criterion.
         Parameters:
@@ -256,6 +257,7 @@ class SetCriterion(nn.Module):
         # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
         self.use_grouppose_keypoints = use_grouppose_keypoints
         self.num_keypoints_per_class = list(num_keypoints_per_class) if num_keypoints_per_class else []
+        self.distributed_normalize = distributed_normalize
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss)
@@ -638,6 +640,21 @@ class SetCriterion(nn.Module):
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
+    def _box_count_normalizer(self, outputs, targets, group_detr):
+        """Return the box-count divisor for training or rank-local validation."""
+        num_boxes = sum(len(target["labels"]) for target in targets)
+        if not self.sum_group_losses:
+            num_boxes *= group_detr
+        num_boxes = torch.as_tensor(
+            [num_boxes],
+            dtype=torch.float,
+            device=next(iter(outputs.values())).device,
+        )
+        if self.distributed_normalize and is_dist_avail_and_initialized():
+            torch.distributed.all_reduce(num_boxes)
+            num_boxes = num_boxes / get_world_size()
+        return torch.clamp(num_boxes, min=1).item()
+
     def forward(self, outputs, targets):
         """This performs the loss computation.
         Parameters:
@@ -651,14 +668,10 @@ class SetCriterion(nn.Module):
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
 
-        # Compute the average number of target boxes across all nodes, for normalization purposes
-        num_boxes = sum(len(t["labels"]) for t in targets)
-        if not self.sum_group_losses:
-            num_boxes = num_boxes * group_detr
-        num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
-        if is_dist_avail_and_initialized():
-            torch.distributed.all_reduce(num_boxes)
-        num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
+        # Training uses the global average box count. Rank-0-only validation
+        # selects the local path so it never enters a collective while other
+        # ranks wait at the validation barrier.
+        num_boxes = self._box_count_normalizer(outputs, targets, group_detr)
 
         # Compute all the requested losses
         losses = {}

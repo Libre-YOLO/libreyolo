@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Mapping, Optional, Tuple, TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -19,6 +19,7 @@ _N_VAL_SAMPLES = 8  # maximum sample images stored for visualisation
 
 if TYPE_CHECKING:
     from libreyolo.models.base import BaseModel
+    from .loss import ValidationLossAdapter
 
 
 def val_collate_fn(batch):
@@ -46,9 +47,17 @@ class DetectionValidator(BaseValidator):
         self,
         model: "BaseModel",
         config: Optional[ValidationConfig] = None,
+        *,
+        loss_adapter: Optional["ValidationLossAdapter"] = None,
         **kwargs,
     ) -> None:
         super().__init__(model, config, **kwargs)
+
+        if loss_adapter is not None and self.config.augment:
+            raise ValueError(
+                "Validation loss cannot be combined with augmented validation. "
+                "The training validator uses augment=False."
+            )
 
         self.coco_evaluator = None
         self.class_names: Optional[List[str]] = None
@@ -59,6 +68,10 @@ class DetectionValidator(BaseValidator):
         self._coco_label_to_category_id: Optional[Dict[int, int]] = None
         self._yolo_coco_img_files: Optional[List[Path]] = None
         self._yolo_coco_label_files: Optional[List[Path]] = None
+        self.loss_adapter = loss_adapter
+        self._active_loss_adapter = loss_adapter
+        self._validation_loss_totals: Dict[str, float] = {}
+        self._validation_loss_batches = 0
 
     # =========================================================================
     # Setup
@@ -178,6 +191,7 @@ class DetectionValidator(BaseValidator):
             self.class_names = None
 
         self.val_preproc = self.model._get_val_preprocessor(img_size=actual_imgsz)
+        self._ensure_validation_loss_target_capacity()
         dataset_kwargs = self._dataset_kwargs()
 
         # Determine dataset format
@@ -289,6 +303,26 @@ class DetectionValidator(BaseValidator):
 
         return dataloader
 
+    def _ensure_validation_loss_target_capacity(self) -> None:
+        """Keep validation target padding at least as large as training's cap."""
+        adapter = getattr(self, "loss_adapter", None)
+        requested = (
+            getattr(adapter, "max_labels", None) if adapter is not None else None
+        )
+        if requested is None:
+            return
+        requested = int(requested)
+        if requested < 1:
+            raise ValueError("Validation-loss max_labels must be at least 1")
+        current = int(getattr(self.val_preproc, "max_labels", requested))
+        if requested > current:
+            self.val_preproc.max_labels = requested
+            logger.info(
+                "Raised validation target capacity from %d to %d for loss computation",
+                current,
+                requested,
+            )
+
     def _find_coco_annotation_file(self, data_path: Path) -> Optional[Path]:
         annotations_dir = data_path / "annotations"
         if not annotations_dir.exists():
@@ -317,6 +351,10 @@ class DetectionValidator(BaseValidator):
         from libreyolo.data import load_data_config
         from libreyolo.data.yolo_coco_api import YOLOCocoAPI
         from libreyolo.validation import COCOEvaluator
+
+        self._active_loss_adapter = getattr(self, "loss_adapter", None)
+        self._validation_loss_totals = {}
+        self._validation_loss_batches = 0
 
         if self.config.verbose:
             logger.info("Initializing COCO evaluator...")
@@ -420,6 +458,87 @@ class DetectionValidator(BaseValidator):
     # =========================================================================
     # Inference pipeline
     # =========================================================================
+
+    def _update_batch_metrics(
+        self,
+        predictions: Any,
+        images: torch.Tensor,
+        targets: torch.Tensor,
+    ) -> None:
+        """Accumulate an opt-in family loss from this batch's raw predictions."""
+        adapter = getattr(self, "_active_loss_adapter", None)
+        if adapter is None:
+            return
+
+        try:
+            with self._autocast_context():
+                values = adapter(
+                    predictions,
+                    targets,
+                    image_size=(int(images.shape[-2]), int(images.shape[-1])),
+                )
+            scalars = self._validation_loss_scalars(values)
+        except Exception as exc:
+            # Validation loss is auxiliary to the established COCO metrics. A
+            # family adapter failure must not discard mAP or best-checkpoint
+            # selection for the epoch, and partial loss averages are unsafe to
+            # publish.
+            self._active_loss_adapter = None
+            self._validation_loss_totals = {}
+            self._validation_loss_batches = 0
+            if (
+                isinstance(exc, torch.cuda.OutOfMemoryError)
+                and torch.cuda.is_available()
+            ):
+                torch.cuda.empty_cache()
+            logger.warning(
+                "Validation loss failed and was disabled for this validation "
+                "pass; detection metrics will continue: %s",
+                exc,
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+            return
+
+        for name, value in scalars.items():
+            self._validation_loss_totals[name] = (
+                self._validation_loss_totals.get(name, 0.0) + value
+            )
+        self._validation_loss_batches += 1
+
+    @staticmethod
+    def _validation_loss_scalars(
+        values: Mapping[str, torch.Tensor | float],
+    ) -> Dict[str, float]:
+        if not isinstance(values, Mapping):
+            raise TypeError("Validation loss adapter must return a mapping")
+        if "loss" not in values:
+            raise ValueError("Validation loss adapter must return a 'loss' value")
+
+        scalars: Dict[str, float] = {}
+        for name, value in values.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError(
+                    "Validation loss metric names must be non-empty strings"
+                )
+            if isinstance(value, torch.Tensor):
+                if value.numel() != 1:
+                    raise ValueError(
+                        f"Validation loss metric {name!r} must be scalar, "
+                        f"got shape {tuple(value.shape)}"
+                    )
+                scalars[name] = float(value.detach().float().item())
+            else:
+                scalars[name] = float(value)
+        return scalars
+
+    def _validation_loss_metrics(self) -> Dict[str, float]:
+        batches = int(getattr(self, "_validation_loss_batches", 0))
+        if batches == 0:
+            return {}
+        return {
+            f"metrics/{name}": value / batches
+            for name, value in getattr(self, "_validation_loss_totals", {}).items()
+        }
 
     def _preprocess_batch(
         self, batch: Tuple
@@ -817,7 +936,11 @@ class DetectionValidator(BaseValidator):
                 if "(B)" in k and not k.startswith("speed/")
             }
         else:
-            bm = {k: v for k, v in metrics.items() if not k.startswith("speed/")}
+            bm = {
+                k: v
+                for k, v in metrics.items()
+                if not k.startswith(("speed/", "metrics/loss"))
+            }
 
         # Inject per-IoU-threshold P/R; fallback to aggregate P/R when unavailable
         bm["p50-95"] = bm.get("metrics/precision", 0.0)
@@ -906,7 +1029,7 @@ class DetectionValidator(BaseValidator):
 
         coco_metrics = self.coco_evaluator.compute(save_json=save_json)
 
-        return {
+        metrics = {
             "metrics/precision": coco_metrics["precision"],
             "metrics/recall": coco_metrics["recall"],
             "metrics/mAP50-95": coco_metrics["mAP"],
@@ -928,6 +1051,8 @@ class DetectionValidator(BaseValidator):
             "metrics/AR_medium": coco_metrics["AR_medium"],
             "metrics/AR_large": coco_metrics["AR_large"],
         }
+        metrics.update(self._validation_loss_metrics())
+        return metrics
 
 
 class SegmentationValidator(DetectionValidator):

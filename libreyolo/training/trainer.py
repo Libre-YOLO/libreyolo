@@ -284,6 +284,17 @@ class BaseTrainer(ABC):
     def on_setup(self):
         """Called after model is on device, before data setup (e.g. bias init)."""
 
+    def validate_validation_loss_config(self) -> None:
+        """Fail early when a family does not implement ``val_loss=True``."""
+        if getattr(self.config, "val_loss", False):
+            raise ValueError(
+                f"val_loss=True is not supported by {self.get_model_family()} training"
+            )
+
+    def build_validation_loss_adapter(self, model: nn.Module):
+        """Build the family adapter used by rank-0 training validation."""
+        raise NotImplementedError
+
     def get_freeze_groups(self) -> List[FreezeGroup]:
         """Return integer-addressable freeze groups for this family."""
         return default_freeze_groups(self.model)
@@ -1423,6 +1434,7 @@ class BaseTrainer(ABC):
             if is_main_process():
                 logger.info("Converted BatchNorm to SyncBatchNorm")
 
+        self.validate_validation_loss_config()
         self.on_setup()
 
         if getattr(self.config, "batch", 16) == -1:
@@ -2634,7 +2646,24 @@ class BaseTrainer(ABC):
                     validator_cls = PointValidator
                 else:
                     validator_cls = DetectionValidator
-                validator = validator_cls(model=self.wrapper_model, config=val_config)
+                validator_kwargs = {}
+                if task == "detect" and getattr(self.config, "val_loss", False):
+                    try:
+                        validator_kwargs["loss_adapter"] = (
+                            self.build_validation_loss_adapter(eval_pytorch_model)
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Validation loss could not be initialized; detection "
+                            "metrics will continue without it: %s",
+                            exc,
+                            exc_info=logger.isEnabledFor(logging.DEBUG),
+                        )
+                validator = validator_cls(
+                    model=self.wrapper_model,
+                    config=val_config,
+                    **validator_kwargs,
+                )
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model
