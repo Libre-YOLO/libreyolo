@@ -29,7 +29,7 @@ below is the runner.
 | Per-domain means | published alongside (7 domains) | our addition |
 | Split discipline | train on `train`, select on `valid`, report on `test` | Roboflow reference code |
 | Selection | validate every epoch, EMA weights, keep best AP50:95 | Roboflow reference code |
-| Epoch budget | cap 100, early stopping patience 20 | LibreYOLO policy (reference runs a fixed 100; disclosed deviation) |
+| Epoch budget | fixed 100, early stopping DISABLED (`patience: 0`) | Roboflow reference code; the harness enforces it |
 | Effective batch | 16 (physical batch x gradient accumulation) | Roboflow reference code |
 | Precision | fp32; bf16 only via explicit `amp_dtype`; never fp16 autocast | LibreYOLO policy |
 | Eval thresholds | conf 0.001; NMS IoU 0.65 for NMS families, identical at selection and final eval; DETR families are NMS-free top-k | LibreYOLO policy |
@@ -54,11 +54,57 @@ va-bench rf100vl-train --data-dir ./rf100-vl --weights-root ./rf100vl-weights --
 # per-dataset test-split eval: cached and resumable, emits one
 # va.submission.v1 JSON with a per-dataset rf100vl block
 va-bench rf100vl --all --data-dir ./rf100-vl --weights-root ./rf100vl-weights
+
+# or both plus checks and rendering as ONE resumable command:
+# preflight -> train -> eval -> markdown report beside the submission
+va-bench rf100vl-campaign --model yolov9t --data-dir ./rf100-vl \
+  --weights-root ./rf100vl-weights --gpus 0,1,2,3,4,5,6,7
 ```
 
-- Dataset download: add `--download` (wraps the `rf100vl` pip package; needs
-  a free `ROBOFLOW_API_KEY` in the env; about 40 GB). The harness writes a
-  version lock and replays recorded versions; it never re-resolves latest.
+Supporting verbs: `rf100vl-preflight` (validate the box BEFORE spending
+GPU-hours: capabilities, data-vs-lock, splits, recipe, torch-vs-GPU sm
+support, disk), `rf100vl-dash` (live localhost dashboard: per-GPU lanes,
+dataset grid, loss/mAP curves, log tails; SSH-tunnel it from rented boxes),
+`rf100vl-report` (submission JSON to markdown report or leaderboard).
+
+- **Dataset, fast path (use this on rented boxes).** Pull the pre-built copy at
+  [`LibreYOLO/rf100-vl`](https://huggingface.co/datasets/LibreYOLO/rf100-vl):
+  100 per-dataset tars, already cleaned, plus `versions.json`, `NOTICE`, and
+  `licenses.json`. No `ROBOFLOW_API_KEY`, and version-pinned so two boxes
+  cannot silently score different data.
+
+  ```bash
+  pip install huggingface_hub
+  python -c "from huggingface_hub import snapshot_download; \
+    snapshot_download('LibreYOLO/rf100-vl', repo_type='dataset', \
+                      local_dir='rf100-vl', max_workers=8)"
+  cd rf100-vl && for f in *.tar; do tar xf "$f" && rm "$f"; done
+  ```
+
+  What makes it fast is few large files instead of 164k small ones, served by
+  the hub's default (Xet-backed) transfer. Do not cargo-cult the old
+  `huggingface_hub[hf_transfer]` extra or `HF_HUB_ENABLE_HF_TRANSFER=1`: on
+  huggingface_hub 1.x the extra installs nothing and the env var is ignored
+  (both only mattered on hub 0.x). An HF token is NOT required for a public
+  dataset and does not raise throughput, but staying logged in
+  (`huggingface-cli login`, or `HF_TOKEN` in the env) gets the higher
+  authenticated rate limit, which is worth having when several boxes pull at
+  once. Measured: Roboflow serves ~2.2 MB/s from a home line and ~16 MB/s from
+  a datacenter, so the canonical path costs 45 min to 5.6 h; the tars are minutes.
+
+- **Dataset, canonical path.** `--download` wraps the `rf100vl` pip package and
+  needs a free `ROBOFLOW_API_KEY`; about 40 GB. Use it to REBUILD the HF copy,
+  to verify it, or if the HF copy is unavailable. The harness writes a version
+  lock and replays recorded versions; it never re-resolves latest.
+  We host the HF copy; it is not a hedge or a stopgap. Licensing is recorded in
+  `va_bench/data/rf100vl_licenses.json`, which deliberately keeps BOTH upstream
+  statements rather than resolving them silently: the benchmark repository
+  claims Apache-2.0 as a blanket licence over the datasets, while all 100
+  Universe projects individually report MIT (checked per project and
+  cross-validated against the `License:` line inside downloaded exports). Both
+  permit redistribution and derivatives with notice retention, so the
+  disagreement changes nothing operationally; we rely on the per-project field
+  and preserve every dataset's own README.dataset.txt inside its archive.
 - Weights contract: training places `best.pt` at
   `<weights_root>/<dataset>/<weight_file>`; eval resolves exactly that path.
 - A capability guard aborts training on any libreyolo build without
@@ -87,9 +133,21 @@ detections), per-run `stats.json` (recipe sha, best epoch, seed, dataset
 version, wall time), the recipe JSON, the dataset version lock, and the
 final submission JSON.
 
+The eval verb writes predictions itself (`<fingerprint>.predictions.json.gz`
+beside each per-dataset result, path recorded in the submission). It is on by
+default; do not turn it off for a run you intend to publish, because it is the
+only thing that makes the claim below true.
+
 - Upload the per-model artifact folder to a Hugging Face dataset repo under
-  the LibreYOLO org (one folder per model). Anyone can then rescore from the
+  the LibreYOLO org (one folder per model) with `va-bench sync-artifacts`.
+  Create the results repo by hand first, then use a **fine-grained token
+  scoped to that one repo with write access only**; the uploader treats
+  `create_repo` as best-effort precisely so such a token works. Pass
+  `--eval-dir` or the per-dataset predictions are not collected, and those are
+  what make the claim below true. Anyone can then rescore from the
   JSONs with pycocotools, no GPU needed; that is the reproducibility story.
+  Verified end to end: a stock-pycocotools rescore of a saved dump, importing
+  no harness code, reproduced the harness AP to four decimals.
 - The leaderboard submission goes to the `vision-analysis` repo through its
   `submit-benchmark-results` flow (validate, rebuild, PR, deploy). See the
   `benchmark-on-visionanalysis` skill for the handoff.
@@ -101,6 +159,22 @@ Account setup, 2FA, launch, exec, tail, pull, guard, and destroy discipline:
 follow `skills/launch-serverless-gpu-job` (Vast section). This section adds
 only the RF100-VL specifics.
 
+- **Image, tested end to end:**
+  `vastai/pytorch:2.11.0-cu128-cuda-12.9-mini-py312-2026-06-15`. A Vast image
+  takes their well-travelled key-injection path; a plain `pytorch/pytorch`
+  works on many hosts but on others sshd refuses your key with `bad ownership
+  or modes for file /root/.ssh/authorized_keys` and there is no way in to fix
+  it. The cu128 build matters just as much: their default tag cannot run a
+  5090 (`no kernel image is available for execution on the device`). The
+  interpreter is `/venv/main/bin/python`, not `python`.
+- **Accept or reject the host in 60 seconds, before installing anything.**
+  `deploy/vast/accept-box.sh` in the harness repo checks GPUs, torch kernels
+  for those GPUs, a real matmul, huggingface.co, PyPI, and disk. Six rented
+  hosts in one evening produced five distinct infrastructure failures, none of
+  them visible on the offer card, including two whose networks could not reach
+  huggingface.co. That failure is the nastiest: `snapshot_download` does not
+  error, it hangs silently while the meter runs. Budget about a dollar for the
+  host search and destroy duds immediately.
 - Workload shape: independent single-GPU jobs, batch 16 at 640 px, under 12
   GB VRAM for most families. No interconnect requirement, so interruptible
   consumer boxes dominate datacenter cards on price per GPU-hour.
@@ -120,7 +194,14 @@ only the RF100-VL specifics.
   before `destroy`.
 - Local-first rule: the whole flow must pass on a local GPU (one dataset,
   then the rf20vl pilot) before renting anything. Credits are for the
-  campaign, not for debugging.
+  campaign, not for debugging. Corollary proven in practice: when a variable
+  changes (a new image, a new provider), test it on ONE cheap GPU first. A
+  single-GPU box settled an image question for about 15 cents that had
+  already cost several dollars of guessing on 8-GPU boxes.
+- Human-flown first: `docs/rf100vl-operator-runbook.md` in the harness repo is
+  every command from rent to destroy, for a person, with what healthy output
+  looks like and where the money goes. Automation is for flows someone has
+  already flown by hand.
 - Rough sizing: 0.5 to 1 consumer-GPU-hour per dataset for YOLO-family
   models, 1 to 2.5 for DETR-family; a full 100-dataset pass per family lands
   roughly between 30 and 200 GPU-hours depending on family.
@@ -130,9 +211,13 @@ only the RF100-VL specifics.
 - Stock pycocotools `summarize()` breaks with a non-default maxDets list
   (headline AP becomes -1). LibreYOLO and the harness compute the stats
   directly; never call stock summarize with a modified list.
-- Only use the `rf100vl` package download. Raw website exports carry a dummy
-  class 0 with shifted category ids; mixing cleaned ground truth with
-  uncleaned predictions scores near zero.
+- Use package-cleaned data only, from either source above. The `rf100vl` package
+  rewrites category numbering on download (dummy class 0 removed, ids shifted to
+  0-based contiguous, annotation ids from 1), and the HF copy was produced by
+  running exactly that code, so both are equivalent and version-pinned. **Never
+  a raw export from the Universe website**: those keep the dummy class and the
+  original numbering, and scoring them against the benchmark ground truth gives
+  close to zero mAP.
 - One dataset is literally named `-grccs`: write `--datasets=-grccs` (the
   space form is eaten by argparse).
 - Never resume a checkpoint after changing physical batch or accumulation.
