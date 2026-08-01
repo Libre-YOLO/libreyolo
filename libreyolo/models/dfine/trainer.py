@@ -46,7 +46,11 @@ from ...data import (
     load_data_config,
 )
 from ...data.dataset import COCODataset, YOLODataset
-from ...training.config import DFINEConfig, TrainConfig
+from ...training.config import (
+    DFINEConfig,
+    TrainConfig,
+    resolve_dfine_base_size_repeat,
+)
 from ...training.scheduler import FlatCosineScheduler
 from ...training.trainer import BaseTrainer
 from .loss import DFINECriterion
@@ -360,6 +364,13 @@ class DFINETrainer(BaseTrainer):
     # _setup_data override — wire DFINEMultiScaleCollate (when enabled)
     # =========================================================================
 
+    def _train_base_size_repeat(self) -> Optional[int]:
+        """Multi-scale repeat for this run: config override or per-size default."""
+        return resolve_dfine_base_size_repeat(
+            getattr(self.config, "size", ""),
+            getattr(self.config, "base_size_repeat", None),
+        )
+
     def _setup_data(self):
         """Mirror of ``BaseTrainer._setup_data`` but uses ``DFINEMultiScaleCollate``.
 
@@ -485,9 +496,13 @@ class DFINETrainer(BaseTrainer):
 
         # Multi-scale collate (or default yolox_collate_fn).
         if getattr(self.config, "multi_scale", False) and not load_segments:
+            # Upstream pins base_size_repeat per size (n disables multi-scale,
+            # s 20, m 6, l 4, x 3); this used to be hardcoded to 3, which only
+            # X actually wants. None makes the collate keep batches at
+            # base_size, which is exactly upstream's `~` for the N size.
             collate_fn = DFINEMultiScaleCollate(
                 base_size=self.config.imgsz,
-                base_size_repeat=3,
+                base_size_repeat=self._train_base_size_repeat(),
                 stop_epoch=stop_epoch,
             )
         else:
