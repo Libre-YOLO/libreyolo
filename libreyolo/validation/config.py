@@ -85,6 +85,12 @@ class ValidationConfig:
     # Workers
     num_workers: int = 4
 
+    # Image cache: False/None (off), True/'ram', or 'disk'. Same semantics as
+    # TrainConfig.cache. Validation preprocessing is deterministic, so cached
+    # reads are byte-identical to fresh ones; 'disk' pays immediately, 'ram'
+    # pays once the validator (and its workers) survive across epochs.
+    cache: Union[bool, str] = field(default=False, kw_only=True)
+
     # Precision
     half: bool = False
     amp_dtype: str = field(default="float16", kw_only=True)

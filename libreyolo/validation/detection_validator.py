@@ -272,6 +272,10 @@ class DetectionValidator(BaseValidator):
             self._yolo_coco_img_files = list(dataset.img_files)
             self._yolo_coco_label_files = list(dataset.label_files)
 
+        # Both dataset classes are ImageCacheMixin; every construction branch
+        # above funnels through here, so this is the single cache switch.
+        dataset.enable_image_cache(getattr(self.config, "cache", False))
+
         use_cuda = torch.cuda.is_available() and self.device.type == "cuda"
         nw = self.config.num_workers
 
