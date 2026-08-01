@@ -2637,7 +2637,20 @@ class BaseTrainer(ABC):
                     validator_cls = PointValidator
                 else:
                     validator_cls = DetectionValidator
-                validator = validator_cls(model=self.wrapper_model, config=val_config)
+                # One validator instance for the whole run, so the dataset,
+                # dataloader workers, pinned buffers and parsed ground truth
+                # survive between epochs instead of being rebuilt ~100 times.
+                # The per-epoch config is still honored: only save_plots and
+                # save_dir ever differ between the configs this loop builds,
+                # and neither is baked into the reused state.
+                validator = getattr(self, "_epoch_validator", None)
+                if validator is None or type(validator) is not validator_cls:
+                    validator = validator_cls(
+                        model=self.wrapper_model, config=val_config
+                    )
+                    self._epoch_validator = validator
+                else:
+                    validator.config = val_config
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model

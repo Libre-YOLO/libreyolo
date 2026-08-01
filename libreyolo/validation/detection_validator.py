@@ -59,6 +59,10 @@ class DetectionValidator(BaseValidator):
         self._coco_label_to_category_id: Optional[Dict[int, int]] = None
         self._yolo_coco_img_files: Optional[List[Path]] = None
         self._yolo_coco_label_files: Optional[List[Path]] = None
+        # Parsed ground truth, cached across runs of this instance. The GT is
+        # immutable for the validator's lifetime; only the evaluator built on
+        # top of it accumulates state and must stay per-run.
+        self._gt_coco_api = None
 
     # =========================================================================
     # Setup
@@ -344,7 +348,10 @@ class DetectionValidator(BaseValidator):
                     "Install with: pip install pycocotools"
                 )
 
-            coco_api = COCO(str(self._coco_annotation_file))
+            coco_api = self._gt_coco_api
+            if coco_api is None:
+                coco_api = COCO(str(self._coco_annotation_file))
+                self._gt_coco_api = coco_api
             self.coco_evaluator = COCOEvaluator(
                 coco_api,
                 iou_type="bbox",
@@ -406,14 +413,17 @@ class DetectionValidator(BaseValidator):
             [Path(p) for p in label_files] if label_files else None
         )
 
-        coco_api = YOLOCocoAPI(
-            images_dir=images_dir,
-            labels_dir=labels_dir,
-            class_names=class_names,
-            image_files=image_files,
-            label_files=yolo_label_files,
-            **self._coco_api_kwargs(),
-        )
+        coco_api = self._gt_coco_api
+        if coco_api is None:
+            coco_api = YOLOCocoAPI(
+                images_dir=images_dir,
+                labels_dir=labels_dir,
+                class_names=class_names,
+                image_files=image_files,
+                label_files=yolo_label_files,
+                **self._coco_api_kwargs(),
+            )
+            self._gt_coco_api = coco_api
         self.coco_evaluator = COCOEvaluator(
             coco_api, iou_type="bbox", max_det=self._coco_max_det()
         )
