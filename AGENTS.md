@@ -113,14 +113,15 @@
 - Keep PRs to the least code needed to solve the stated problem.
 - Do not mention other computer vision libraries in PR titles or descriptions
   unless the comparison is necessary to explain compatibility or API behavior.
-- Whether the agent opens the PR or hands over a pre-filled link, the title and
-  description are written to be read by a human reviewer, not as a transcript of
-  what the agent did. The required `## Code provenance` section must be accurate
-  for the actual diff, never a placeholder, or the `provenance-check` CI gate
-  fails.
-- An agent that opens a PR says so plainly in the description and states what it
-  verified and what it did not. It never implies review or approval it does not
-  have.
+- **Agent-written PR descriptions are short and factual.** Bullets, not prose.
+  What changed, why, what the reviewer should check, what was not verified.
+  No narration of the agent's process, no restating of its own reasoning, no
+  adjectives, no selling. Ten lines beats fifty. A human who wants the longer
+  story will ask for it or write it themselves.
+- The required `## Code provenance` section must be accurate for the actual
+  diff, never a placeholder, or the `provenance-check` CI gate fails.
+- An agent that opens a PR says so in one line, and states what it verified and
+  what it did not. It never implies review or approval it does not have.
 
 ## General library constraints
 - Generally every user facing API (Python, yamls, etc) has to follow the de-facto YOLO CLI/API conventions

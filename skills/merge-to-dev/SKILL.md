@@ -119,12 +119,32 @@ required provenance section comes up blank. GitHub honours `title` and `body`
 query params on the compare page, so pre-fill them yourself and the human
 lands on a PR form already filled in.
 
-Write the body the way `.github/pull_request_template.md` asks: a normal
-description in whatever shape fits the change, plus, **required, a
-`## Code provenance` section**. The `provenance-check` CI gate fails the PR
-if that section is missing or empty, so it is the one part you must always
-include. Keep it short, factual prose, matching the repo's house style, no
-checkboxes and no tables:
+Write the body the way `.github/pull_request_template.md` asks: a description
+plus, **required, a `## Code provenance` section**. The `provenance-check` CI
+gate fails the PR if that section is missing or empty, so it is the one part you
+must always include.
+
+**Keep it short and factual. Bullets, not prose.** Per `AGENTS.md`: what
+changed, why, what to check, what was not verified. No process narration, no
+adjectives, no selling. Ten lines beats fifty. Shape:
+
+```markdown
+What: <one line>
+Why: <one line>
+
+- <change 1>
+- <change 2>
+
+Check: <what the reviewer should look at>
+Not verified: <what you did not test, or "nothing outstanding">
+Opened by an agent.
+
+## Code provenance
+<one accurate line, see below>
+```
+
+For the provenance section itself, short factual prose, no checkboxes and no
+tables:
 
 - First-party only: a `## Code provenance` heading followed by one line, e.g.
   "Original code written for this PR; bug fixes to LibreYOLO's own first-party
