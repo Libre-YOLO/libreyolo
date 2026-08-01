@@ -560,6 +560,7 @@ FAMILY_MARKERS = {
     "yolo9_e2e": pytest.mark.yolo9_e2e,
     "yolonas": pytest.mark.yolonas,
     "rfdetr": pytest.mark.rfdetr,
+    "lwdetr": pytest.mark.lwdetr,
     "dfine": pytest.mark.dfine,
     "deim": pytest.mark.deim,
     "deimv2": pytest.mark.deimv2,
