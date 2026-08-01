@@ -2,11 +2,11 @@
 name: merge-to-dev
 description: >-
   The whole dance for landing code on LibreYOLO's dev branch: branch, commit,
-  push to upstream, then hand the user a one-click compare URL that pre-fills
-  the PR title and description (including the required Code provenance section)
-  for them to review and submit (agents must not open the PR themselves),
-  and once they have opened it, babysit the Greptile bot review until it is
-  happy. Use whenever the user says "put this on dev", "push this to dev",
+  push to upstream, then either open the PR against dev or hand the user a
+  one-click compare URL that pre-fills the PR title and description (including
+  the required Code provenance section), and once the PR exists, babysit the
+  Greptile bot review until it is happy. Agents may open the PR but never
+  approve or merge it. Use whenever the user says "put this on dev", "push this to dev",
   "merge this to dev", "ship this", "open a PR for this", or hands over
   finished work on LibreYOLO/libreyolo. The user should never have to ask for
   the PR link; producing it is the task.
@@ -15,14 +15,22 @@ description: >-
 # Merge code to dev
 
 There is exactly one way code lands on `dev` in `LibreYOLO/libreyolo`:
-**branch -> commit -> push to upstream -> the human opens a PR with base
-`dev`**. Never push to `dev` directly, even though the account has admin.
-And per `AGENTS.md`, the **agent never opens the PR**: it pushes the branch
-and hands over a one-click compare URL that pre-fills the PR title and
-description (with the required Code provenance section), and the human reviews
-and submits it. When the user says "put this on dev", run the dance below
-and end your turn with that link, not with a question and not with a PR you
-opened yourself.
+**branch -> commit -> push to upstream -> a PR with base `dev`**. Never push to
+`dev` directly, even though the account has admin.
+
+Per `AGENTS.md`, an agent **may open that PR**, but opening it is where the
+agent's authority stops: never approve, never merge, never dismiss a review
+finding. Two valid endings, and the choice is the user's:
+
+- **Open the PR** (`gh pr create --base dev`) when the user asked for a PR or
+  the work is finished and self-contained. Say in the description that an agent
+  opened it, and what was verified.
+- **Hand over a one-click compare URL** that pre-fills the title and description
+  (with the required Code provenance section) when the work is exploratory, or
+  the user wants the description in their own words.
+
+Either way the description carries an accurate `## Code provenance` section, and
+you end your turn with the PR or compare link, not with a question.
 
 ## Environment gotchas (read first, they bite every session)
 
@@ -136,22 +144,22 @@ python -c "import urllib.parse,sys; print('https://github.com/LibreYOLO/libreyol
 
 Hand the user that single pre-filled link and stop.
 
-**Pre-filling the URL is allowed; opening the PR is not.** `AGENTS.md`:
-"Agents must not open pull requests"; "Humans handle ... PR creation." So
-never run `gh pr create`; hand the pre-filled compare URL and let the human
-review, edit the prose into their own words, and submit. The `## Code
-provenance` section is the accurate part you own; never leave it blank or the
-CI gate fails.
+**Or open it yourself.** `AGENTS.md` allows an agent to open the PR
+(`gh pr create --base dev --title ... --body ...`), but never to approve, merge,
+or dismiss a review finding. Prefer opening it when the user asked for a PR;
+prefer the pre-filled link when the work is exploratory or the user wants the
+prose in their own words. Either way the `## Code provenance` section is the
+part you own: never leave it blank or the CI gate fails, and never let the
+description imply a review that has not happened.
 
 **Deliver the link without being asked.** "Pushed the branch" is not a
-finished turn; the link is the deliverable. CI (`unit-tests.yml`,
-`install-smoke.yml`) runs once the human opens the PR to `dev`, so their
-click is also what starts the CI signal.
+finished turn; the PR or the compare link is the deliverable. CI
+(`unit-tests.yml`, `install-smoke.yml`) runs once the PR to `dev` exists.
 
-### 5. Babysit Greptile (after the human opens the PR)
+### 5. Babysit Greptile (after the PR is open)
 
-This step needs a PR to exist, so it starts once the human has opened it
-from your link (or tells you "it's open" / "ship it"). Do not sit polling
+This step needs a PR to exist, so it starts once you have opened it or the
+human has (or tells you "it's open" / "ship it"). Do not sit polling
 for a PR number before then. When the PR author is one of the repo admins,
 the Greptile bot reviews the PR automatically a few minutes after it opens
 (and again after each push).
@@ -223,8 +231,8 @@ merging to dev is their click.
 ## Anti-patterns
 
 - Pushing to `dev` or `release` directly. Never, admin or not.
-- Opening the PR yourself with `gh pr create`. `AGENTS.md` forbids it; hand
-  the one-click compare URL and let the human submit.
+- Approving or merging your own PR, or dismissing a Greptile finding to make a
+  check go green. Opening the PR is allowed; deciding it is good is not.
 - Handing a bare `?expand=1` link with no `&body=`. It leaves the required
   `## Code provenance` section blank, so the `provenance-check` CI gate fails.
 - Padding the description with checkbox lists or a provenance table. The
