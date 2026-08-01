@@ -20,7 +20,7 @@ from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
 from ...validation.preprocessors import LWDETRValPreprocessor
 from ..base import BaseModel
-from .nn import LWDETR_CONFIGS, SIZE_DIVISOR, LibreLWDETRModel
+from .nn import SIZE_DIVISOR, LibreLWDETRModel
 from .utils import preprocess_image, unwrap_lwdetr_checkpoint
 from ...postprocess.lwdetr import postprocess
 
