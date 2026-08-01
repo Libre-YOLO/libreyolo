@@ -32,7 +32,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-__all__ = ["LWDETR_CONFIGS", "LibreLWDETRModel"]
+__all__ = ["LWDETR_CONFIGS", "LWDETRExportWrapper", "LibreLWDETRModel"]
 
 
 # =============================================================================
@@ -254,6 +254,14 @@ class Attention(nn.Module):
             self.qkv = nn.Linear(dim, dim * 3, bias=False)
             self.q_bias = nn.Parameter(torch.zeros(dim))
             self.v_bias = nn.Parameter(torch.zeros(dim))
+            # The key projection is deliberately unbiased. Upstream materialises
+            # the zero block with ``torch.zeros_like(v_bias)``; holding it as a
+            # non-persistent buffer keeps the value identical while making it an
+            # ONNX initializer on the module's device. Built as a traced
+            # constant instead, ONNX constant folding would try to concatenate a
+            # CPU tensor with CUDA parameters and fail on GPU export. Not
+            # persistent, so checkpoints are unaffected.
+            self.register_buffer("k_bias", torch.zeros(dim), persistent=False)
         else:
             self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.proj = nn.Linear(dim, dim)
@@ -261,13 +269,7 @@ class Attention(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         batch, num_tokens, channels = x.shape
         if self.use_cae:
-            qkv_bias = torch.cat(
-                (
-                    self.q_bias,
-                    torch.zeros_like(self.v_bias, requires_grad=False),
-                    self.v_bias,
-                )
-            )
+            qkv_bias = torch.cat((self.q_bias, self.k_bias, self.v_bias))
             qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
         else:
             qkv = self.qkv(x)
@@ -1031,7 +1033,11 @@ class MLP(nn.Module):
 def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128) -> Tensor:
     """Sine-embed reference boxes (cx, cy[, w, h]) for the decoder query pos."""
     scale = 2 * math.pi
-    dim_t = torch.arange(dim, dtype=torch.float32, device=pos_tensor.device)
+    # Built from pos_tensor rather than torch.arange so the frequency table is a
+    # derived tensor, not a baked constant. A traced constant keeps whatever
+    # device it was created on, which breaks TorchScript artifacts run on a
+    # different device. cumsum-of-ones reproduces arange exactly.
+    dim_t = pos_tensor.new_ones(int(dim)).cumsum(0) - 1.0
     dim_t = 10000 ** (2 * (dim_t // 2) / dim)
     x_embed = pos_tensor[:, :, 0] * scale
     y_embed = pos_tensor[:, :, 1] * scale
@@ -1072,20 +1078,21 @@ def gen_encoder_output_proposals(
     batch, _, _ = memory.shape
     proposals = []
     for level, (height, width) in enumerate(spatial_shapes):
-        grid_y, grid_x = torch.meshgrid(
-            torch.linspace(0, height - 1, height, dtype=torch.float32, device=memory.device),
-            torch.linspace(0, width - 1, width, dtype=torch.float32, device=memory.device),
-            indexing="ij",
+        # The anchor grid depends only on the feature-map shape, so a literal
+        # meshgrid/linspace would be traced as a constant pinned to whatever
+        # device built it — and a TorchScript artifact then fails when run
+        # elsewhere. Deriving it from ``memory`` keeps the device following the
+        # input. cumsum-of-ones equals linspace(0, n-1, n) exactly, and
+        # normalising by Python floats matches dividing by a [W, H] tensor.
+        ones = memory.new_ones((height, width))
+        grid_y = (ones.cumsum(0) - 1.0 + 0.5) / float(height)
+        grid_x = (ones.cumsum(1) - 1.0 + 0.5) / float(width)
+        grid = torch.stack((grid_x, grid_y), dim=-1).unsqueeze(0).expand(
+            batch, -1, -1, -1
         )
-        grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)
-
-        scale = torch.as_tensor(
-            [width, height], dtype=torch.float32, device=memory.device
-        ).view(1, 1, 1, 2)
-        grid = (grid.unsqueeze(0).expand(batch, -1, -1, -1) + 0.5) / scale
 
         wh = torch.ones_like(grid) * 0.05 * (2.0**level)
-        proposals.append(torch.cat((grid, wh), -1).view(batch, -1, 4))
+        proposals.append(torch.cat((grid, wh), -1).reshape(batch, -1, 4))
 
     output_proposals = torch.cat(proposals, 1)
     output_proposals_valid = ((output_proposals > 0.01) & (output_proposals < 0.99)).all(
@@ -1520,3 +1527,20 @@ class LibreLWDETRModel(nn.Module):
 
         outputs_class = self.class_embed(hs)
         return {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
+
+
+class LWDETRExportWrapper(nn.Module):
+    """Flatten the output dict to a tuple for tracing-based export.
+
+    ``torch.onnx.export`` cannot give named outputs to a dict return, so the
+    graph emits ``(pred_logits, pred_boxes)`` in declaration order — the same
+    contract the other DETR families export.
+    """
+
+    def __init__(self, model: LibreLWDETRModel) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        out = self.model(x)
+        return out["pred_logits"], out["pred_boxes"]
