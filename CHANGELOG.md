@@ -34,6 +34,14 @@ before 1.4.0 are documented in the
 - Native fp8 execution tier: finalized fp8 QuantLinear runs on the fp8 tensor cores via torch._scaled_mm (Ada/Hopper/Blackwell); optional Triton kernels fuse activation conversion and the per-channel scale/bias epilogue, while validation-selected FeyNobg Swin stage-0 Linears use manifest-recorded tensorwise weight scales for a fully fused cuBLASLt epilogue. Finalized fp8 QuantConv2d convolves in fp16 on cached dequantized weights, and fp16-remainder checkpoints get float32 I/O root hooks. On LibreFeyNobg/RTX 5070 Ti, fp8 is 123.1 vs 129.3 ms for batch-1 graphed predict and 515.4 vs 535.3 ms at batch 4, with a 275 vs 531 MB file.
 - CUDA graph capture for the birefnet and feynobg families via encoder-only capture (the deformable decoder replays wrong under capture and stays eager; graphed output is bit-identical to eager); GraphRunner warms up on the capture stream so lazily-allocated cuBLASLt/cuDNN workspaces stop invalidating capture, and quant modules cache the calibration flag as a host bool (the per-forward .item() sync also invalidated capture)
 
+### Fixed
+
+- D-FINE training now applies upstream's per-size multi-scale recipe instead
+  of a hardcoded `base_size_repeat=3`: n trains at fixed size, s uses 20,
+  m 6, l 4, x 3 (Peterande/D-FINE custom fine-tune configs; only X matched
+  before). New `DFINEConfig.base_size_repeat` field overrides the per-size
+  default when set (#675)
+
 ## [1.4.0] - 2026-07-24
 
 LibreYOLO v1.4.0: 15 new model families, 3 new tasks (panoptic, matte, OCR), a quantization stack, two new trackers, and a multi-GPU training correctness overhaul.
