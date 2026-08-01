@@ -33,8 +33,8 @@
   Opening a PR is where an agent's authority stops: it does not approve, does
   not merge, and does not dismiss review findings.
 - Agents must not post issue comments or PR comments unless a human explicitly
-  asks for it. Replying to review findings on the agent's own PR is part of the
-  work and is allowed.
+  asks for it. This holds on the agent's own PR too: address review findings by
+  pushing a commit, and put anything else in the summary to the human.
 - Humans handle issue creation, review submission, and final merge decisions.
 - Handing over a one-click pre-filled GitHub URL instead of opening the PR
   remains a valid option, and is the better one when the work is exploratory or
