@@ -23,6 +23,11 @@ class _Runner:
     def __init__(self, forward):
         self.forward = forward
         self.calls = 0
+        self.captures = []
+        self.capture_on_miss = True
+
+    def capture(self, x):
+        self.captures.append(tuple(x.shape))
 
     def run(self, x, auto=False):
         self.calls += 1
@@ -153,9 +158,34 @@ def test_enabled_opens_scope_and_routes_through_runner(tmp_path):
 
     assert model.support_checks == 1
     assert model.scope_modes == [True]
+    assert len(model.runner.captures) == 1, (
+        "capture must happen up front, before the batch loop"
+    )
     assert model.runner.calls == 1, "_inference must go through the graph runner"
     assert model.eager_calls == 1  # the runner double delegates to _forward
     assert model._cuda_graph_mode is None, "scope must close after the run"
+    assert model.runner.capture_on_miss is True, (
+        "the replay-only policy must be restored after the loop"
+    )
+    assert torch.equal(v.last_preds, torch.ones(2, 3, 8, 8) * 2)
+
+
+def test_capture_failure_runs_the_whole_pass_eager(tmp_path):
+    """A capture failure must degrade to a plain eager pass, not crash."""
+    from libreyolo.models.base.cuda_graph import CudaGraphUnavailable
+
+    model = _GraphAwareModel()
+
+    def failing_capture(x):
+        raise CudaGraphUnavailable("simulated capture failure")
+
+    model.runner.capture = failing_capture
+    v = _validator(model, tmp_path, cuda_graph=True)
+    v.run()
+
+    assert model.scope_modes == [], "no scope after a failed capture"
+    assert model.runner.calls == 0, "the loop must not touch the runner"
+    assert model.eager_calls == 1
     assert torch.equal(v.last_preds, torch.ones(2, 3, 8, 8) * 2)
 
 
@@ -221,6 +251,11 @@ def test_gpu_validation_forward_is_bit_identical(tmp_path):
             save_dir=str(tmp_path / "val"),
             verbose=False,
             cuda_graph=cuda_graph,
+            # Match the up-front capture (batch_size, 3, imgsz, imgsz) to the
+            # batch the stub loop feeds, so the loop replays rather than
+            # missing and running eager under the replay-only policy.
+            batch_size=2,
+            imgsz=64,
         )
         v = _FixedBatchValidator(model=model, config=config)
         with torch.no_grad():
@@ -229,5 +264,64 @@ def test_gpu_validation_forward_is_bit_identical(tmp_path):
 
     eager = run_once(False)
     graphed = run_once(True)
-    assert model.graph_info()["graph_count"] >= 1, "capture must have happened"
+    info = model.graph_info()
+    assert info["graph_count"] >= 1, "capture must have happened"
+    assert sum(c["replays"] for c in info["captured"]) >= 1, (
+        "the loop must replay the up-front capture, not run eager"
+    )
     _assert_outputs_equal(eager, graphed)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_runner_latches_eager_after_capture_failure():
+    """One failed capture must stop all further capture attempts: retrying
+    pays a full warmup per batch and fails identically on a poisoned context
+    (measured 2.4x slower than eager over a 25-epoch run)."""
+    from libreyolo.models.base.cuda_graph import CudaGraphUnavailable, GraphRunner
+
+    attempts = []
+    runner = GraphRunner(forward_fn=lambda x: x * 2, family="fake")
+
+    def failing_capture(x):
+        attempts.append(1)
+        raise RuntimeError("simulated cudaErrorStreamCaptureInvalidated")
+
+    runner._capture = failing_capture
+    x = torch.ones(2, 3, 8, 8, device="cuda")
+    with torch.no_grad():
+        first = runner.run(x)
+        second = runner.run(x)
+
+    assert len(attempts) == 1, "capture must not be retried after a failure"
+    assert torch.equal(first, x * 2) and torch.equal(second, x * 2)
+    assert runner.info()["eager_fallbacks"] == 2
+
+    # Explicit capture() short-circuits too, and release() resets the latch.
+    with pytest.raises(CudaGraphUnavailable, match="not retrying"), torch.no_grad():
+        runner.capture(x)
+    assert len(attempts) == 1
+    runner.release()
+    with torch.no_grad():
+        runner.run(x)
+    assert len(attempts) == 2, "release() must allow capture again"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_runner_capture_on_miss_false_never_captures():
+    from libreyolo.models.base.cuda_graph import GraphRunner
+
+    attempts = []
+    runner = GraphRunner(forward_fn=lambda x: x * 2, family="fake")
+
+    def counting_capture(x):
+        attempts.append(1)
+        raise AssertionError("must not be reached")
+
+    runner._capture = counting_capture
+    runner.capture_on_miss = False
+    x = torch.ones(2, 3, 8, 8, device="cuda")
+    with torch.no_grad():
+        out = runner.run(x)
+
+    assert attempts == [], "shape miss must run eager without capturing"
+    assert torch.equal(out, x * 2)

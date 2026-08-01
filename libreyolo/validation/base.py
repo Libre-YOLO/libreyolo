@@ -70,10 +70,25 @@ class BaseValidator(ABC):
             self._run_validation()
         else:
             # Same contract as predict(..., cuda_graph=...): unsupported
-            # families fail loudly up front, uncapturable situations (CPU
-            # device, odd input) fall back to eager inside the runner.
+            # families fail loudly up front. Uncapturable situations (CPU
+            # device, capture failure) run the whole pass eagerly.
             self.model._require_cuda_graph_support()
-            with self.model.cuda_graph_scope(requested):
+            if self._capture_val_graph():
+                runner = self.model._get_graph_runner()
+                previous = runner.capture_on_miss
+                # Replay-only inside the loop. The loader's pin-memory threads
+                # call cudaHostAlloc while batches are in flight, and any
+                # synchronous CUDA allocation invalidates a capture in
+                # progress, so capture happens only at the controlled point in
+                # _capture_val_graph. A shape miss inside the loop (the final
+                # partial batch) runs eager.
+                runner.capture_on_miss = False
+                try:
+                    with self.model.cuda_graph_scope(requested):
+                        self._run_validation()
+                finally:
+                    runner.capture_on_miss = previous
+            else:
                 self._run_validation()
         return self._finalize()
 
@@ -218,6 +233,44 @@ class BaseValidator(ABC):
                 "cuda", dtype=torch_amp_dtype(self.config.amp_dtype)
             )
         return nullcontext()
+
+    def _capture_val_graph(self) -> bool:
+        """Capture the full-batch forward before the loop; True on success.
+
+        Capture must not happen inside the batch loop: the DataLoader's
+        pin-memory threads call cudaHostAlloc while batches are in flight, and
+        a synchronous CUDA allocation invalidates a capture in progress
+        (cudaErrorStreamCaptureInvalidated) -- observed to then poison every
+        later capture attempt in the process, while the epoch whose capture
+        failed lost its validation entirely. Here, before iteration starts,
+        the loader threads are quiet and warmup just synchronized the device.
+        No-op when the shape is already captured, so the validator the trainer
+        reuses across epochs pays this once per run.
+        """
+        from libreyolo.models.base.cuda_graph import CudaGraphUnavailable
+
+        imgsz = self.config.imgsz
+        if isinstance(imgsz, (list, tuple)):
+            imgsz_h, imgsz_w = int(imgsz[0]), int(imgsz[1])
+        else:
+            imgsz_h = imgsz_w = int(imgsz)
+        dummy = torch.zeros(
+            (self.config.batch_size, 3, imgsz_h, imgsz_w),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        model_module = getattr(self.model, "model", None)
+        if hasattr(model_module, "eval"):
+            model_module.eval()
+        try:
+            with torch.no_grad(), self._autocast_context():
+                self.model._get_graph_runner().capture(dummy)
+        except CudaGraphUnavailable as exc:
+            if not getattr(self, "_warned_eager_val", False):
+                self._warned_eager_val = True
+                logger.warning("cuda_graph: validation runs eager (%s)", exc)
+            return False
+        return True
 
     def _warmup_model(self, n_warmup: int = 3) -> None:
         """Run dummy inference passes to trigger JIT compilation and CUDA kernel caching."""
