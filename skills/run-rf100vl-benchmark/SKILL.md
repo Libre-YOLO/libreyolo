@@ -86,6 +86,28 @@ Supporting verbs: `rf100vl-preflight`, `rf100vl-dash` (pass `--data-dir` or
 queued datasets show no image counts and the ETA is size-blind),
 `rf100vl-report`.
 
+**Open the dashboard for the operator as soon as training starts; do not
+wait to be asked.** A campaign runs for hours on a rented box and the panel
+is the only view of it that is not a wall of log text: per-GPU lanes, the
+100-dataset grid, per-dataset loss and mAP curves. Serve it on the box and
+forward it, then open the local URL in their browser:
+
+```bash
+# on the box, in its own tmux session
+va-bench rf100vl-dash --state-root <weights-root>/.state --data-dir <data-dir>
+# from the operator's machine (keep the tunnel alive for the whole run)
+ssh -N -L 8877:127.0.0.1:8877 -p <PORT> root@<HOST>
+# then open http://127.0.0.1:8877/
+```
+
+Bind the default `127.0.0.1` on the box and reach it through the tunnel;
+never bind `0.0.0.0` on a rented host. Re-open the tunnel after any box
+restart, and re-check the URL answers rather than assuming: an `ssh -L` that
+loses its forward exits silently, and a dead tunnel looks exactly like a
+stalled campaign. If a previous tunnel still holds port 8877, a new one fails
+with `ExitOnForwardFailure` while the old one keeps working, so verify by
+fetching the page, not by watching the ssh process.
+
 - **Dataset, fast path.** Pull [`LibreYOLO/rf100-vl`](https://huggingface.co/datasets/LibreYOLO/rf100-vl):
   100 per-dataset tars + lock files. Prefer `max_workers=32` and stay logged
   in (`HF_TOKEN`) for the authenticated rate limit. Do not cargo-cult
