@@ -9,6 +9,14 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreLWDETR (LW-DETR), a detect-only family in sizes t/s/m/l/x at 640px:
+  plain-ViT encoder with interleaved window/global attention, multi-scale
+  projector, and a shallow deformable DETR decoder. Code and weights are
+  Apache-2.0 (Atten4Vis/Baidu); ported outputs are bit-exact against the
+  official implementation on all five released sizes. Inference-only — the
+  Group-DETR one-to-many training recipe is not implemented and `train()`
+  raises. LW-DETR is the architecture RF-DETR was forked from, so LibreYOLO
+  now ships both the ancestor and its descendant
 - Canonical `edge` and `normal` dense-prediction task contracts, including
   original-canvas result payloads and visualization, dataset schemas,
   validators (edge ODS/OIS and normal angular metrics), and public API aliases
