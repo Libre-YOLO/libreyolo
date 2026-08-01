@@ -246,12 +246,18 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "deim",
         "deimv2",
         "ec",
+        "lwdetr",
         "rfdetr",
         "rtdetr",
         "rtdetrv2",
         "rtdetrv4",
         "yolo9_e2e",
     }
+
+
+def _lwdetr_num_select(model_size: Optional[str]) -> int:
+    """Return LW-DETR's configured top-k selection for exported backends."""
+    return 100 if model_size == "t" else 300
 
 
 def _rfdetr_num_select(task: str, model_size: Optional[str]) -> int:
@@ -454,6 +460,11 @@ class BaseBackend(ABC):
                 effective_imgsz,
                 color_format,
                 task=self.task,
+            )
+            return tensor, img, size, 1.0
+        elif self.model_family == "lwdetr":
+            tensor, img, size = self._preprocess_lwdetr(
+                image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
         elif self.model_family in ("dfine", "rtdetrv4"):
@@ -782,6 +793,20 @@ class BaseBackend(ABC):
         return img_tensor, original_img, original_size
 
     @staticmethod
+    def _preprocess_lwdetr(image, input_size, color_format):
+        """LW-DETR preprocessing: square resize + RGB + ImageNet mean/std."""
+        from ..models.lwdetr.utils import preprocess_numpy as lwdetr_preprocess_numpy
+
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+
+        img_chw, _ = lwdetr_preprocess_numpy(np.array(img), input_size)
+        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+
+        return img_tensor, original_img, original_size
+
+    @staticmethod
     def _preprocess_dfine(image, input_size, color_format):
         """D-FINE preprocessing: plain resize + RGB + /255, no ImageNet norm."""
         from ..models.dfine.utils import preprocess_numpy as dfine_preprocess_numpy
@@ -947,6 +972,11 @@ class BaseBackend(ABC):
                 conf,
                 max_det=max_det,
             )
+        elif self.model_family == "lwdetr":
+            boxes, scores, cls = self._parse_lwdetr(
+                all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
+            return boxes, scores, cls, None
         elif self.model_family in ("dfine", "rtdetrv4"):
             if self.model_family == "dfine" and self.task == "segment":
                 return self._parse_dfine_segment(
@@ -1523,6 +1553,38 @@ class BaseBackend(ABC):
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask].astype(np.int64)
 
+    def _parse_lwdetr(self, all_outputs, orig_w, orig_h, conf, max_det: int = 300):
+        """Parse LW-DETR outputs — same top-K decode as D-FINE, plus COCO remap.
+
+        Upstream never returns more than its configured ``num_select``, and the
+        released COCO head has one column per COCO category id, so the ids are
+        mapped down to the contiguous 80-class interface the native path exposes.
+
+        The unmapped columns are sliced out *before* the top-K, matching
+        ``postprocess.lwdetr``: filtering after selection would let one of the
+        11 annotation-free COCO ids consume a slot of the max_det budget with no
+        replacement, so exported graphs would drop a detection the native path
+        keeps.
+        """
+        effective_max_det = min(max_det, _lwdetr_num_select(self.model_size))
+
+        num_classes = all_outputs[0].shape[-1]
+        if num_classes == 91 and self.nb_classes == 80:
+            from ..utils.coco import COCO91_CATEGORY_IDS
+
+            columns = np.asarray(COCO91_CATEGORY_IDS, dtype=np.int64)
+            sliced = [all_outputs[0][:, :, columns], *all_outputs[1:]]
+            boxes, scores, class_ids = self._parse_dfine(
+                sliced, orig_w, orig_h, conf, max_det=effective_max_det
+            )
+            # _parse_dfine returns indices into the sliced 80-column head, which
+            # is already the contiguous LibreYOLO ordering.
+            return boxes, scores, class_ids
+
+        return self._parse_dfine(
+            all_outputs, orig_w, orig_h, conf, max_det=effective_max_det
+        )
+
     def _parse_dfine_segment(
         self, all_outputs, orig_w, orig_h, conf, max_det: int = 300
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
@@ -1942,9 +2004,12 @@ class BaseBackend(ABC):
 
         # COCO 91→80 class mapping
         if num_classes == 91 and self.nb_classes == 80:
-            from ..models.rfdetr.model import _COCO91_TO_COCO80
+            # Shared module, not models.rfdetr.model: that import pulls in the
+            # optional transformers dependency, which LW-DETR exports (also a
+            # 91-wide head) must not require.
+            from ..utils.coco import COCO91_TO_COCO80
 
-            mapped = np.array([_COCO91_TO_COCO80.get(int(c), -1) for c in class_ids])
+            mapped = np.array([COCO91_TO_COCO80.get(int(c), -1) for c in class_ids])
             valid = mapped >= 0
             boxes_raw = boxes_raw[valid]
             max_scores = max_scores[valid]
@@ -2800,6 +2865,7 @@ class BaseBackend(ABC):
             DEIMv2ValPreprocessor,
             DFINEValPreprocessor,
             ECValPreprocessor,
+            LWDETRValPreprocessor,
             PICODETValPreprocessor,
             RFDETRValPreprocessor,
             RTDETRValPreprocessor,
@@ -2827,6 +2893,7 @@ class BaseBackend(ABC):
             "deim": DEIMValPreprocessor,
             "dfine": DFINEValPreprocessor,
             "ec": ECValPreprocessor,
+            "lwdetr": LWDETRValPreprocessor,
             "picodet": PICODETValPreprocessor,
             "rfdetr": RFDETRValPreprocessor,
             "rtdetr": RTDETRValPreprocessor,

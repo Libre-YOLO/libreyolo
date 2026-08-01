@@ -990,6 +990,18 @@ _add(
     since="1.4",
 )
 _add(
+    "validated",
+    ("lwdetr",),
+    ("detect",),
+    ("onnx", "torchscript"),
+    reason=(
+        "Runtime parity checked against native PyTorch on the same device: "
+        "identical class ids and detection counts, scores within 3e-6 (ONNX) "
+        "and 6e-8 (TorchScript)."
+    ),
+    since="1.5",
+)
+_add(
     "experimental",
     ("deim",),
     ("detect",),
@@ -1559,6 +1571,7 @@ _FAMILY_BLOCKS = {
 
 _NCNN_BLOCKS = {
     "dfine": "D-FINE",
+    "lwdetr": "LW-DETR",
     "deim": "DEIM",
     "deimv2": "DEIMv2",
     "rtdetr": "RT-DETR",

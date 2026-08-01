@@ -54,6 +54,10 @@ from .deimv2.model import LibreDEIMv2  # noqa: E402
 from .rtdetrv4.model import LibreRTDETRv4  # noqa: E402  (must precede LibreDFINE — sibling arch, more-specific can_load)
 from .dfine.model import LibreDFINE  # noqa: E402
 from .deim.model import LibreDEIM  # noqa: E402
+# LW-DETR is RF-DETR's ancestor and shares its decoder/projector key names, so
+# it registers eagerly and ahead of the lazy RF-DETR import; its plain-ViT
+# encoder keys (patch_embed.proj + CAE q_bias) are the discriminator.
+from .lwdetr.model import LibreLWDETR  # noqa: E402
 from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
@@ -186,6 +190,13 @@ def _unwrap_state_dict(state_dict: dict) -> dict:
 def _needs_rfdetr_registration(weights_dict: dict) -> bool:
     """Return True when checkpoint keys require lazy RF-DETR registration."""
     if LibreRTDETR.can_load(weights_dict):
+        return False
+
+    # LW-DETR carries enc_out_class_embed / enc_out_bbox_embed (RF-DETR forked
+    # them from it), but is a core family with no transformers dependency.
+    # Without this guard, loading LW-DETR weights would import RF-DETR and hard
+    # fail whenever the optional ``rfdetr`` extra is not installed.
+    if LibreLWDETR.can_load(weights_dict):
         return False
 
     if "linear.weight" in weights_dict and any(

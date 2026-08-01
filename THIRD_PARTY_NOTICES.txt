@@ -438,10 +438,19 @@ LW-DETR (Atten4Vis / Baidu)
 Source: https://github.com/Atten4Vis/LW-DETR
 License: Apache License 2.0
 Copyright (c) 2024 Baidu. All Rights Reserved.
-Used for: backbone, transformer, matcher, loss, postprocess, and
-          tensor utilities consumed by RF-DETR
+Used for: (1) the standalone LibreLWDETR family — plain-ViT
+          encoder, multi-scale projector, deformable DETR decoder,
+          and postprocess (libreyolo/models/lwdetr/,
+          libreyolo/postprocess/lwdetr.py); and (2) backbone,
+          transformer, matcher, loss, postprocess, and tensor
+          utilities consumed by RF-DETR, which forked and modified
+          this architecture
           (libreyolo/models/rfdetr/{backbone,transformer,matcher,
           loss,lwdetr,tensors,box_ops}.py).
+          Weights for the standalone family are converted from the
+          upstream Apache-2.0 COCO releases (huggingface.co/xbsu/
+          LW-DETR) and rehosted at LibreYOLO/LibreLWDETR{t,s,m,l,x};
+          see docs/provenance/lwdetr.md.
 
 --------------------------------------------------------------------
 Conditional DETR (Atten4Vis / Microsoft)
