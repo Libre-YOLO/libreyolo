@@ -42,6 +42,10 @@ class DetectionValidator(BaseValidator):
 
     task = "detect"
 
+    # Class-level default so instances built without __init__ (a pattern the
+    # test suite uses for narrow-scope validators) still resolve it.
+    _gt_coco_api = None
+
     def __init__(
         self,
         model: "BaseModel",
