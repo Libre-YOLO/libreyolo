@@ -41,6 +41,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | lingbotvision | semantic | ✓ | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |  |
+| lwdetr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |
 | moge2 | normal | ✓ |  | ✓ |  |  |  |  |  |  |
@@ -400,6 +401,10 @@ A check mark applies only under any constraint listed here.
 - `locateanything` / `point` / `tflite`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `coreml`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `coreai`: Generative VLM export is out of scope for v1.
+- `lwdetr` / `detect` / `ncnn`: NCNN export is not supported for LW-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
+- `lwdetr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `lwdetr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `lwdetr` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `mobilenetv4` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `mobilesam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.

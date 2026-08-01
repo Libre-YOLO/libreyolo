@@ -575,6 +575,31 @@
     "optional_extra": "vlm",
     "available": true
   },
+  "lwdetr": {
+    "class": "libreyolo.models.lwdetr.model.LibreLWDETR",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 640,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "default_imgsz": {
+      "t": 640,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
   "mobilenetv4": {
     "class": "libreyolo.models.mobilenetv4.model.LibreMobileNetV4",
     "tasks": [

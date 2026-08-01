@@ -50,6 +50,7 @@ file = name + ".pt"
 | YOLO9 | `LibreYOLO9` | `LibreYOLO9m.pt` |
 | YOLO9-P2 | `LibreYOLO9P2` | `LibreYOLO9P2s.pt`, `LibreYOLO9P2s-visdrone.pt` (dataset-variant suffix) |
 | RFDETR | `LibreRFDETR` | `LibreRFDETRn.pt`, `LibreRFDETRn-seg.pt`, `LibreRFDETRx-pose.pt` |
+| LWDETR | `LibreLWDETR` | `LibreLWDETRt.pt` (LW-DETR, RF-DETR's ancestor; Apache-2.0 code + weights; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
 | RTDETRv2 | `LibreRTDETRv2` | `LibreRTDETRv2r50.pt` |
 | RTDETRv4 | `LibreRTDETRv4` | `LibreRTDETRv4s.pt` |
@@ -154,6 +155,9 @@ LibreRFDETRl.pt, LibreRFDETRn-seg.pt, LibreRFDETRs-seg.pt,
 LibreRFDETRm-seg.pt, LibreRFDETRl-seg.pt, LibreRFDETRx-pose.pt,
 LibreRFDETRn-obb.pt, LibreRFDETRs-obb.pt, LibreRFDETRm-obb.pt,
 LibreRFDETRl-obb.pt,
+
+LibreLWDETRt.pt, LibreLWDETRs.pt, LibreLWDETRm.pt,
+LibreLWDETRl.pt, LibreLWDETRx.pt,
 
 LibreECs.pt, LibreECm.pt, LibreECl.pt, LibreECx.pt,
 LibreECs-pose.pt, LibreECm-pose.pt, LibreECl-pose.pt,
@@ -348,7 +352,7 @@ Rules:
 
 - **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
   section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
-- **No slug exists** for `yolo9_e2e`, `yolo9_p2`, `l2cs`, RTMDet, the VLM /
+- **No slug exists** for `lwdetr`, `yolo9_e2e`, `yolo9_p2`, `l2cs`, RTMDet, the VLM /
   SAM / open-vocab tiers, or the Darknet-lineage families (`yolo1`, `yolo2`,
   `yolo3`, `yolo4`) and `yolo7` — omit the Benchmarks section and tell the user.
   Semantic / depth / restore / point repos also omit it (detection only).
