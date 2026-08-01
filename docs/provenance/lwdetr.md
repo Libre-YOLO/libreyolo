@@ -5,7 +5,9 @@
   at `weights/convert_lwdetr_weights.py`.
 - **Upstream:** https://github.com/Atten4Vis/LW-DETR (paper: arXiv 2406.03459,
   "LW-DETR: A Transformer Replacement to YOLO for Real-Time Detection"),
-  Baidu / Atten4Vis, 2024.
+  Baidu / Atten4Vis, 2024. Ported from commit
+  `d5e6e6c4add2d24dafb965ced8b50163c50b9788` (2025-02-18, repository head at
+  port time).
 - **Upstream code license:** Apache-2.0 (`LICENSE` at the repository root,
   verified 2026-08-01). Source file headers carry
   `Copyright (c) 2024 Baidu. All Rights Reserved.` and preserve the
