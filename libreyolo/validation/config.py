@@ -91,6 +91,15 @@ class ValidationConfig:
     # pays once the validator (and its workers) survive across epochs.
     cache: Union[bool, str] = field(default=False, kw_only=True)
 
+    # Replay the model forward through captured CUDA graphs (True, False or
+    # 'auto'), using the same per-shape cache predict() uses. Validation is
+    # the ideal capture client: every batch has one shape (plus one partial
+    # final batch), and small detectors spend more host time launching the
+    # forward's kernels than the GPU spends running them. Replay is
+    # bit-identical to the eager forward (gated by tests/unit/test_cuda_graph
+    # .py); anything uncapturable falls back to eager with a warning.
+    cuda_graph: Union[bool, str] = field(default=False, kw_only=True)
+
     # Precision
     half: bool = False
     amp_dtype: str = field(default="float16", kw_only=True)

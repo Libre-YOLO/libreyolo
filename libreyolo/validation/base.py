@@ -60,8 +60,21 @@ class BaseValidator(ABC):
 
     def run(self, **kwargs) -> Dict[str, float]:
         """Main validation entry point (template method)."""
+        # Local import: models.base imports validation.preprocessors, so a
+        # module-level import here would be circular.
+        from libreyolo.models.base.cuda_graph import normalize_cuda_graph_mode
+
         self._setup(**kwargs)
-        self._run_validation()
+        requested = getattr(self.config, "cuda_graph", False)
+        if normalize_cuda_graph_mode(requested) is None:
+            self._run_validation()
+        else:
+            # Same contract as predict(..., cuda_graph=...): unsupported
+            # families fail loudly up front, uncapturable situations (CPU
+            # device, odd input) fall back to eager inside the runner.
+            self.model._require_cuda_graph_support()
+            with self.model.cuda_graph_scope(requested):
+                self._run_validation()
         return self._finalize()
 
     def _setup_device(self) -> torch.device:
@@ -189,10 +202,15 @@ class BaseValidator(ABC):
 
     def _inference(self, images: torch.Tensor) -> Any:
         """Run model inference on a batch of images (B, C, H, W)."""
+        from libreyolo.models.base.cuda_graph import forward_maybe_graphed
+
         use_non_blocking = self.device.type == "cuda"
         images = images.to(self.device, non_blocking=use_non_blocking)
         with self._autocast_context():
-            return self.model._forward(images)
+            # Replays a captured CUDA graph when run() opened a graph scope;
+            # exactly model._forward(images) otherwise, including for the
+            # duck-typed model doubles in the test suite.
+            return forward_maybe_graphed(self.model, images)
 
     def _autocast_context(self):
         if self.config.half and self.device.type == "cuda":

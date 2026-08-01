@@ -2613,6 +2613,18 @@ class BaseTrainer(ABC):
                 # One knob for both loops: a run that opts into image caching
                 # for training gets the same for its (deterministic) validation.
                 cache=getattr(self.config, "cache", False),
+                # Same principle for graph replay, gated on the inference-side
+                # capability: training capture (CudaGraphTrainSpec) and forward
+                # capture (SUPPORTS_CUDA_GRAPH) are separate opt-ins, and a
+                # family with only the former must validate eagerly rather
+                # than fail. Replay is bit-identical, so this is an execution
+                # detail, not a protocol change.
+                cuda_graph=(
+                    bool(getattr(self.config, "cuda_graph", False))
+                    and bool(
+                        getattr(self.wrapper_model, "SUPPORTS_CUDA_GRAPH", False)
+                    )
+                ),
             )
 
             if self.wrapper_model is None:
