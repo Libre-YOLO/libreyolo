@@ -173,8 +173,24 @@ only the RF100-VL specifics.
   hosts in one evening produced five distinct infrastructure failures, none of
   them visible on the offer card, including two whose networks could not reach
   huggingface.co. That failure is the nastiest: `snapshot_download` does not
-  error, it hangs silently while the meter runs. Budget about a dollar for the
-  host search and destroy duds immediately.
+  error, it hangs silently while the meter runs.
+- **The host search is nearly free, so destroy duds without hesitating.** Vast
+  starts the GPU meter at `running`, not at creation, so a box that never
+  finishes pulling the image bills almost nothing. Measured from the charges
+  ledger (`vastai show invoices-v1 -c`): a box wedged in the pull for 15
+  minutes and then destroyed was charged $0.019, and six failed rentals across
+  one evening came to about $0.10 between them. An earlier estimate of "about a
+  dollar for the host search" overstated this by roughly 10x. The real cost of
+  a dud is the operator's attention, not money. Two corollaries: never keep a
+  doubtful box because destroying it feels wasteful, and never rush the
+  decision either, because waiting on a slow pull is also nearly free.
+- **`actual_status` is a poor up-signal; sshd answering is the real one.** A
+  box can sit at `loading` with a stale `status_msg` for many minutes while it
+  extracts a multi-gigabyte layer, which looks identical to a wedge. Poll the
+  ssh port instead: a genuinely wedged host refuses the connection after the
+  pull should long since have finished, while a slow but healthy one eventually
+  answers. Distinct layer IDs advancing in `status_msg` is the other healthy
+  tell; the same layer for over ten minutes with no new IDs is not.
 - Workload shape: independent single-GPU jobs, batch 16 at 640 px, under 12
   GB VRAM for most families. No interconnect requirement, so interruptible
   consumer boxes dominate datacenter cards on price per GPU-hour.
@@ -182,9 +198,18 @@ only the RF100-VL specifics.
   RTX 5090 or RTX 4090 boxes; the orchestrator takes any GPU count and
   multi-box runs split the dataset list.
 - Offer filter: verified host, reliability above 0.99, at least 8 vCPU per
-  GPU, at least 300 GB disk, at least 500 Mbps down, download cost under
-  0.01 USD per GB, host driver CUDA capability 12.8 or newer. Bid 20 to 30
-  percent above the current minimum to reduce outbid churn.
+  GPU, at least 300 GB disk available on the machine, at least 500 Mbps down,
+  download cost under 0.01 USD per GB, host driver CUDA capability 12.8 or
+  newer. Bid 20 to 30 percent above the current minimum to reduce outbid churn.
+- **Allocate about 120 GB, not 300.** The filter above says which machines
+  qualify; `--disk` is what you rent and are billed for, and the two are easy
+  to conflate because both have been written as 300. One campaign needs roughly
+  70 GB (6.4 image, about 3 pip, 49.4 dataset, about 3 per model of weights),
+  and `accept-box.sh` asks only for 120 GB free. Disk bills on allocated rather
+  than used GB, for the whole time the instance exists, at rates that vary by
+  host: 300 GB measured at $0.083/hr on one box and $0.139/hr on another.
+  Oversizing to 300 GB therefore costs about a dollar across a 12-hour chain
+  and buys nothing.
 - Prices move within hours: re-check offers immediately before every wave
   and archive the query plus results with the run records.
 - Interruptible semantics: being outbid pauses the box; its disk persists
