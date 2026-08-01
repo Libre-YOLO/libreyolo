@@ -34,9 +34,8 @@ def postprocess(
             scaled into it when given.
         max_det: Top-K budget over (query x class) pairs.
         class_map: Optional class-index remap (COCO-91 ids to contiguous
-            COCO-80 for the released checkpoints). Detections whose class is
-            absent from the map are dropped, matching the fact that the 11
-            unused COCO ids carry no annotations.
+            COCO-80 for the released checkpoints). Columns absent from the map
+            are excluded from selection entirely -- see below.
 
     Returns:
         dict with ``num_detections`` / ``boxes`` / ``scores`` / ``classes``.
@@ -55,15 +54,32 @@ def postprocess(
         out_logits = out_logits[0]
         out_bbox = out_bbox[0]
 
-    num_classes = out_logits.shape[-1]
     prob = out_logits.sigmoid()
 
+    class_ids = None
+    if class_map is not None:
+        # Drop the unmapped columns *before* top-K rather than filtering after.
+        # The 11 COCO ids with no annotations are still columns of the 91-wide
+        # head, so a post-hoc filter would let one of them consume a slot of the
+        # max_det budget and silently return fewer detections than asked for,
+        # with no replacement pulled up from the next valid candidate. Slicing
+        # first makes the selection behave exactly like an 80-class head.
+        source_ids = sorted(class_map)
+        columns = torch.as_tensor(source_ids, dtype=torch.long, device=prob.device)
+        class_ids = torch.as_tensor(
+            [class_map[i] for i in source_ids], dtype=torch.long, device=prob.device
+        )
+        prob = prob[:, columns]
+
+    num_classes = prob.shape[-1]
     topk_values, topk_indices = torch.topk(
-        prob.view(-1), min(max_det, prob.numel())
+        prob.reshape(-1), min(max_det, prob.numel())
     )
     scores = topk_values
     query_idx = topk_indices // num_classes
     class_idx = topk_indices % num_classes
+    if class_ids is not None:
+        class_idx = class_ids[class_idx]
 
     boxes = box_cxcywh_to_xyxy(out_bbox)[query_idx]
 
@@ -71,17 +87,6 @@ def postprocess(
     scores = scores[keep]
     class_idx = class_idx[keep]
     boxes = boxes[keep]
-
-    if class_map is not None:
-        mapped = torch.tensor(
-            [class_map.get(int(c), -1) for c in class_idx.cpu()],
-            dtype=class_idx.dtype,
-            device=class_idx.device,
-        )
-        valid = mapped >= 0
-        boxes = boxes[valid]
-        scores = scores[valid]
-        class_idx = mapped[valid]
 
     if original_size is not None:
         orig_w, orig_h = original_size

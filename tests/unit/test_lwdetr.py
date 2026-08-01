@@ -168,6 +168,49 @@ def test_lwdetr_postprocess_contract_and_coco_remap():
     np.testing.assert_allclose(result["boxes"][0], [40.0, 80.0, 60.0, 120.0], rtol=1e-6)
 
 
+def test_lwdetr_unmapped_coco_columns_do_not_consume_the_detection_budget():
+    """Annotation-free COCO ids must not displace real detections.
+
+    The released head has 91 columns, 11 of which are COCO ids that carry no
+    annotations. Filtering those out *after* top-K would let one of them take a
+    slot of the max_det budget with nothing pulled up to replace it, so the
+    caller silently gets fewer detections than requested. Selection must behave
+    like an 80-class head instead.
+    """
+    from libreyolo.postprocess.lwdetr import postprocess
+    from libreyolo.utils.coco import COCO91_TO_COCO80
+
+    unmapped = [c for c in range(91) if c not in COCO91_TO_COCO80]
+    assert unmapped, "expected the 91-wide COCO head to have unused ids"
+
+    num_queries, max_det = 8, 5
+    logits = torch.full((1, num_queries, 91), -10.0)
+    # Give every unmapped column a top score, so a post-hoc filter would lose
+    # every one of those slots.
+    for query, column in enumerate(unmapped[:num_queries]):
+        logits[0, query, column] = 20.0
+    # And give real classes scores that are lower but still well above -10.
+    for query in range(num_queries):
+        logits[0, query, 1 + query] = 5.0
+
+    result = postprocess(
+        {
+            "pred_logits": logits,
+            "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.2]] * num_queries]),
+        },
+        conf_thres=0.01,
+        iou_thres=0.5,
+        original_size=(100, 100),
+        max_det=max_det,
+        class_map=COCO91_TO_COCO80,
+    )
+
+    assert result["num_detections"] == max_det
+    assert set(result["classes"].tolist()) <= set(COCO91_TO_COCO80.values())
+    # The surviving detections are the real ones, at their own scores.
+    assert np.allclose(result["scores"], 1 / (1 + np.exp(-5.0)), atol=1e-6)
+
+
 def test_lwdetr_val_preprocessor_matches_inference_preprocess():
     from libreyolo.models.lwdetr.utils import preprocess_numpy
     from libreyolo.validation.preprocessors import LWDETRValPreprocessor

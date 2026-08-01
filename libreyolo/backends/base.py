@@ -1559,22 +1559,31 @@ class BaseBackend(ABC):
         Upstream never returns more than its configured ``num_select``, and the
         released COCO head has one column per COCO category id, so the ids are
         mapped down to the contiguous 80-class interface the native path exposes.
+
+        The unmapped columns are sliced out *before* the top-K, matching
+        ``postprocess.lwdetr``: filtering after selection would let one of the
+        11 annotation-free COCO ids consume a slot of the max_det budget with no
+        replacement, so exported graphs would drop a detection the native path
+        keeps.
         """
         effective_max_det = min(max_det, _lwdetr_num_select(self.model_size))
-        boxes, scores, class_ids = self._parse_dfine(
-            all_outputs, orig_w, orig_h, conf, max_det=effective_max_det
-        )
 
         num_classes = all_outputs[0].shape[-1]
         if num_classes == 91 and self.nb_classes == 80:
-            from ..utils.coco import COCO91_TO_COCO80
+            from ..utils.coco import COCO91_CATEGORY_IDS
 
-            mapped = np.array(
-                [COCO91_TO_COCO80.get(int(c), -1) for c in class_ids], dtype=np.int64
+            columns = np.asarray(COCO91_CATEGORY_IDS, dtype=np.int64)
+            sliced = [all_outputs[0][:, :, columns], *all_outputs[1:]]
+            boxes, scores, class_ids = self._parse_dfine(
+                sliced, orig_w, orig_h, conf, max_det=effective_max_det
             )
-            valid = mapped >= 0
-            boxes, scores, class_ids = boxes[valid], scores[valid], mapped[valid]
-        return boxes, scores, class_ids
+            # _parse_dfine returns indices into the sliced 80-column head, which
+            # is already the contiguous LibreYOLO ordering.
+            return boxes, scores, class_ids
+
+        return self._parse_dfine(
+            all_outputs, orig_w, orig_h, conf, max_det=effective_max_det
+        )
 
     def _parse_dfine_segment(
         self, all_outputs, orig_w, orig_h, conf, max_det: int = 300
