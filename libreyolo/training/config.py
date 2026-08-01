@@ -187,9 +187,14 @@ class TrainConfig:
     # System
     workers: int = 4
     # Image caching to speed dataloading across epochs. Accepts False (off),
-    # True/'ram' (decoded images in RAM), or 'disk' (decoded images as .npy
-    # beside each source image). 'disk' is the safest choice with dataloader
-    # workers; default is off.
+    # True/'ram' (cached images in RAM), or 'disk' (cached images as .npy
+    # beside each source image). Families whose transform consumes the
+    # dataset's deterministic resize cache the *resized* image (skipping decode
+    # and resize, ~an order of magnitude smaller than caching the decode);
+    # families that opt into wants_unresized_image cache the full-resolution
+    # decode. Cached reads are byte-identical to fresh ones either way. The
+    # flag also enables caching in the per-epoch validation loop. 'disk' is
+    # the safest choice with dataloader workers; default is off.
     cache: Union[bool, str] = False
     patience: int = 50
     resume: bool = False

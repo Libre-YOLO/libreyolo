@@ -127,10 +127,19 @@ class GraphRunner:
 
     auto_threshold: int = DEFAULT_AUTO_THRESHOLD
 
+    # When False, run() never captures on a shape miss and just runs eager;
+    # already-captured shapes still replay. Callers that iterate a DataLoader
+    # set this around their loop, because the loader's pin-memory threads call
+    # cudaHostAlloc while batches are in flight, and any synchronous CUDA
+    # allocation on the context invalidates a capture in progress. Such
+    # callers capture at a controlled point first (see capture()).
+    capture_on_miss: bool = True
+
     _graphs: Dict[GraphKey, _CapturedGraph] = field(default_factory=dict)
     _pool: Optional[Any] = None
     _misses: int = 0
     _fallback_reason: Optional[str] = None
+    _capture_failed: bool = False
     _warned_capacity: bool = False
     _warned_unused: bool = False
     _shape_counts: Dict[GraphKey, int] = field(default_factory=dict)
@@ -167,6 +176,17 @@ class GraphRunner:
                 return self.forward_fn(input_tensor)
 
         if captured is None:
+            if self._capture_failed or not self.capture_on_miss:
+                # No capture attempt. Either a previous capture already failed
+                # -- one cudaErrorStreamCaptureInvalidated poisons every later
+                # capture attempt on the context, and each retry pays warmup
+                # before failing the same way (measured: retry-per-batch made
+                # validation 2.4x slower than eager) -- or the caller forbade
+                # mid-loop capture because concurrent work (DataLoader
+                # pin-memory threads calling cudaHostAlloc) would invalidate
+                # it. Replays of already-captured shapes are unaffected.
+                self._misses += 1
+                return self.forward_fn(input_tensor)
             self._warn_if_precaptured_unused(key)
             if len(self._graphs) >= self.max_graphs:
                 if not self._warned_capacity:
@@ -183,6 +203,7 @@ class GraphRunner:
             try:
                 captured = self._capture(input_tensor)
             except Exception as exc:  # capture is best-effort by contract
+                self._capture_failed = True
                 self._note_fallback(f"capture failed: {type(exc).__name__}: {exc}")
                 return self.forward_fn(input_tensor)
             self._graphs[key] = captured
@@ -207,9 +228,18 @@ class GraphRunner:
         key = self._key(input_tensor)
         if key in self._graphs:
             return
+        if self._capture_failed:
+            # A failed capture poisons later capture attempts on this context;
+            # retrying costs a full warmup before failing identically. Callers
+            # that really want to retry can release() first.
+            raise CudaGraphUnavailable(
+                f"a previous capture failed for {self.family or 'model'}; "
+                "not retrying (call release() to reset)"
+            )
         try:
             self._graphs[key] = self._capture(input_tensor)
         except Exception as exc:
+            self._capture_failed = True
             raise CudaGraphUnavailable(
                 f"CUDA graph capture failed for {self.family or 'model'} at "
                 f"shape {tuple(input_tensor.shape)}: {exc}"
@@ -241,6 +271,7 @@ class GraphRunner:
         self._pool = None
         self._misses = 0
         self._fallback_reason = None
+        self._capture_failed = False
         self._warned_capacity = False
         self._warned_unused = False
 
