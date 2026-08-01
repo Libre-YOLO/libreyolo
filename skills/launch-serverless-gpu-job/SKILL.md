@@ -127,6 +127,13 @@ $PY $SK audit                                       # end-of-session: is anythin
   `</dev/null` so the job survives disconnect; then `tail` the log.
 - **Right-size by $/job, not $/hr.** A tiny model half-idles a 4090; a cheaper
   card can be cheaper *per epoch* even if slower (watch VRAM).
+- **CUDA graphs cost VRAM, so budget for them when packing several trainings on
+  one card.** Capture holds a private memory pool: measured on 8x RTX 5090 with
+  3 yolov9t trainings per card, 18.6 GB eager against 20.3 GB graphed, i.e.
+  about +0.6 GB per lane. The pool shrinks under pressure rather than OOMing
+  (a lane capped at 4.1 GB reserved 3.9 GB and lost no throughput), but a big
+  model is a different story: rfdetr added 5.42 GB of private pool and OOMed a
+  16 GB card outright. Measure per family before choosing packing depth.
 - For unattended runs, arm the watchdog in the background:
   `$PY $SK guard <id> --max-hours 24 --done-file /root/JOB_DONE` (destroys on the
   done-marker or timeout; best-effort — needs this process alive).
