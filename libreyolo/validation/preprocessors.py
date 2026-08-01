@@ -190,6 +190,13 @@ class RFDETRValPreprocessor(BaseValPreprocessor):
         # the source image to the square model canvas.
         return True
 
+    @staticmethod
+    def _family_preprocess_numpy():
+        """Return the family's ``preprocess_numpy``; subclasses point elsewhere."""
+        from ..models.rfdetr.utils import preprocess_numpy
+
+        return preprocess_numpy
+
     def __call__(
         self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -198,9 +205,7 @@ class RFDETRValPreprocessor(BaseValPreprocessor):
 
         rgb_img = img[:, :, ::-1]  # BGR -> RGB
         if target_h == target_w:
-            from ..models.rfdetr.utils import preprocess_numpy
-
-            resized_img, _ = preprocess_numpy(rgb_img, target_h)
+            resized_img, _ = self._family_preprocess_numpy()(rgb_img, target_h)
         else:
             pil_img = Image.fromarray(rgb_img).resize(
                 (target_w, target_h), Image.Resampling.BILINEAR
@@ -227,6 +232,22 @@ class RFDETRValPreprocessor(BaseValPreprocessor):
             padded_targets[:n] = targets[:n]
 
         return resized_img, padded_targets
+
+
+class LWDETRValPreprocessor(RFDETRValPreprocessor):
+    """LW-DETR preprocessor: square resize, RGB, ImageNet mean/std.
+
+    Upstream's val transform is ``SquareResize([640]) + ToTensor + Normalize``
+    (PIL BILINEAR to a square canvas, no letterbox) — the same pipeline
+    RF-DETR inherited from it, so only the family-local ``preprocess_numpy``
+    differs.
+    """
+
+    @staticmethod
+    def _family_preprocess_numpy():
+        from ..models.lwdetr.utils import preprocess_numpy
+
+        return preprocess_numpy
 
 
 class YOLO9ValPreprocessor(BaseValPreprocessor):

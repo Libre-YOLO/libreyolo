@@ -246,6 +246,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "deim",
         "deimv2",
         "ec",
+        "lwdetr",
         "rfdetr",
         "rtdetr",
         "rtdetrv2",
@@ -1942,9 +1943,12 @@ class BaseBackend(ABC):
 
         # COCO 91→80 class mapping
         if num_classes == 91 and self.nb_classes == 80:
-            from ..models.rfdetr.model import _COCO91_TO_COCO80
+            # Shared module, not models.rfdetr.model: that import pulls in the
+            # optional transformers dependency, which LW-DETR exports (also a
+            # 91-wide head) must not require.
+            from ..utils.coco import COCO91_TO_COCO80
 
-            mapped = np.array([_COCO91_TO_COCO80.get(int(c), -1) for c in class_ids])
+            mapped = np.array([COCO91_TO_COCO80.get(int(c), -1) for c in class_ids])
             valid = mapped >= 0
             boxes_raw = boxes_raw[valid]
             max_scores = max_scores[valid]
