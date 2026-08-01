@@ -331,7 +331,19 @@ class GraphRunner:
             torch.cuda.synchronize()
 
             graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph, pool=self._pool, stream=stream):
+            # thread_local: only this thread is restricted during capture.
+            # Under the default "global" mode, a DataLoader pin-memory
+            # thread staging the next batch (cudaHostAlloc) would both
+            # invalidate the capture and be poisoned by it, killing the
+            # run on its next batch fetch. The pin thread never touches
+            # the capturing stream, so nothing it does belongs in the
+            # graph.
+            with torch.cuda.graph(
+                graph,
+                pool=self._pool,
+                stream=stream,
+                capture_error_mode="thread_local",
+            ):
                 output = self.forward_fn(static_input)
 
         static_outputs, skeleton = _flatten(output)
