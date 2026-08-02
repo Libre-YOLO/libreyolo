@@ -234,6 +234,14 @@ def test_round8_tensorrt_fp32_parity_promotes_nine_cells():
     assert "0.9970" in pidnet.reason
 
 
+def test_swin_classifier_exports_are_backed_by_trained_runtime_parity():
+    for format in ("onnx", "torchscript", "openvino", "tensorrt"):
+        entry = get_support("swin", "classify", format)
+        assert entry.tier == "validated"
+        assert "test_swin_export.py" in entry.reason
+        assert "224x224" in entry.constraint
+
+
 def test_round9_promotes_three_parity_cells_and_records_seven_gaps():
     deim = get_support("deim", "detect", "onnx")
     assert deim.tier == "validated"
@@ -592,6 +600,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("segformer", "semantic"),
         ("siglip2", "classify"),
         ("siglip2", "embed"),
+        ("swin", "classify"),
         ("swinir", "restore"),
         ("teed", "edge"),
         ("yolo1", "detect"),
