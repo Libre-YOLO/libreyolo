@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from typing import Any, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 
+from ...postprocess.fcos import postprocess
+from ...utils.coco import COCO91_TO_COCO80
 from ...utils.image_loader import ImageInput
+from ...validation.preprocessors import FCOSValPreprocessor
 from ..base import BaseModel
 from .nn import LibreFCOSModel
 from .utils import preprocess_image, preprocess_numpy
+from .validator import FCOSValidator
 
 
 class LibreFCOS(BaseModel):
@@ -23,6 +26,9 @@ class LibreFCOS(BaseModel):
     SUPPORTED_TASKS = ("detect",)
     DEFAULT_TASK = "detect"
     TRAIN_CONFIG = None
+    val_preprocessor_class = FCOSValPreprocessor
+    validator_class = FCOSValidator
+    SUPPORTS_BATCHED_PREDICT = False
 
     def __init__(
         self,
@@ -41,7 +47,15 @@ class LibreFCOS(BaseModel):
         )
         if isinstance(model_path, str):
             self._load_weights(model_path)
+        self._arch_num_classes = self.model.num_classes
         self.model.eval()
+
+    def __call__(self, source=None, **kwargs):
+        """Use the published FCOS thresholds unless the caller overrides them."""
+        kwargs.setdefault("conf", 0.2)
+        kwargs.setdefault("iou", 0.6)
+        kwargs.setdefault("max_det", 100)
+        return super().__call__(source, **kwargs)
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
@@ -106,13 +120,20 @@ class LibreFCOS(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> dict:
-        del output, conf_thres, iou_thres, original_size, max_det, kwargs
-        return {
-            "num_detections": 0,
-            "boxes": np.zeros((0, 4), dtype=np.float32),
-            "scores": np.zeros((0,), dtype=np.float32),
-            "classes": np.zeros((0,), dtype=np.int64),
-        }
+        class_map = (
+            COCO91_TO_COCO80
+            if self._arch_num_classes == 91 and self.nb_classes == 80
+            else None
+        )
+        return postprocess(
+            output,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            original_size=original_size,
+            max_det=max_det,
+            class_map=class_map,
+            **kwargs,
+        )
 
     def train(self, *args, **kwargs):
         raise NotImplementedError(

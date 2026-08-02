@@ -1,35 +1,111 @@
-"""Preprocessing helpers for the FCOS family scaffold."""
+"""Exact torchvision-compatible preprocessing for FCOS inference.
+
+Transform semantics are derived from pytorch/vision v0.26.0 at commit
+336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause).
+"""
 
 from __future__ import annotations
 
+import math
 from typing import Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from ...utils.image_loader import ImageInput, ImageLoader
 
+IMAGE_MEAN = (0.485, 0.456, 0.406)
+IMAGE_STD = (0.229, 0.224, 0.225)
+DEFAULT_MIN_SIZE = 800
+DEFAULT_MAX_SIZE = 1333
+SIZE_DIVISIBLE = 32
+
+
+def max_size_for(input_size: int) -> int:
+    """Scale torchvision's 800/1333 resize contract for an explicit override."""
+    input_size = int(input_size)
+    if input_size <= 0:
+        raise ValueError(f"input_size must be positive, got {input_size}")
+    return int(round(input_size * DEFAULT_MAX_SIZE / DEFAULT_MIN_SIZE))
+
+
+def resize_dimensions(
+    height: int,
+    width: int,
+    input_size: int = DEFAULT_MIN_SIZE,
+) -> tuple[int, int, float]:
+    """Return the unpadded FCOS resize dimensions and nominal uniform scale."""
+    if height <= 0 or width <= 0:
+        raise ValueError(f"image dimensions must be positive, got {(height, width)}")
+    max_size = max_size_for(input_size)
+    scale = min(float(input_size) / min(height, width), max_size / max(height, width))
+    # F.interpolate with scale_factor and recompute_scale_factor=True floors
+    # each spatial dimension independently.
+    return max(1, int(height * scale)), max(1, int(width * scale)), scale
+
+
+def _preprocess_tensor(
+    img_rgb_hwc: np.ndarray,
+    input_size: int = DEFAULT_MIN_SIZE,
+) -> tuple[torch.Tensor, float]:
+    image = np.asarray(img_rgb_hwc)
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError(f"FCOS expects an RGB HWC image, got {image.shape}")
+
+    tensor = torch.from_numpy(np.array(image, copy=True, order="C")).permute(2, 0, 1)
+    tensor = tensor.to(dtype=torch.float32).div(255.0)
+    mean = tensor.new_tensor(IMAGE_MEAN).view(3, 1, 1)
+    std = tensor.new_tensor(IMAGE_STD).view(3, 1, 1)
+    tensor = (tensor - mean) / std
+
+    height, width = tensor.shape[-2:]
+    _, _, scale = resize_dimensions(height, width, input_size)
+    tensor = F.interpolate(
+        tensor.unsqueeze(0),
+        scale_factor=scale,
+        mode="bilinear",
+        recompute_scale_factor=True,
+        align_corners=False,
+    )[0]
+
+    resized_h, resized_w = tensor.shape[-2:]
+    padded_h = int(math.ceil(resized_h / SIZE_DIVISIBLE) * SIZE_DIVISIBLE)
+    padded_w = int(math.ceil(resized_w / SIZE_DIVISIBLE) * SIZE_DIVISIBLE)
+    tensor = F.pad(tensor, (0, padded_w - resized_w, 0, padded_h - resized_h))
+    return tensor, scale
+
 
 def preprocess_numpy(
-    img_rgb_hwc: np.ndarray, input_size: int = 800
+    img_rgb_hwc: np.ndarray,
+    input_size: int = DEFAULT_MIN_SIZE,
 ) -> Tuple[np.ndarray, float]:
-    """Return an RGB CHW float tensor; exact aspect resize lands with the graph."""
-    del input_size
-    image = np.asarray(img_rgb_hwc, dtype=np.float32) / 255.0
-    return np.ascontiguousarray(image.transpose(2, 0, 1)), 1.0
+    """Normalize, aspect-resize, and bottom/right-pad an RGB uint8 image."""
+    tensor, ratio = _preprocess_tensor(img_rgb_hwc, input_size)
+    return np.ascontiguousarray(tensor.numpy(), dtype=np.float32), ratio
 
 
 def preprocess_image(
     image: ImageInput,
     color_format: str = "auto",
-    input_size: int = 800,
+    input_size: int = DEFAULT_MIN_SIZE,
 ) -> tuple[torch.Tensor, Image.Image, tuple[int, int], float]:
-    """Load one image for the importable scaffold."""
+    """Load and apply torchvision's FCOS inference transform to one image."""
     loaded = ImageLoader.load(image, color_format=color_format)
     original_size = loaded.size
-    image_chw, ratio = preprocess_numpy(np.asarray(loaded), input_size)
-    return torch.from_numpy(image_chw).unsqueeze(0), loaded, original_size, ratio
+    tensor, ratio = _preprocess_tensor(np.asarray(loaded), input_size)
+    return tensor.unsqueeze(0), loaded, original_size, ratio
 
 
-__all__ = ["preprocess_image", "preprocess_numpy"]
+__all__ = [
+    "DEFAULT_MAX_SIZE",
+    "DEFAULT_MIN_SIZE",
+    "IMAGE_MEAN",
+    "IMAGE_STD",
+    "SIZE_DIVISIBLE",
+    "max_size_for",
+    "preprocess_image",
+    "preprocess_numpy",
+    "resize_dimensions",
+]
