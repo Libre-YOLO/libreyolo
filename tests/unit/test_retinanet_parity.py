@@ -12,6 +12,7 @@ import os
 from functools import partial
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 from PIL import Image
@@ -29,6 +30,8 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 from torchvision.transforms.functional import pil_to_tensor
 
 from libreyolo.models.retinanet.nn import LibreRetinaNetModel
+from libreyolo.postprocess.retinanet import postprocess
+from libreyolo.utils.coco import COCO91_TO_COCO80
 
 
 CHECKPOINT_DIR = os.environ.get("LIBREYOLO_RETINANET_CHECKPOINT_DIR")
@@ -137,6 +140,8 @@ def test_official_raw_head_parity(size):
         expected_features = list(reference.backbone(input_tensor).values())
         expected_heads = reference.head(expected_features)
         actual_heads, actual_features = ours.forward_head(input_tensor)
+        expected_detections = reference([image])[0]
+        decoded_output = ours(input_tensor)
 
     feature_diff = max(
         float((expected - actual).abs().max().item())
@@ -149,3 +154,27 @@ def test_official_raw_head_parity(size):
     )
     assert feature_diff == 0.0
     assert head_diff == 0.0
+
+    original_size = (int(image.shape[-1]), int(image.shape[-2]))
+    actual_detections = postprocess(
+        decoded_output,
+        conf_thres=0.05,
+        iou_thres=0.5,
+        original_size=original_size,
+        input_size=800,
+        max_det=300,
+    )
+    mapped_labels = torch.full_like(expected_detections["labels"], -1)
+    for source, target in COCO91_TO_COCO80.items():
+        mapped_labels[expected_detections["labels"] == source] = target
+    valid = mapped_labels >= 0
+    expected_boxes = expected_detections["boxes"][valid].cpu().numpy()
+    expected_scores = expected_detections["scores"][valid].cpu().numpy()
+    expected_classes = mapped_labels[valid].cpu().numpy()
+    np.testing.assert_array_equal(actual_detections["boxes"], expected_boxes)
+    np.testing.assert_array_equal(actual_detections["scores"], expected_scores)
+    np.testing.assert_array_equal(actual_detections["classes"], expected_classes)
+    print(
+        f"size={size} final_detections={len(expected_boxes)} "
+        "box_max_abs_diff=0.0 score_max_abs_diff=0.0 classes_equal=True"
+    )
