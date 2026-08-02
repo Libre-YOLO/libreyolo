@@ -55,3 +55,27 @@ def test_state_dict_layout_matches_reference_architecture():
     }
     our_shapes = {key: tuple(value.shape) for key, value in ours.state_dict().items()}
     assert our_shapes == reference_shapes
+
+
+def test_preprocess_matches_reference_fixed_resize_exactly():
+    import numpy as np
+    import torch
+    from torchvision.models.detection.transform import GeneralizedRCNNTransform
+
+    from libreyolo.models.ssd.utils import preprocess_numpy
+
+    image = np.arange(73 * 119 * 3, dtype=np.uint8).reshape(73, 119, 3)
+    source = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
+    transform = GeneralizedRCNNTransform(
+        300,
+        300,
+        [0.48235, 0.45882, 0.40784],
+        [1.0 / 255.0] * 3,
+        size_divisible=1,
+        fixed_size=(300, 300),
+    )
+    reference = transform([source])[0].tensors[0]
+    actual, ratio = preprocess_numpy(image)
+
+    assert ratio == 1.0
+    assert torch.equal(torch.from_numpy(actual), reference)

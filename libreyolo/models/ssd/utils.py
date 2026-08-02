@@ -1,18 +1,23 @@
+# Derived from torchvision v0.26.0 GeneralizedRCNNTransform normalization and
+# fixed-size resize behavior. Upstream commit:
+# 336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause).
 """Image preprocessing helpers for SSD300."""
 
 from __future__ import annotations
 
 from typing import Tuple
 
-import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
+from ...postprocess.ssd import postprocess
 from ...utils.image_loader import ImageInput, ImageLoader
 
 
-SSD_IMAGE_MEAN = (0.48235 * 255.0, 0.45882 * 255.0, 0.40784 * 255.0)
+SSD_IMAGE_MEAN = (0.48235, 0.45882, 0.40784)
+SSD_IMAGE_STD = (1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0)
 
 
 def preprocess_numpy(
@@ -24,13 +29,18 @@ def preprocess_numpy(
         input_h, input_w = int(input_size[0]), int(input_size[1])
     else:
         input_h = input_w = int(input_size)
-    resized = cv2.resize(
-        img_rgb_hwc,
-        (input_w, input_h),
-        interpolation=cv2.INTER_LINEAR,
-    ).astype(np.float32)
-    resized -= np.asarray(SSD_IMAGE_MEAN, dtype=np.float32)
-    return np.ascontiguousarray(resized.transpose(2, 0, 1)), 1.0
+    image = torch.from_numpy(np.array(img_rgb_hwc, copy=True, order="C"))
+    image = image.permute(2, 0, 1).to(dtype=torch.float32) / 255.0
+    mean = image.new_tensor(SSD_IMAGE_MEAN).view(3, 1, 1)
+    std = image.new_tensor(SSD_IMAGE_STD).view(3, 1, 1)
+    image = (image - mean) / std
+    image = F.interpolate(
+        image.unsqueeze(0),
+        size=(input_h, input_w),
+        mode="bilinear",
+        align_corners=False,
+    )[0]
+    return np.ascontiguousarray(image.numpy()), 1.0
 
 
 def preprocess_image(
@@ -51,4 +61,10 @@ def preprocess_image(
     )
 
 
-__all__ = ["SSD_IMAGE_MEAN", "preprocess_image", "preprocess_numpy"]
+__all__ = [
+    "SSD_IMAGE_MEAN",
+    "SSD_IMAGE_STD",
+    "postprocess",
+    "preprocess_image",
+    "preprocess_numpy",
+]

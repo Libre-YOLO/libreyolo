@@ -7,10 +7,11 @@ from typing import Any, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from ...utils.coco import COCO91_TO_COCO80
 from ...utils.image_loader import ImageInput
 from ..base import BaseModel
 from .nn import LibreSSDModel
-from .utils import preprocess_image
+from .utils import postprocess, preprocess_image
 
 
 class LibreSSD(BaseModel):
@@ -121,8 +122,21 @@ class LibreSSD(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> dict:
-        del output, conf_thres, iou_thres, original_size, max_det, kwargs
-        raise NotImplementedError("SSD300 postprocessing is not implemented yet")
+        actual_input_size = kwargs.get("input_size", self.input_size)
+        class_map = (
+            COCO91_TO_COCO80
+            if self._arch_num_classes == 91 and self.nb_classes == 80
+            else None
+        )
+        return postprocess(
+            output,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            original_size=original_size,
+            max_det=max_det,
+            class_map=class_map,
+            input_size=actual_input_size,
+        )
 
     def train(self, *args, **kwargs):
         del args, kwargs
