@@ -118,6 +118,13 @@ a maturity target from `libreyolo-port-model` section 2, and remember that
 working trainer will usually stall. Make the trainer a follow-up unless training
 is the point of the port.
 
+Also name the **rollout group** the family enters (`MODEL_GROUPS` in
+`libreyolo/models/registry.py`; semantics in `docs/nomenclature.md`, "Model
+groups"). New ports normally enter `g2` (trainable) or `g3` (inference-only);
+`g0`/`g1` placement needs maintainer sign-off. The implementer copies this
+into the registry at commit 1, and `tests/unit/test_model_registry.py` blocks
+merge until they do.
+
 ## 5. The PRD document
 
 Use these sections, in this order. It is the shape that has survived adversarial

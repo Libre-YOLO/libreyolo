@@ -16,7 +16,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "clip": {
     "class": "libreyolo.models.clip.model.LibreCLIP",
@@ -38,7 +39,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "convnext": {
     "class": "libreyolo.models.convnext.model.LibreConvNeXt",
@@ -59,7 +61,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "deformable_detr": {
     "class": "libreyolo.models.deformable_detr.model.LibreDeformableDETR",
@@ -84,7 +87,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "deim": {
     "class": "libreyolo.models.deim.model.LibreDEIM",
@@ -109,7 +113,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g1"
   },
   "deimv2": {
     "class": "libreyolo.models.deimv2.model.LibreDEIMv2",
@@ -140,7 +145,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g1"
   },
   "depth_anything": {
     "class": "libreyolo.models.depth_anything.model.LibreDepthAnythingV2",
@@ -163,7 +169,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "depth_anything3": {
     "class": "libreyolo.models.depth_anything3.model.LibreDepthAnything3",
@@ -180,7 +187,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "detr": {
     "class": "libreyolo.models.detr.model.LibreDETR",
@@ -203,7 +211,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "dexined": {
     "class": "libreyolo.models.dexined.model.LibreDexiNed",
@@ -220,7 +229,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "dfine": {
     "class": "libreyolo.models.dfine.model.LibreDFINE",
@@ -261,7 +271,8 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g1"
   },
   "dinov2": {
     "class": "libreyolo.models.dinov2.model.LibreDINOv2",
@@ -299,7 +310,8 @@
     },
     "export_override": "custom",
     "optional_extra": "rfdetr",
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "ec": {
     "class": "libreyolo.models.ec.model.LibreEC",
@@ -343,7 +355,8 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g1"
   },
   "edgetam": {
     "class": "libreyolo.models.sam.edgetam.LibreEdgeTAM",
@@ -360,7 +373,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "efficientnetv2": {
     "class": "libreyolo.models.efficientnetv2.model.LibreEfficientNetV2",
@@ -383,7 +397,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "eomt": {
     "class": "libreyolo.models.eomt.model.LibreEoMT",
@@ -422,7 +437,8 @@
     },
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "faster_rcnn": {
     "class": "libreyolo.models.faster_rcnn.model.LibreFasterRCNN",
@@ -445,7 +461,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "feynobg": {
     "class": "libreyolo.models.feynobg.model.LibreFeyNobg",
@@ -462,7 +479,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "florence2": {
     "class": "libreyolo.models.vlm.florence2.LibreFlorence2",
@@ -481,7 +499,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "fomo": {
     "class": "libreyolo.models.fomo.model.LibreFOMO",
@@ -502,7 +521,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "grounding_dino": {
     "class": "libreyolo.models.openvocab.grounding_dino.LibreGroundingDINO",
@@ -521,7 +541,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "openvocab",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "internvl3": {
     "class": "libreyolo.models.vlm.internvl3.LibreInternVL3",
@@ -542,7 +563,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "kosmos2": {
     "class": "libreyolo.models.vlm.kosmos2.LibreKosmos2",
@@ -559,7 +581,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "l2cs": {
     "class": "libreyolo.models.l2cs.model.LibreL2CS",
@@ -584,7 +607,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "lfm2vl": {
     "class": "libreyolo.models.vlm.lfm2.LibreLFM2VL",
@@ -603,7 +627,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "lingbotvision": {
     "class": "libreyolo.models.lingbotvision.model.LibreLingBotVision",
@@ -626,7 +651,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "locateanything": {
     "class": "libreyolo.models.vlm.locateanything.LibreLocateAnything",
@@ -644,7 +670,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "lwdetr": {
     "class": "libreyolo.models.lwdetr.model.LibreLWDETR",
@@ -669,7 +696,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "mobilenetv4": {
     "class": "libreyolo.models.mobilenetv4.model.LibreMobileNetV4",
@@ -690,7 +718,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "mobilesam": {
     "class": "libreyolo.models.mobilesam.model.LibreMobileSAM",
@@ -707,7 +736,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "moge2": {
     "class": "libreyolo.models.moge2.model.LibreMoGe2",
@@ -728,7 +758,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "nafnet": {
     "class": "libreyolo.models.nafnet.model.LibreNAFNet",
@@ -747,7 +778,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "omdet_turbo": {
     "class": "libreyolo.models.openvocab.omdet_turbo.LibreOMDetTurbo",
@@ -764,7 +796,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "openvocab",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "ov_deim": {
     "class": "libreyolo.models.openvocab.ov_deim.LibreOVDEIM",
@@ -785,7 +818,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "openvocab",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "owlv2": {
     "class": "libreyolo.models.openvocab.owlv2.LibreOWLv2",
@@ -804,7 +838,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "openvocab",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "picodet": {
     "class": "libreyolo.models.picodet.model.LibrePICODET",
@@ -825,7 +860,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "picosam3": {
     "class": "libreyolo.models.picosam3.model.LibrePicoSAM3",
@@ -842,7 +878,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "pidnet": {
     "class": "libreyolo.models.pidnet.model.LibrePIDNet",
@@ -863,7 +900,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "ppocr": {
     "class": "libreyolo.models.ppocr.model.LibrePPOCR",
@@ -882,7 +920,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "qwen3vl": {
     "class": "libreyolo.models.vlm.qwen3vl.LibreQwen3VL",
@@ -903,7 +942,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "realesrgan": {
     "class": "libreyolo.models.realesrgan.model.LibreRealESRGAN",
@@ -924,7 +964,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "resnet": {
     "class": "libreyolo.models.resnet.model.LibreResNet",
@@ -947,7 +988,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "rfdetr": {
     "class": "libreyolo.models.rfdetr.model.LibreRFDETR",
@@ -999,7 +1041,8 @@
     },
     "export_override": "custom",
     "optional_extra": "rfdetr",
-    "available": true
+    "available": true,
+    "group": "g0"
   },
   "rtdetr": {
     "class": "libreyolo.models.rtdetr.model.LibreRTDETR",
@@ -1028,7 +1071,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g1"
   },
   "rtdetrv2": {
     "class": "libreyolo.models.rtdetrv2.model.LibreRTDETRv2",
@@ -1053,7 +1097,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g1"
   },
   "rtdetrv4": {
     "class": "libreyolo.models.rtdetrv4.model.LibreRTDETRv4",
@@ -1076,7 +1121,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g1"
   },
   "rtmdet": {
     "class": "libreyolo.models.rtmdet.model.LibreRTMDet",
@@ -1117,7 +1163,8 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "sam": {
     "class": "libreyolo.models.sam.model.LibreSAM1",
@@ -1138,7 +1185,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "sam2": {
     "class": "libreyolo.models.sam.sam2.LibreSAM2",
@@ -1161,7 +1209,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "sam3": {
     "class": "libreyolo.models.sam.sam3.LibreSAM3",
@@ -1178,7 +1227,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "sam3dbody": {
     "class": "libreyolo.models.sam3dbody.model.LibreSAM3DBody",
@@ -1197,7 +1247,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": null,
-    "available": false
+    "available": false,
+    "group": "g3"
   },
   "segformer": {
     "class": "libreyolo.models.segformer.model.LibreSegformer",
@@ -1224,7 +1275,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "siglip2": {
     "class": "libreyolo.models.siglip2.model.LibreSigLIP2",
@@ -1244,7 +1296,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "smolvlm2": {
     "class": "libreyolo.models.vlm.smolvlm.LibreSmolVLM2",
@@ -1263,7 +1316,8 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "group": "s"
   },
   "swinir": {
     "class": "libreyolo.models.swinir.model.LibreSwinIR",
@@ -1284,7 +1338,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "teed": {
     "class": "libreyolo.models.teed.model.LibreTEED",
@@ -1301,7 +1356,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "yolo1": {
     "class": "libreyolo.models.yolo1.model.LibreYOLO1",
@@ -1320,7 +1376,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g4"
   },
   "yolo2": {
     "class": "libreyolo.models.yolo2.model.LibreYOLO2",
@@ -1339,7 +1396,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g4"
   },
   "yolo3": {
     "class": "libreyolo.models.yolo3.model.LibreYOLO3",
@@ -1360,7 +1418,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g4"
   },
   "yolo4": {
     "class": "libreyolo.models.yolo4.model.LibreYOLO4",
@@ -1379,7 +1438,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g4"
   },
   "yolo7": {
     "class": "libreyolo.models.yolo7.model.LibreYOLO7",
@@ -1396,7 +1456,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "yolo9": {
     "class": "libreyolo.models.yolo9.model.LibreYOLO9",
@@ -1426,7 +1487,8 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g0"
   },
   "yolo9_e2e": {
     "class": "libreyolo.models.yolo9_e2e.model.LibreYOLO9E2E",
@@ -1456,7 +1518,8 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g1"
   },
   "yolo9_p2": {
     "class": "libreyolo.models.yolo9_p2.model.LibreYOLO9P2",
@@ -1480,7 +1543,8 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g1"
   },
   "yolonas": {
     "class": "libreyolo.models.yolonas.model.LibreYOLONAS",
@@ -1515,7 +1579,8 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g1"
   },
   "yolox": {
     "class": "libreyolo.models.yolox.model.LibreYOLOX",
@@ -1542,7 +1607,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g2"
   },
   "zipdepth": {
     "class": "libreyolo.models.zipdepth.model.LibreZipDepth",
@@ -1561,6 +1627,7 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   }
 }

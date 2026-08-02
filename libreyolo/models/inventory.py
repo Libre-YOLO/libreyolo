@@ -94,6 +94,7 @@ def collect_model_inventory() -> dict[str, dict]:
     """Return eager and lazy family metadata without constructing models."""
     from libreyolo.models import try_ensure_rfdetr
     from libreyolo.models.base.model import BaseModel
+    from libreyolo.models.registry import group_of
 
     optional: dict[str, tuple[str | None, bool]] = {}
     try_ensure_rfdetr()
@@ -134,6 +135,7 @@ def collect_model_inventory() -> dict[str, dict]:
             "export_override": _export_override(cls, BaseModel),
             "optional_extra": extra,
             "available": available,
+            "group": group_of(family),
         }
     return dict(sorted(inventory.items()))
 

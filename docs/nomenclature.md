@@ -6,6 +6,31 @@ not a proposal. Sources of truth are the `FAMILY` and `FILENAME_PREFIX`
 class constants in `libreyolo/models/<family>/model.py` and the
 task-resolution rules in [`libreyolo/tasks.py`](../libreyolo/tasks.py).
 
+## Model groups
+
+Families are enrolled in rollout groups that decide where a cross-cutting
+feature lands first and how hard it is validated. The single source of truth
+is `MODEL_GROUPS` in
+[`libreyolo/models/registry.py`](../libreyolo/models/registry.py); the CLI
+inventory exposes each family's group, and
+`tests/unit/test_model_registry.py` fails when a registered family is not
+enrolled.
+
+| Group | Meaning |
+|---|---|
+| `g0` | Flagship (`yolo9`, `rfdetr`). Features are designed and fully GPU-validated here first. |
+| `g1` | Core trainable detectors. Features follow `g0` in the same release wave, GPU-smoked per family. |
+| `g2` | Supporting trainables. Kept green in CI; features land opportunistically or on request. |
+| `g3` | Inference-only specialists. Predict/val/export surface only; training features do not apply. |
+| `g4` | Museum (`yolo1`-`yolo4`). Frozen exhibits; bug fixes only. |
+| `s`  | Sibling tiers (SAM, open-vocab, VLM, zero-shot). Separate product surfaces, excluded from group rollouts. |
+
+Groups classify **families, not tasks**: "add validation loss to `g1`" means
+the `g1` families, and a task-scoped rollout says so explicitly ("`g1`
+detect"). A group states the default priority, not an obligation; a family
+may sit out a feature its architecture cannot support, documented at the
+feature.
+
 ## Filename schema
 
 Every weight file follows:
