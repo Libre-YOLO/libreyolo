@@ -46,6 +46,7 @@ from .models import (
     LibrePIDNet,
     LibreSegformer,
     LibreLingBotVision,
+    LibreViT,
     LibreMobileNetV4,
     LibreConvNeXt,
     LibreEfficientNetV2,
