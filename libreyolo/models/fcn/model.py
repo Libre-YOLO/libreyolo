@@ -8,6 +8,7 @@ from typing import Any, ClassVar, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from ...postprocess.fcn import postprocess, resize_logits
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ..base import BaseModel
@@ -170,9 +171,23 @@ class LibreFCN(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> dict:
-        raise NotImplementedError(
-            "LibreFCN semantic postprocessing is not implemented yet."
+        return postprocess(
+            output,
+            conf_thres,
+            iou_thres,
+            original_size,
+            max_det=max_det,
+            **kwargs,
         )
+
+    def _postprocess_semantic_logits(
+        self,
+        output: Any,
+        original_size: Tuple[int, int],
+        **kwargs,
+    ) -> torch.Tensor:
+        """Resize primary FCN logits to the source image before argmax or TTA."""
+        return resize_logits(output, original_size)
 
     def train(self, *args, **kwargs):
         raise NotImplementedError(

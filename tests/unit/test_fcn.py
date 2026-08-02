@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 import torch
+from PIL import Image
 from torchvision.models.segmentation import fcn_resnet50
 
 from libreyolo import LibreFCN
@@ -88,7 +89,108 @@ def test_fcn_rejects_generic_resnet_backbone():
     assert not LibreFCN.can_load(state)
 
 
+def test_fcn_checkpoint_fingerprint_is_bidirectionally_disjoint():
+    from libreyolo.models.dinov2.model import LibreDINOv2
+    from libreyolo.models.eomt.model import LibreEoMT
+    from libreyolo.models.resnet.model import LibreResNet
+    from libreyolo.models.rtdetr.model import LibreRTDETR
+
+    tensor = torch.empty(1)
+    resnet = {"conv1.weight": tensor, "fc.weight": tensor}
+    for layer, blocks in ((1, 2), (2, 2), (3, 2), (4, 2)):
+        for block in range(blocks):
+            resnet[f"layer{layer}.{block}.conv1.weight"] = tensor
+    foreign_states = [
+        (LibreResNet, resnet),
+        (
+            LibreDINOv2,
+            {"backbone.encoder.proj.weight": tensor, "predict.weight": tensor},
+        ),
+        (
+            LibreEoMT,
+            {
+                "query.weight": tensor,
+                "mask_head.fc1.weight": tensor,
+                "mask_head.fc2.weight": tensor,
+                "mask_head.fc3.weight": tensor,
+                "class_predictor.weight": tensor,
+                "embeddings.patch_embeddings.projection.weight": tensor,
+            },
+        ),
+        (
+            LibreRTDETR,
+            {
+                "backbone.res_layers.0.blocks.0.conv1.weight": tensor,
+                "encoder.input_proj.0.conv.weight": tensor,
+                "decoder.input_proj.0.conv.weight": tensor,
+                "decoder.dec_score_head.0.weight": tensor,
+            },
+        ),
+    ]
+    fcn = _fcn_state(50)
+
+    for foreign_class, foreign_state in foreign_states:
+        assert foreign_class.can_load(foreign_state)
+        assert not LibreFCN.can_load(foreign_state)
+        assert not foreign_class.can_load(fcn)
+
+
 def test_fcn_training_is_explicitly_out_of_scope():
     model = LibreFCN(size="r50", device="cpu")
     with pytest.raises(NotImplementedError, match="inference-only"):
         model.train()
+
+
+def test_fcn_postprocess_uses_primary_logits_and_restores_source_shape():
+    model = object.__new__(LibreFCN)
+    primary = torch.zeros(1, 3, 8, 8)
+    primary[:, 2] = 1
+    auxiliary = torch.zeros_like(primary)
+    auxiliary[:, 1] = 10
+
+    result = model._postprocess(
+        {"out": primary, "aux": auxiliary},
+        conf_thres=0.25,
+        iou_thres=0.45,
+        original_size=(13, 7),
+    )
+
+    assert tuple(result["semantic"].shape) == (7, 13)
+    assert torch.all(result["semantic"] == 2)
+
+
+def test_fcn_predict_returns_semantic_result(tmp_path, monkeypatch):
+    class Stub(torch.nn.Module):
+        def forward(self, image):
+            logits = torch.zeros(image.shape[0], 3, image.shape[-2], image.shape[-1])
+            logits[:, 1] = 1
+            return {"out": logits, "aux": torch.zeros_like(logits)}
+
+    image_path = tmp_path / "image.png"
+    Image.new("RGB", (19, 11), color=(30, 80, 120)).save(image_path)
+    monkeypatch.setattr(LibreFCN, "_init_model", lambda self: Stub())
+    model = LibreFCN(size="r50", nb_classes=3, device="cpu")
+
+    result = model.predict(str(image_path), imgsz=32)
+
+    assert result.boxes is None
+    assert result.semantic_mask is not None
+    assert tuple(result.semantic_mask.data.shape) == (11, 19)
+
+
+def test_shared_semantic_surfaces_extract_primary_fcn_output():
+    from libreyolo.export.exporter import _SemanticExportWrapper
+    from libreyolo.validation.semantic_validator import SemanticValidator
+
+    class Stub(torch.nn.Module):
+        def forward(self, image):
+            return {"out": image[:, :2], "aux": image[:, 1:3]}
+
+    image = torch.rand(1, 3, 8, 8)
+    exported = _SemanticExportWrapper(Stub())(image)
+    validated = SemanticValidator._extract_logits(
+        object(), {"out": image[:, :2], "aux": image[:, 1:3]}, (8, 8)
+    )
+
+    torch.testing.assert_close(exported, image[:, :2])
+    torch.testing.assert_close(validated, image[:, :2])

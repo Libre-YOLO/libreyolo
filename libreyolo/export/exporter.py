@@ -202,6 +202,8 @@ class _SemanticExportWrapper(torch.nn.Module):
                 return output["logits"]
             if "predictions" in output:
                 return output["predictions"]
+            if "out" in output:
+                return output["out"]
         if isinstance(output, (list, tuple)):
             return output[-1]
         return output
