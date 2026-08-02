@@ -255,6 +255,42 @@ def test_predict_returns_relative_inverse_depth_result(midas_small):
     assert result.names == {0: "depth"}
 
 
+def test_onnx_auto_opset_is_17():
+    from libreyolo.export.onnx import _requires_onnx_opset17
+
+    assert _requires_onnx_opset17("midas")
+
+
+@pytest.mark.parametrize("format", ["torchscript", "onnx"])
+def test_small_exported_depth_parity(midas_small, tmp_path: Path, format: str):
+    if format == "onnx":
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
+    from libreyolo import LibreYOLO
+
+    y, x = np.mgrid[0:64, 0:64]
+    image = np.stack((x * 4, y * 4, (x + y) * 2), axis=-1).astype(np.uint8)
+    native = midas_small.predict(image, imgsz=64).depth_map.data.numpy()
+    artifact = midas_small.export(
+        format=format,
+        output_path=str(tmp_path / f"midas_s.{format}"),
+        imgsz=64,
+        dynamic=False,
+        simplify=False,
+    )
+    backend = LibreYOLO(artifact, device="cpu")
+    actual = backend.predict(image).depth_map.data.numpy()
+
+    mse = float(np.mean((native - actual) ** 2))
+    peak = max(float(np.max(np.abs(native))), 1e-6)
+    psnr = float("inf") if mse == 0 else 20.0 * np.log10(peak / np.sqrt(mse))
+    assert psnr > 40.0
+    assert backend.family == "midas"
+    assert backend.size == "s"
+    assert backend.task == "depth"
+    assert backend.names == {0: "depth"}
+
+
 def test_bad_imgsz_and_training_fail_explicitly():
     model = LibreMiDaS.__new__(LibreMiDaS)
     with pytest.raises(ValueError, match="divisible by 32"):

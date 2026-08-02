@@ -11,7 +11,6 @@ dependency.
 from __future__ import annotations
 
 import importlib.util
-import math
 from typing import Sequence
 
 import torch
@@ -331,7 +330,7 @@ def _resize_pos_embed(
 ) -> torch.Tensor:
     posemb_tok = posemb[:, : model.start_index]
     posemb_grid = posemb[0, model.start_index :]
-    old_grid = int(math.sqrt(len(posemb_grid)))
+    old_grid = int(model.patch_embed.grid_size[0])
     posemb_grid = posemb_grid.reshape(1, old_grid, old_grid, -1).permute(0, 3, 1, 2)
     posemb_grid = F.interpolate(posemb_grid, size=(grid_h, grid_w), mode="bilinear")
     posemb_grid = posemb_grid.permute(0, 2, 3, 1).reshape(1, grid_h * grid_w, -1)
