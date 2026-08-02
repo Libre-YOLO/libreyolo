@@ -190,6 +190,33 @@ class TestThreadLocalCaptureErrors:
                 raise RuntimeError("boom")
         assert torch.cuda.CUDAGraph is original
 
+    def test_concurrent_contexts_serialize_and_restore_the_original(self):
+        """Unsynchronized, two overlapping contexts would each save a
+        different "original" (the second saves the first's subclass) and
+        the interleaved restores could leave a temporary subclass installed
+        for the rest of the process. The patch lock must serialize them:
+        every context sees the true original as its base class, and the
+        true original is what remains at the end."""
+        import threading
+        import time
+
+        original = torch.cuda.CUDAGraph
+        bases = []
+
+        def use_context():
+            with _thread_local_capture_errors():
+                bases.append(torch.cuda.CUDAGraph.__mro__[1])
+                time.sleep(0.02)
+
+        threads = [threading.Thread(target=use_context) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert torch.cuda.CUDAGraph is original
+        assert bases == [original] * 4
+
     def test_forces_thread_local_at_capture_begin(self):
         class FakeGraph:
             def capture_begin(self, *args, **kwargs):

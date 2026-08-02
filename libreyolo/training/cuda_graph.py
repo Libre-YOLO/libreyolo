@@ -55,6 +55,7 @@ trajectory as identical between eager and graphed runs.
 from __future__ import annotations
 
 import logging
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
@@ -63,6 +64,14 @@ import torch
 from torch import nn
 
 logger = logging.getLogger(__name__)
+
+# Serializes the torch.cuda.CUDAGraph swap below. Without it, two host
+# threads capturing concurrently would each save a different "original"
+# (the second thread saves the first thread's subclass) and the interleaved
+# restores could leave a temporary subclass installed for the rest of the
+# process. Capture is rare and takes seconds, so holding the lock across
+# the whole capture is fine.
+_capture_patch_lock = threading.Lock()
 
 
 @contextmanager
@@ -90,18 +99,19 @@ def _thread_local_capture_errors() -> Iterator[None]:
     ``torch.cuda.CUDAGraph`` symbol it instantiates is swapped for a
     subclass that forces the mode at ``capture_begin``.
     """
-    original = torch.cuda.CUDAGraph
+    with _capture_patch_lock:
+        original = torch.cuda.CUDAGraph
 
-    class _ThreadLocalCaptureGraph(original):  # type: ignore[misc, valid-type]
-        def capture_begin(self, *args: Any, **kwargs: Any) -> None:
-            kwargs["capture_error_mode"] = "thread_local"
-            super().capture_begin(*args, **kwargs)
+        class _ThreadLocalCaptureGraph(original):  # type: ignore[misc, valid-type]
+            def capture_begin(self, *args: Any, **kwargs: Any) -> None:
+                kwargs["capture_error_mode"] = "thread_local"
+                super().capture_begin(*args, **kwargs)
 
-    torch.cuda.CUDAGraph = _ThreadLocalCaptureGraph
-    try:
-        yield
-    finally:
-        torch.cuda.CUDAGraph = original
+        torch.cuda.CUDAGraph = _ThreadLocalCaptureGraph
+        try:
+            yield
+        finally:
+            torch.cuda.CUDAGraph = original
 
 # A shape must repeat this many times before capture pays off. One-shot
 # shapes (a lone odd-size batch) then never capture, while any steady-state
