@@ -45,6 +45,12 @@ class SwinClassifier(SwinBackbone):
             tf_order=False,
         )
         super().__init__(dims)
+        # At the fixed 224px classifier resolution, the final stage is one
+        # 7x7 window. timm disables cyclic shift when a stage is no larger
+        # than its window; the shared dense-backbone path normally runs at
+        # larger resolutions and therefore keeps the configured shift.
+        for block in self.layers[-1].blocks:
+            block.shift_size = 0
         self.size = size
         self.num_classes = num_classes
         self.num_features = spec["embed_dim"] * 8
