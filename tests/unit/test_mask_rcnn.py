@@ -48,6 +48,8 @@ def test_task_dispatch_controls_mask_branch(monkeypatch):
     detect = LibreMaskRCNN(None, size="r50", task="detect", device="cpu")
     assert detect.model.roi_heads.return_masks is False
     assert detect.validator_class is FasterRCNNValidator
+    assert detect._allow_checkpoint_task_mismatch("segment") is True
+    assert detect._allow_checkpoint_task_mismatch("detect") is False
 
 
 def test_validation_preprocessor_matches_inference_pixels_and_scales_targets():

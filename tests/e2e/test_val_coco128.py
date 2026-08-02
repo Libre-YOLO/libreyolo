@@ -32,12 +32,16 @@ MIN_MAP = 0.18  # Uniform threshold for all models
 def test_val_coco128(family, size, weights):
     """Validate a pretrained model on coco128 and check mAP >= 0.18."""
     weights = require_test_weights(weights)
-    model = LibreYOLO(weights, size=size)
+    # coco128 ships box-only YOLO labels. Mask R-CNN defaults to segment, so
+    # use its shared checkpoint in detect mode for this detection-mAP gate;
+    # mask parity and segmentation validation dispatch are covered separately.
+    model_kwargs = {"task": "detect"} if family == "mask_rcnn" else {}
+    model = LibreYOLO(weights, size=size, **model_kwargs)
 
     # The portable Deformable DETR implementation deliberately uses GridSample
     # instead of its upstream CUDA extension. Multi-scale encoder attention is
     # memory-heavy at 800 px, so validate it one image at a time.
-    batch = 1 if family == "deformable_detr" else 16
+    batch = 1 if family in {"deformable_detr", "mask_rcnn"} else 16
     results = model.val(data="coco128.yaml", batch=batch, conf=0.001, iou=0.6)
 
     map50_95 = results["metrics/mAP50-95"]

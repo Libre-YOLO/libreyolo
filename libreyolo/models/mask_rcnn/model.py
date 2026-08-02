@@ -78,6 +78,10 @@ class LibreMaskRCNN(LibreFasterRCNN):
     def detect_checkpoint_task(cls, state_dict: dict) -> Optional[str]:
         return "segment" if cls.can_load(state_dict) else None
 
+    def _allow_checkpoint_task_mismatch(self, checkpoint_task: str) -> bool:
+        """Allow the shared instance-segmentation checkpoint in detect mode."""
+        return checkpoint_task == "segment" and self.task == "detect"
+
     def _init_model(self) -> nn.Module:
         head_width = 91 if self.nb_classes == 80 else self.nb_classes + 1
         return LibreMaskRCNNModel(
