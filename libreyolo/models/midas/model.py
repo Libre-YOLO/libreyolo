@@ -16,6 +16,7 @@ inference-only and ships two complementary official variants:
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
@@ -125,11 +126,9 @@ class LibreMiDaS(BaseModel):
             "scratch": self.model.scratch,
         }
 
-    @staticmethod
-    def _get_preprocess_numpy():
-        # The family needs the size code in addition to the common input size;
-        # validation uses the dense-task path and the network owns normalization.
-        return None
+    def _get_preprocess_numpy(self):
+        """Return the variant-bound RGB preprocessor used by export tooling."""
+        return partial(preprocess_numpy, size=self.size)
 
     def _preprocess(
         self,
@@ -164,8 +163,24 @@ class LibreMiDaS(BaseModel):
         depth = output
         if isinstance(depth, dict):
             depth = depth.get("depth", depth.get("predictions"))
+            if depth is None:
+                raise ValueError(
+                    "MiDaS output dict must contain 'depth' or 'predictions'."
+                )
+        if isinstance(depth, (list, tuple)):
+            if not depth:
+                raise ValueError("MiDaS received an empty output sequence.")
+            depth = depth[0]
+        depth = torch.as_tensor(depth)
+        if depth.ndim == 2:
+            depth = depth.unsqueeze(0).unsqueeze(0)
         if depth.ndim == 3:
             depth = depth.unsqueeze(1)
+        if depth.ndim != 4 or depth.shape[1] != 1:
+            raise ValueError(
+                "MiDaS postprocessing expects [B, 1, H, W], [B, H, W], or "
+                f"[H, W] depth; got {tuple(depth.shape)}."
+            )
         orig_w, orig_h = original_size
         depth = F.interpolate(
             depth.float(),

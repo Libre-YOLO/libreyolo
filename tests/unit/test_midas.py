@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+import torch.nn.functional as F
 
 from libreyolo.models.autoconvert import autoconvert_upstream_checkpoint
 from libreyolo.models.midas.convert import (
@@ -19,6 +20,12 @@ from libreyolo.models.midas.utils import _resize_shape, preprocess_numpy
 from libreyolo.utils.serialization import validate_checkpoint_metadata
 
 pytestmark = [pytest.mark.unit, pytest.mark.midas]
+
+
+@pytest.fixture(scope="module")
+def midas_small():
+    pytest.importorskip("timm")
+    return LibreMiDaS(model_path=None, size="s", task="depth", device="cpu")
 
 
 def _midas_signature(size: str) -> dict[str, torch.Tensor]:
@@ -171,17 +178,81 @@ def test_raw_upstream_state_autoconverts_with_depth_name(tmp_path: Path):
     assert checkpoint["names"] == {0: "depth"}
 
 
-def test_small_forward_contract():
-    pytest.importorskip("timm")
-    from libreyolo.models.midas.nn import MiDaSSmall
-
-    model = MiDaSSmall().eval()
+def test_small_forward_contract(midas_small):
+    model = midas_small.model.eval()
     assert "pixel_mean" not in model.state_dict()
     assert "pixel_std" not in model.state_dict()
     with torch.inference_mode():
         output = model(torch.rand(1, 3, 64, 64))
     assert output.shape == (1, 1, 64, 64)
     assert float(output.min()) >= 0.0
+
+
+def test_bound_export_preprocessor_matches_family_utility(midas_small):
+    image = np.random.default_rng(12).integers(
+        0, 256, size=(83, 117, 3), dtype=np.uint8
+    )
+    expected = preprocess_numpy(image, 64, "s")
+    actual = midas_small._get_preprocess_numpy()(image, 64)
+    np.testing.assert_array_equal(actual[0], expected[0])
+    assert actual[1] == expected[1]
+
+
+@pytest.mark.parametrize(
+    "wrapped",
+    [
+        lambda value: value,
+        lambda value: value[:, 0],
+        lambda value: value[0, 0],
+        lambda value: {"depth": value},
+        lambda value: {"predictions": value[:, 0]},
+        lambda value: (value,),
+    ],
+)
+def test_postprocess_restores_original_size(wrapped):
+    model = LibreMiDaS.__new__(LibreMiDaS)
+    raw = torch.arange(24, dtype=torch.float32).reshape(1, 1, 4, 6)
+    parsed = model._postprocess(
+        wrapped(raw),
+        conf_thres=0.25,
+        iou_thres=0.45,
+        original_size=(11, 7),
+    )
+    expected = F.interpolate(
+        raw,
+        size=(7, 11),
+        mode="bilinear",
+        align_corners=True,
+    )[0, 0]
+    assert set(parsed) == {"depth"}
+    torch.testing.assert_close(parsed["depth"], expected)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [{}, [], torch.zeros(1, 2, 4, 4), torch.zeros(1, 1, 1, 4, 4)],
+)
+def test_postprocess_rejects_malformed_outputs(output):
+    model = LibreMiDaS.__new__(LibreMiDaS)
+    with pytest.raises(ValueError):
+        model._postprocess(
+            output,
+            conf_thres=0.25,
+            iou_thres=0.45,
+            original_size=(11, 7),
+        )
+
+
+def test_predict_returns_relative_inverse_depth_result(midas_small):
+    image = np.random.default_rng(22).integers(0, 256, size=(80, 90, 3), dtype=np.uint8)
+
+    result = midas_small.predict(image, imgsz=64)
+
+    assert result.boxes is None
+    assert result.depth_map is not None
+    assert tuple(result.depth_map.data.shape) == (80, 90)
+    assert torch.isfinite(result.depth_map.data).all()
+    assert result.names == {0: "depth"}
 
 
 def test_bad_imgsz_and_training_fail_explicitly():
