@@ -63,6 +63,7 @@ file = name + ".pt"
 | ConvNeXt | `LibreConvNeXt` | `LibreConvNeXtt-cls.pt` |
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
+| ViT | `LibreViT` | `LibreViTti-cls.pt` (classic patch-16 AugReg classifier; Apache-2.0 code + weights; inference-only) |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 | SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
@@ -192,6 +193,9 @@ LibreEfficientNetV2b2-cls.pt, LibreEfficientNetV2b3-cls.pt,
 
 LibreResNet18-cls.pt, LibreResNet34-cls.pt,
 LibreResNet50-cls.pt, LibreResNet101-cls.pt,
+
+LibreViTti-cls.pt, LibreViTs-cls.pt,
+LibreViTb-cls.pt, LibreViTl-cls.pt,
 
 LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 

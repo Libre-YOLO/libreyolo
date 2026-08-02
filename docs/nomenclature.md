@@ -50,7 +50,7 @@ Libre<FAMILY><size>[-<task>].pt
 The model families registered into the model factory (the VLM tier is a
 separate category, covered in the note below). Most are detectors; `pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
 instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
-`efficientnetv2` / `resnet` families are classify-only:
+`efficientnetv2` / `resnet` / `vit` families are classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
 |---|---|---|
@@ -89,6 +89,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `convnext`  | `LibreConvNeXt`  | CamelCase preserved (upstream brand casing `ConvNeXt`) — classify-only family |
 | `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
 | `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
+| `vit`       | `LibreViT`       | All-caps acronym (`ViT` classic Vision Transformer) — inference-only classifier |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot classify + image/text embed) — inference-only |
 | `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot classify + image/text embed); inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
@@ -189,6 +190,7 @@ ships:
 | `convnext`  | `t`, `s`, `b` (V1 Tiny/Small/Base) |
 | `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
+| `vit`       | `ti`, `s`, `b`, `l` (classic patch-16 Tiny/Small/Base/Large; all at 224) |
 | `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models). Weight variants select the degradation: `LibreNAFNetl-restore.pt` (GoPro deblur) and `LibreNAFNetl-restore-sidd.pt` (SIDD denoise, the model behind the `denoise` alias) |
 | `realesrgan` | `x4`, `x2`, `x4t` (size code encodes scale + tier: `x4` = RealESRGAN_x4plus RRDBNet 4x quality default, `x2` = RealESRGAN_x2plus RRDBNet 2x, `x4t` = realesr-general-x4v3 SRVGG compact 4x fast/video tier) |
 | `swinir`    | `s`, `m`, `l` (all 4x: lightweight SwinIR-S, real-world SwinIR-M, and real-world SwinIR-L) |
@@ -443,6 +445,7 @@ Detector-factory family support follows:
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `resnet`    | `("classify",)`             | classify | vanilla ResNet image classifier (v1.5); 18/34/50/101 at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
+| `vit`       | `("classify",)`             | classify | classic patch-16 Vision Transformer; ti/s/b/l at 224 with AugReg ImageNet-1k weights; predict + top-1/top-5 `val` + ONNX; inference-only |
 | `clip`      | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or whole-image/text embeddings in one space |
 | `siglip2`   | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or multilingual whole-image/text embeddings in one space |
 | `facerec`   | `("embed",)`                | embed | two-stage face-region embeddings; rows align with face boxes; inference-only |
@@ -680,13 +683,19 @@ LibreResNet18-cls.pt       # ResNet-18  (224, ImageNet-1k, a1 recipe)
 LibreResNet34-cls.pt       # ResNet-34  (224, ImageNet-1k, a1 recipe)
 LibreResNet50-cls.pt       # ResNet-50  (224, ImageNet-1k, a1 recipe)
 LibreResNet101-cls.pt      # ResNet-101 (224, ImageNet-1k, a1 recipe)
+
+LibreViTti-cls.pt          # ViT-Tiny/16  (224, AugReg ImageNet-1k)
+LibreViTs-cls.pt           # ViT-Small/16 (224, AugReg ImageNet-1k)
+LibreViTb-cls.pt           # ViT-Base/16  (224, AugReg2 ImageNet-1k)
+LibreViTl-cls.pt           # ViT-Large/16 (224, AugReg ImageNet-1k)
 ```
 
 Unlike `gaze`/`point` (which carry their suffix despite being single-task),
 `classify` keeps its `-cls` suffix to match the ecosystem-wide convention. The
 `mobilenetv4` family is a native port of MobileNetV4 (the speed tier); the
 `convnext` family is a native port of ConvNeXt V1; the `efficientnetv2` family
-is a native port of EfficientNetV2-base (the accuracy tier). All are derived
+is a native port of EfficientNetV2-base (the accuracy tier); and `vit` is the
+inference-only classic patch-16 Vision Transformer family. All are derived
 from timm (Apache-2.0); weights are Apache-2.0 ImageNet-1k and load
 bit-identically (see each family's `NOTICE`, e.g.
 `libreyolo/models/efficientnetv2/NOTICE`, `libreyolo/models/convnext/NOTICE`).
@@ -695,7 +704,7 @@ are excluded; EfficientNetV2 ships only the ImageNet-1k checkpoints, as the
 `.in21k`/JFT variants carry extra-data terms.
 
 **Eval resolution is a deliberate choice.** The classify families evaluate at a
-real-time-friendly default (224 for MobileNetV4 s/m, ConvNeXt, ResNet; 256 for
+real-time-friendly default (224 for MobileNetV4 s/m, ConvNeXt, ResNet, ViT; 256 for
 MobileNetV4-l; 224/240/260/300 for EfficientNetV2 b0–b3) rather than timm's
 larger *test* resolutions (e.g. 256/288/320), which trade ~1.6–2× compute for a
 few tenths of a percent top-1. This does **not** affect parity — given the same

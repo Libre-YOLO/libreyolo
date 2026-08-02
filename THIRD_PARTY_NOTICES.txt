@@ -779,15 +779,22 @@ License: Apache License 2.0
 Copyright (c) Ross Wightman and the timm contributors.
 Used for: the native image-classification model families ported from
           timm architectures — libreyolo/models/{mobilenetv4,convnext,
-          efficientnetv2,resnet}/ — and the shared Swin backbone at
+          efficientnetv2,resnet,vit}/ — and the shared Swin backbone at
           libreyolo/models/swin/. Module/attribute names mirror timm so
           its Apache-2.0 ImageNet-1k pretrained weights load unchanged and
           inference is bit-identical. Architecture lineage: ConvNeXt also
           derives from facebookresearch/ConvNeXt (MIT); EfficientNetV2 from
           google/automl (Apache-2.0); ResNet from He et al. 2015. Weights
-          (timm *.in1k / *.fb_in1k / a1_in1k, Apache-2.0) are mirrored on
+          (timm *.in1k / *.fb_in1k / *.augreg*_in21k_ft_in1k / a1_in1k,
+          Apache-2.0) are mirrored on
           the LibreYOLO Hugging Face org. ConvNeXt-V2 fcmae weights
           (CC-BY-NC) are NOT used.
+
+          LibreViT specifically derives its native fixed-224 patch-16 graph
+          from timm v1.0.28, commit
+          8ef73809f622e0031bd7f4940265734aef8b9978. Its AugReg checkpoint
+          revisions and source/converted SHA-256 hashes are recorded in
+          docs/provenance/vit.md.
 
 --------------------------------------------------------------------
 Apache License 2.0 (full text)

@@ -1,7 +1,7 @@
 """Nightly native inference checks for every public model family.
 
 This is the broad tier: one smallest pretrained case per family, native model
-load, two inference passes, and stable detection/gaze outputs. Keep exports and
+load, two inference passes, and stable task-native outputs. Keep exports and
 training out of this file; those belong to flagship or backend-specific suites.
 """
 
@@ -95,6 +95,20 @@ def _assert_batched_detection_output_matches_sequential(family, sequential, batc
     torch.testing.assert_close(sequential_cls, batched_cls, rtol=0, atol=0)
 
 
+def _assert_classification_output_is_stable(family, first, second):
+    assert first.probs is not None, f"{family} did not return probabilities"
+    assert second.probs is not None, f"{family} did not return probabilities"
+    assert first.orig_shape == second.orig_shape
+    assert first.names, f"{family} result has no class names"
+
+    first_probs = _tensor(first.probs.data)
+    second_probs = _tensor(second.probs.data)
+    assert torch.isfinite(first_probs).all(), f"{family} produced non-finite probabilities"
+    assert torch.isclose(first_probs.sum(), torch.tensor(1.0), atol=1e-5)
+    torch.testing.assert_close(first_probs, second_probs, rtol=1e-5, atol=1e-6)
+    assert first.probs.top1 == second.probs.top1
+
+
 def _run_l2cs(weights, size):
     from libreyolo import LibreL2CS
 
@@ -136,7 +150,10 @@ def test_native_inference_is_stable(family, size, weights, sample_image):
     try:
         first = model(sample_image, conf=0.25)
         second = model(sample_image, conf=0.25)
-        _assert_detection_output_is_stable(family, first, second)
+        if family == "vit":
+            _assert_classification_output_is_stable(family, first, second)
+        else:
+            _assert_detection_output_is_stable(family, first, second)
     finally:
         del model
         cuda_cleanup()
@@ -173,6 +190,10 @@ def test_batched_list_predict_matches_sequential(family, size, weights, sample_i
         batched = model(images, conf=conf, batch=2)
 
         assert len(sequential) == len(batched) == 2
+        if family == "vit":
+            for r_seq, r_bat in zip(sequential, batched):
+                _assert_classification_output_is_stable(family, r_seq, r_bat)
+            return
         assert len(sequential[0]) > 0, f"{family} returned no detections"
         for r_seq, r_bat in zip(sequential, batched):
             # Full box/score/class parity for every image with detections
