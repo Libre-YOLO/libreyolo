@@ -19,6 +19,10 @@ class RFDETRConfig(TrainConfig):
     workers: int = 0
     weight_decay: float = 1e-4
     eval_interval: int = 1
+    # Compute the full detection criterion (main, auxiliary, and encoder
+    # outputs) during validation. Off by default because Hungarian matching
+    # adds validation time.
+    val_loss: bool = False
     warmup_epochs: int = 0
     warmup_lr_start: float = 1e-6
     no_aug_epochs: int = 0

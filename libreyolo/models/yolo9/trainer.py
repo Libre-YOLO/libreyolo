@@ -53,6 +53,32 @@ class YOLO9Trainer(BaseTrainer):
     def get_model_tag(self) -> str:
         return f"YOLOv9-{self.config.size}"
 
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+
+        from .nn import DDetect, LibreYOLO9Model
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        standard_model = (
+            self.get_model_family() == "yolo9"
+            and type(self.model) is LibreYOLO9Model
+            and type(self.model.head) is DDetect
+        )
+        if task != "detect" or not standard_model:
+            raise ValueError(
+                "val_loss=True currently supports standard YOLO9 detection only; "
+                "YOLO9-E2E, YOLO9-P2, and non-detect tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import YOLO9ValidationLoss
+
+        return YOLO9ValidationLoss(
+            model,
+            max_labels=int(getattr(self.config, "max_labels", 100)),
+        )
+
     def get_freeze_groups(self) -> List[FreezeGroup]:
         model = self.model
         backbone = getattr(model, "backbone", None)

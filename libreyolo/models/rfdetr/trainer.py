@@ -127,6 +127,34 @@ class RFDETRTrainer(BaseTrainer):
     def get_model_tag(self) -> str:
         return f"LibreRFDETR-{self.config.size}"
 
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+
+        from .nn import LibreRFDETRModel
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        standard_model = type(self.model) is LibreRFDETRModel and not any(
+            bool(getattr(self.model, name, False))
+            for name in (
+                "segmentation",
+                "pose",
+                "obb",
+                "classification",
+                "semantic",
+            )
+        )
+        if task != "detect" or not standard_model:
+            raise ValueError(
+                "val_loss=True currently supports RF-DETR detection only; "
+                "segment, pose, OBB, classify, and semantic tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import RFDETRValidationLoss
+
+        return RFDETRValidationLoss(model)
+
     def preserve_freeze_param(self, name: str, param: torch.nn.Parameter) -> bool:
         if not getattr(self.config, "lora", False):
             return False
