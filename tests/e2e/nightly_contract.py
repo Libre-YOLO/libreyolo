@@ -1,6 +1,6 @@
 """Versioned contract for the nightly e2e test suite."""
 
-NIGHTLY_E2E_SUITE_VERSION = "2.2"
+NIGHTLY_E2E_SUITE_VERSION = "2.3"
 NIGHTLY_E2E_SUITE_CONTRACT = (
     "general=smallest native inference case for every public detector family, "
     "including inference-only museum families, "

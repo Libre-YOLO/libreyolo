@@ -306,6 +306,23 @@ Faster R-CNN / TorchVision (BSD-3-Clause)
     not an explicit checkpoint-specific grant, and repeat torchvision's
     pretrained-model terms caveat.
 
+SSD300 / TorchVision (BSD-3-Clause; VGG weight lineage CC BY 4.0)
+    Path:    libreyolo/models/ssd/, libreyolo/postprocess/ssd.py,
+             weights/convert_ssd_weights.py
+    License: libreyolo/models/ssd/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreSSD300 inference graph is derived from torchvision
+    v0.26.0's SSD300, VGG feature extractor, default-box generator, box coder,
+    transform, and postprocessing utilities (BSD-3-Clause, Copyright (c)
+    Soumith Chintala 2016). The official COCO checkpoint is mirrored
+    separately under BSD-3-Clause on an explicitly disclosed implied basis;
+    it has no per-object license file. Its VGG-16 initialization traces to
+    Oxford Visual Geometry Group feature weights released under CC BY 4.0.
+    The family notice supplies the full BSD text, VGG attribution, license
+    link, changes statement, and pretrained-model/data caveats.
+
 LW-DETR (Apache License 2.0)
     Path:    libreyolo/models/lwdetr/, libreyolo/postprocess/lwdetr.py,
              weights/convert_lwdetr_weights.py

@@ -25,6 +25,13 @@ before 1.4.0 are documented in the
   resize and final class-wise NMS in-graph with dynamic source H/W. The
   BSD-3-Clause code attribution and the pretrained-weight caveat ship with
   the family, and `train()` raises
+- LibreSSD300, an inference-only museum port of torchvision's fixed-resolution
+  SSD300 VGG16 COCO detector. Native preprocessing, raw heads, default boxes,
+  and final detections are exact against pytorch/vision v0.26.0. Batch-dynamic,
+  fixed-300 ONNX export emits decoded predictions for LibreYOLO's shared
+  class-aware NMS. The BSD-3-Clause source and implied checkpoint-license
+  basis are disclosed alongside the Oxford VGG feature-weight CC BY 4.0
+  lineage; `train()` raises
 - LibreDeformableDETR, an inference-only museum port of the original
   Apache-2.0 Deformable DETR in all five released ResNet-50 variants
   (`r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage`). The portable

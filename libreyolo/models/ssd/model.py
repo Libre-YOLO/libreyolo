@@ -9,6 +9,7 @@ import torch.nn as nn
 
 from ...utils.coco import COCO91_TO_COCO80
 from ...utils.image_loader import ImageInput
+from ...validation.preprocessors import SSDValPreprocessor
 from ..base import BaseModel
 from .nn import LibreSSDModel
 from .utils import postprocess, preprocess_image
@@ -28,6 +29,7 @@ class LibreSSD(BaseModel):
     DEFAULT_TASK = "detect"
     TRAIN_CONFIG = None
     TTA_FIXED_SIZE = True
+    val_preprocessor_class = SSDValPreprocessor
 
     def __init__(
         self,

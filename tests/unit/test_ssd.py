@@ -79,3 +79,27 @@ def test_preprocess_matches_reference_fixed_resize_exactly():
 
     assert ratio == 1.0
     assert torch.equal(torch.from_numpy(actual), reference)
+
+
+def test_validation_preprocessor_matches_native_input_and_geometry():
+    import numpy as np
+
+    from libreyolo.models.ssd.utils import preprocess_numpy
+    from libreyolo.validation.preprocessors import SSDValPreprocessor
+
+    bgr = np.arange(73 * 119 * 3, dtype=np.uint8).reshape(73, 119, 3)
+    targets = np.array([[10.0, 11.0, 60.0, 50.0, 4.0]], dtype=np.float32)
+    preprocessor = SSDValPreprocessor(img_size=(300, 300), max_labels=4)
+
+    image, padded_targets = preprocessor(bgr, targets, (300, 300))
+    reference, _ = preprocess_numpy(bgr[:, :, ::-1].copy(), 300)
+
+    assert np.array_equal(image, reference)
+    assert preprocessor.custom_normalization is True
+    assert preprocessor.uses_letterbox is False
+    assert preprocessor.wants_unresized_image is True
+    assert np.allclose(
+        padded_targets[0],
+        [10.0 * 300 / 119, 11.0 * 300 / 73, 60.0 * 300 / 119, 50.0 * 300 / 73, 4.0],
+    )
+    assert not padded_targets[1:].any()
