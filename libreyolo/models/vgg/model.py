@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from ...postprocess.vgg import postprocess as _vgg_postprocess
 from ...utils.image_loader import ImageInput
 from ..base import BaseModel
 from .nn import VGG
@@ -153,8 +154,15 @@ class LibreVGG(BaseModel):
         ratio: float = 1.0,
         **kwargs,
     ) -> Dict:
-        del output, conf_thres, iou_thres, original_size, max_det, ratio, kwargs
-        raise NotImplementedError("VGG postprocessing is added after upstream parity passes.")
+        return _vgg_postprocess(
+            output,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            original_size=original_size,
+            max_det=max_det,
+            ratio=ratio,
+            **kwargs,
+        )
 
     def train(self, *args, **kwargs):
         del args, kwargs
