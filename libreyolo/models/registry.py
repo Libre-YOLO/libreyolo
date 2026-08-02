@@ -67,6 +67,7 @@ MODEL_GROUPS: dict[str, str] = {
     "feynobg": "g3",
     "ppocr": "g3",
     "l2cs": "g3",
+    "hrnet": "g3",
     "facerec": "g3",
     "sam3dbody": "g3",
     # g4 - museum
