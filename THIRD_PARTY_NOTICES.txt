@@ -467,12 +467,26 @@ Used for: position-encoding, transformer, matcher, and loss
 DETR (facebookresearch / Meta)
 --------------------------------------------------------------------
 Source: https://github.com/facebookresearch/detr
+Commit: 29901c51d7fe8712168b8d0d64351170bc0f83e0
 License: Apache License 2.0
 Copyright (c) Facebook, Inc. and its affiliates.
-Used for: NestedTensor, position-encoding, matcher, set-criterion,
-          and box utilities reused by RF-DETR via LW-DETR
+Used for: the standalone original DETR architecture and inference utilities
+          (libreyolo/models/detr/, libreyolo/postprocess/detr.py), plus
+          NestedTensor, position-encoding, matcher, set-criterion, and box
+          utilities reused by RF-DETR via LW-DETR
           (libreyolo/models/rfdetr/{backbone,transformer,matcher,
           loss,lwdetr,tensors,box_ops}.py).
+
+--------------------------------------------------------------------
+PyTorch torch.nn.Transformer
+--------------------------------------------------------------------
+Source: https://github.com/pytorch/pytorch
+License: BSD-3-Clause
+Copyright (c) 2016-2026 Facebook, Inc. and its affiliates.
+Used for: facebookresearch/detr models/transformer.py states that it is a
+          modified copy of torch.nn.Transformer. LibreDETR ports that
+          Apache-2.0 DETR module and retains the inherited PyTorch lineage
+          (libreyolo/models/detr/nn.py).
 
 --------------------------------------------------------------------
 Deformable DETR (fundamentalvision / SenseTime)

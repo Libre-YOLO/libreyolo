@@ -53,15 +53,23 @@ def test_detr_official_signature_and_class_count():
     assert LibreDETR.detect_size(state) is None
 
 
-def test_detr_skeleton_builds_and_is_inference_only():
+@pytest.mark.parametrize("size", ("r50", "r50dc5", "r101", "r101dc5"))
+def test_detr_native_model_builds_and_forwards(size):
+    from libreyolo import LibreDETR
+
+    model = LibreDETR(None, size=size, nb_classes=3, device="cpu")
+    assert model.family == "detr"
+    assert model.task == "detect"
+    model.model.eval()
+    with torch.no_grad():
+        output = model.model(torch.zeros(1, 3, 64, 64))
+    assert output["pred_logits"].shape == (1, 100, 4)
+    assert output["pred_boxes"].shape == (1, 100, 4)
+
+
+def test_detr_native_model_is_inference_only():
     from libreyolo import LibreDETR
 
     model = LibreDETR(None, size="r50", nb_classes=3, device="cpu")
-    assert model.family == "detr"
-    assert model.task == "detect"
-    with torch.no_grad():
-        output = model.model(torch.zeros(1, 3, 32, 32))
-    assert output["pred_logits"].shape == (1, 100, 4)
-    assert output["pred_boxes"].shape == (1, 100, 4)
     with pytest.raises(NotImplementedError, match="inference-only"):
         model.train(data="coco128.yaml")
