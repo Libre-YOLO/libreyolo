@@ -44,9 +44,35 @@ project the weights were derived from. Per-family summary:
              upstream: roboflow/rf-detr
              (backbone: facebookresearch/dinov2, Apache-2.0)
 
+    Faster R-CNN (LibreFasterRCNN{n,s,m,l})            BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official COCO checkpoints carry no per-object license file.
+             Rehosting uses BSD-3-Clause implied by the releasing project,
+             not a publisher-confirmed checkpoint grant. Every weight repo
+             ships the verbatim BSD text and states torchvision's warning that
+             pretrained-model terms may derive from training data and users
+             must determine permission for their use case.
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreFasterRCNN{n,s,m,l}
+
+    Deformable DETR                                     Apache-2.0
+             (LibreDeformableDETR{r50ss,r50ssdc5,r50,
+              r50refine,r50twostage})
+             upstream code: fundamentalvision/Deformable-DETR
+             upstream weights: SenseTime/deformable-detr* on Hugging Face
+             Converted without changing learned tensors; the 91-column COCO
+             head is retained and mapped to contiguous COCO-80 at runtime.
+
     RT-DETR  (LibreRTDETR{r18,r34,r50,r50m,r101})      Apache-2.0
              upstream: lyuwenyu/RT-DETR
              (backbone: PaddlePaddle/PaddleClas ResNet_vd, Apache-2.0)
+
+    DETR     (LibreDETR{r50,r50dc5,r101,r101dc5})      Apache-2.0
+             upstream: facebookresearch/detr, commit
+             29901c51d7fe8712168b8d0d64351170bc0f83e0.
+             Official COCO model-zoo tensors are unchanged; conversion only
+             adds LibreYOLO checkpoint metadata. Every Hugging Face weight
+             repository carries the upstream Apache-2.0 LICENSE and NOTICE.
 
     EoMT     (LibreEoMTl-sem, LibreEoMTl-seg,          MIT
               LibreEoMTl-seg-1280, LibreEoMT{s,b,l}-panoptic)

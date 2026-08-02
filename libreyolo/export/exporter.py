@@ -141,6 +141,8 @@ def _pose_keypoint_shape_metadata(model) -> dict:
 
 _FIXED_SQUARE_EXPORT_FAMILIES = {
     "clip",
+    "deformable_detr",
+    "detr",
     "dfine",
     "deim",
     "deimv2",
@@ -792,6 +794,12 @@ class BaseExporter(ABC):
             nn_model = _SemanticExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "detr":
+            from ..models.detr.nn import DETRExportWrapper
+
+            nn_model = DETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "dfine":
             from ..models.dfine.nn import DFINEExportWrapper
 
@@ -853,6 +861,18 @@ class BaseExporter(ABC):
             from ..models.lwdetr.nn import LWDETRExportWrapper
 
             nn_model = LWDETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "faster_rcnn":
+            from ..models.faster_rcnn.nn import FasterRCNNExportWrapper
+
+            nn_model = FasterRCNNExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "deformable_detr":
+            from ..models.deformable_detr.nn import DeformableDETRExportWrapper
+
+            nn_model = DeformableDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
         elif family == "rtmdet":
@@ -1273,6 +1293,29 @@ class OnnxExporter(BaseExporter):
     apply_model_half = True
     supports_embedded_nms = True
     default_int8_calibration_data = True
+
+    def _resolve_params(self, output_path, imgsz, device, half, int8):
+        imgsz, device, output_path = super()._resolve_params(
+            output_path, imgsz, device, half, int8
+        )
+        family = self.model._get_model_name()
+        size = getattr(self.model, "size", None)
+        if family == "deformable_detr" and size == "r50twostage":
+            if half:
+                raise NotImplementedError(
+                    "Deformable DETR two-stage ONNX export is validated in FP32 only."
+                )
+            if device.type != "cpu":
+                warnings.warn(
+                    "Deformable DETR two-stage ONNX export is traced on CPU because "
+                    "the legacy PyTorch exporter can terminate while lowering its "
+                    "CUDA top-k graph. The model is restored to its original device "
+                    "after export.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+                device = torch.device("cpu")
+        return imgsz, device, output_path
 
     def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
         if int8:

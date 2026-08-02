@@ -1895,6 +1895,30 @@ _add(
 )
 _add(
     "validated",
+    ("detr",),
+    ("detect",),
+    ("onnx", "torchscript"),
+    reason=(
+        "Official-checkpoint raw outputs and public predict results are covered "
+        "by native, ONNX Runtime, and TorchScript parity tests."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed square input",
+)
+_add(
+    "validated",
+    ("deformable_detr",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "All five official ResNet-50 variants preserve raw-logit, box, and "
+        "public prediction parity through ONNX Runtime at a fixed square canvas."
+    ),
+    since="1.5",
+    constraint="FP32, fixed square input, ONNX opset 17",
+)
+_add(
+    "validated",
     ("lwdetr",),
     ("detect",),
     ("onnx", "torchscript"),
@@ -1904,6 +1928,41 @@ _add(
         "and 6e-8 (TorchScript)."
     ),
     since="1.5",
+)
+_add(
+    "validated",
+    ("faster_rcnn",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "Official trained-checkpoint parity covers graph outputs and unified "
+        "ONNX-backend detections against native PyTorch."
+    ),
+    since="1.7",
+    constraint=(
+        "ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream "
+        "aspect resize and final class-wise NMS are embedded in the graph"
+    ),
+)
+_add(
+    "blocked",
+    ("faster_rcnn",),
+    ("detect",),
+    ("torchscript", "executorch"),
+    reason=(
+        "The variable-length two-stage detection graph has only been "
+        "validated through the ONNX runtime contract."
+    ),
+)
+_add(
+    "blocked",
+    ("faster_rcnn",),
+    ("detect",),
+    ("tensorrt", "openvino", "ncnn", "tflite", "coreml", "coreai"),
+    reason=(
+        "This runtime has no parity evidence for Faster R-CNN's proposal, "
+        "RoIAlign, variable-length output, and embedded-NMS graph."
+    ),
 )
 _add(
     "validated",
@@ -2703,6 +2762,8 @@ _FAMILY_BLOCKS = {
 }
 
 _NCNN_BLOCKS = {
+    "deformable_detr": "Deformable DETR",
+    "detr": "DETR",
     "dfine": "D-FINE",
     "lwdetr": "LW-DETR",
     "deim": "DEIM",

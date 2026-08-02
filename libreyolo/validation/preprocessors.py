@@ -250,6 +250,66 @@ class LWDETRValPreprocessor(RFDETRValPreprocessor):
         return preprocess_numpy
 
 
+class DETRValPreprocessor(RFDETRValPreprocessor):
+    """DETR preprocessor: fixed square RGB resize plus ImageNet normalization."""
+
+    @staticmethod
+    def _family_preprocess_numpy():
+        from ..models.detr.utils import preprocess_numpy
+
+        return preprocess_numpy
+
+
+class FasterRCNNValPreprocessor(BaseValPreprocessor):
+    """Keep source resolution for the model's in-graph detection transform."""
+
+    @property
+    def normalize(self) -> bool:
+        # The validator performs /255; ImageNet normalization remains in-graph.
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        rgb_chw = np.ascontiguousarray(
+            img[:, :, ::-1].transpose(2, 0, 1), dtype=np.float32
+        )
+
+        # Images stay in original coordinates, but DetectionValidator's shared
+        # GT parser expects non-letterboxed targets in validation-canvas space
+        # and divides this scale back out. Scale only the metric copy.
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, [0, 2]] *= target_w / orig_w
+            scaled[:count, [1, 3]] *= target_h / orig_h
+            padded_targets[:count] = scaled[:count]
+        return rgb_chw, padded_targets
+
+
+class DeformableDETRValPreprocessor(RFDETRValPreprocessor):
+    """Deformable DETR fixed-square ImageNet-normalized preprocessor.
+
+    Upstream evaluation preserves aspect ratio at a short side of 800 with a
+    1333-pixel cap. LibreYOLO uses its fixed-shape deployment convention: PIL
+    bilinear resize directly to 800 x 800, with independent x/y box scaling.
+    Validation and interactive inference deliberately share that transform.
+    """
+
+    @staticmethod
+    def _family_preprocess_numpy():
+        from ..models.deformable_detr.utils import preprocess_numpy
+
+        return preprocess_numpy
+
+
 class YOLO9ValPreprocessor(BaseValPreprocessor):
     """YOLOv9 preprocessor: letterbox with gray padding, 0-1 range, RGB format."""
 
@@ -341,6 +401,7 @@ class YOLONASValPreprocessor(YOLO9ValPreprocessor):
     ) -> Tuple[float, float, float]:
         # YOLO-NAS resizes to YOLO_NAS_RESIZE_SIZE first, then center-pads to imgsz.
         from ..models.yolonas.utils import YOLO_NAS_RESIZE_SIZE
+
         r = min(YOLO_NAS_RESIZE_SIZE / orig_h, YOLO_NAS_RESIZE_SIZE / orig_w)
         new_w = int(round(orig_w * r))
         new_h = int(round(orig_h * r))

@@ -64,6 +64,31 @@
     "available": true,
     "group": "g2"
   },
+  "deformable_detr": {
+    "class": "libreyolo.models.deformable_detr.model.LibreDeformableDETR",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r50ss": 800,
+      "r50ssdc5": 800,
+      "r50": 800,
+      "r50refine": 800,
+      "r50twostage": 800
+    },
+    "default_imgsz": {
+      "r50ss": 800,
+      "r50ssdc5": 800,
+      "r50": 800,
+      "r50refine": 800,
+      "r50twostage": 800
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
   "deim": {
     "class": "libreyolo.models.deim.model.LibreDEIM",
     "tasks": [
@@ -163,6 +188,29 @@
     "optional_extra": null,
     "available": true,
     "group": "g3"
+  },
+  "detr": {
+    "class": "libreyolo.models.detr.model.LibreDETR",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r50": 800,
+      "r50dc5": 800,
+      "r101": 800,
+      "r101dc5": 800
+    },
+    "default_imgsz": {
+      "r50": 800,
+      "r50dc5": 800,
+      "r101": 800,
+      "r101dc5": 800
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
   },
   "dexined": {
     "class": "libreyolo.models.dexined.model.LibreDexiNed",
@@ -389,6 +437,29 @@
     "optional_extra": null,
     "available": true,
     "group": "g3"
+  },
+  "faster_rcnn": {
+    "class": "libreyolo.models.faster_rcnn.model.LibreFasterRCNN",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "n": 320,
+      "s": 800,
+      "m": 800,
+      "l": 800
+    },
+    "default_imgsz": {
+      "n": 320,
+      "s": 800,
+      "m": 800,
+      "l": 800
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
   },
   "feynobg": {
     "class": "libreyolo.models.feynobg.model.LibreFeyNobg",

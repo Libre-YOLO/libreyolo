@@ -299,7 +299,11 @@ Copyright 2022-2024 The HuggingFace Team. All Rights Reserved.
 Used for: DINOv2-with-Registers reference implementation that
           libreyolo/models/rfdetr/dinov2.py adapts to add windowed
           self-attention. Also a runtime dependency loaded via
-          AutoBackbone for the non-windowed DinoV2 path.
+          AutoBackbone for the non-windowed DinoV2 path. The Deformable
+          DETR checkpoint key mapping in
+          libreyolo/models/deformable_detr/conversion.py is adapted from
+          Transformers commit
+          4a224b1e2182d1f8f27d1d76fb8de6ab40b7ff62.
 
 --------------------------------------------------------------------
 EoMT (Mobile Perception Systems Lab at TU/e)
@@ -467,22 +471,45 @@ Used for: position-encoding, transformer, matcher, and loss
 DETR (facebookresearch / Meta)
 --------------------------------------------------------------------
 Source: https://github.com/facebookresearch/detr
+Commit: 29901c51d7fe8712168b8d0d64351170bc0f83e0
 License: Apache License 2.0
 Copyright (c) Facebook, Inc. and its affiliates.
-Used for: NestedTensor, position-encoding, matcher, set-criterion,
-          and box utilities reused by RF-DETR via LW-DETR
+Used for: the standalone original DETR architecture and inference utilities
+          (libreyolo/models/detr/, libreyolo/postprocess/detr.py), plus
+          NestedTensor, position-encoding, matcher, set-criterion, and box
+          utilities reused by RF-DETR via LW-DETR
           (libreyolo/models/rfdetr/{backbone,transformer,matcher,
-          loss,lwdetr,tensors,box_ops}.py).
+          loss,lwdetr,tensors,box_ops}.py), and the NestedTensor,
+          position-encoding, and ResNet-backbone portions of the standalone
+          Deformable DETR port (libreyolo/models/deformable_detr/common.py).
+
+--------------------------------------------------------------------
+PyTorch torch.nn.Transformer
+--------------------------------------------------------------------
+Source: https://github.com/pytorch/pytorch
+License: BSD-3-Clause
+Copyright (c) 2016-2026 Facebook, Inc. and its affiliates.
+Used for: facebookresearch/detr models/transformer.py states that it is a
+          modified copy of torch.nn.Transformer. LibreDETR ports that
+          Apache-2.0 DETR module and retains the inherited PyTorch lineage
+          (libreyolo/models/detr/nn.py).
 
 --------------------------------------------------------------------
 Deformable DETR (fundamentalvision / SenseTime)
 --------------------------------------------------------------------
 Source: https://github.com/fundamentalvision/Deformable-DETR
+        commit 11169a60c33333af00a4849f1808023eba96a931
 License: Apache License 2.0
 Copyright (c) 2020 SenseTime. All Rights Reserved.
-Used for: multi-scale deformable attention reused by RF-DETR
+Used for: the standalone inference-only LibreDeformableDETR family
+          (libreyolo/models/deformable_detr/ and
+          libreyolo/postprocess/deformable_detr.py), plus multi-scale
+          deformable attention reused by RF-DETR
           (libreyolo/models/rfdetr/transformer.py: MSDeformAttn,
-          ms_deform_attn_core_pytorch).
+          ms_deform_attn_core_pytorch). The five standalone checkpoints are
+          converted from the Apache-2.0 SenseTime Hugging Face mirrors and
+          rehosted at LibreYOLO/LibreDeformableDETR{r50ss,r50ssdc5,r50,
+          r50refine,r50twostage}; see docs/provenance/deformable_detr.md.
 
 --------------------------------------------------------------------
 ViTDet (facebookresearch detectron2)
@@ -579,6 +606,29 @@ these weights by distilling pseudo-labels from Depth Anything V2 Large
 grant on the student weights is upstream's published position, and the
 distillation lineage is documented in
 libreyolo/models/zipdepth/NOTICE.
+
+--------------------------------------------------------------------
+TorchVision Faster R-CNN (PyTorch contributors)
+--------------------------------------------------------------------
+Source: https://github.com/pytorch/vision
+Commit: 336d36e8db990a905498c73933e35231876e28bc
+Version: torchvision 0.26.0
+License: BSD-3-Clause
+Copyright (c) Soumith Chintala 2016
+Used for: the native inference-only Faster R-CNN family in
+          libreyolo/models/faster_rcnn/nn.py. The implementation derives its
+          two-stage orchestration, RPN, RoI box head, image transform, box
+          coder, and FPN-backbone construction from the pinned BSD source.
+          The full BSD license text and the code-vs-weights distinction are
+          recorded in libreyolo/models/faster_rcnn/NOTICE.
+
+NOTE - code vs. weights: the upstream source code is BSD-3-Clause. The four
+official COCO checkpoint files do not carry an explicit checkpoint-specific
+license, and torchvision's README warns that pretrained-model terms may differ
+based on training data. LibreYOLO's separate weight mirrors apply
+BSD-3-Clause on an explicitly disclosed implied basis, ship the verbatim
+license with every checkpoint, and repeat the caveat. The source distribution
+does not bundle the checkpoint files; conversion only adds metadata.
 
 --------------------------------------------------------------------
 NAFNet (Megvii Research)

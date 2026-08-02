@@ -270,6 +270,42 @@ YOLOv7 / MultimediaTechLab/YOLO (MIT License)
     the model-definition v7.yaml is bundled under libreyolo/models/yolo7/.
     MIT is MIT-compatible; these terms add only attribution obligations.
 
+DETR (Apache License 2.0)
+    Path:    libreyolo/models/detr/, libreyolo/postprocess/detr.py,
+             weights/convert_detr_weights.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/facebookresearch/detr
+             commit 29901c51d7fe8712168b8d0d64351170bc0f83e0
+             Copyright (c) Facebook, Inc. and its affiliates.
+    Weights: https://dl.fbaipublicfiles.com/detr/ (Apache-2.0), rehosted at
+             LibreYOLO/LibreDETR{r50,r50dc5,r101,r101dc5}
+
+    LibreDETR is a native inference port of the original DETR ResNet-50/101
+    and DC5 detector variants. Module names mirror upstream so all four
+    official COCO checkpoints load unchanged. The transformer source inherits
+    its stated ``torch.nn.Transformer`` lineage from PyTorch (BSD-3-Clause).
+    Copyright headers are retained in the ported architecture; family-level
+    details live in libreyolo/models/detr/NOTICE.
+
+Faster R-CNN / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/faster_rcnn/,
+             libreyolo/postprocess/faster_rcnn.py
+    License: libreyolo/models/faster_rcnn/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreFasterRCNN inference graph is derived from torchvision
+    v0.26.0's Faster R-CNN, RPN, RoI box heads, transform, box coder, and FPN
+    backbone builders (BSD-3-Clause, Copyright (c) Soumith Chintala 2016).
+    Upstream state-dict names are retained for strict local conversion. The
+    port adds LibreYOLO metadata, contiguous COCO-80 mapping, validation, and
+    fixed-batch ONNX integration; it excludes training-only matching,
+    sampling, and losses. Official COCO checkpoints are not bundled in the
+    source distribution. Separate weight mirrors disclose that their
+    BSD-3-Clause redistribution basis is implied by the releasing project,
+    not an explicit checkpoint-specific grant, and repeat torchvision's
+    pretrained-model terms caveat.
+
 LW-DETR (Apache License 2.0)
     Path:    libreyolo/models/lwdetr/, libreyolo/postprocess/lwdetr.py,
              weights/convert_lwdetr_weights.py
@@ -288,6 +324,23 @@ LW-DETR (Apache License 2.0)
     preserved in the ported modules and cited separately in
     THIRD_PARTY_NOTICES.txt. Ported inference only — the Group-DETR training
     recipe is not included. See docs/provenance/lwdetr.md.
+
+Deformable DETR (Apache License 2.0)
+    Path:    libreyolo/models/deformable_detr/,
+             libreyolo/postprocess/deformable_detr.py,
+             weights/convert_deformable_detr_weights.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/fundamentalvision/Deformable-DETR
+             commit 11169a60c33333af00a4849f1808023eba96a931
+    Copyright (c) 2020 SenseTime. All Rights Reserved.
+    Modified from DETR, Copyright (c) Facebook, Inc. and its affiliates.
+
+    LibreYOLO ports the original ResNet-50 inference architecture and its
+    pure-PyTorch multi-scale deformable-attention reference path. The upstream
+    custom CUDA extension and all training-only code are excluded. Official
+    Apache-2.0 SenseTime COCO weights are converted and rehosted for all five
+    released variants. Source-file lineage headers are preserved; see
+    docs/provenance/deformable_detr.md.
 
 D-FINE-seg (Apache License 2.0)
     Path:    libreyolo/models/dfine/, libreyolo/postprocess/dfine.py

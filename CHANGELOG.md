@@ -9,6 +9,27 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
+  in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
+  Native outputs are bit-exact against the pinned facebookresearch/detr
+  Apache-2.0 source; TorchScript export is bit-exact and fixed-800 ONNX
+  Runtime prediction parity is verified. DC5 dilation is stored explicitly in
+  checkpoint metadata because it changes the runtime graph without changing
+  any tensor shape, and `size` is required when constructing `LibreDETR`
+  directly. The 500-epoch Hungarian-matching training recipe is not
+  implemented and `train()` raises
+- LibreFasterRCNN, an inference-only museum port of torchvision's Faster
+  R-CNN in sizes n/s/m/l (MobileNetV3-Large 320-FPN, MobileNetV3-Large FPN,
+  ResNet-50 FPN v1, ResNet-50 FPN v2). Native detections are exact against
+  pytorch/vision v0.26.0; batch-one ONNX export keeps the upstream aspect
+  resize and final class-wise NMS in-graph with dynamic source H/W. The
+  BSD-3-Clause code attribution and the pretrained-weight caveat ship with
+  the family, and `train()` raises
+- LibreDeformableDETR, an inference-only museum port of the original
+  Apache-2.0 Deformable DETR in all five released ResNet-50 variants
+  (`r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage`). The portable
+  `grid_sample` attention path is bit-exact against upstream's pure-PyTorch
+  reference, and all variants have fixed-800 ONNX Runtime prediction parity
 - LibreLWDETR (LW-DETR), a detect-only family in sizes t/s/m/l/x at 640px:
   plain-ViT encoder with interleaved window/global attention, multi-scale
   projector, and a shallow deformable DETR decoder. Code and weights are
