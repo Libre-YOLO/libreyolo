@@ -137,8 +137,8 @@ def _onnx_paste_mask_in_image(
     image_height: Tensor,
     image_width: Tensor,
 ) -> Tensor:
-    one = torch.ones(1, dtype=torch.int64)
-    zero = torch.zeros(1, dtype=torch.int64)
+    one = torch.ones(1, dtype=torch.int64, device=box.device)
+    zero = torch.zeros(1, dtype=torch.int64, device=box.device)
     width = torch.max(torch.cat((box[2] - box[0] + one, one)))
     height = torch.max(torch.cat((box[3] - box[1] + one, one)))
     mask = F.interpolate(
@@ -155,14 +155,32 @@ def _onnx_paste_mask_in_image(
     unpadded = mask[
         (y0 - box[1]) : (y1 - box[1]),
         (x0 - box[0]) : (x1 - box[0]),
-    ]
-    zeros_y0 = torch.zeros(y0, unpadded.size(1))
-    zeros_y1 = torch.zeros(image_height - y1, unpadded.size(1))
-    rows = torch.cat((zeros_y0, unpadded.to(torch.float32), zeros_y1), dim=0)[
-        :image_height, :
-    ]
-    zeros_x0 = torch.zeros(rows.size(0), x0)
-    zeros_x1 = torch.zeros(rows.size(0), image_width - x1)
+    ].to(torch.float32)
+    zeros_y0 = torch.zeros(
+        y0,
+        unpadded.size(1),
+        dtype=unpadded.dtype,
+        device=unpadded.device,
+    )
+    zeros_y1 = torch.zeros(
+        image_height - y1,
+        unpadded.size(1),
+        dtype=unpadded.dtype,
+        device=unpadded.device,
+    )
+    rows = torch.cat((zeros_y0, unpadded, zeros_y1), dim=0)[:image_height, :]
+    zeros_x0 = torch.zeros(
+        rows.size(0),
+        x0,
+        dtype=rows.dtype,
+        device=rows.device,
+    )
+    zeros_x1 = torch.zeros(
+        rows.size(0),
+        image_width - x1,
+        dtype=rows.dtype,
+        device=rows.device,
+    )
     return torch.cat((zeros_x0, rows, zeros_x1), dim=1)[:, :image_width]
 
 
@@ -173,7 +191,13 @@ def _onnx_paste_masks_loop(
     image_height: Tensor,
     image_width: Tensor,
 ) -> Tensor:
-    pasted = torch.zeros(0, image_height, image_width)
+    pasted = torch.zeros(
+        0,
+        image_height,
+        image_width,
+        dtype=torch.float32,
+        device=masks.device,
+    )
     for index in range(masks.size(0)):
         current = _onnx_paste_mask_in_image(
             masks[index][0],
@@ -199,8 +223,16 @@ def paste_masks_in_image(
         return _onnx_paste_masks_loop(
             masks,
             boxes,
-            torch.scalar_tensor(image_height, dtype=torch.int64),
-            torch.scalar_tensor(image_width, dtype=torch.int64),
+            torch.scalar_tensor(
+                image_height,
+                dtype=torch.int64,
+                device=masks.device,
+            ),
+            torch.scalar_tensor(
+                image_width,
+                dtype=torch.int64,
+                device=masks.device,
+            ),
         )[:, None]
     pasted = [
         _paste_mask_in_image(mask[0], box, image_height, image_width)

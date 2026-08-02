@@ -62,6 +62,26 @@ def test_detect_export_wrapper_omits_masks():
     assert len(outputs) == 3
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_onnx_mask_paste_keeps_cuda_tensors_on_device():
+    from libreyolo.models.mask_rcnn.nn import _onnx_paste_mask_in_image
+
+    mask = torch.ones((4, 4), device="cuda")
+    box = torch.tensor([1, 1, 2, 2], dtype=torch.int64, device="cuda")
+    image_height = torch.scalar_tensor(4, dtype=torch.int64, device="cuda")
+    image_width = torch.scalar_tensor(4, dtype=torch.int64, device="cuda")
+
+    output = _onnx_paste_mask_in_image(
+        mask,
+        box,
+        image_height,
+        image_width,
+    )
+
+    assert output.device.type == "cuda"
+    assert tuple(output.shape) == (4, 4)
+
+
 def test_onnx_export_rejects_non_unit_batch_and_forces_dynamic(monkeypatch):
     from libreyolo import LibreMaskRCNN
     from libreyolo.models.base import BaseModel
