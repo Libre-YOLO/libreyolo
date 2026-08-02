@@ -87,7 +87,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "deim": {
     "class": "libreyolo.models.deim.model.LibreDEIM",
@@ -210,7 +211,8 @@
     "task_sizes": {},
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "dexined": {
     "class": "libreyolo.models.dexined.model.LibreDexiNed",
@@ -459,7 +461,8 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "group": "g3"
   },
   "feynobg": {
     "class": "libreyolo.models.feynobg.model.LibreFeyNobg",
