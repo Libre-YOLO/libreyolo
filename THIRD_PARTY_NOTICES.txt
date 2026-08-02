@@ -492,10 +492,10 @@ Used for: the standalone inference-only LibreDeformableDETR family
           libreyolo/postprocess/deformable_detr.py), plus multi-scale
           deformable attention reused by RF-DETR
           (libreyolo/models/rfdetr/transformer.py: MSDeformAttn,
-          ms_deform_attn_core_pytorch). The five standalone checkpoints can be
-          converted from the Apache-2.0 SenseTime Hugging Face mirrors into
-          LibreDeformableDETR{r50ss,r50ssdc5,r50,r50refine,r50twostage}; see
-          docs/provenance/deformable_detr.md.
+          ms_deform_attn_core_pytorch). The five standalone checkpoints are
+          converted from the Apache-2.0 SenseTime Hugging Face mirrors and
+          rehosted at LibreYOLO/LibreDeformableDETR{r50ss,r50ssdc5,r50,
+          r50refine,r50twostage}; see docs/provenance/deformable_detr.md.
 
 --------------------------------------------------------------------
 ViTDet (facebookresearch detectron2)
