@@ -53,6 +53,7 @@ file = name + ".pt"
 | DETR | `LibreDETR` | `LibreDETRr50.pt` (original DETR; Apache-2.0 code + weights; inference-only) |
 | LWDETR | `LibreLWDETR` | `LibreLWDETRt.pt` (LW-DETR, RF-DETR's ancestor; Apache-2.0 code + weights; inference-only) |
 | FasterRCNN | `LibreFasterRCNN` | `LibreFasterRCNNn.pt` (modernized torchvision Faster R-CNN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
+| EfficientDet | `LibreEfficientDet` | `LibreEfficientDetd0.pt` (D0-D4; Apache-2.0 project release weights with no separate asset license; inference-only) |
 | Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
 | RTDETRv2 | `LibreRTDETRv2` | `LibreRTDETRv2r50.pt` |
@@ -172,6 +173,10 @@ LibreLWDETRl.pt, LibreLWDETRx.pt,
 
 LibreFasterRCNNn.pt, LibreFasterRCNNs.pt,
 LibreFasterRCNNm.pt, LibreFasterRCNNl.pt,
+
+LibreEfficientDetd0.pt, LibreEfficientDetd1.pt,
+LibreEfficientDetd2.pt, LibreEfficientDetd3.pt,
+LibreEfficientDetd4.pt,
 
 LibreDeformableDETRr50ss.pt, LibreDeformableDETRr50ssdc5.pt,
 LibreDeformableDETRr50.pt, LibreDeformableDETRr50refine.pt,

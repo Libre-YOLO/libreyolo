@@ -376,6 +376,32 @@
     "available": true,
     "group": "s"
   },
+  "efficientdet": {
+    "class": "libreyolo.models.efficientdet.model.LibreEfficientDet",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "d0": 512,
+      "d1": 640,
+      "d2": 768,
+      "d3": 896,
+      "d4": 1024
+    },
+    "default_imgsz": {
+      "d0": 512,
+      "d1": 640,
+      "d2": 768,
+      "d3": 896,
+      "d4": 1024
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "efficientnetv2": {
     "class": "libreyolo.models.efficientnetv2.model.LibreEfficientNetV2",
     "tasks": [

@@ -91,6 +91,10 @@ DETR_RF1_FAMILIES = {"dfine", "deim", "deimv2", "rtdetr"}
 # convergence has not been validated against the RF1 mAP floor. Every RF1
 # training test skips them — keep the two tests consistent via this map.
 _EXPERIMENTAL_TRAINING_SKIP = {
+    "efficientdet": (
+        "EfficientDet ships inference-only: its focal-loss, anchor matching, "
+        "and compound-scale training recipe are outside this port, and train() raises."
+    ),
     "detr": (
         "Original DETR ships inference-only: its 500-epoch Hungarian-matching "
         "training recipe is not implemented, and train() raises. Inference "

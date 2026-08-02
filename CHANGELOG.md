@@ -21,6 +21,12 @@ before 1.4.0 are documented in the
   the evaluator falls back to pycocotools with a warning if the package
   is missing. Install via `pip install libreyolo[fast-eval]`.
 
+- LibreEfficientDet, an inference-only EfficientDet D0-D4 museum family with
+  fixed 512/640/768/896/1024 inputs, native EfficientNet backbones and weighted
+  BiFPN, exact raw-output and decoded-candidate parity against the pinned
+  Apache-2.0 `rwightman/efficientdet-pytorch` source, and validated ONNX,
+  TorchScript, OpenVINO, and TensorRT prediction parity. The focal-loss and
+  anchor-matching training recipe is not implemented and `train()` raises
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr

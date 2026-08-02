@@ -1,9 +1,12 @@
 """Convert official EfficientDet checkpoints to LibreYOLO metadata format.
 
 The source checkpoints are the TensorFlow-ported D0-D4 state dictionaries from
-``rwightman/efficientdet-pytorch`` 0.4.1, Apache-2.0. LibreYOLO preserves every
-learned tensor and the upstream parameter names. The official 90-output sparse
-COCO head remains in the graph while metadata exposes LibreYOLO's contiguous
+``rwightman/efficientdet-pytorch`` 0.4.1 at commit
+``c6dff775a36cea0bf9b76c58e59f936411c5ce01`` (Apache-2.0). The v0.1 release
+assets have no separate weight-license object; redistribution relies on the
+Apache-2.0 license of the releasing project. LibreYOLO preserves every learned
+tensor and the upstream parameter names. The official 90-output sparse COCO
+head remains in the graph while metadata exposes LibreYOLO's contiguous
 COCO-80 interface.
 
 Usage::
