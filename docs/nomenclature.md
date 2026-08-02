@@ -42,6 +42,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `dfine`     | `LibreDFINE`    | All-caps acronym (hyphen dropped from `D-FINE`) |
 | `deim`      | `LibreDEIM`     | All-caps acronym |
 | `deimv2`    | `LibreDEIMv2`   | All-caps acronym + lowercase version |
+| `detr`      | `LibreDETR`     | All-caps acronym |
 | `rtdetr`    | `LibreRTDETR`   | All-caps acronym (hyphen dropped from `RT-DETR`) |
 | `rtdetrv2`  | `LibreRTDETRv2` | All-caps acronym + lowercase version |
 | `rtdetrv4`  | `LibreRTDETRv4` | All-caps acronym + lowercase version |
@@ -139,6 +140,7 @@ ships:
 | `dfine`     | `n`, `s`, `m`, `l`, `x` |
 | `deim`      | `n`, `s`, `m`, `l`, `x` |
 | `deimv2`    | per-cfg (see `SIZE_CONFIGS`) |
+| `detr`      | `r50`, `r50dc5`, `r101`, `r101dc5` (ResNet depth plus optional dilated C5; all use a fixed 800 square) |
 | `rtdetr`    | `r18`, `r34`, `r50`, `r50m`, `r101`, `l`, `x` |
 | `rtdetrv2`  | `r18`, `r34`, `r50`, `r50m`, `r101` |
 | `rtdetrv4`  | `s`, `m`, `l`, `x` |
@@ -378,6 +380,7 @@ Detector-factory family support follows:
 | `dfine`     | `("detect", "segment")`             | detect | segment uses the D-FINE-seg mask head; same sizes as detect; COCO `-seg` weights on HF (detect-to-segment fine-tune needs an explicit transfer flag) |
 | `deim`      | `("detect",)` (default)             | detect | detect-only |
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
+| `detr`      | `("detect",)`                       | detect | original DETR; inference-only (no trainer, `train()` raises); fixed 800 square |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetrv2`  | `("detect",)` (default)             | detect | detect-only |
 | `rtdetrv4`  | `("detect",)` (default)             | detect | detect-only |

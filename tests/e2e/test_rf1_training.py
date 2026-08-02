@@ -91,6 +91,11 @@ DETR_RF1_FAMILIES = {"dfine", "deim", "deimv2", "rtdetr"}
 # convergence has not been validated against the RF1 mAP floor. Every RF1
 # training test skips them — keep the two tests consistent via this map.
 _EXPERIMENTAL_TRAINING_SKIP = {
+    "detr": (
+        "Original DETR ships inference-only: its 500-epoch Hungarian-matching "
+        "training recipe is not implemented, and train() raises. Inference "
+        "parity against the pinned Apache-2.0 source is exact."
+    ),
     "lwdetr": (
         "LW-DETR ships inference-only: its Group-DETR one-to-many recipe "
         "(13 query groups, IoU-aware classification loss, two-stage encoder "
