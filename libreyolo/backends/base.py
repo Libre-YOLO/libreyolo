@@ -641,6 +641,10 @@ class BaseBackend(ABC):
             from ..models.segformer.model import preprocess_numpy
 
             chw, ratio = preprocess_numpy(arr, (input_h, input_w))
+        elif self.model_family == "deeplabv3":
+            from ..models.deeplabv3.utils import preprocess_numpy
+
+            chw, ratio = preprocess_numpy(arr, (input_h, input_w))
         else:
             resized = cv2.resize(
                 arr, (input_w, input_h), interpolation=cv2.INTER_LINEAR

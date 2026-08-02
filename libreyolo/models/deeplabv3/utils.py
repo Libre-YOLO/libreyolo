@@ -5,6 +5,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from ...postprocess.deeplabv3 import postprocess, semantic_logits
+
 
 IMAGENET_MEAN = np.asarray((0.485, 0.456, 0.406), dtype=np.float32)
 IMAGENET_STD = np.asarray((0.229, 0.224, 0.225), dtype=np.float32)
@@ -37,4 +39,10 @@ def preprocess_numpy(
     return chw, 1.0
 
 
-__all__ = ["IMAGENET_MEAN", "IMAGENET_STD", "preprocess_numpy"]
+__all__ = [
+    "IMAGENET_MEAN",
+    "IMAGENET_STD",
+    "postprocess",
+    "preprocess_numpy",
+    "semantic_logits",
+]

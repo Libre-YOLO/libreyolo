@@ -20,6 +20,10 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from ...postprocess.deeplabv3 import (
+    postprocess as _deeplabv3_postprocess,
+)
+from ...postprocess.deeplabv3 import semantic_logits
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
 from ..base.model import BaseModel
@@ -191,7 +195,7 @@ class LibreDeepLabv3(BaseModel):
         original_size: tuple[int, int],
         **kwargs,
     ) -> torch.Tensor:
-        raise NotImplementedError("DeepLabv3 postprocessing lands after parity.")
+        return semantic_logits(output, original_size)
 
     def _postprocess(
         self,
@@ -202,7 +206,7 @@ class LibreDeepLabv3(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> Dict:
-        raise NotImplementedError("DeepLabv3 postprocessing lands after parity.")
+        return _deeplabv3_postprocess(output, original_size)
 
     def _validate_loaded_state_dict_for_task(
         self,
