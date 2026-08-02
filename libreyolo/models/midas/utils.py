@@ -27,7 +27,9 @@ def _constrain_to_multiple(
     return constrained
 
 
-def _resize_shape(width: int, height: int, input_size: int, size: str) -> tuple[int, int]:
+def _resize_shape(
+    width: int, height: int, input_size: int, size: str
+) -> tuple[int, int]:
     scale_height = input_size / height
     scale_width = input_size / width
 
