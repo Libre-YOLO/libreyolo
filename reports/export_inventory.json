@@ -274,6 +274,28 @@
     "available": true,
     "group": "g1"
   },
+  "dinodetr": {
+    "class": "libreyolo.models.dinodetr.model.LibreDINODETR",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r50": 800,
+      "r50s5": 800,
+      "swinl": 800
+    },
+    "default_imgsz": {
+      "r50": 800,
+      "r50s5": 800,
+      "swinl": 800
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "dinov2": {
     "class": "libreyolo.models.dinov2.model.LibreDINOv2",
     "tasks": [
