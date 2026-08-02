@@ -12,9 +12,10 @@ import numpy as np
 import torch
 from torch import nn
 
+from ...postprocess.hrnet import postprocess_hrnet
 from ..base import BaseModel
 from .nn import HRNetPoseModel
-from .utils import preprocess_crop_image, preprocess_numpy
+from .utils import box_to_center_scale, preprocess_crop_image, preprocess_numpy
 
 
 class LibreHRNet(BaseModel):
@@ -133,13 +134,20 @@ class LibreHRNet(BaseModel):
         ratio=1.0,
         **kwargs,
     ) -> dict:
-        del output, conf_thres, iou_thres, original_size, max_det, ratio, kwargs
-        return {
-            "boxes": np.zeros((0, 4), dtype=np.float32),
-            "scores": np.zeros((0,), dtype=np.float32),
-            "classes": np.zeros((0,), dtype=np.int64),
-            "keypoints": np.zeros((0, self.POSE_NUM_KEYPOINTS, 3), dtype=np.float32),
-        }
+        del conf_thres, iou_thres, ratio
+        original_width, original_height = original_size
+        box = [0.0, 0.0, float(original_width), float(original_height)]
+        center, scale = box_to_center_scale(box, self._get_input_size())
+        return postprocess_hrnet(
+            output,
+            centers=center[None, :],
+            scales=scale[None, :],
+            boxes=np.asarray([box], dtype=np.float32),
+            box_scores=np.ones((1,), dtype=np.float32),
+            keypoint_threshold=float(kwargs.get("keypoint_threshold", 0.2)),
+            oks_threshold=float(kwargs.get("oks_threshold", 0.9)),
+            max_det=min(int(max_det), 1),
+        )
 
     def train(self, *args, **kwargs):
         raise NotImplementedError(

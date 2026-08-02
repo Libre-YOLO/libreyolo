@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from ..data.pose_metadata import COCO17_FLIP_IDX
+from ..data.pose_metadata import COCO17_OKS_SIGMAS
 
 
 def get_max_preds(batch_heatmaps: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -122,3 +123,125 @@ def flip_back_tensor(
         shifted = restored.clone()
         restored[:, :, :, 1:] = shifted[:, :, :, :-1]
     return restored
+
+
+def oks_iou(
+    reference_keypoints: np.ndarray,
+    candidate_keypoints: np.ndarray,
+    reference_area: float,
+    candidate_areas: np.ndarray,
+    sigmas: Sequence[float] = COCO17_OKS_SIGMAS,
+) -> np.ndarray:
+    """Compute upstream-style object keypoint similarity for one-to-many poses."""
+    if candidate_keypoints.shape[0] == 0:
+        return np.zeros((0,), dtype=np.float32)
+    variances = (np.asarray(sigmas, dtype=np.float32) * 2.0) ** 2
+    reference = reference_keypoints.reshape(-1, 3)
+    candidates = candidate_keypoints.reshape(candidate_keypoints.shape[0], -1, 3)
+    dx = candidates[:, :, 0] - reference[None, :, 0]
+    dy = candidates[:, :, 1] - reference[None, :, 1]
+    average_areas = (float(reference_area) + candidate_areas[:, None]) / 2.0
+    exponent = (dx**2 + dy**2) / variances[None, :]
+    exponent = exponent / (average_areas + np.spacing(1)) / 2.0
+    return np.exp(-exponent).mean(axis=1)
+
+
+def oks_nms(
+    keypoints: np.ndarray,
+    scores: np.ndarray,
+    areas: np.ndarray,
+    threshold: float = 0.9,
+) -> np.ndarray:
+    """Greedily suppress poses whose OKS exceeds ``threshold``."""
+    if keypoints.shape[0] == 0:
+        return np.zeros((0,), dtype=np.int64)
+    order = scores.argsort()[::-1]
+    keep: list[int] = []
+    while order.size > 0:
+        index = int(order[0])
+        keep.append(index)
+        overlaps = oks_iou(
+            keypoints[index],
+            keypoints[order[1:]],
+            float(areas[index]),
+            areas[order[1:]],
+        )
+        remaining = np.where(overlaps <= threshold)[0]
+        order = order[remaining + 1]
+    return np.asarray(keep, dtype=np.int64)
+
+
+def _empty_pose_result(num_keypoints: int = 17) -> dict[str, np.ndarray | int]:
+    return {
+        "num_detections": 0,
+        "boxes": np.zeros((0, 4), dtype=np.float32),
+        "scores": np.zeros((0,), dtype=np.float32),
+        "classes": np.zeros((0,), dtype=np.int64),
+        "keypoints": np.zeros((0, num_keypoints, 3), dtype=np.float32),
+    }
+
+
+def postprocess_hrnet(
+    heatmaps: torch.Tensor | np.ndarray,
+    centers: np.ndarray,
+    scales: np.ndarray,
+    boxes: np.ndarray,
+    box_scores: np.ndarray,
+    *,
+    keypoint_threshold: float = 0.2,
+    oks_threshold: float = 0.9,
+    max_det: int = 300,
+) -> dict[str, np.ndarray | int]:
+    """Decode, rescore, and OKS-suppress one batch of HRNet person poses."""
+    if isinstance(heatmaps, torch.Tensor):
+        heatmaps = heatmaps.detach().float().cpu().numpy()
+    heatmaps = np.asarray(heatmaps, dtype=np.float32)
+    if heatmaps.ndim != 4:
+        raise ValueError(f"heatmaps must have shape (N, K, H, W), got {heatmaps.shape}")
+    num_instances, num_keypoints = heatmaps.shape[:2]
+    if num_instances == 0:
+        return _empty_pose_result(num_keypoints)
+
+    centers = np.asarray(centers, dtype=np.float32).reshape(-1, 2)
+    scales = np.asarray(scales, dtype=np.float32).reshape(-1, 2)
+    boxes = np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
+    box_scores = np.asarray(box_scores, dtype=np.float32).reshape(-1)
+    lengths = {num_instances, len(centers), len(scales), len(boxes), len(box_scores)}
+    if len(lengths) != 1:
+        raise ValueError(
+            "heatmaps, centers, scales, boxes, and box_scores must have the same "
+            f"instance count, got {sorted(lengths)}"
+        )
+
+    points, peak_responses = decode_heatmaps(
+        heatmaps,
+        centers,
+        scales,
+        post_process=True,
+    )
+    keypoints = np.concatenate((points, peak_responses), axis=2).astype(
+        np.float32,
+        copy=False,
+    )
+
+    responses = peak_responses[:, :, 0]
+    visible = responses > float(keypoint_threshold)
+    visible_counts = visible.sum(axis=1)
+    mean_responses = np.divide(
+        (responses * visible).sum(axis=1),
+        visible_counts,
+        out=np.zeros((num_instances,), dtype=np.float32),
+        where=visible_counts != 0,
+    )
+    scores = (box_scores * mean_responses).astype(np.float32, copy=False)
+    areas = np.prod(scales * 200.0, axis=1)
+    keep = oks_nms(keypoints, scores, areas, threshold=float(oks_threshold))
+    keep = keep[: max(0, int(max_det))]
+
+    return {
+        "num_detections": int(len(keep)),
+        "boxes": boxes[keep],
+        "scores": scores[keep],
+        "classes": np.zeros((len(keep),), dtype=np.int64),
+        "keypoints": keypoints[keep],
+    }
