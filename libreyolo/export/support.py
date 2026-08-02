@@ -1966,6 +1966,53 @@ _add(
 )
 _add(
     "validated",
+    ("fcos",),
+    ("detect",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The official trained checkpoint preserves the single-tensor raw "
+        "contract and public post-NMS detections against native PyTorch."
+    ),
+    since="1.7",
+    constraint=(
+        "FP32, batch 1, out-of-graph aspect resize; ONNX opset 18 with "
+        "dynamic padded H/W"
+    ),
+)
+_add(
+    "experimental",
+    ("fcos",),
+    ("detect",),
+    ("openvino",),
+    reason=(
+        "FP32 dynamic-shape conversion and high-confidence public predictions "
+        "pass, but small score/box drift can change low-confidence NMS ordering."
+    ),
+    since="1.7",
+    constraint="OpenVINO CPU, FP32, batch 1, dynamic padded H/W",
+)
+_add(
+    "blocked",
+    ("fcos",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "FCOS requires dynamic padded H/W to preserve its 800/1333 aspect "
+        "transform, while the current TensorRT runtime profiles dynamic batch only."
+    ),
+)
+_add(
+    "blocked",
+    ("fcos",),
+    ("detect",),
+    ("executorch", "ncnn", "tflite", "coreml", "coreai"),
+    reason=(
+        "No runtime parity contract exists for FCOS dynamic anchor grids and "
+        "variable padded spatial shapes in this format."
+    ),
+)
+_add(
+    "validated",
     ("deim",),
     ("detect",),
     ("onnx",),

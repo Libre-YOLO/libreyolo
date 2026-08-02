@@ -32,6 +32,7 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 __all__ = [
     "FCOSAnchorGenerator",
     "FCOSClassificationHead",
+    "FCOSExportWrapper",
     "FCOSHead",
     "FCOSRegressionHead",
     "LibreFCOSModel",
@@ -261,14 +262,12 @@ class FCOSAnchorGenerator(nn.Module):
         anchors = torch.stack((-widths, -heights, widths, heights), dim=1) / 2
         return anchors.round()
 
-    def forward(
-        self, images: Tensor, feature_maps: list[Tensor]
-    ) -> tuple[Tensor, Tensor]:
+    def grid_anchors(self, images: Tensor, feature_maps: list[Tensor]) -> Tensor:
+        """Return batched anchors without materializing host-visible level sizes."""
         grid_sizes = [feature.shape[-2:] for feature in feature_maps]
         image_height, image_width = images.shape[-2:]
         dtype, device = feature_maps[0].dtype, feature_maps[0].device
         anchors_per_level: list[Tensor] = []
-        level_sizes: list[int] = []
 
         for grid_size, base_anchor in zip(grid_sizes, self.cell_anchors):
             grid_height, grid_width = grid_size
@@ -300,10 +299,18 @@ class FCOSAnchorGenerator(nn.Module):
             anchors_per_level.append(
                 (shifts.view(-1, 1, 4) + base.view(1, -1, 4)).reshape(-1, 4)
             )
-            level_sizes.append(int(grid_height * grid_width))
 
         anchors = torch.cat(anchors_per_level, dim=0)
-        anchors = anchors.unsqueeze(0).expand(images.shape[0], -1, -1)
+        return anchors.unsqueeze(0).expand(images.shape[0], -1, -1)
+
+    def forward(
+        self, images: Tensor, feature_maps: list[Tensor]
+    ) -> tuple[Tensor, Tensor]:
+        anchors = self.grid_anchors(images, feature_maps)
+        level_sizes = [
+            int(feature.shape[-2] * feature.shape[-1]) for feature in feature_maps
+        ]
+        device = feature_maps[0].device
         sizes = torch.tensor(level_sizes, dtype=torch.int64, device=device)
         sizes = sizes.unsqueeze(0).expand(images.shape[0], -1)
         return anchors, sizes
@@ -334,3 +341,66 @@ class LibreFCOSModel(nn.Module):
             "anchors": anchors,
             "level_sizes": level_sizes,
         }
+
+
+class FCOSExportWrapper(nn.Module):
+    """Emit decoded boxes, level ids, and mapped per-class scores in one tensor."""
+
+    def __init__(self, model: LibreFCOSModel) -> None:
+        super().__init__()
+        self.model = model
+        if model.num_classes == 91:
+            from ...utils.coco import COCO91_TO_COCO80
+
+            class_indices = [
+                source
+                for source, _ in sorted(
+                    COCO91_TO_COCO80.items(), key=lambda item: item[1]
+                )
+            ]
+        else:
+            class_indices = list(range(model.num_classes))
+        self.register_buffer(
+            "class_indices",
+            torch.tensor(class_indices, dtype=torch.int64),
+            persistent=False,
+        )
+
+    @staticmethod
+    def _decode(regression: Tensor, anchors: Tensor) -> Tensor:
+        anchors = anchors.to(dtype=regression.dtype)
+        center_x = 0.5 * (anchors[..., 0] + anchors[..., 2])
+        center_y = 0.5 * (anchors[..., 1] + anchors[..., 3])
+        width = anchors[..., 2] - anchors[..., 0]
+        height = anchors[..., 3] - anchors[..., 1]
+        distances = regression * torch.stack((width, height, width, height), dim=-1)
+        return torch.stack(
+            (
+                center_x - distances[..., 0],
+                center_y - distances[..., 1],
+                center_x + distances[..., 2],
+                center_y + distances[..., 3],
+            ),
+            dim=-1,
+        )
+
+    def forward(self, images: Tensor) -> Tensor:
+        head_outputs, features = self.model.forward_head(images)
+        anchors = self.model.anchor_generator.grid_anchors(images, features)
+        boxes = self._decode(head_outputs["bbox_regression"], anchors)
+        scores = torch.sqrt(
+            torch.sigmoid(head_outputs["cls_logits"])
+            * torch.sigmoid(head_outputs["bbox_ctrness"])
+        )
+        scores = torch.index_select(scores, -1, self.class_indices)
+        level_ids = torch.cat(
+            [
+                torch.full_like(
+                    feature[:, :1].flatten(2).transpose(1, 2),
+                    float(level),
+                )
+                for level, feature in enumerate(features)
+            ],
+            dim=1,
+        )
+        return torch.cat((boxes, level_ids, scores), dim=-1)

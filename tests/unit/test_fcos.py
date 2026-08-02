@@ -134,9 +134,13 @@ def test_fcos_resize_and_validation_preprocessor_geometry() -> None:
     image = np.zeros((6, 8, 3), dtype=np.uint8)
     targets = np.array([[1.0, 1.0, 4.0, 3.0, 2.0]], dtype=np.float32)
     processed, padded_targets = preprocessor(image, targets, (32, 32))
-    assert processed.shape == (3, 32, 32)
-    np.testing.assert_array_equal(padded_targets[0], [4.0, 4.0, 16.0, 12.0, 2.0])
-    assert preprocessor.letterbox_scale(6, 8, 32) == (4.0, 0.0, 0.0)
+    scale = 32 / 6
+    assert processed.shape == (3, 32, 64)
+    np.testing.assert_allclose(
+        padded_targets[0],
+        [scale, scale, 4 * scale, 3 * scale, 2.0],
+    )
+    assert preprocessor.letterbox_scale(6, 8, 32) == (scale, 0.0, 0.0)
 
 
 def test_fcos_public_defaults_and_training_rejection() -> None:

@@ -233,12 +233,14 @@ def export_onnx(
     is_edge = task == "edge"
     is_gaze = task == "gaze"
     is_faster_rcnn = model_family == "faster_rcnn"
+    is_fcos = model_family == "fcos"
     known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
     if (
         not is_seg
         and not known_detr_detection
         and not is_faster_rcnn
+        and not is_fcos
         and not is_restore
         and not is_matte
         and not is_depth
@@ -268,6 +270,18 @@ def export_onnx(
                 "boxes": {0: "detections"},
                 "scores": {0: "detections"},
                 "labels": {0: "detections"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_fcos:
+        output_names = ["output"]
+        # FCOS preprocessing is outside the graph and preserves aspect ratio,
+        # so padded spatial dimensions vary with the source image.
+        dynamic_axes = (
+            {
+                "images": {0: "batch", 2: "height", 3: "width"},
+                "output": {0: "batch", 1: "anchors"},
             }
             if dynamic
             else None

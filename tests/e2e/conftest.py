@@ -486,6 +486,7 @@ MODEL_CATALOG = [
     ("faster_rcnn", "s", "LibreFasterRCNNs.pt"),
     ("faster_rcnn", "m", "LibreFasterRCNNm.pt"),
     ("faster_rcnn", "l", "LibreFasterRCNNl.pt"),
+    ("fcos", "r50", "LibreFCOSr50.pt"),
     ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
     ("deformable_detr", "r50ssdc5", "LibreDeformableDETRr50ssdc5.pt"),
     ("deformable_detr", "r50", "LibreDeformableDETRr50.pt"),
@@ -533,6 +534,7 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("deimv2", "atto", "LibreDEIMv2atto.pt"),
     ("detr", "r50", "LibreDETRr50.pt"),
     ("faster_rcnn", "n", "LibreFasterRCNNn.pt"),
+    ("fcos", "r50", "LibreFCOSr50.pt"),
     ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("rtdetr", "r18", "LibreRTDETRr18.pt"),
@@ -559,6 +561,7 @@ RTDETRV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv2"]
 RTDETRV4_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv4"]
 PICODET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "picodet"]
 FASTER_RCNN_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "faster_rcnn"]
+FCOS_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "fcos"]
 
 ALL_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG]
 ALL_MODELS_WITH_WEIGHTS = MODEL_CATALOG
@@ -567,13 +570,13 @@ NON_RFDETR_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f != "rfdetr"]
 # Quick test set (for CI — smallest auto-available models only)
 QUICK_TEST_MODELS = [("yolox", "n"), ("yolo9", "t"), ("rtdetr", "r18")]
 
-# Full legacy export test set. Faster R-CNN is ONNX-only and has its own
-# official-checkpoint runtime parity gate, so blocked formats must not attempt
-# to export it merely because its public weights are now in MODEL_CATALOG.
+# Full legacy export test set. Museum detectors with narrow export contracts
+# have dedicated runtime parity gates, so blocked formats must not attempt to
+# export them merely because their public weights are in MODEL_CATALOG.
 FULL_TEST_MODELS = [
     (family, size)
     for family, size in NON_RFDETR_MODELS
-    if family != "faster_rcnn"
+    if family not in {"faster_rcnn", "fcos"}
 ]
 
 # RF-DETR test set (separate due to dependency)
@@ -592,6 +595,7 @@ FAMILY_MARKERS = {
     "detr": pytest.mark.detr,
     "lwdetr": pytest.mark.lwdetr,
     "faster_rcnn": pytest.mark.faster_rcnn,
+    "fcos": pytest.mark.fcos,
     "deformable_detr": pytest.mark.deformable_detr,
     "dfine": pytest.mark.dfine,
     "deim": pytest.mark.deim,

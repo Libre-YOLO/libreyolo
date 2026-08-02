@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Optional, Tuple
 
 import torch
@@ -140,6 +141,25 @@ class LibreFCOS(BaseModel):
             "FCOS is currently inference-only; dense assignment and loss "
             "training are not implemented."
         )
+
+    def export(
+        self,
+        format: str = "onnx",
+        *,
+        opset: int = 18,
+        **kwargs,
+    ) -> str:
+        export_format = format.lower()
+        if export_format in {"onnx", "openvino"}:
+            if kwargs.get("dynamic") is False:
+                warnings.warn(
+                    "FCOS preserves aspect ratio before the graph; forcing "
+                    "dynamic=True so padded source shapes remain valid.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            kwargs["dynamic"] = True
+        return super().export(format=format, opset=opset, **kwargs)
 
     def _strict_loading(self) -> bool:
         return True
