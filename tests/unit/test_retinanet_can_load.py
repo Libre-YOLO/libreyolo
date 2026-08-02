@@ -77,3 +77,15 @@ def test_retinanet_rejects_fcos_centerness_head():
     state = _retinanet_state()
     state["head.classification_head.bbox_ctrness.weight"] = torch.zeros(1)
     assert not LibreRetinaNet.can_load(state)
+
+
+def test_default_runtime_autoconvert_claim_is_strict():
+    from libreyolo import LibreRetinaNet
+
+    retina_state = _retinanet_state()
+    converted = LibreRetinaNet.convert_upstream_state_dict(retina_state)
+    assert converted is not None
+    assert set(converted) == set(retina_state)
+    assert all(torch.equal(converted[key], value) for key, value in retina_state.items())
+    assert LibreRetinaNet.convert_upstream_state_dict(_rtdetr_state()) is None
+    assert LibreRetinaNet.convert_upstream_state_dict(_resnet_state()) is None
