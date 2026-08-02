@@ -495,6 +495,9 @@ MODEL_CATALOG = [
         "r50twostage",
         "LibreDeformableDETRr50twostage.pt",
     ),
+    ("dinodetr", "r50", "LibreDINODETRr50.pt"),
+    ("dinodetr", "r50s5", "LibreDINODETRr50s5.pt"),
+    ("dinodetr", "swinl", "LibreDINODETRswinl.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("ec", "m", "LibreECm.pt"),
     ("ec", "l", "LibreECl.pt"),
@@ -534,6 +537,7 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("detr", "r50", "LibreDETRr50.pt"),
     ("faster_rcnn", "n", "LibreFasterRCNNn.pt"),
     ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
+    ("dinodetr", "r50", "LibreDINODETRr50.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("rtdetr", "r18", "LibreRTDETRr18.pt"),
     ("rtdetrv2", "r18", "weights/LibreRTDETRv2r18.pt"),
@@ -553,6 +557,7 @@ DEIM_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deim"]
 DEIMV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deimv2"]
 DETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "detr"]
 DEFORMABLE_DETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deformable_detr"]
+DINODETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "dinodetr"]
 EC_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "ec"]
 RTDETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 RTDETRV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv2"]
@@ -593,6 +598,7 @@ FAMILY_MARKERS = {
     "lwdetr": pytest.mark.lwdetr,
     "faster_rcnn": pytest.mark.faster_rcnn,
     "deformable_detr": pytest.mark.deformable_detr,
+    "dinodetr": pytest.mark.dinodetr,
     "dfine": pytest.mark.dfine,
     "deim": pytest.mark.deim,
     "deimv2": pytest.mark.deimv2,

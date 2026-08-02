@@ -199,4 +199,16 @@ class LibreDINODETRModel(nn.Module):
         ]
 
 
-__all__ = ["DINODETR_CONFIGS", "LibreDINODETRModel"]
+class DINODETRExportWrapper(nn.Module):
+    """Expose only the two final tensors consumed by exported runtimes."""
+
+    def __init__(self, model: LibreDINODETRModel) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        output = self.model(x)
+        return output["pred_logits"], output["pred_boxes"]
+
+
+__all__ = ["DINODETR_CONFIGS", "DINODETRExportWrapper", "LibreDINODETRModel"]

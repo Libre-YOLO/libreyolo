@@ -105,6 +105,11 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "losses, auxiliary decoder losses, and backbone learning-rate recipe are "
         "not implemented. Exact upstream inference parity is verified separately."
     ),
+    "dinodetr": (
+        "DINO-DETR ships inference-only: contrastive denoising, Hungarian matching, "
+        "auxiliary losses, and its multi-scale training recipe are outside this port. "
+        "Exact upstream inference parity is verified separately."
+    ),
     "lwdetr": (
         "LW-DETR ships inference-only: its Group-DETR one-to-many recipe "
         "(13 query groups, IoU-aware classification loss, two-stage encoder "

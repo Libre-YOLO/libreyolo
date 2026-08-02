@@ -37,7 +37,7 @@ def test_val_coco128(family, size, weights):
     # The portable Deformable DETR implementation deliberately uses GridSample
     # instead of its upstream CUDA extension. Multi-scale encoder attention is
     # memory-heavy at 800 px, so validate it one image at a time.
-    batch = 1 if family == "deformable_detr" else 16
+    batch = 1 if family in {"deformable_detr", "dinodetr"} else 16
     results = model.val(data="coco128.yaml", batch=batch, conf=0.001, iou=0.6)
 
     map50_95 = results["metrics/mAP50-95"]

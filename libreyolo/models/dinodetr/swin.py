@@ -279,18 +279,21 @@ class BasicLayer(nn.Module):
     ) -> tuple[Tensor, int, int, Tensor, int, int]:
         padded_h = math.ceil(height / self.window_size) * self.window_size
         padded_w = math.ceil(width / self.window_size) * self.window_size
-        image_mask = torch.zeros((1, padded_h, padded_w, 1), device=x.device)
-        height_slices = (
-            slice(0, -self.window_size),
-            slice(-self.window_size, -self.shift_size),
-            slice(-self.shift_size, None),
+        # This is algebraically identical to upstream's nine in-place slice
+        # assignments, but functional construction also lowers cleanly to ONNX.
+        height_coords = torch.arange(padded_h, device=x.device)
+        width_coords = torch.arange(padded_w, device=x.device)
+        height_regions = (height_coords >= padded_h - self.window_size).to(
+            torch.float32
+        ) + (height_coords >= padded_h - self.shift_size).to(torch.float32)
+        width_regions = (width_coords >= padded_w - self.window_size).to(
+            torch.float32
+        ) + (width_coords >= padded_w - self.shift_size).to(torch.float32)
+        image_mask = (
+            (height_regions[:, None] * 3 + width_regions[None, :])
+            .unsqueeze(0)
+            .unsqueeze(-1)
         )
-        width_slices = height_slices
-        count = 0
-        for height_slice in height_slices:
-            for width_slice in width_slices:
-                image_mask[:, height_slice, width_slice, :] = count
-                count += 1
         mask_windows = window_partition(image_mask, self.window_size).view(
             -1, self.window_size * self.window_size
         )

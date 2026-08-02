@@ -1919,6 +1919,18 @@ _add(
 )
 _add(
     "validated",
+    ("dinodetr",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "All three official ResNet-50 and Swin-L variants preserve raw-logit, "
+        "box, and public prediction parity through ONNX Runtime."
+    ),
+    since="1.5",
+    constraint="FP32, fixed square input, ONNX opset 17",
+)
+_add(
+    "validated",
     ("lwdetr",),
     ("detect",),
     ("onnx", "torchscript"),
@@ -2764,6 +2776,7 @@ _FAMILY_BLOCKS = {
 _NCNN_BLOCKS = {
     "deformable_detr": "Deformable DETR",
     "detr": "DETR",
+    "dinodetr": "DINO-DETR",
     "dfine": "D-FINE",
     "lwdetr": "LW-DETR",
     "deim": "DEIM",

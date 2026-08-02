@@ -8,13 +8,16 @@ inference-only port preserves the three released detector configurations.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from torch import nn
 
-from ...validation.preprocessors import DeformableDETRValPreprocessor
+from ...postprocess.dinodetr import postprocess
+from ...utils.coco import COCO91_TO_COCO80
+from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
+from ...validation.preprocessors import DeformableDETRValPreprocessor
 from ..base import BaseModel
 from .nn import LibreDINODETRModel
 from .utils import unwrap_dinodetr_checkpoint
@@ -153,7 +156,12 @@ class LibreDINODETR(BaseModel):
 
         return preprocess_numpy
 
-    def _preprocess(self, image, color_format: str = "auto", input_size=None):
+    def _preprocess(
+        self,
+        image: ImageInput,
+        color_format: str = "auto",
+        input_size: Optional[int] = None,
+    ):
         from ..deformable_detr.utils import preprocess_image
 
         return preprocess_image(
@@ -165,9 +173,29 @@ class LibreDINODETR(BaseModel):
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         return self.model(input_tensor)
 
-    def _postprocess(self, *args, **kwargs):
-        raise NotImplementedError(
-            "DINO-DETR postprocessing is added only after upstream parity passes."
+    def _postprocess(
+        self,
+        output: Any,
+        conf_thres: float,
+        iou_thres: float,
+        original_size: Tuple[int, int],
+        max_det: int = 300,
+        **kwargs,
+    ) -> Dict:
+        if isinstance(output, tuple):
+            output = {"pred_logits": output[0], "pred_boxes": output[1]}
+        class_map = (
+            COCO91_TO_COCO80
+            if self._arch_num_classes == _COCO91_HEAD_WIDTH and self.nb_classes == 80
+            else None
+        )
+        return postprocess(
+            output,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            original_size=original_size,
+            max_det=min(max_det, self.model.num_select),
+            class_map=class_map,
         )
 
     def train(self, *args, **kwargs):

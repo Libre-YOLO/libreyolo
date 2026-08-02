@@ -11,6 +11,7 @@ import torch
 _DETR_TUPLE_OUTPUT_FAMILIES = {
     "deformable_detr",
     "detr",
+    "dinodetr",
     "dfine",
     "deim",
     "deimv2",
