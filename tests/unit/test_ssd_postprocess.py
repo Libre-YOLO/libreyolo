@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pytest
 import torch
@@ -19,6 +21,14 @@ def _raw_outputs() -> dict[str, torch.Tensor]:
         "bbox_regression": torch.zeros(1, 8732, 4),
         "cls_logits": logits,
     }
+
+
+def test_postprocess_uses_upstream_detection_defaults():
+    parameters = inspect.signature(postprocess).parameters
+    assert parameters["conf_thres"].default == 0.01
+    assert parameters["iou_thres"].default == 0.45
+    assert parameters["topk_candidates"].default == 400
+    assert parameters["max_det"].default == 200
 
 
 def test_default_box_inventory_and_first_pair():
@@ -80,6 +90,30 @@ def test_postprocess_applies_per_class_nms_and_max_det():
 
     assert result["num_detections"] == 1
     assert result["scores"][0] > 0.99
+
+
+def test_postprocess_preserves_upstream_detection_ceiling(monkeypatch):
+    outputs = _raw_outputs()
+    outputs["cls_logits"][0, :250, 1] = 20.0
+    decoded = torch.zeros(8732, 4)
+    index = torch.arange(250, dtype=torch.float32)
+    decoded[:250, 0] = (index % 25) * 2
+    decoded[:250, 1] = torch.floor(index / 25) * 2
+    decoded[:250, 2] = decoded[:250, 0] + 1
+    decoded[:250, 3] = decoded[:250, 1] + 1
+    monkeypatch.setattr(
+        "libreyolo.postprocess.ssd._decode_boxes",
+        lambda regression, anchors: decoded.clone(),
+    )
+
+    result = postprocess(
+        outputs,
+        conf_thres=0.5,
+        max_det=300,
+        class_map={1: 0},
+    )
+
+    assert result["num_detections"] == 200
 
 
 def test_postprocess_rejects_non_ssd_raw_shapes():

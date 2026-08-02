@@ -79,8 +79,9 @@ layout. It is not a wrapper around torchvision's SSD model class.
 - The released head has background plus sparse COCO category ids in 91
   outputs. Public results map those ids to LibreYOLO's contiguous 80 classes.
 - Native defaults match the pinned source: score threshold 0.01, NMS IoU 0.45,
-  400 candidates per class, and 200 final detections. Public `conf`, `iou`, and
-  `max_det` arguments remain authoritative.
+  400 candidates per class, and 200 final detections. Public `conf` and `iou`
+  arguments remain authoritative; `max_det` can request a lower limit while
+  retaining the source model's fixed 200-detection ceiling.
 - ONNX emits one decoded YOLO-grid tensor shaped `(B, 84, 8732)`. The shared
   LibreYOLO backend performs score filtering and class-aware NMS. Only the
   batch axis is dynamic; spatial dimensions remain fixed at 300.

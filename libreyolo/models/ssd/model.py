@@ -121,7 +121,7 @@ class LibreSSD(BaseModel):
         conf_thres: float,
         iou_thres: float,
         original_size: Tuple[int, int],
-        max_det: int = 300,
+        max_det: int = 200,
         **kwargs,
     ) -> dict:
         actual_input_size = kwargs.get("input_size", self.input_size)

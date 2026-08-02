@@ -2955,6 +2955,9 @@ class BaseBackend(ABC):
         max_det: int,
     ) -> Results:
         """Apply family-appropriate suppression/max_det/filtering and wrap."""
+        if self.model_family == "ssd":
+            max_det = min(max(0, int(max_det)), 200)
+
         if len(boxes) == 0:
             keypoints_obj = None
             if keypoints is not None:

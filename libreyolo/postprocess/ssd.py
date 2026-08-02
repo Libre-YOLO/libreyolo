@@ -118,16 +118,17 @@ def _empty_result() -> dict[str, Any]:
 
 def postprocess(
     outputs: Any,
-    conf_thres: float = 0.25,
+    conf_thres: float = 0.01,
     iou_thres: float = 0.45,
     original_size: Optional[Tuple[int, int]] = None,
-    max_det: int = 300,
+    max_det: int = 200,
     class_map: Optional[Mapping[int, int]] = None,
     input_size: int = 300,
     topk_candidates: int = 400,
     **_unused,
 ) -> dict[str, Any]:
     """Decode one raw SSD head into LibreYOLO's detection dictionary."""
+    max_det = min(max(0, int(max_det)), 200)
     if not isinstance(outputs, Mapping):
         raise TypeError("SSD postprocess expects a raw output mapping")
     regression = outputs["bbox_regression"]
@@ -187,7 +188,7 @@ def postprocess(
     boxes = torch.cat(image_boxes, dim=0)
     scores = torch.cat(image_scores, dim=0)
     labels = torch.cat(image_labels, dim=0)
-    if boxes.numel() == 0 or max_det <= 0:
+    if boxes.numel() == 0 or max_det == 0:
         return _empty_result()
 
     finite = torch.isfinite(boxes).all(dim=-1) & torch.isfinite(scores)
@@ -200,7 +201,7 @@ def postprocess(
     nms_boxes = boxes.float() if boxes.dtype == torch.float16 else boxes
     nms_scores = scores.float() if scores.dtype == torch.float16 else scores
     keep = batched_nms(nms_boxes, nms_scores, labels, iou_thres)
-    keep = keep[: max(0, int(max_det))]
+    keep = keep[:max_det]
     boxes = boxes[keep].clone()
     scores = scores[keep]
     labels = labels[keep]

@@ -119,6 +119,29 @@ def test_backend_uses_ssd_fixed_resize_preprocessing():
     assert torch.equal(actual, expected)
 
 
+@pytest.mark.parametrize(("requested", "expected"), [(300, 200), (10, 10)])
+def test_backend_preserves_ssd_detection_ceiling(requested: int, expected: int):
+    backend = _SSDBackend()
+    count = 250
+    x = np.arange(count, dtype=np.float32) * 2
+    boxes = np.column_stack((x, np.zeros(count), x + 1, np.ones(count)))
+    scores = np.linspace(1.0, 0.5, count, dtype=np.float32)
+    classes = np.zeros(count, dtype=np.int64)
+
+    result = backend._build_result(
+        boxes,
+        scores,
+        classes,
+        orig_shape=(300, 600),
+        image_path=None,
+        iou=0.45,
+        classes=None,
+        max_det=requested,
+    )
+
+    assert len(result.boxes) == expected
+
+
 def test_export_rejects_non_native_canvas_and_embedded_nms():
     from libreyolo import LibreSSD
 
