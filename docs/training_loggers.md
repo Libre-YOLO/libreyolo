@@ -76,7 +76,8 @@ The validator reuses the model output already produced for mAP; it does not
 run a second network forward. YOLO9 reports `val/loss`, `val/loss/box`,
 `val/loss/cls`, and `val/loss/dfl`. RF-DETR reports `val/loss`,
 `val/loss/ce`, `val/loss/bbox`, and `val/loss/giou`, with the total covering
-the same main, auxiliary-decoder, and encoder terms as training. The always-on
+the same main, auxiliary-decoder, and encoder terms as training. Components
+are weighted for both families, so they sum to the reported total. The always-on
 artifact names are the corresponding `metrics/loss...` keys, and
 `libreyolo monitor` overlays `metrics/loss` with `train/loss`.
 

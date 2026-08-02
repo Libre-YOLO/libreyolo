@@ -251,9 +251,12 @@ def test_rfdetr_adapter_uses_full_weighted_criterion_output():
     values = adapter(predictions, targets, image_size=(8, 8))
 
     assert float(values["loss"]) == pytest.approx(29.0)
-    assert float(values["loss/ce"]) == pytest.approx(3.0)
-    assert float(values["loss/bbox"]) == pytest.approx(3.0)
-    assert float(values["loss/giou"]) == pytest.approx(4.0)
+    assert float(values["loss/ce"]) == pytest.approx(6.0)
+    assert float(values["loss/bbox"]) == pytest.approx(15.0)
+    assert float(values["loss/giou"]) == pytest.approx(8.0)
+    assert float(values["loss/ce"] + values["loss/bbox"] + values["loss/giou"]) == (
+        pytest.approx(float(values["loss"]))
+    )
 
 
 def _criterion(*, distributed_normalize: bool) -> SetCriterion:

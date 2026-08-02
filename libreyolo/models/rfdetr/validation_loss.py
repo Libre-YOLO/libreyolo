@@ -73,11 +73,14 @@ class RFDETRValidationLoss:
         zero = predictions["pred_logits"].sum() * 0.0
 
         def component(prefix: str) -> torch.Tensor:
+            # Weighted like the total, so the reported ce/bbox/giou components
+            # sum to ``loss`` exactly (matching YOLO9's weighted components).
             return sum(
                 (
-                    value
+                    value * self.criterion.weight_dict[name]
                     for name, value in loss_dict.items()
-                    if name == prefix or name.startswith(prefix + "_")
+                    if (name == prefix or name.startswith(prefix + "_"))
+                    and name in self.criterion.weight_dict
                 ),
                 zero,
             )
