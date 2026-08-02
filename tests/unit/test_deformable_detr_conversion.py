@@ -146,3 +146,46 @@ def test_incomplete_decoder_projection_group_fails_closed():
     state.pop("model.decoder.layers.5.self_attn.v_proj.bias")
     with pytest.raises(ValueError, match="projections.*expected q/k/v"):
         convert_hf_deformable_detr_state_dict(state)
+
+
+def test_family_runtime_hook_converts_hf_layout():
+    from libreyolo import LibreDeformableDETR
+
+    converted = LibreDeformableDETR.convert_upstream_state_dict(_hf_base_fixture())
+    assert converted is not None
+    assert LibreDeformableDETR.can_load(converted) is True
+    assert "transformer.decoder.layers.0.self_attn.in_proj_weight" in converted
+
+
+def test_runtime_autoconvert_uses_hf_repository_directory_for_dc5(tmp_path):
+    from libreyolo.models.autoconvert import autoconvert_upstream_checkpoint
+
+    source = (
+        tmp_path
+        / "models--SenseTime--deformable-detr-single-scale-dc5"
+        / "snapshots"
+        / "revision"
+        / "model.safetensors"
+    )
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"loaded state is supplied directly")
+
+    native = {
+        "backbone.0.body.conv1.weight": torch.zeros(64, 3, 7, 7),
+        "transformer.encoder.layers.0.self_attn.sampling_offsets.weight": torch.zeros(
+            64, 256
+        ),
+        "transformer.level_embed": torch.zeros(1, 256),
+        "input_proj.0.0.weight": torch.zeros(256, 2048, 1, 1),
+        "class_embed.0.weight": torch.zeros(91, 256),
+        "bbox_embed.0.layers.0.weight": torch.zeros(256, 256),
+    }
+    output_path = autoconvert_upstream_checkpoint(str(source), loaded=native)
+
+    assert output_path is not None
+    checkpoint = torch.load(output_path, map_location="cpu", weights_only=True)
+    assert checkpoint["model_family"] == "deformable_detr"
+    assert checkpoint["size"] == "r50ssdc5"
+    assert checkpoint["task"] == "detect"
+    assert checkpoint["nc"] == 80
+    assert checkpoint["imgsz"] == 800

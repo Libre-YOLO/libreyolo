@@ -56,6 +56,22 @@ class LibreDeformableDETR(BaseModel):
         )
 
     @classmethod
+    def convert_upstream_state_dict(cls, state_dict: dict) -> Optional[dict]:
+        """Accept native releases or remap official Transformers safetensors."""
+        if cls.can_load(state_dict):
+            return dict(state_dict)
+
+        from .conversion import (
+            convert_hf_deformable_detr_state_dict,
+            is_hf_deformable_detr_state_dict,
+        )
+
+        if not is_hf_deformable_detr_state_dict(state_dict):
+            return None
+        converted = convert_hf_deformable_detr_state_dict(state_dict)
+        return converted if cls.can_load(converted) else None
+
+    @classmethod
     def detect_size_from_filename(cls, filename: str) -> Optional[str]:
         detected = super().detect_size_from_filename(filename)
         if detected is not None:
