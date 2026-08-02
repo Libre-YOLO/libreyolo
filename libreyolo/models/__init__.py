@@ -58,6 +58,7 @@ from .deim.model import LibreDEIM  # noqa: E402
 # it registers eagerly and ahead of the lazy RF-DETR import; its plain-ViT
 # encoder keys (patch_embed.proj + CAE q_bias) are the discriminator.
 from .lwdetr.model import LibreLWDETR  # noqa: E402
+from .faster_rcnn.model import LibreFasterRCNN  # noqa: E402
 from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
@@ -721,6 +722,7 @@ __all__ = [
     "LibreDFINE",
     "LibreDEIM",
     "LibreDEIMv2",
+    "LibreFasterRCNN",
     "LibreEC",
     "LibrePICODET",
     "LibreRTMDet",
