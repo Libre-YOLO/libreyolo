@@ -81,6 +81,18 @@ class TestDeepLabv3Metadata:
             "main/LibreDeepLabv3mv3-sem.pt"
         )
 
+    def test_parity_validated_export_matrix(self):
+        from libreyolo.export.support import get_support
+
+        for format_name in ("onnx", "torchscript", "openvino", "tensorrt"):
+            support = get_support("deeplabv3", "semantic", format_name)
+            assert support.tier == "validated"
+            assert support.constraint
+        for format_name in ("executorch", "ncnn", "tflite", "coreml", "coreai"):
+            assert get_support("deeplabv3", "semantic", format_name).tier == (
+                "blocked"
+            )
+
 
 class TestDeepLabv3Conversion:
     def test_converter_requires_auxiliary_upstream_fingerprint(self):

@@ -64,6 +64,28 @@
     "available": true,
     "group": "g2"
   },
+  "deeplabv3": {
+    "class": "libreyolo.models.deeplabv3.model.LibreDeepLabv3",
+    "tasks": [
+      "semantic"
+    ],
+    "default_task": "semantic",
+    "sizes": {
+      "r50": 520,
+      "r101": 520,
+      "mv3": 520
+    },
+    "default_imgsz": {
+      "r50": 520,
+      "r101": 520,
+      "mv3": 520
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "deformable_detr": {
     "class": "libreyolo.models.deformable_detr.model.LibreDeformableDETR",
     "tasks": [
