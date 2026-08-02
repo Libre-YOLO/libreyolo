@@ -1966,6 +1966,31 @@ _add(
 )
 _add(
     "validated",
+    ("mask_rcnn",),
+    ("detect", "segment"),
+    ("onnx",),
+    reason=(
+        "Official trained-checkpoint parity covers final boxes, scores, labels, "
+        "and full-image masks through ONNX Runtime and the unified backend."
+    ),
+    since="1.7",
+    constraint=(
+        "ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream "
+        "aspect resize, class-wise NMS, RoIAlign, and mask paste are embedded"
+    ),
+)
+_add(
+    "blocked",
+    ("mask_rcnn",),
+    ("detect", "segment"),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
+    reason=(
+        "Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, "
+        "RoIAlign, variable-length detection, and full-image mask graph."
+    ),
+)
+_add(
+    "validated",
     ("deim",),
     ("detect",),
     ("onnx",),

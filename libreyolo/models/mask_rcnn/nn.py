@@ -23,6 +23,7 @@ from torch.nn import functional as F
 from torchvision.ops import Conv2dNormActivation, MultiScaleRoIAlign
 
 from ..faster_rcnn.nn import (
+    FasterRCNNExportWrapper,
     GeneralizedRCNNTransform,
     LibreFasterRCNNModel,
     RoIHeads,
@@ -30,6 +31,7 @@ from ..faster_rcnn.nn import (
 
 __all__ = [
     "LibreMaskRCNNModel",
+    "MaskRCNNExportWrapper",
     "MaskRCNNHeads",
     "MaskRCNNPredictor",
 ]
@@ -231,6 +233,32 @@ class MaskRCNNTransform(GeneralizedRCNNTransform):
                     original_shape,
                 )
         return detections
+
+
+class MaskRCNNExportWrapper(FasterRCNNExportWrapper):
+    """Expose one image's final boxes and optional masks as ONNX tensors."""
+
+    def __init__(
+        self,
+        model: "LibreMaskRCNNModel",
+        *,
+        include_masks: bool = True,
+    ) -> None:
+        super().__init__(model)
+        self.include_masks = include_masks
+
+    def forward(self, images: Tensor):
+        detection = self.model(images)[0]
+        labels = self.label_map[detection["labels"]]
+        keep = labels >= 0
+        outputs = (
+            detection["boxes"][keep],
+            detection["scores"][keep],
+            labels[keep],
+        )
+        if not self.include_masks:
+            return outputs
+        return (*outputs, detection["masks"][keep])
 
 
 class MaskRCNNHeads(nn.Sequential):

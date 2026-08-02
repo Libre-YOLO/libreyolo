@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
@@ -115,3 +116,25 @@ class LibreMaskRCNN(LibreFasterRCNN):
             "Mask R-CNN is currently inference-only; sampled-RoI and mask "
             "training are not implemented."
         )
+
+    def export(
+        self,
+        format: str = "onnx",
+        *,
+        opset: int = 18,
+        **kwargs,
+    ) -> str:
+        if format.lower() == "onnx":
+            if int(kwargs.get("batch", 1)) != 1:
+                raise NotImplementedError(
+                    "Mask R-CNN ONNX export supports batch=1 only."
+                )
+            if kwargs.get("dynamic") is False:
+                warnings.warn(
+                    "Mask R-CNN ONNX keeps its upstream resize and mask paste "
+                    "inside the graph; forcing dynamic=True for source parity.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            kwargs["dynamic"] = True
+        return super().export(format=format, opset=opset, **kwargs)

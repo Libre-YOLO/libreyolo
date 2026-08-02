@@ -274,6 +274,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "deimv2",
         "ec",
         "faster_rcnn",
+        "mask_rcnn",
         "lwdetr",
         "rfdetr",
         "rtdetr",
@@ -500,7 +501,7 @@ class BaseBackend(ABC):
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
-        elif self.model_family == "faster_rcnn":
+        elif self.model_family in {"faster_rcnn", "mask_rcnn"}:
             return self._preprocess_faster_rcnn(
                 image, effective_imgsz, color_format
             )
@@ -1103,6 +1104,10 @@ class BaseBackend(ABC):
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
             return boxes, scores, cls, None
+        elif self.model_family == "mask_rcnn":
+            return self._parse_mask_rcnn(
+                all_outputs, effective_imgsz, orig_w, orig_h, conf
+            )
         elif self.model_family == "faster_rcnn":
             boxes, scores, cls = self._parse_faster_rcnn(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf
@@ -1412,6 +1417,61 @@ class BaseBackend(ABC):
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
         valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
         return boxes[valid], scores[valid], class_ids[valid]
+
+    def _parse_mask_rcnn(
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+    ):
+        """Parse aligned boxes and full-image masks from the export wrapper."""
+        boxes = np.asarray(all_outputs[0], dtype=np.float32).reshape(-1, 4)
+        scores = np.asarray(all_outputs[1], dtype=np.float32).reshape(-1)
+        class_ids = np.asarray(all_outputs[2], dtype=np.int64).reshape(-1)
+        masks = None
+        if self.task == "segment":
+            if len(all_outputs) < 4:
+                raise ValueError(
+                    "Mask R-CNN segment export did not provide a masks output"
+                )
+            masks = np.asarray(all_outputs[3], dtype=np.float32)
+            if masks.ndim == 4 and masks.shape[1] == 1:
+                masks = masks[:, 0]
+
+        keep = scores > conf
+        boxes, scores, class_ids = boxes[keep], scores[keep], class_ids[keep]
+        if masks is not None:
+            masks = masks[keep]
+        if not len(boxes):
+            if masks is not None:
+                masks = np.zeros((0, orig_h, orig_w), dtype=np.bool_)
+            return boxes, scores, class_ids, masks
+
+        boxes = boxes.copy()
+        if not getattr(self, "_dynamic_spatial_axes", False):
+            input_h, input_w = _imgsz_hw(effective_imgsz)
+            boxes[:, [0, 2]] *= orig_w / input_w
+            boxes[:, [1, 3]] *= orig_h / input_h
+            if masks is not None:
+                masks = np.stack(
+                    [
+                        cv2.resize(
+                            mask,
+                            (orig_w, orig_h),
+                            interpolation=cv2.INTER_LINEAR,
+                        )
+                        for mask in masks
+                    ],
+                    axis=0,
+                )
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        if masks is not None:
+            masks = masks[valid] >= 0.5
+        return boxes[valid], scores[valid], class_ids[valid], masks
 
     def _parse_yolo9(
         self,
