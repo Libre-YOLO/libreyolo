@@ -9,7 +9,9 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from ...postprocess.vit import postprocess as _vit_postprocess
 from ...utils.image_loader import ImageInput
+from ...validation.vit_validator import ViTClassifyValidator
 from ..base import BaseModel
 from .nn import VisionTransformer
 from .utils import preprocess_image as _vit_preprocess
@@ -35,6 +37,7 @@ class LibreViT(BaseModel):
     DEFAULT_TASK = "classify"
     REQUIRE_TASK_SUFFIX = True
     TRAIN_CONFIG = None
+    validator_class = ViTClassifyValidator
 
     # All four AugReg ImageNet-1k checkpoints use the same timm eval config.
     CROP_PCT = {"ti": 0.9, "s": 0.9, "b": 0.9, "l": 0.9}
@@ -56,30 +59,44 @@ class LibreViT(BaseModel):
         patch_key = "patch_embed.proj.weight"
         pos_key = "pos_embed"
         head_key = "head.weight"
-        if patch_key not in weights_dict or pos_key not in weights_dict or head_key not in weights_dict:
+        cls_key = "cls_token"
+        if any(
+            key not in weights_dict
+            for key in (patch_key, pos_key, head_key, cls_key)
+        ):
             return None
 
         patch = weights_dict[patch_key]
         pos = weights_dict[pos_key]
+        cls_token = weights_dict[cls_key]
+        head = weights_dict[head_key]
         if patch.ndim != 4 or tuple(patch.shape[1:]) != (3, 16, 16):
             return None
+        embed_dim = int(patch.shape[0])
         # 224 / 16 = 14, plus one class token. Reject patch32, 384px, hybrid,
         # and in21k-only head layouts instead of silently resizing them.
-        if pos.ndim != 3 or int(pos.shape[1]) != 197:
+        if tuple(pos.shape) != (1, 197, embed_dim):
+            return None
+        if tuple(cls_token.shape) != (1, 1, embed_dim):
+            return None
+        if head.ndim != 2 or int(head.shape[1]) != embed_dim:
             return None
 
-        highest_block = -1
+        block_indices = set()
         for key in weights_dict:
             match = re.match(r"^blocks\.(\d+)\.norm1\.weight$", key)
             if match:
-                highest_block = max(highest_block, int(match.group(1)))
-        signature = (int(patch.shape[0]), highest_block + 1)
-        return {
+                block_indices.add(int(match.group(1)))
+        signature = (embed_dim, len(block_indices))
+        size = {
             (192, 12): "ti",
             (384, 12): "s",
             (768, 12): "b",
             (1024, 24): "l",
         }.get(signature)
+        if size is None or block_indices != set(range(len(block_indices))):
+            return None
+        return size
 
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:
@@ -153,9 +170,8 @@ class LibreViT(BaseModel):
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         return self.model(input_tensor)
 
-    def _postprocess(self, *args, **kwargs) -> Dict:
-        del args, kwargs
-        raise NotImplementedError("ViT postprocessing lands after the upstream parity gate.")
+    def _postprocess(self, output: Any, **kwargs) -> Dict:
+        return _vit_postprocess(output, **kwargs)
 
     def train(self, *args, **kwargs):
         del args, kwargs
