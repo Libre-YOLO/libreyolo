@@ -16,6 +16,7 @@ import pytest
 import torch
 
 from libreyolo.models.efficientdet.nn import LibreEfficientDetModel
+from libreyolo.postprocess.efficientdet import generate_anchors
 
 UPSTREAM_DIR = os.environ.get("LIBREYOLO_EFFICIENTDET_UPSTREAM_DIR")
 
@@ -41,6 +42,7 @@ def test_effdet_raw_outputs_are_bit_exact(size: str) -> None:
     pytest.importorskip("effdet")
     assert importlib.metadata.version("effdet") == "0.4.1"
     from effdet import get_efficientdet_config
+    from effdet.anchors import Anchors
     from effdet.efficientdet import EfficientDet
 
     checkpoint_path = Path(UPSTREAM_DIR) / CHECKPOINTS[size]
@@ -52,6 +54,10 @@ def test_effdet_raw_outputs_are_bit_exact(size: str) -> None:
     actual = LibreEfficientDetModel(size=size, num_classes=90).eval()
     reference.load_state_dict(state_dict, strict=True)
     actual.load_state_dict(state_dict, strict=True)
+
+    expected_anchors = Anchors.from_config(reference.config).boxes
+    actual_anchors = generate_anchors(actual.image_size)
+    assert torch.equal(expected_anchors, actual_anchors)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     reference.to(device)

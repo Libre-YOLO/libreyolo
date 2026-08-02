@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from PIL import Image
 
+from ...postprocess.efficientdet import postprocess
 from ...utils.image_loader import ImageInput, ImageLoader
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -45,10 +46,10 @@ def preprocess_image(
     return torch.from_numpy(chw).unsqueeze(0), original_img, original_size, ratio
 
 
-def postprocess(*args, **kwargs):
-    """Placeholder until the raw graph passes the upstream parity gate."""
-    del args, kwargs
-    raise NotImplementedError("EfficientDet postprocessing is not implemented yet.")
-
-
-__all__ = ["IMAGENET_MEAN", "IMAGENET_STD", "postprocess", "preprocess_image", "preprocess_numpy"]
+__all__ = [
+    "IMAGENET_MEAN",
+    "IMAGENET_STD",
+    "postprocess",
+    "preprocess_image",
+    "preprocess_numpy",
+]

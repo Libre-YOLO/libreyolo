@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 
 from ...utils.image_loader import ImageInput
+from ...validation.preprocessors import EfficientDetValPreprocessor
 from ..base import BaseModel
 from .config import INPUT_SIZES, SCALE_CONFIGS
 from .nn import LibreEfficientDetModel
@@ -38,6 +39,7 @@ class LibreEfficientDet(BaseModel):
     DEFAULT_TASK = "detect"
     TRAIN_CONFIG = None
     TTA_FIXED_SIZE = True
+    val_preprocessor_class = EfficientDetValPreprocessor
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
@@ -63,7 +65,11 @@ class LibreEfficientDet(BaseModel):
         if weight is None or getattr(weight, "ndim", 0) != 4:
             return None
         fpn_channels = int(weight.shape[1])
-        matches = [size for size, cfg in SCALE_CONFIGS.items() if cfg.fpn_channels == fpn_channels]
+        matches = [
+            size
+            for size, cfg in SCALE_CONFIGS.items()
+            if cfg.fpn_channels == fpn_channels
+        ]
         return matches[0] if len(matches) == 1 else None
 
     @classmethod
@@ -71,7 +77,9 @@ class LibreEfficientDet(BaseModel):
         detected = super().detect_size_from_filename(filename)
         if detected is not None:
             return detected
-        match = re.search(r"(?:tf_)?efficientdet[_-](d[0-4])(?:_|-|\.|$)", Path(filename).name.lower())
+        match = re.search(
+            r"(?:tf_)?efficientdet[_-](d[0-4])(?:_|-|\.|$)", Path(filename).name.lower()
+        )
         return match.group(1) if match else None
 
     @classmethod
@@ -98,7 +106,9 @@ class LibreEfficientDet(BaseModel):
         device: str = "auto",
         **kwargs,
     ) -> None:
-        self._arch_num_classes = _COCO_SPARSE_CLASSES if nb_classes == 80 else nb_classes
+        self._arch_num_classes = (
+            _COCO_SPARSE_CLASSES if nb_classes == 80 else nb_classes
+        )
         super().__init__(
             model_path=model_path,
             size=size,
@@ -110,7 +120,9 @@ class LibreEfficientDet(BaseModel):
             self._load_weights(model_path)
 
     def _init_model(self) -> nn.Module:
-        return LibreEfficientDetModel(size=self.size, num_classes=self._arch_num_classes)
+        return LibreEfficientDetModel(
+            size=self.size, num_classes=self._arch_num_classes
+        )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
         return {

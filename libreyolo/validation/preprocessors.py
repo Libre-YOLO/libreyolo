@@ -169,6 +169,49 @@ class YOLOXValPreprocessor(BaseValPreprocessor):
         return padded_img, padded_targets
 
 
+class EfficientDetValPreprocessor(BaseValPreprocessor):
+    """EfficientDet eval resize-pad, RGB, and ImageNet normalization."""
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        return True
+
+    @property
+    def uses_letterbox(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.efficientdet.utils import preprocess_numpy
+
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError(
+                "EfficientDet validation requires a square input, "
+                f"got ({target_h}, {target_w})"
+            )
+        rgb = np.ascontiguousarray(img[:, :, ::-1])
+        chw, ratio = preprocess_numpy(rgb, input_size=target_h)
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, :4] *= ratio
+            padded_targets[:count] = scaled[:count]
+        return np.ascontiguousarray(chw, dtype=np.float32), padded_targets
+
+
 class RFDETRValPreprocessor(BaseValPreprocessor):
     """RF-DETR preprocessor: simple resize, RGB, ImageNet mean/std normalization."""
 
