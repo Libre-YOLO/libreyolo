@@ -53,6 +53,7 @@ file = name + ".pt"
 | DETR | `LibreDETR` | `LibreDETRr50.pt` (original DETR; Apache-2.0 code + weights; inference-only) |
 | LWDETR | `LibreLWDETR` | `LibreLWDETRt.pt` (LW-DETR, RF-DETR's ancestor; Apache-2.0 code + weights; inference-only) |
 | FasterRCNN | `LibreFasterRCNN` | `LibreFasterRCNNn.pt` (modernized torchvision Faster R-CNN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
+| FCOS | `LibreFCOS` | `LibreFCOSr50.pt` (torchvision FCOS ResNet-50 FPN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
 | Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
 | RTDETRv2 | `LibreRTDETRv2` | `LibreRTDETRv2r50.pt` |
@@ -173,6 +174,8 @@ LibreLWDETRl.pt, LibreLWDETRx.pt,
 LibreFasterRCNNn.pt, LibreFasterRCNNs.pt,
 LibreFasterRCNNm.pt, LibreFasterRCNNl.pt,
 
+LibreFCOSr50.pt,
+
 LibreDeformableDETRr50ss.pt, LibreDeformableDETRr50ssdc5.pt,
 LibreDeformableDETRr50.pt, LibreDeformableDETRr50refine.pt,
 LibreDeformableDETRr50twostage.pt,
@@ -259,11 +262,11 @@ through derivative works. Their cards use `license: other` +
 `license_name: nvidia-source-code-license-segformer` + `license_link`, lead with
 a non-commercial banner, and the loader prints the restriction before every
 auto-download. Never tag them `apache-2.0` because the *code* is Apache.
-Faster R-CNN's four torchvision checkpoints have no per-object license file;
-the maintainer approved BSD-3-Clause rehosting on the releasing-project
-**implied** basis. Every card and NOTICE must say that the grant is implied,
-must reproduce torchvision's pretrained-model caveat, and must not call the
-checkpoint license publisher-confirmed.
+Faster R-CNN's four torchvision checkpoints and FCOS's torchvision checkpoint
+have no per-object license file; the maintainer approved BSD-3-Clause rehosting
+on the releasing-project **implied** basis. Every card and NOTICE must say that
+the grant is implied, must reproduce torchvision's pretrained-model caveat,
+and must not call the checkpoint license publisher-confirmed.
 A name being *valid* does not make it *hostable*; run the gate.
 
 The `-visdrone` suffix is a `WEIGHT_VARIANTS` dataset variant (grammar in
@@ -356,7 +359,7 @@ https://www.visionanalysis.org/model/<va-slug>
 
 1. Map the family id: `yolo9` → `yolov9`. Every other family id is used as-is
    (`yolox`, `rfdetr`, `rtdetr`, `rtdetrv2`, `rtdetrv4`, `dfine`, `deim`,
-   `deimv2`, `picodet`, `yolonas`, `ec`).
+   `deimv2`, `picodet`, `yolonas`, `ec`, `fcos`).
 2. Map the size — YOLOX only: `n` → `nano`, `t` → `tiny`. All other sizes are
    used as-is (including `r50`-style RT-DETR codes and DEIMv2's
    `atto`/`femto`/`pico`).
