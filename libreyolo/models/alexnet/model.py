@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from ...postprocess.alexnet import postprocess as _alexnet_postprocess
 from ...utils.image_loader import ImageInput
 from ..base import BaseModel
 from .nn import AlexNet
@@ -132,9 +133,14 @@ class LibreAlexNet(BaseModel):
         ratio: float = 1.0,
         **kwargs,
     ) -> Dict:
-        del output, conf_thres, iou_thres, original_size, max_det, ratio, kwargs
-        raise NotImplementedError(
-            "AlexNet postprocessing lands after parity is proven."
+        return _alexnet_postprocess(
+            output,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            original_size=original_size,
+            max_det=max_det,
+            ratio=ratio,
+            **kwargs,
         )
 
     def train(self, *args, **kwargs):
