@@ -607,6 +607,30 @@ _add(
 )
 _add(
     "validated",
+    ("deit",),
+    ("classify",),
+    ("onnx",),
+    reason=(
+        "The official DeiT-tiny checkpoint preserves upstream/native logits, "
+        "exported raw logits, public probabilities, and top-1/top-5 results."
+    ),
+    since="1.5",
+    constraint="CPU FP32, fixed 224x224 input; ONNX uses opset 17",
+)
+_add(
+    "validated",
+    ("deit",),
+    ("classify",),
+    ("torchscript",),
+    reason=(
+        "The official DeiT-tiny checkpoint preserves upstream/native logits, "
+        "bit-exact exported raw logits and probabilities, and top-1/top-5 results."
+    ),
+    since="1.5",
+    constraint="CPU FP32 with fixed 224x224 input",
+)
+_add(
+    "validated",
     ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
     ("classify",),
     ("openvino",),
@@ -615,11 +639,38 @@ _add(
 )
 _add(
     "validated",
+    ("deit",),
+    ("classify",),
+    ("openvino",),
+    reason=(
+        "The official DeiT-tiny checkpoint preserves raw-logit and probability "
+        "cosine above 0.999 with identical top-1/top-5 results."
+    ),
+    since="1.5",
+    constraint="OpenVINO 2026.2 CPU FP32 with fixed 224x224 input",
+)
+_add(
+    "validated",
     ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
     ("classify",),
     ("tensorrt",),
     since="1.6",
     constraint="FP32 with fixed family-native input resolution",
+)
+_add(
+    "validated",
+    ("deit",),
+    ("classify",),
+    ("tensorrt",),
+    reason=(
+        "The official DeiT-tiny checkpoint preserves finite raw logits, "
+        "probability cosine above 0.999, and identical top-1/top-5 results."
+    ),
+    since="1.5",
+    constraint=(
+        "TensorRT 10.16 FP16 on RTX 5070 Ti, fixed 224x224 batch-1 input, "
+        "0.25 GiB tactic workspace"
+    ),
 )
 _add(
     "validated",
