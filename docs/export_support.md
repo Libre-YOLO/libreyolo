@@ -33,6 +33,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | eomt | segment |  |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |  |
 | faster_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |
+| fcos | detect | ✓ | ✓ |  |  | exp |  |  |  |  |
 | feynobg | matte | exp | ✓ | exp |  |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
@@ -178,6 +179,8 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `semantic` / `tensorrt`: FP32 with a fixed family-native export canvas
 - `eomt` / `semantic` / `openvino`: fixed family-native export canvas
 - `faster_rcnn` / `detect` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream aspect resize and final class-wise NMS are embedded in the graph
+- `fcos` / `detect` / `onnx`: FP32, batch 1, out-of-graph aspect resize, opset 18, dynamic padded H/W
+- `fcos` / `detect` / `torchscript`: FP32, batch 1, out-of-graph aspect resize, variable padded H/W
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
 - `fomo` / `point` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape
 - `fomo` / `point` / `tensorrt`: FP32 with a fixed 96x96 input
@@ -453,6 +456,12 @@ A check mark applies only under any constraint listed here.
 - `faster_rcnn` / `detect` / `tflite`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `coreml`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `coreai`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
+- `fcos` / `detect` / `executorch`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
+- `fcos` / `detect` / `tensorrt`: FCOS requires dynamic padded H/W to preserve its 800/1333 aspect transform, while the current TensorRT runtime profiles dynamic batch only.
+- `fcos` / `detect` / `ncnn`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
+- `fcos` / `detect` / `tflite`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
+- `fcos` / `detect` / `coreml`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
+- `fcos` / `detect` / `coreai`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
 - `feynobg` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `feynobg` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `feynobg` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.

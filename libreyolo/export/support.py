@@ -1968,16 +1968,27 @@ _add(
     "validated",
     ("fcos",),
     ("detect",),
-    ("onnx", "torchscript"),
+    ("onnx",),
     reason=(
         "The official trained checkpoint preserves the single-tensor raw "
-        "contract and public post-NMS detections against native PyTorch."
+        "contract and public post-NMS detections in ONNX Runtime."
     ),
     since="1.7",
     constraint=(
-        "FP32, batch 1, out-of-graph aspect resize; ONNX opset 18 with "
-        "dynamic padded H/W"
+        "FP32, batch 1, out-of-graph aspect resize, opset 18, dynamic padded H/W"
     ),
+)
+_add(
+    "validated",
+    ("fcos",),
+    ("detect",),
+    ("torchscript",),
+    reason=(
+        "The official trained checkpoint preserves the single-tensor raw "
+        "contract and public post-NMS detections in TorchScript."
+    ),
+    since="1.7",
+    constraint="FP32, batch 1, out-of-graph aspect resize, variable padded H/W",
 )
 _add(
     "experimental",

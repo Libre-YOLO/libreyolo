@@ -464,6 +464,24 @@
     "available": true,
     "group": "g3"
   },
+  "fcos": {
+    "class": "libreyolo.models.fcos.model.LibreFCOS",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r50": 800
+    },
+    "default_imgsz": {
+      "r50": 800
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "feynobg": {
     "class": "libreyolo.models.feynobg.model.LibreFeyNobg",
     "tasks": [
