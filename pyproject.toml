@@ -375,6 +375,7 @@ markers = [
     "lwdetr: tests covering the LW-DETR model family",
     "faster_rcnn: tests covering the Faster R-CNN model family",
     "deformable_detr: tests covering the Deformable DETR model family",
+    "dinodetr: tests covering the DINO-DETR model family",
     "dfine: tests covering the D-FINE model family",
     "deim: tests covering the DEIM model family",
     "deimv2: tests covering the DEIMv2 model family",
