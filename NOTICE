@@ -306,6 +306,24 @@ Faster R-CNN / TorchVision (BSD-3-Clause)
     not an explicit checkpoint-specific grant, and repeat torchvision's
     pretrained-model terms caveat.
 
+FCOS / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/fcos/, libreyolo/postprocess/fcos.py
+    License: libreyolo/models/fcos/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreFCOS inference graph is derived from torchvision v0.26.0's
+    FCOS detector, dense heads, anchor generator, transform, box coder, and
+    postprocessing (BSD-3-Clause, Copyright (c) Soumith Chintala 2016).
+    Upstream state-dict names are retained so the 319 official entries load
+    strictly. LibreYOLO adds metadata, validation, contiguous COCO-80 mapping,
+    and dynamic-spatial export integration; training assignment and losses are
+    excluded. The official checkpoint is not bundled in the source
+    distribution. Its separate weight mirror discloses that BSD-3-Clause
+    redistribution is implied by the releasing project, not an explicit
+    checkpoint-specific grant, and repeats torchvision's pretrained-model
+    terms caveat.
+
 LW-DETR (Apache License 2.0)
     Path:    libreyolo/models/lwdetr/, libreyolo/postprocess/lwdetr.py,
              weights/convert_lwdetr_weights.py
