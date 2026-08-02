@@ -308,6 +308,23 @@ LW-DETR (Apache License 2.0)
     THIRD_PARTY_NOTICES.txt. Ported inference only — the Group-DETR training
     recipe is not included. See docs/provenance/lwdetr.md.
 
+Deformable DETR (Apache License 2.0)
+    Path:    libreyolo/models/deformable_detr/,
+             libreyolo/postprocess/deformable_detr.py,
+             weights/convert_deformable_detr_weights.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/fundamentalvision/Deformable-DETR
+             commit 11169a60c33333af00a4849f1808023eba96a931
+    Copyright (c) 2020 SenseTime. All Rights Reserved.
+    Modified from DETR, Copyright (c) Facebook, Inc. and its affiliates.
+
+    LibreYOLO ports the original ResNet-50 inference architecture and its
+    pure-PyTorch multi-scale deformable-attention reference path. The upstream
+    custom CUDA extension and all training-only code are excluded. Official
+    Apache-2.0 SenseTime COCO weights are converted and rehosted for all five
+    released variants. Source-file lineage headers are preserved; see
+    docs/provenance/deformable_detr.md.
+
 D-FINE-seg (Apache License 2.0)
     Path:    libreyolo/models/dfine/, libreyolo/postprocess/dfine.py
     Source:  https://github.com/ArgoHA/D-FINE-seg

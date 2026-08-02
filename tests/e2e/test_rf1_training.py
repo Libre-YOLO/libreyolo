@@ -86,14 +86,19 @@ def dataset_data_yaml(dataset):
 MIN_MAP = 0.05
 DETR_RF1_FAMILIES = {"dfine", "deim", "deimv2", "rtdetr"}
 
-# Families whose training is wired end-to-end (loss + assigner + trainer) and
-# whose inference parity is verified, but whose small-dataset fine-tune
+# Families excluded from the RF1 training contract. This includes
+# inference-only families and training paths whose small-dataset fine-tune
 # convergence has not been validated against the RF1 mAP floor. Every RF1
 # training test skips them — keep the two tests consistent via this map.
 _EXPERIMENTAL_TRAINING_SKIP = {
     "faster_rcnn": (
         "Faster R-CNN ships inference-only: RPN and sampled-RoI training "
         "are intentionally outside the museum-port scope, and train() raises."
+    ),
+    "deformable_detr": (
+        "Deformable DETR ships inference-only: its Hungarian matcher, focal/L1/GIoU "
+        "losses, auxiliary decoder losses, and backbone learning-rate recipe are "
+        "not implemented. Exact upstream inference parity is verified separately."
     ),
     "lwdetr": (
         "LW-DETR ships inference-only: its Group-DETR one-to-many recipe "

@@ -482,6 +482,15 @@ MODEL_CATALOG = [
     ("faster_rcnn", "s", "LibreFasterRCNNs.pt"),
     ("faster_rcnn", "m", "LibreFasterRCNNm.pt"),
     ("faster_rcnn", "l", "LibreFasterRCNNl.pt"),
+    ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
+    ("deformable_detr", "r50ssdc5", "LibreDeformableDETRr50ssdc5.pt"),
+    ("deformable_detr", "r50", "LibreDeformableDETRr50.pt"),
+    ("deformable_detr", "r50refine", "LibreDeformableDETRr50refine.pt"),
+    (
+        "deformable_detr",
+        "r50twostage",
+        "LibreDeformableDETRr50twostage.pt",
+    ),
     ("ec", "s", "LibreECs.pt"),
     ("ec", "m", "LibreECm.pt"),
     ("ec", "l", "LibreECl.pt"),
@@ -519,6 +528,7 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("deim", "n", "weights/LibreDEIMn.pt"),
     ("deimv2", "atto", "LibreDEIMv2atto.pt"),
     ("faster_rcnn", "n", "LibreFasterRCNNn.pt"),
+    ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("rtdetr", "r18", "LibreRTDETRr18.pt"),
     ("rtdetrv2", "r18", "weights/LibreRTDETRv2r18.pt"),
@@ -536,6 +546,7 @@ RFDETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rfdetr"]
 DFINE_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "dfine"]
 DEIM_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deim"]
 DEIMV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deimv2"]
+DEFORMABLE_DETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deformable_detr"]
 EC_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "ec"]
 RTDETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 RTDETRV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv2"]
@@ -574,6 +585,7 @@ FAMILY_MARKERS = {
     "rfdetr": pytest.mark.rfdetr,
     "lwdetr": pytest.mark.lwdetr,
     "faster_rcnn": pytest.mark.faster_rcnn,
+    "deformable_detr": pytest.mark.deformable_detr,
     "dfine": pytest.mark.dfine,
     "deim": pytest.mark.deim,
     "deimv2": pytest.mark.deimv2,

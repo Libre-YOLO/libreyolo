@@ -299,7 +299,11 @@ Copyright 2022-2024 The HuggingFace Team. All Rights Reserved.
 Used for: DINOv2-with-Registers reference implementation that
           libreyolo/models/rfdetr/dinov2.py adapts to add windowed
           self-attention. Also a runtime dependency loaded via
-          AutoBackbone for the non-windowed DinoV2 path.
+          AutoBackbone for the non-windowed DinoV2 path. The Deformable
+          DETR checkpoint key mapping in
+          libreyolo/models/deformable_detr/conversion.py is adapted from
+          Transformers commit
+          4a224b1e2182d1f8f27d1d76fb8de6ab40b7ff62.
 
 --------------------------------------------------------------------
 EoMT (Mobile Perception Systems Lab at TU/e)
@@ -472,17 +476,26 @@ Copyright (c) Facebook, Inc. and its affiliates.
 Used for: NestedTensor, position-encoding, matcher, set-criterion,
           and box utilities reused by RF-DETR via LW-DETR
           (libreyolo/models/rfdetr/{backbone,transformer,matcher,
-          loss,lwdetr,tensors,box_ops}.py).
+          loss,lwdetr,tensors,box_ops}.py), and the NestedTensor,
+          position-encoding, and ResNet-backbone portions of the standalone
+          Deformable DETR port (libreyolo/models/deformable_detr/common.py).
 
 --------------------------------------------------------------------
 Deformable DETR (fundamentalvision / SenseTime)
 --------------------------------------------------------------------
 Source: https://github.com/fundamentalvision/Deformable-DETR
+        commit 11169a60c33333af00a4849f1808023eba96a931
 License: Apache License 2.0
 Copyright (c) 2020 SenseTime. All Rights Reserved.
-Used for: multi-scale deformable attention reused by RF-DETR
+Used for: the standalone inference-only LibreDeformableDETR family
+          (libreyolo/models/deformable_detr/ and
+          libreyolo/postprocess/deformable_detr.py), plus multi-scale
+          deformable attention reused by RF-DETR
           (libreyolo/models/rfdetr/transformer.py: MSDeformAttn,
-          ms_deform_attn_core_pytorch).
+          ms_deform_attn_core_pytorch). The five standalone checkpoints are
+          converted from the Apache-2.0 SenseTime Hugging Face mirrors and
+          rehosted at LibreYOLO/LibreDeformableDETR{r50ss,r50ssdc5,r50,
+          r50refine,r50twostage}; see docs/provenance/deformable_detr.md.
 
 --------------------------------------------------------------------
 ViTDet (facebookresearch detectron2)
