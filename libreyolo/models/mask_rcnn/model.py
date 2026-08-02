@@ -11,7 +11,9 @@ from ...postprocess.mask_rcnn import postprocess
 from ...utils.coco import COCO91_TO_COCO80
 from ...validation.preprocessors import FasterRCNNValPreprocessor
 from ..faster_rcnn.model import LibreFasterRCNN
+from ..faster_rcnn.validator import FasterRCNNValidator
 from .nn import LibreMaskRCNNModel
+from .validator import MaskRCNNValidator
 
 
 class LibreMaskRCNN(LibreFasterRCNN):
@@ -43,6 +45,9 @@ class LibreMaskRCNN(LibreFasterRCNN):
             nb_classes=nb_classes,
             device=device,
             **kwargs,
+        )
+        self.validator_class = (
+            MaskRCNNValidator if self.task == "segment" else FasterRCNNValidator
         )
 
     @classmethod
