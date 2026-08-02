@@ -530,16 +530,8 @@ class YOLODataset(ImageCacheMixin, Dataset):
             raise ValueError(f"Failed to load {img_file}")
         return img
 
-    def load_resized_img(self, index: int) -> np.ndarray:
-        """Load and resize image."""
-        img = self.load_image(index)
-        r = min(self.img_size[0] / img.shape[0], self.img_size[1] / img.shape[1])
-        resized_img = cv2.resize(
-            img,
-            (int(img.shape[1] * r), int(img.shape[0] * r)),
-            interpolation=cv2.INTER_LINEAR,
-        ).astype(np.uint8)
-        return resized_img
+    # load_resized_img comes from ImageCacheMixin: the deterministic resize is
+    # the post-resize cache point, so the mixin owns both the math and the cache.
 
     def _load_segments(self, index: int):
         if self.segments is None:
@@ -892,16 +884,8 @@ class COCODataset(ImageCacheMixin, Dataset):
             raise ValueError(f"Failed to load {img_file}")
         return img
 
-    def load_resized_img(self, index: int) -> np.ndarray:
-        """Load and resize image."""
-        img = self.load_image(index)
-        r = min(self.img_size[0] / img.shape[0], self.img_size[1] / img.shape[1])
-        resized_img = cv2.resize(
-            img,
-            (int(img.shape[1] * r), int(img.shape[0] * r)),
-            interpolation=cv2.INTER_LINEAR,
-        ).astype(np.uint8)
-        return resized_img
+    # load_resized_img comes from ImageCacheMixin: the deterministic resize is
+    # the post-resize cache point, so the mixin owns both the math and the cache.
 
     def _load_segments(self, index: int):
         if self.segments is None:

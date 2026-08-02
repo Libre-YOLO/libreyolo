@@ -197,6 +197,14 @@ class BaseTrainer(ABC):
         self._profiler = None
         self._stop_training = False
 
+        # CUDA graph capture of the training network (opt-in via
+        # config.cuda_graph). None = disabled, zero overhead. The family
+        # spec is resolved lazily on the first training batch so capture
+        # sees the fully-constructed model and criterion.
+        self._cuda_graph_manager = None
+        self._cuda_graph_spec = None
+        self._cuda_graph_spec_resolved = False
+
     # =========================================================================
     # Config
     # =========================================================================
@@ -313,6 +321,62 @@ class BaseTrainer(ABC):
         instance. Detection-only trainers may ignore ``polygons``.
         """
         return self.model(imgs, targets)
+
+    def cuda_graph_train_spec(self):
+        """Family hook: describe how to capture this family's training step.
+
+        Return a :class:`~libreyolo.training.cuda_graph.CudaGraphTrainSpec`
+        splitting the step into a static-shaped network (captured) and an
+        eager loss (``assemble``), or ``None`` when the family, task or
+        current configuration does not support capture. Called once, on the
+        first training batch, only when ``config.cuda_graph`` is enabled.
+        """
+        return None
+
+    def _forward_train(
+        self,
+        imgs: torch.Tensor,
+        targets: torch.Tensor,
+        polygons: Optional[List] = None,
+    ) -> Dict:
+        """``on_forward`` with optional CUDA-graph capture of the network.
+
+        Routing keeps a hard equivalence contract: any batch that cannot go
+        through a captured graph (no family spec, shape mismatch, capture
+        disabled) takes the exact ``on_forward`` path instead, so enabling
+        ``cuda_graph`` never changes training numerics.
+        """
+        # getattr defaults keep partially-constructed trainers (test
+        # doubles, exotic subclasses skipping BaseTrainer.__init__) on the
+        # plain eager path.
+        manager = getattr(self, "_cuda_graph_manager", None)
+        if manager is not None and not manager.disabled:
+            if not getattr(self, "_cuda_graph_spec_resolved", False):
+                self._cuda_graph_spec_resolved = True
+                try:
+                    self._cuda_graph_spec = self.cuda_graph_train_spec()
+                except Exception as exc:
+                    self._cuda_graph_spec = None
+                    manager.disabled = True
+                    logger.warning(
+                        "cuda_graph=True ignored (family spec failed: %r); "
+                        "training runs eager.",
+                        exc,
+                    )
+                if self._cuda_graph_spec is None and not manager.disabled:
+                    manager.disabled = True
+                    logger.warning(
+                        "cuda_graph=True ignored (%s does not support "
+                        "training capture for this task); training runs "
+                        "eager.",
+                        type(self).__name__,
+                    )
+            spec = getattr(self, "_cuda_graph_spec", None)
+            if spec is not None:
+                flat = manager.run(spec, imgs)
+                if flat is not None:
+                    return spec.assemble(flat, imgs, targets, polygons)
+        return self.on_forward(imgs, targets, polygons=polygons)
 
     # =========================================================================
     # Shared infrastructure
@@ -1571,6 +1635,29 @@ class BaseTrainer(ABC):
                     },
                 )
 
+        # CUDA graph training capture (opt-in). Constructed last so capture
+        # can only ever see the fully-built model, optimizer and criterion.
+        # Unsupported run shapes downgrade to eager with one clear warning
+        # instead of failing the run.
+        if getattr(self.config, "cuda_graph", False):
+            reason = None
+            if self.device.type != "cuda":
+                reason = "device is not CUDA"
+            elif self.is_distributed:
+                reason = "distributed training is not supported yet"
+            elif self.distiller is not None:
+                reason = "distillation runs are not supported"
+            if reason is not None:
+                if is_main_process():
+                    logger.warning(
+                        "cuda_graph=True ignored (%s); training runs eager.",
+                        reason,
+                    )
+            else:
+                from libreyolo.training.cuda_graph import TrainGraphManager
+
+                self._cuda_graph_manager = TrainGraphManager()
+
         self._is_setup = True
 
     def _ddp_find_unused_parameters(self) -> bool:
@@ -1583,10 +1670,16 @@ class BaseTrainer(ABC):
         return False
 
     def _autocast_context(self):
-        """Create a CUDA autocast context using the configured dtype."""
+        """Create a CUDA autocast context using the configured dtype.
+
+        With CUDA graph training capture active, autocast's weight-cast
+        cache must be disabled: the capture recipe requires cache_enabled
+        =False so warm-up, capture and replay all see the same cast ops.
+        """
         return autocast(
             "cuda",
             dtype=torch_amp_dtype(getattr(self.config, "amp_dtype", "float16")),
+            cache_enabled=getattr(self, "_cuda_graph_manager", None) is None,
         )
 
     def _ddp_static_graph(self) -> bool:
@@ -2146,7 +2239,7 @@ class BaseTrainer(ABC):
             if self.scaler is not None:
                 with self._prof_phase("forward"):
                     with self._autocast_context():
-                        outputs = self.on_forward(imgs, targets, polygons=polygons)
+                        outputs = self._forward_train(imgs, targets, polygons)
                         total_loss_raw = outputs["total_loss"]
                         if distiller is not None:
                             distill_loss = distiller.compute_loss()
@@ -2165,7 +2258,7 @@ class BaseTrainer(ABC):
                     self.scaler.update()
             else:
                 with self._prof_phase("forward"):
-                    outputs = self.on_forward(imgs, targets, polygons=polygons)
+                    outputs = self._forward_train(imgs, targets, polygons)
                     total_loss_raw = outputs["total_loss"]
                     if distiller is not None:
                         distill_loss = distiller.compute_loss()
@@ -2198,7 +2291,12 @@ class BaseTrainer(ABC):
             for name, value in loss_components.items():
                 loss_component_sums[name] = loss_component_sums.get(name, 0.0) + value
 
-            del outputs, loss
+            # total_loss_raw is included so no reference to this step's
+            # autograd graph outlives the iteration: a live graph pins
+            # AccumulateGrad nodes to the default stream, which invalidates
+            # CUDA graph capture on a later batch (and idly retains memory
+            # otherwise).
+            del outputs, loss, total_loss_raw
 
             # LR update
             lr = self.lr_scheduler.update_lr(self.current_iter + 1)
@@ -2328,7 +2426,7 @@ class BaseTrainer(ABC):
             if self.scaler is not None:
                 with self._prof_phase("forward"):
                     with self._autocast_context():
-                        outputs = self.on_forward(imgs, targets, polygons=polygons)
+                        outputs = self._forward_train(imgs, targets, polygons)
                         total_loss_raw = outputs["total_loss"]
                         if distiller is not None:
                             distill_loss = distiller.compute_loss()
@@ -2348,7 +2446,7 @@ class BaseTrainer(ABC):
                         self.scaler.update()
             else:
                 with self._prof_phase("forward"):
-                    outputs = self.on_forward(imgs, targets, polygons=polygons)
+                    outputs = self._forward_train(imgs, targets, polygons)
                     total_loss_raw = outputs["total_loss"]
                     if distiller is not None:
                         distill_loss = distiller.compute_loss()
@@ -2385,7 +2483,9 @@ class BaseTrainer(ABC):
             for name, value in loss_components.items():
                 loss_component_sums[name] = loss_component_sums.get(name, 0.0) + value
 
-            del outputs, loss
+            # See the matching del in _train_epoch: total_loss_raw must not
+            # keep the autograd graph alive across iterations.
+            del outputs, loss, total_loss_raw
 
             # Progress bar
             postfix = {"loss": f"{loss_val:.4f}", "lr": f"{lr:.6f}"}
@@ -2510,6 +2610,21 @@ class BaseTrainer(ABC):
                 num_workers=self.config.workers,
                 save_plots=val_save_plots,
                 save_dir=val_save_dir,
+                # One knob for both loops: a run that opts into image caching
+                # for training gets the same for its (deterministic) validation.
+                cache=getattr(self.config, "cache", False),
+                # Same principle for graph replay, gated on the inference-side
+                # capability: training capture (CudaGraphTrainSpec) and forward
+                # capture (SUPPORTS_CUDA_GRAPH) are separate opt-ins, and a
+                # family with only the former must validate eagerly rather
+                # than fail. Replay is bit-identical, so this is an execution
+                # detail, not a protocol change.
+                cuda_graph=(
+                    bool(getattr(self.config, "cuda_graph", False))
+                    and bool(
+                        getattr(self.wrapper_model, "SUPPORTS_CUDA_GRAPH", False)
+                    )
+                ),
             )
 
             if self.wrapper_model is None:
@@ -2534,7 +2649,20 @@ class BaseTrainer(ABC):
                     validator_cls = PointValidator
                 else:
                     validator_cls = DetectionValidator
-                validator = validator_cls(model=self.wrapper_model, config=val_config)
+                # One validator instance for the whole run, so the dataset,
+                # dataloader workers, pinned buffers and parsed ground truth
+                # survive between epochs instead of being rebuilt ~100 times.
+                # The per-epoch config is still honored: only save_plots and
+                # save_dir ever differ between the configs this loop builds,
+                # and neither is baked into the reused state.
+                validator = getattr(self, "_epoch_validator", None)
+                if validator is None or type(validator) is not validator_cls:
+                    validator = validator_cls(
+                        model=self.wrapper_model, config=val_config
+                    )
+                    self._epoch_validator = validator
+                else:
+                    validator.config = val_config
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model

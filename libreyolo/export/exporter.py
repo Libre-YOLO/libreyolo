@@ -145,6 +145,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "deim",
     "deimv2",
     "ec",
+    "lwdetr",
     "moge2",
     "rtdetr",
     "rtdetrv2",
@@ -846,6 +847,12 @@ class BaseExporter(ABC):
             dfine_wrapped = True
         elif family in {"rtdetr", "rtdetrv2", "rtdetrv4"}:
             nn_model = _RTDETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "lwdetr":
+            from ..models.lwdetr.nn import LWDETRExportWrapper
+
+            nn_model = LWDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
         elif family == "rtmdet":

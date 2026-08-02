@@ -64,14 +64,22 @@ def test_trainer_autocast_context_uses_configured_dtype(monkeypatch):
         def __exit__(self, *_):
             return False
 
-    def fake_autocast(device_type, *, dtype):
-        calls.append((device_type, dtype))
+    def fake_autocast(device_type, *, dtype, cache_enabled=True):
+        calls.append((device_type, dtype, cache_enabled))
         return _Context()
 
     monkeypatch.setattr("libreyolo.training.trainer.autocast", fake_autocast)
     trainer = SimpleNamespace(config=SimpleNamespace(amp_dtype="bfloat16"))
 
+    # Without a CUDA graph manager the autocast weight cache stays enabled.
     with BaseTrainer._autocast_context(trainer):
         pass
 
-    assert calls == [("cuda", torch.bfloat16)]
+    assert calls == [("cuda", torch.bfloat16, True)]
+
+    # With a manager active the capture recipe requires the cache disabled.
+    trainer._cuda_graph_manager = object()
+    with BaseTrainer._autocast_context(trainer):
+        pass
+
+    assert calls[-1] == ("cuda", torch.bfloat16, False)

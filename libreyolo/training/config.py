@@ -126,6 +126,13 @@ class TrainConfig:
     # CUDA autocast dtype when AMP is enabled. The explicit default preserves
     # historical amp=True behavior while allowing reproducible BF16 training.
     amp_dtype: str = "float16"
+    # Capture the network's training forward/backward into CUDA graphs to
+    # cut kernel-launch overhead on launch-bound (small-model) runs. Opt-in
+    # and single-GPU only; families without capture support, distributed
+    # runs and distillation runs fall back to eager training with a warning.
+    # Numerics are identical either way; batches whose shape differs from
+    # the captured shape (multi-scale, last partial batch) run eager.
+    cuda_graph: bool = False
     # Layer freezing. An int freezes the first N family-defined freeze groups;
     # a list freezes explicit group indices or module-name selectors; a string
     # freezes matching module/parameter names.
@@ -180,9 +187,14 @@ class TrainConfig:
     # System
     workers: int = 4
     # Image caching to speed dataloading across epochs. Accepts False (off),
-    # True/'ram' (decoded images in RAM), or 'disk' (decoded images as .npy
-    # beside each source image). 'disk' is the safest choice with dataloader
-    # workers; default is off.
+    # True/'ram' (cached images in RAM), or 'disk' (cached images as .npy
+    # beside each source image). Families whose transform consumes the
+    # dataset's deterministic resize cache the *resized* image (skipping decode
+    # and resize, ~an order of magnitude smaller than caching the decode);
+    # families that opt into wants_unresized_image cache the full-resolution
+    # decode. Cached reads are byte-identical to fresh ones either way. The
+    # flag also enables caching in the per-epoch validation loop. 'disk' is
+    # the safest choice with dataloader workers; default is off.
     cache: Union[bool, str] = False
     patience: int = 50
     resume: bool = False
@@ -355,6 +367,26 @@ class YOLO9PoseConfig(YOLO9Config):
     name: str = "yolo9_pose_exp"
 
 
+# Upstream's custom fine-tune configs pin the multi-scale collate's
+# base_size_repeat per size (Peterande/D-FINE, configs/dfine/custom/*.yml):
+# N disables multi-scale outright (`base_size_repeat: ~`) and smaller models
+# get more scale variety. Verified against upstream 2026-08; see issue #675.
+DFINE_BASE_SIZE_REPEAT: dict = {"n": None, "s": 20, "m": 6, "l": 4, "x": 3}
+
+
+def resolve_dfine_base_size_repeat(size, override=None):
+    """The multi-scale repeat the D-FINE trainer should hand its collate.
+
+    An explicit ``override`` (``DFINEConfig.base_size_repeat``) wins; otherwise
+    the upstream per-size default applies. ``None`` means the collate keeps
+    every batch at ``base_size`` (upstream's ``~`` for the N size). Unknown
+    sizes fall back to 3, the value that used to be hardcoded for everyone.
+    """
+    if override is not None:
+        return int(override)
+    return DFINE_BASE_SIZE_REPEAT.get(str(size).lower(), 3)
+
+
 @dataclass(kw_only=True)
 class DFINEConfig(TrainConfig):
     """D-FINE-specific training defaults.
@@ -392,6 +424,11 @@ class DFINEConfig(TrainConfig):
     backbone_lr_mult: float = 0.5  # upstream's fine-tune recipe uses 0.5×
     clip_max_norm: float = 0.1  # upstream default; 0 disables clipping
     multi_scale: bool = True  # per-batch random resize via DFINEMultiScaleCollate
+    # How often the base size appears among the multi-scale collate's choices.
+    # Unset (None) resolves to the upstream per-size default via
+    # resolve_dfine_base_size_repeat: n disables multi-scale, s 20, m 6, l 4,
+    # x 3. Set an int to override for every size.
+    base_size_repeat: Optional[int] = None
     aug_stop_epoch_ratio: float = 0.85  # disable strong augs at epoch * ratio
     crop_resize_prob: float = 0.0
 

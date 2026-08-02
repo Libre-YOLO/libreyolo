@@ -43,6 +43,11 @@ class LibreDEIMv2(BaseModel):
     val_preprocessor_class = DEIMv2ValPreprocessor
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
     IMGSZ_DIVISOR = 32
+    # Same graph-safety argument as D-FINE (DEIMv2 shares the DEIM/D-FINE
+    # decoder line): fixed eval_spatial_size, lazily built anchors settle in
+    # capture warmup, static top-k. Captures and replays bit-identically
+    # (tests/unit/test_cuda_graph_detr_families.py).
+    SUPPORTS_CUDA_GRAPH = True
 
     @classmethod
     def _validate_imgsz(cls, imgsz: int, *, context: str = "DEIMv2 imgsz") -> int:

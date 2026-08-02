@@ -39,8 +39,11 @@ quick managed job with a minimal API.
 
 Every path here spends real money the moment a GPU spins up.
 
-- **Vast** bills wall-clock until you `destroy`, and a *stopped* box still bills
-  its disk — this is the big trap; use `audit` / `guard` / `destroy` (below).
+- **Vast** bills wall-clock until you `destroy`. Idle GPUs bill exactly like busy
+  ones, so killing a training job saves nothing on its own; only `stop` or
+  `destroy` moves the meter. A *stopped* box still bills its disk: forgotten,
+  that is the big trap; chosen, it is a 50x saving (see "Pause instead of
+  destroy"). Use `audit` / `guard` / `destroy` (below).
 - **Modal / Beam** scale to zero when the function returns, so a forgotten box is
   much less likely — but a hung or infinite-timeout job **still bills**. Always
   set a `timeout=`, and don't leave an interactive session holding a GPU.
@@ -128,6 +131,66 @@ $PY $SK audit                                       # end-of-session: is anythin
   `$PY $SK guard <id> --max-hours 24 --done-file /root/JOB_DONE` (destroys on the
   done-marker or timeout; best-effort — needs this process alive).
 
+### Pause instead of destroy: a 50x lever, and when it is wrong
+
+`destroy` is not the only way to stop spending. `stop` halts GPU billing while
+keeping the container disk, so the box comes back with your environment,
+dataset and checkpoints already in place.
+
+```bash
+vastai stop instance  <ID>     # GPU billing stops, disk keeps billing
+vastai start instance <ID>     # resume, same disk, IF the GPUs are still free
+vastai reboot instance <ID>    # stop+start, for a wedged container
+vastai recycle instance <ID>   # destroy+recreate the container, keeps the contract
+```
+
+Measured on an 8x RTX 4090 with a 250 GB disk (2026-07-31):
+
+| state | rate | note |
+|---|---|---|
+| running | $3.4828/hr | GPUs plus disk |
+| **stopped** | **$0.0694/hr** | disk only, **50x cheaper, 98% saving** |
+| destroyed | $0 | disk and data gone |
+
+The stopped rate is arithmetic you can predict before renting:
+
+```
+stopped $/hr = disk_GB * storage_cost_per_GB_per_month / 730
+             = 250 * 0.20 / 730 = $0.0694/hr   ($50/month; cheap is not free)
+```
+
+**Stop or destroy? Compare against what a rebuild costs.** Rebuilding means
+renting again, pulling the image, installing, and re-staging the data. Measured
+on a real campaign box: about 15 minutes of setup ($0.87 at this rate) plus
+43 GB of inbound transfer ($0.11), so roughly $1.00. Against $0.0694/hr:
+
+- Coming back within **~14 hours**: STOP. The disk bill is less than a rebuild.
+- Gone longer than that: DESTROY, and rebuild from the HF-hosted dataset.
+- Add the host lottery to the destroy side of the ledger. Finding a host whose
+  egress works cost about $1 of duds in one session, so in practice stopping
+  wins out to roughly a day.
+
+**The risk that makes stop unsafe for scarce hardware:** stopping releases the
+GPUs. Nothing reserves them for you, so `start` succeeds only if the host still
+has them free, and a popular multi-GPU config can be gone when you return. Your
+DISK is safe; your GPUs are not. For a config you must have back, either keep
+it running or destroy it and plan to hunt again.
+
+### Two more levers worth knowing before you rent
+
+**Right-size the disk. It bills on ALLOCATED GB, not used GB.** The box above
+allocated 250 GB and used 45 GB, so its stopped rate was 5.5x higher than
+needed; 120 GB would have cost $0.033/hr stopped. You cannot shrink a disk
+after creation, so decide at rental: staged data plus checkpoints plus roughly
+30% headroom.
+
+**Interruptible (bid) instances trade reliability for price, and the discount
+varies.** `min_bid` on the offer is the floor. On the box above it was $3.20
+against $3.4828 on demand, a mere 8%, which is not worth preemption risk; other
+hosts discount far more, so read `min_bid` rather than assuming. Only consider
+it when the work is genuinely resumable, and remember a preempted instance
+keeps billing its disk exactly like a stopped one.
+
 ### `onstart` scripts (provided)
 
 - `onstart/probe.sh` — first-launch health/throughput probe (GPU + download speed).
@@ -142,8 +205,10 @@ $PY $SK audit                                       # end-of-session: is anythin
    → the helper falls back to SSH for logs.
 3. `destroy` needs `-y` or the raw CLI hangs *while billing*.
 4. Poll `instances-v1`, not `show instance` (often perm-gated).
-5. A **stopped** instance is not free — its disk bills until `destroy`. Run
-   `audit` after any crash/disconnect.
+5. A **stopped** instance is not free: its disk bills until `destroy`. That is a
+   trap when you forgot about it and a deliberate 50x saving when you meant it,
+   so see "Pause instead of destroy" above. Run `audit` after any crash or
+   disconnect to catch the forgotten kind.
 
 ---
 
