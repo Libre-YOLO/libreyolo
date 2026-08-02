@@ -106,6 +106,7 @@ from .lingbotvision.model import LibreLingBotVision  # noqa: E402,F401  (semanti
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
+from .vgg.model import LibreVGG  # noqa: E402  (classify-only; exact 3x3 stem + FC shape signature)
 from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
 
 # Native CLIP zero-shot classifier: pure-torch towers (no open_clip at runtime),
@@ -768,6 +769,7 @@ __all__ = [
     "LibreMobileNetV4",
     "LibreConvNeXt",
     "LibreEfficientNetV2",
+    "LibreVGG",
     "LibreResNet",
     "LibreCLIP",
     "LibreSigLIP2",
