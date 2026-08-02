@@ -62,7 +62,13 @@ basis. Every LibreYOLO weight repository therefore carries the verbatim
 torchvision BSD-3-Clause license, an attribution notice, and the caveat above;
 the cards must never describe the checkpoint license as publisher-confirmed.
 `weights/upload_fcn_hf.py` builds and validates the exact five-file
-repositories before publication.
+repositories before publication. The public mirrors are
+[`r50`](https://huggingface.co/LibreYOLO/LibreFCNr50) and
+[`r101`](https://huggingface.co/LibreYOLO/LibreFCNr101). Each was verified
+public with exactly five files, added to the LibreYOLO Models collection, and
+bare-filename auto-downloaded from a fresh directory. The downloaded SHA-256
+matched the uploaded LFS object and semantic prediction completed for both
+sizes.
 
 ## Ported surface
 
