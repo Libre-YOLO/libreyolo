@@ -107,9 +107,16 @@ def test_rfdetr_explicitly_rejects_original_signature():
 
 
 @pytest.mark.parametrize(
-    "size", ("r50ss", "r50ssdc5", "r50", "r50refine", "r50twostage")
+    ("size", "side", "state_keys"),
+    (
+        ("r50ss", 64, 549),
+        ("r50ssdc5", 64, 549),
+        ("r50", 64, 561),
+        ("r50refine", 64, 597),
+        ("r50twostage", 128, 630),
+    ),
 )
-def test_family_skeleton_builds(size):
+def test_native_architecture_builds_and_runs(size, side, state_keys):
     from libreyolo import LibreDeformableDETR
 
     model = LibreDeformableDETR(None, size=size, device="cpu")
@@ -117,3 +124,61 @@ def test_family_skeleton_builds(size):
     assert model.input_size == 800
     assert model.nb_classes == 80
     assert model._arch_num_classes == 91
+    assert len(model.model.state_dict()) == state_keys
+
+    model.model.eval()
+    with torch.inference_mode():
+        output = model.model(torch.zeros(1, 3, side, side))
+
+    assert output["pred_logits"].shape == (1, 300, 91)
+    assert output["pred_boxes"].shape == (1, 300, 4)
+    assert len(output["aux_outputs"]) == 5
+
+
+def test_variant_structure_matches_upstream_contracts():
+    from libreyolo.models.deformable_detr.nn import LibreDeformableDETRModel
+
+    single_scale = LibreDeformableDETRModel("r50ss")
+    assert single_scale.num_feature_levels == 1
+    assert single_scale.backbone.strides == [32]
+    del single_scale
+
+    dc5 = LibreDeformableDETRModel("r50ssdc5")
+    assert dc5.backbone.strides == [16]
+    del dc5
+
+    base = LibreDeformableDETRModel("r50")
+    assert base.num_feature_levels == 4
+    assert base.class_embed[0] is base.class_embed[1]
+    del base
+
+    refined = LibreDeformableDETRModel("r50refine")
+    assert refined.class_embed[0] is not refined.class_embed[1]
+    assert hasattr(refined, "query_embed")
+    del refined
+
+    two_stage = LibreDeformableDETRModel("r50twostage")
+    assert not hasattr(two_stage, "query_embed")
+    assert hasattr(two_stage.transformer, "enc_output")
+    assert len(two_stage.class_embed) == 7
+
+
+def test_pure_pytorch_deformable_attention_core_has_gradients():
+    from libreyolo.models.deformable_detr.ms_deform_attn import (
+        ms_deform_attn_core_pytorch,
+    )
+
+    value = torch.arange(8, dtype=torch.float32).view(1, 4, 1, 2)
+    value.requires_grad_(True)
+    output = ms_deform_attn_core_pytorch(
+        value,
+        torch.tensor([[2, 2]], dtype=torch.long),
+        torch.tensor([[[[[[0.5, 0.5]]]]]], dtype=torch.float32),
+        torch.ones(1, 1, 1, 1, 1),
+    )
+
+    assert output.shape == (1, 1, 2)
+    torch.testing.assert_close(output, value.detach().mean(dim=1))
+    output.sum().backward()
+    assert value.grad is not None
+    assert torch.isfinite(value.grad).all()
