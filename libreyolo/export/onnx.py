@@ -233,12 +233,14 @@ def export_onnx(
     is_edge = task == "edge"
     is_gaze = task == "gaze"
     is_faster_rcnn = model_family == "faster_rcnn"
+    is_retinanet = model_family == "retinanet"
     known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
     if (
         not is_seg
         and not known_detr_detection
         and not is_faster_rcnn
+        and not is_retinanet
         and not is_restore
         and not is_matte
         and not is_depth
@@ -268,6 +270,16 @@ def export_onnx(
                 "boxes": {0: "detections"},
                 "scores": {0: "detections"},
                 "labels": {0: "detections"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_retinanet:
+        output_names = ["output"]
+        dynamic_axes = (
+            {
+                "images": {2: "height", 3: "width"},
+                "output": {1: "anchors"},
             }
             if dynamic
             else None

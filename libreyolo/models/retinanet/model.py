@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
@@ -164,6 +165,28 @@ class LibreRetinaNet(BaseModel):
             "RetinaNet is currently inference-only; focal-loss training is "
             "not implemented."
         )
+
+    def export(
+        self,
+        format: str = "onnx",
+        *,
+        opset: int = 13,
+        **kwargs,
+    ) -> str:
+        if format.lower() == "onnx":
+            if int(kwargs.get("batch", 1)) != 1:
+                raise NotImplementedError(
+                    "RetinaNet ONNX export supports batch=1 only."
+                )
+            if kwargs.get("dynamic") is False:
+                warnings.warn(
+                    "RetinaNet uses variable aspect-preserved inputs; forcing "
+                    "dynamic=True for source-shape parity.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            kwargs["dynamic"] = True
+        return super().export(format=format, opset=opset, **kwargs)
 
     def _strict_loading(self) -> bool:
         return True

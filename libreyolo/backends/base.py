@@ -504,6 +504,21 @@ class BaseBackend(ABC):
             return self._preprocess_faster_rcnn(
                 image, effective_imgsz, color_format
             )
+        elif self.model_family == "retinanet":
+            from ..models.retinanet.utils import (
+                preprocess_image as retinanet_preprocess_image,
+            )
+
+            input_h, input_w = _imgsz_hw(effective_imgsz)
+            if input_h != input_w:
+                raise NotImplementedError(
+                    "RetinaNet exported inference requires a scalar or square imgsz."
+                )
+            return retinanet_preprocess_image(
+                image,
+                input_size=input_h,
+                color_format=color_format,
+            )
         elif self.model_family == "deformable_detr":
             tensor, img, size = self._preprocess_deformable_detr(
                 image, effective_imgsz, color_format
@@ -1108,6 +1123,15 @@ class BaseBackend(ABC):
                 all_outputs, effective_imgsz, orig_w, orig_h, conf
             )
             return boxes, scores, cls, None
+        elif self.model_family == "retinanet":
+            boxes, scores, cls = self._parse_retinanet(
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+            )
+            return boxes, scores, cls, None
         elif self.model_family == "deformable_detr":
             boxes, scores, cls = self._parse_deformable_detr(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
@@ -1412,6 +1436,96 @@ class BaseBackend(ABC):
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
         valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
         return boxes[valid], scores[valid], class_ids[valid]
+
+    def _parse_retinanet(
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+    ):
+        """Select RetinaNet candidates per FPN level before backend NMS."""
+        from ..postprocess.retinanet import level_anchor_counts, resize_geometry
+
+        predictions = np.asarray(all_outputs[0], dtype=np.float32)
+        if predictions.ndim == 3:
+            if predictions.shape[0] != 1:
+                raise ValueError(
+                    "RetinaNet exported inference currently requires batch=1, "
+                    f"got batch={predictions.shape[0]}"
+                )
+            predictions = predictions[0]
+        if predictions.ndim != 2 or predictions.shape[1] < 5:
+            raise ValueError(
+                "RetinaNet output must have shape (1, anchors, 4 + classes), "
+                f"got {np.asarray(all_outputs[0]).shape}"
+            )
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        if input_h != input_w:
+            raise NotImplementedError(
+                "RetinaNet exported inference requires a scalar or square imgsz."
+            )
+        resized_h, resized_w, scale_x, scale_y = resize_geometry(
+            (orig_w, orig_h), input_h
+        )
+        counts = level_anchor_counts(resized_h, resized_w)
+        if sum(counts) != predictions.shape[0]:
+            raise ValueError(
+                "RetinaNet anchor count does not match preprocessing geometry: "
+                f"output has {predictions.shape[0]}, expected {sum(counts)}."
+            )
+
+        selected_boxes = []
+        selected_scores = []
+        selected_classes = []
+        offset = 0
+        for count in counts:
+            level = predictions[offset : offset + count]
+            offset += count
+            boxes, scores = level[:, :4], level[:, 4:]
+            anchor_ids, class_ids = np.nonzero(scores > conf)
+            if not len(anchor_ids):
+                continue
+            level_scores = scores[anchor_ids, class_ids]
+            keep_count = min(1000, len(level_scores))
+            if keep_count < len(level_scores):
+                keep = np.argpartition(-level_scores, keep_count - 1)[:keep_count]
+                level_scores = level_scores[keep]
+                anchor_ids = anchor_ids[keep]
+                class_ids = class_ids[keep]
+            order = np.argsort(-level_scores, kind="stable")
+            level_boxes = boxes[anchor_ids[order]].copy()
+            level_boxes[:, [0, 2]] = np.clip(
+                level_boxes[:, [0, 2]], 0, resized_w
+            )
+            level_boxes[:, [1, 3]] = np.clip(
+                level_boxes[:, [1, 3]], 0, resized_h
+            )
+            selected_boxes.append(level_boxes)
+            selected_scores.append(level_scores[order])
+            selected_classes.append(class_ids[order].astype(np.int64, copy=False))
+
+        if not selected_boxes:
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int64),
+            )
+
+        boxes = np.concatenate(selected_boxes)
+        scores = np.concatenate(selected_scores).astype(np.float32, copy=False)
+        class_ids = np.concatenate(selected_classes)
+        finite = np.isfinite(boxes).all(axis=1) & np.isfinite(scores)
+        boxes, scores, class_ids = boxes[finite], scores[finite], class_ids[finite]
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        boxes, scores, class_ids = boxes[valid], scores[valid], class_ids[valid]
+        boxes[:, [0, 2]] /= scale_x
+        boxes[:, [1, 3]] /= scale_y
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        return boxes, scores, class_ids
 
     def _parse_yolo9(
         self,
@@ -2909,6 +3023,7 @@ class BaseBackend(ABC):
             # native YOLO9 postprocess.
             if self.model_family in (
                 "picodet",
+                "retinanet",
                 "rtmdet",
                 "yolo9",
                 "yolonas",

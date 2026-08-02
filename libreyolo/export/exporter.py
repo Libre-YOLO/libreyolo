@@ -869,6 +869,12 @@ class BaseExporter(ABC):
             nn_model = FasterRCNNExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "retinanet":
+            from ..models.retinanet.nn import RetinaNetExportWrapper
+
+            nn_model = RetinaNetExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "deformable_detr":
             from ..models.deformable_detr.nn import DeformableDETRExportWrapper
 

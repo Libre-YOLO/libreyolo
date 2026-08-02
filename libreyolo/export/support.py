@@ -1966,6 +1966,40 @@ _add(
 )
 _add(
     "validated",
+    ("retinanet",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "Official-checkpoint parity covers decoded graph outputs and unified "
+        "ONNX-backend detections against native PyTorch."
+    ),
+    since="1.7",
+    constraint=(
+        "ONNX Runtime, FP32, opset 13, batch 1, dynamic preprocessed H/W; "
+        "class-aware NMS runs in the LibreYOLO backend"
+    ),
+)
+_add(
+    "blocked",
+    ("retinanet",),
+    ("detect",),
+    (
+        "torchscript",
+        "executorch",
+        "tensorrt",
+        "openvino",
+        "ncnn",
+        "tflite",
+        "coreml",
+        "coreai",
+    ),
+    reason=(
+        "RetinaNet's dynamic P3-P7 anchor graph and external class-aware "
+        "postprocessing have parity evidence only through ONNX Runtime."
+    ),
+)
+_add(
+    "validated",
     ("deim",),
     ("detect",),
     ("onnx",),

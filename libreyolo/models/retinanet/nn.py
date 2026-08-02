@@ -31,6 +31,7 @@ from ...utils.coco import COCO91_TO_COCO80
 
 __all__ = [
     "LibreRetinaNetModel",
+    "RetinaNetExportWrapper",
     "RetinaNetClassificationHead",
     "RetinaNetHead",
     "RetinaNetRegressionHead",
@@ -491,3 +492,14 @@ class LibreRetinaNetModel(nn.Module):
         if self.num_classes == 91:
             scores = scores.index_select(2, self._coco91_source_indices)
         return torch.cat((decoded, scores), dim=2)
+
+
+class RetinaNetExportWrapper(nn.Module):
+    """Expose decoded boxes plus contiguous sigmoid scores to exporters."""
+
+    def __init__(self, model: LibreRetinaNetModel) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, images: Tensor) -> Tensor:
+        return self.model(images)
