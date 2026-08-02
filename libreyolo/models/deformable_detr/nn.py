@@ -292,4 +292,21 @@ class LibreDeformableDETRModel(nn.Module):
         ]
 
 
-__all__ = ["DEFORMABLE_DETR_CONFIGS", "LibreDeformableDETRModel", "MLP"]
+class DeformableDETRExportWrapper(nn.Module):
+    """Expose the two final detection tensors used by exported runtimes."""
+
+    def __init__(self, model: LibreDeformableDETRModel) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        output = self.model(x)
+        return output["pred_logits"], output["pred_boxes"]
+
+
+__all__ = [
+    "DEFORMABLE_DETR_CONFIGS",
+    "DeformableDETRExportWrapper",
+    "LibreDeformableDETRModel",
+    "MLP",
+]
