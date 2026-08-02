@@ -9,6 +9,12 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreDeiT, an inference-only museum port of the plain DeiT patch-16
+  ImageNet-1k classifiers in tiny, small, and base sizes at fixed 224px.
+  Official Apache-2.0 timm checkpoints load with unchanged tensors and
+  bit-exact upstream/native logits; ONNX Runtime, TorchScript, OpenVINO, and
+  TensorRT FP16 export parity is covered. Distilled and 384px variants remain
+  out of scope (#637)
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr

@@ -1,0 +1,32 @@
+LibreDeiT third-party attribution
+=================================
+
+The plain DeiT architecture and released variant contract originate from:
+
+    Repository: https://github.com/facebookresearch/deit
+    Commit:     7e160fe43f0252d17191b71cbb5826254114ea5b
+    License:    Apache License 2.0
+    Copyright:  Copyright (c) Facebook, Inc. and its affiliates.
+
+The native inference implementation in ``nn.py`` is derived from:
+
+    Repository: https://github.com/huggingface/pytorch-image-models
+    Commit:     e98c05a5a15e81188ec62dd5380b8f5c3251075a
+    Files:      timm/models/vision_transformer.py
+                timm/layers/attention.py
+                timm/layers/patch_embed.py
+                timm/layers/mlp.py
+    License:    Apache License 2.0
+    Copyright:  Copyright (c) Ross Wightman and the timm contributors.
+
+Module names and inference operations mirror timm 1.0.28 so the official
+``deit_{tiny,small,base}_patch16_224.fb_in1k`` ImageNet-1k state dictionaries
+load with ``strict=True`` and unchanged learned tensors. The source model cards
+declare ``license: apache-2.0``. LibreYOLO converts those weights only by adding
+checkpoint metadata and ImageNet class names.
+
+Only the plain 224-pixel variants are included. Distillation-token, DeiT III,
+and 384-pixel variants are outside this release and no excluded weights were
+inspected or redistributed.
+
+The Apache-2.0 license text is at ``licenses/Apache-2.0.txt``.

@@ -74,6 +74,7 @@ MODEL_GROUPS: dict[str, str] = {
     "yolo2": "g4",
     "yolo3": "g4",
     "yolo4": "g4",
+    "deit": "g4",
     # s - sibling tiers
     "sam": "s",
     "sam2": "s",

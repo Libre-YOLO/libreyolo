@@ -1,8 +1,8 @@
 """Nightly native inference checks for every public model family.
 
 This is the broad tier: one smallest pretrained case per family, native model
-load, two inference passes, and stable detection/gaze outputs. Keep exports and
-training out of this file; those belong to flagship or backend-specific suites.
+load, two inference passes, and stable task outputs. Keep exports and training
+out of this file; those belong to flagship or backend-specific suites.
 """
 
 import pytest
@@ -55,6 +55,25 @@ def _assert_detection_output_is_stable(family, first, second):
     torch.testing.assert_close(first_cls, second_cls, rtol=0, atol=0)
 
 
+def _assert_classification_output_is_stable(family, first, second):
+    assert first.probs is not None, f"{family} did not return probabilities"
+    assert second.probs is not None, f"{family} did not return probabilities"
+    assert first.boxes is None and second.boxes is None
+    assert first.orig_shape == second.orig_shape
+    assert first.names, f"{family} result has no class names"
+
+    first_probs = _tensor(first.probs.data)
+    second_probs = _tensor(second.probs.data)
+    assert first_probs.ndim == second_probs.ndim == 1
+    assert first_probs.shape == second_probs.shape
+    assert torch.isfinite(first_probs).all(), f"{family} produced non-finite probs"
+    assert torch.isfinite(second_probs).all(), f"{family} produced non-finite probs"
+    torch.testing.assert_close(first_probs.sum(), torch.tensor(1.0), atol=1e-5, rtol=0)
+    torch.testing.assert_close(second_probs.sum(), torch.tensor(1.0), atol=1e-5, rtol=0)
+    torch.testing.assert_close(first_probs, second_probs, rtol=1e-5, atol=1e-6)
+    assert first.probs.top1 == second.probs.top1
+
+
 def _assert_batched_detection_output_matches_sequential(family, sequential, batched):
     assert sequential.boxes is not None, f"{family} did not return detection boxes"
     assert batched.boxes is not None, f"{family} did not return detection boxes"
@@ -93,6 +112,24 @@ def _assert_batched_detection_output_matches_sequential(family, sequential, batc
     torch.testing.assert_close(sequential_boxes, batched_boxes, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(sequential_conf, batched_conf, rtol=1e-2, atol=5e-3)
     torch.testing.assert_close(sequential_cls, batched_cls, rtol=0, atol=0)
+
+
+def _assert_batched_classification_output_matches_sequential(
+    family, sequential, batched
+):
+    assert sequential.probs is not None, f"{family} did not return probabilities"
+    assert batched.probs is not None, f"{family} did not return probabilities"
+    assert sequential.boxes is None and batched.boxes is None
+    assert sequential.orig_shape == batched.orig_shape
+    assert sequential.names, f"{family} result has no class names"
+
+    sequential_probs = _tensor(sequential.probs.data)
+    batched_probs = _tensor(batched.probs.data)
+    assert sequential_probs.shape == batched_probs.shape
+    assert torch.isfinite(sequential_probs).all()
+    assert torch.isfinite(batched_probs).all()
+    torch.testing.assert_close(sequential_probs, batched_probs, rtol=1e-3, atol=1e-5)
+    assert sequential.probs.top1 == batched.probs.top1
 
 
 def _run_l2cs(weights, size):
@@ -136,7 +173,10 @@ def test_native_inference_is_stable(family, size, weights, sample_image):
     try:
         first = model(sample_image, conf=0.25)
         second = model(sample_image, conf=0.25)
-        _assert_detection_output_is_stable(family, first, second)
+        if model.task == "classify":
+            _assert_classification_output_is_stable(family, first, second)
+        else:
+            _assert_detection_output_is_stable(family, first, second)
     finally:
         del model
         cuda_cleanup()
@@ -173,6 +213,13 @@ def test_batched_list_predict_matches_sequential(family, size, weights, sample_i
         batched = model(images, conf=conf, batch=2)
 
         assert len(sequential) == len(batched) == 2
+        if model.task == "classify":
+            for r_seq, r_bat in zip(sequential, batched):
+                _assert_batched_classification_output_matches_sequential(
+                    family, r_seq, r_bat
+                )
+            return
+
         assert len(sequential[0]) > 0, f"{family} returned no detections"
         for r_seq, r_bat in zip(sequential, batched):
             # Full box/score/class parity for every image with detections
