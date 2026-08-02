@@ -15,6 +15,8 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from ...postprocess.deformable_detr import postprocess
+from ...utils.coco import COCO91_TO_COCO80
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
 from ...validation.preprocessors import RFDETRValPreprocessor
@@ -237,8 +239,20 @@ class LibreDeformableDETR(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> Dict:
-        raise NotImplementedError(
-            "Deformable DETR postprocessing is added after the upstream parity gate."
+        if isinstance(output, tuple):
+            output = {"pred_logits": output[0], "pred_boxes": output[1]}
+        class_map = (
+            COCO91_TO_COCO80
+            if self._arch_num_classes == _COCO91_HEAD_WIDTH and self.nb_classes == 80
+            else None
+        )
+        return postprocess(
+            output,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            original_size=original_size,
+            max_det=min(max_det, self.model.num_select),
+            class_map=class_map,
         )
 
     def train(self, *args, **kwargs):
