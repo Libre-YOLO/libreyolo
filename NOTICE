@@ -301,9 +301,9 @@ Deformable DETR (Apache License 2.0)
 
     LibreYOLO ports the original ResNet-50 inference architecture and its
     pure-PyTorch multi-scale deformable-attention reference path. The upstream
-    custom CUDA extension and all training-only code are excluded. Official
-    Apache-2.0 SenseTime COCO weights are converted and rehosted for all five
-    released variants. Source-file lineage headers are preserved; see
+    custom CUDA extension and all training-only code are excluded. The family
+    supports converting all five official Apache-2.0 SenseTime COCO
+    checkpoints. Source-file lineage headers are preserved; see
     docs/provenance/deformable_detr.md.
 
 D-FINE-seg (Apache License 2.0)

@@ -107,6 +107,60 @@ def test_rfdetr_explicitly_rejects_original_signature():
 
 
 @pytest.mark.parametrize(
+    "family",
+    ("dfine", "deim", "deimv2", "rtdetr", "rfdetr", "ec"),
+)
+def test_confusable_detr_families_reject_each_other_bidirectionally(family):
+    """Keep the original architecture isolated from all DETR descendants."""
+    from libreyolo import LibreDeformableDETR
+    from libreyolo.models.deim.model import LibreDEIM
+    from libreyolo.models.deimv2.model import LibreDEIMv2
+    from libreyolo.models.dfine.model import LibreDFINE
+    from libreyolo.models.ec.model import LibreEC
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+    from libreyolo.models.rtdetr.model import LibreRTDETR
+
+    sibling_cases = {
+        "dfine": (
+            LibreDFINE,
+            {"decoder.pre_bbox_head.0.layers.0.weight": torch.zeros(1)},
+        ),
+        "deim": (
+            LibreDEIM,
+            {"decoder.pre_bbox_head.0.layers.0.weight": torch.zeros(1)},
+        ),
+        "deimv2": (
+            LibreDEIMv2,
+            {"decoder.layers.0.swish_ffn.fc1.weight": torch.zeros(1)},
+        ),
+        "rtdetr": (
+            LibreRTDETR,
+            {
+                "backbone.res_layers.0.weight": torch.zeros(1),
+                "encoder.input_proj.0.0.weight": torch.zeros(1),
+                "decoder.input_proj.0.weight": torch.zeros(1),
+                "decoder.dec_score_head.0.weight": torch.zeros(1),
+            },
+        ),
+        "rfdetr": (
+            LibreRFDETR,
+            {"transformer.decoder.layers.0.weight": torch.zeros(1)},
+        ),
+        "ec": (
+            LibreEC,
+            {"backbone.backbone.register_token": torch.zeros(1)},
+        ),
+    }
+    sibling_class, sibling_state = sibling_cases[family]
+    original_state = _signature()
+
+    assert sibling_class.can_load(sibling_state) is True
+    assert LibreDeformableDETR.can_load(sibling_state) is False
+    assert LibreDeformableDETR.can_load(original_state) is True
+    assert sibling_class.can_load(original_state) is False
+
+
+@pytest.mark.parametrize(
     ("size", "side", "state_keys"),
     (
         ("r50ss", 64, 549),

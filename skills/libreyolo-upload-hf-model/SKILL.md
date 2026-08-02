@@ -357,9 +357,10 @@ Rules:
 
 - **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
   section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
-- **No slug exists** for `lwdetr`, `yolo9_e2e`, `yolo9_p2`, `l2cs`, RTMDet, the VLM /
-  SAM / open-vocab tiers, or the Darknet-lineage families (`yolo1`, `yolo2`,
-  `yolo3`, `yolo4`) and `yolo7` — omit the Benchmarks section and tell the user.
+- **No slug exists** for `lwdetr`, `deformable_detr`, `yolo9_e2e`, `yolo9_p2`,
+  `l2cs`, RTMDet, the VLM / SAM / open-vocab tiers, or the Darknet-lineage
+  families (`yolo1`, `yolo2`, `yolo3`, `yolo4`) and `yolo7` — omit the
+  Benchmarks section and tell the user.
   Semantic / depth / restore / point repos also omit it (detection only).
 - **The page may lag the upload.** Model pages are generated from
   `website/src/data/metadata/models.json` in
