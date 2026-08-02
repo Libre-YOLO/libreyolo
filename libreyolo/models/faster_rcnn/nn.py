@@ -381,7 +381,7 @@ class RegionProposalNetwork(nn.Module):
 
     def forward(
         self, images: ImageList, features: dict[str, Tensor]
-    ) -> tuple[list[Tensor], tuple[list[Tensor], list[Tensor]]]:
+    ) -> tuple[list[Tensor], dict[str, Tensor]]:
         feature_list = list(features.values())
         objectness_levels, bbox_levels = self.head(feature_list)
         anchors = self.anchor_generator(images, feature_list)
@@ -398,7 +398,7 @@ class RegionProposalNetwork(nn.Module):
         boxes, _ = self.filter_proposals(
             proposals, objectness, images.image_sizes, per_level
         )
-        return boxes, (objectness_levels, bbox_levels)
+        return boxes, {}
 
 
 class TwoMLPHead(nn.Module):
@@ -539,7 +539,7 @@ class RoIHeads(nn.Module):
         features: dict[str, Tensor],
         proposals: list[Tensor],
         image_shapes: list[tuple[int, int]],
-    ) -> tuple[list[dict[str, Tensor]], tuple[Tensor, Tensor]]:
+    ) -> tuple[list[dict[str, Tensor]], dict[str, Tensor]]:
         box_features = self.box_roi_pool(features, proposals, image_shapes)
         box_features = self.box_head(box_features)
         class_logits, box_regression = self.box_predictor(box_features)
@@ -550,7 +550,7 @@ class RoIHeads(nn.Module):
             {"boxes": box, "labels": label, "scores": score}
             for box, label, score in zip(boxes, labels, scores)
         ]
-        return detections, (class_logits, box_regression)
+        return detections, {}
 
 
 @torch.jit.unused
@@ -804,10 +804,6 @@ class LibreFasterRCNNModel(nn.Module):
                 if isinstance(module, FrozenBatchNorm2d):
                     module.eps = 0.0
 
-        self._last_head_tensors: Optional[
-            dict[str, tuple[list[Tensor], list[Tensor]] | tuple[Tensor, Tensor]]
-        ] = None
-
     def forward(
         self, images: Tensor | list[Tensor]
     ) -> list[dict[str, Tensor]]:
@@ -824,11 +820,10 @@ class LibreFasterRCNNModel(nn.Module):
         features = self.backbone(image_list.tensors)
         if isinstance(features, Tensor):
             features = OrderedDict([("0", features)])
-        proposals, rpn_tensors = self.rpn(image_list, features)
-        detections, roi_tensors = self.roi_heads(
+        proposals, _ = self.rpn(image_list, features)
+        detections, _ = self.roi_heads(
             features, proposals, image_list.image_sizes
         )
-        self._last_head_tensors = {"rpn": rpn_tensors, "roi": roi_tensors}
         return self.transform.postprocess(
             detections, image_list.image_sizes, original_image_sizes
         )
