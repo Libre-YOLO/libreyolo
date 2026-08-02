@@ -594,6 +594,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("siglip2", "embed"),
         ("swinir", "restore"),
         ("teed", "edge"),
+        ("vgg", "classify"),
         ("yolo1", "detect"),
         ("yolo2", "detect"),
         ("yolo3", "detect"),
