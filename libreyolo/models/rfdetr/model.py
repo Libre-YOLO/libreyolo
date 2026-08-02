@@ -126,6 +126,12 @@ class LibreRFDETR(BaseModel):
     TRAIN_CONFIG: ClassVar[type[RFDETRConfig]] = RFDETRConfig
     val_preprocessor_class: ClassVar[type[RFDETRValPreprocessor]] = RFDETRValPreprocessor
     TTA_FIXED_SIZE: ClassVar[bool] = True  # fixed square; multi-scale TTA is a no-op
+    # The eval forward (DINOv2 backbone + deformable-attention decoder) is
+    # pure tensor work with a static output structure; deformable attention
+    # uses atomics only in its backward, so the inference forward captures
+    # and replays bit-identically
+    # (tests/unit/test_cuda_graph_detr_families.py).
+    SUPPORTS_CUDA_GRAPH: ClassVar[bool] = True
 
     # CLI parameters intentionally ignored by native RF-DETR training.
     UNSUPPORTED_TRAIN_PARAMS: ClassVar[set[str]] = {
