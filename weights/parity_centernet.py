@@ -16,6 +16,8 @@ import sys
 import types
 from pathlib import Path
 
+import cv2
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn.modules.utils import _pair
@@ -141,9 +143,34 @@ def run() -> dict[str, dict[str, float]]:
     _install_reference_dcn()
     add_repo_root_to_path()
     from libreyolo.models.centernet.nn import build_centernet
+    from libreyolo.models.centernet.utils import (
+        CENTERNET_MEAN,
+        CENTERNET_STD,
+        preprocess_bgr,
+    )
+    from libreyolo.postprocess.centernet import postprocess
+    from models.decode import ctdet_decode
+    from utils.image import affine_transform as upstream_transform_point
+    from utils.image import get_affine_transform as upstream_affine
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     results: dict[str, dict[str, float]] = {}
+    rng = np.random.default_rng(637)
+    image = rng.integers(0, 256, size=(317, 509, 3), dtype=np.uint8)
+    center = np.array([image.shape[1] / 2.0, image.shape[0] / 2.0], dtype=np.float32)
+    scale = float(max(image.shape[:2]))
+    transform = upstream_affine(center, scale, 0, [512, 512])
+    reference_image = cv2.warpAffine(
+        image, transform, (512, 512), flags=cv2.INTER_LINEAR
+    )
+    reference_image = (
+        (reference_image / 255.0 - CENTERNET_MEAN) / CENTERNET_STD
+    ).astype(np.float32)
+    reference_image = np.ascontiguousarray(reference_image.transpose(2, 0, 1))
+    candidate_image, _ = preprocess_bgr(image, input_size=512)
+    preprocess_difference = float(np.max(np.abs(reference_image - candidate_image)))
+    if preprocess_difference != 0.0:
+        raise AssertionError(f"Preprocess max_abs_diff={preprocess_difference}")
     for size, (filename, expected_hash) in OFFICIAL_CASES.items():
         path = checkpoints / filename
         if _sha256(path) != expected_hash:
@@ -160,8 +187,7 @@ def run() -> dict[str, dict[str, float]]:
         reference.to(device)
         candidate.to(device)
 
-        torch.manual_seed(637)
-        inputs = torch.randn(1, 3, 512, 512, device=device)
+        inputs = torch.from_numpy(candidate_image).unsqueeze(0).to(device)
         with torch.inference_mode():
             expected = reference(inputs)[-1]
             actual = candidate(inputs)
@@ -169,6 +195,53 @@ def run() -> dict[str, dict[str, float]]:
             key: (expected[key] - actual[key]).abs().max().item()
             for key in ("hm", "wh", "reg")
         }
+
+        reference_decoded = ctdet_decode(
+            expected["hm"].sigmoid(), expected["wh"], reg=expected["reg"], K=100
+        )
+        reference_array = reference_decoded.detach().cpu().numpy()[0]
+        inverse = upstream_affine(center, scale, 0, (128, 128), inv=1)
+        for row in reference_array:
+            row[0:2] = upstream_transform_point(row[0:2], inverse)
+            row[2:4] = upstream_transform_point(row[2:4], inverse)
+        reference_classes = {
+            class_id + 1: reference_array[
+                reference_array[:, 5] == class_id, :5
+            ].astype(np.float32)
+            for class_id in range(80)
+        }
+        reference_rows = []
+        for class_id, class_rows in reference_classes.items():
+            for row in class_rows:
+                reference_rows.append([*row[:5], class_id - 1])
+        reference_rows = np.asarray(reference_rows, dtype=np.float32)
+        reference_rows = reference_rows[
+            np.argsort(-reference_rows[:, 4], kind="stable")
+        ]
+        candidate_result = postprocess(
+            actual,
+            conf_thres=0.0,
+            original_size=(image.shape[1], image.shape[0]),
+            input_size=512,
+            max_det=100,
+        )
+        candidate_rows = np.concatenate(
+            (
+                candidate_result["boxes"],
+                candidate_result["scores"][:, None],
+                candidate_result["classes"][:, None].astype(np.float32),
+            ),
+            axis=1,
+        )
+        results[size]["e2e_boxes"] = float(
+            np.max(np.abs(reference_rows[:, :4] - candidate_rows[:, :4]))
+        )
+        results[size]["e2e_scores"] = float(
+            np.max(np.abs(reference_rows[:, 4] - candidate_rows[:, 4]))
+        )
+        results[size]["e2e_classes"] = float(
+            np.max(np.abs(reference_rows[:, 5] - candidate_rows[:, 5]))
+        )
         del reference, candidate, inputs, expected, actual
         if device.type == "cuda":
             torch.cuda.empty_cache()
@@ -188,7 +261,8 @@ def main() -> int:
     for size, outputs in results.items():
         for name, difference in outputs.items():
             print(f"{size} {name}: max_abs_diff={difference}")
-            failed = failed or difference != 0.0
+            tolerance = 1e-4 if name == "e2e_boxes" else 0.0
+            failed = failed or difference > tolerance
     print("PASS" if not failed else "FAIL")
     return int(failed)
 

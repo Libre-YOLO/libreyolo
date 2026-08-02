@@ -71,14 +71,8 @@ def _portable_deform_conv2d(
         kernel_x = (point % kernel_width) * dilation[1]
         sample_y = base_y + kernel_y + offset[:, point * 2]
         sample_x = base_x + kernel_x + offset[:, point * 2 + 1]
-        if height > 1:
-            sample_y = sample_y * (2.0 / (height - 1)) - 1.0
-        else:
-            sample_y = sample_y * 0.0
-        if width > 1:
-            sample_x = sample_x * (2.0 / (width - 1)) - 1.0
-        else:
-            sample_x = sample_x * 0.0
+        sample_y = sample_y * (2.0 / (height - 1)) - 1.0
+        sample_x = sample_x * (2.0 / (width - 1)) - 1.0
         grids.append(torch.stack((sample_x, sample_y), dim=-1))
 
     grid = torch.cat(grids, dim=1)

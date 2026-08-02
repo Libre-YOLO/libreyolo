@@ -267,6 +267,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
     valid detections and make exported runtimes diverge from native PyTorch.
     """
     return model_family in {
+        "centernet",
         "deformable_detr",
         "detr",
         "dfine",
@@ -509,6 +510,10 @@ class BaseBackend(ABC):
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
+        elif self.model_family == "centernet":
+            return self._preprocess_centernet(
+                image, effective_imgsz, color_format
+            )
         elif self.model_family in ("dfine", "rtdetrv4"):
             tensor, img, size = self._preprocess_dfine(
                 image, effective_imgsz, color_format
@@ -914,6 +919,20 @@ class BaseBackend(ABC):
         return img_tensor, original_img, original_size
 
     @staticmethod
+    def _preprocess_centernet(image, input_size, color_format):
+        """CenterNet preprocessing: centered BGR affine warp and normalization."""
+        from ..models.centernet.utils import preprocess_image
+
+        input_h, input_w = _imgsz_hw(input_size)
+        if input_h != input_w:
+            raise NotImplementedError(
+                "CenterNet exported inference requires a square input canvas."
+            )
+        return preprocess_image(
+            image, input_size=input_h, color_format=color_format
+        )
+
+    @staticmethod
     def _preprocess_detr(image, input_size, color_format):
         """DETR preprocessing: square resize + RGB + ImageNet mean/std."""
         from ..models.detr.utils import preprocess_numpy as detr_preprocess_numpy
@@ -1111,6 +1130,16 @@ class BaseBackend(ABC):
         elif self.model_family == "deformable_detr":
             boxes, scores, cls = self._parse_deformable_detr(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
+            return boxes, scores, cls, None
+        elif self.model_family == "centernet":
+            boxes, scores, cls = self._parse_centernet(
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+                max_det=max_det,
             )
             return boxes, scores, cls, None
         elif self.model_family in ("dfine", "rtdetrv4"):
@@ -1811,6 +1840,28 @@ class BaseBackend(ABC):
         return self._parse_dfine(
             all_outputs, orig_w, orig_h, conf, max_det=effective_max_det
         )
+
+    @staticmethod
+    def _parse_centernet(
+        all_outputs,
+        input_size,
+        orig_w,
+        orig_h,
+        conf,
+        max_det: int = 100,
+    ):
+        """Parse the export graph's baked top-100 CenterNet detections."""
+        from ..postprocess.centernet import postprocess
+
+        decoded = all_outputs[0] if isinstance(all_outputs, (tuple, list)) else all_outputs
+        result = postprocess(
+            decoded,
+            conf_thres=conf,
+            original_size=(orig_w, orig_h),
+            input_size=input_size,
+            max_det=min(max_det, 100),
+        )
+        return result["boxes"], result["scores"], result["classes"]
 
     def _parse_dfine_segment(
         self, all_outputs, orig_w, orig_h, conf, max_det: int = 300
@@ -3113,6 +3164,7 @@ class BaseBackend(ABC):
             DEIMv2DINOValPreprocessor,
             DEIMv2ValPreprocessor,
             DeformableDETRValPreprocessor,
+            CenterNetValPreprocessor,
             DETRValPreprocessor,
             DFINEValPreprocessor,
             ECValPreprocessor,
@@ -3143,6 +3195,7 @@ class BaseBackend(ABC):
         preprocessor_cls = {
             "deim": DEIMValPreprocessor,
             "deformable_detr": DeformableDETRValPreprocessor,
+            "centernet": CenterNetValPreprocessor,
             "detr": DETRValPreprocessor,
             "dfine": DFINEValPreprocessor,
             "ec": ECValPreprocessor,

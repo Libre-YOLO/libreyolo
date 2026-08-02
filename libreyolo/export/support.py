@@ -1931,6 +1931,28 @@ _add(
 )
 _add(
     "validated",
+    ("centernet",),
+    ("detect",),
+    ("onnx", "torchscript"),
+    reason=(
+        "Both official checkpoints preserve baked top-100 detections and public "
+        "prediction parity through the portable grid-sample DCN graph."
+    ),
+    since="1.7",
+    constraint="FP32, fixed square input; ONNX Runtime CPU or TorchScript",
+)
+_add(
+    "blocked",
+    ("centernet",),
+    ("detect",),
+    ("ncnn",),
+    reason=(
+        "NCNN cannot lower CenterNet's portable deformable sampling plus "
+        "baked top-k decode contract. Use ONNX or TorchScript."
+    ),
+)
+_add(
+    "validated",
     ("faster_rcnn",),
     ("detect",),
     ("onnx",),
