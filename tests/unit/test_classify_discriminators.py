@@ -21,6 +21,7 @@ def test_supported_variants_detected():
     timm = pytest.importorskip("timm")
     from libreyolo import (
         LibreConvNeXt,
+        LibreDeiT,
         LibreEfficientNetV2,
         LibreMobileNetV4,
         LibreResNet,
@@ -34,6 +35,9 @@ def test_supported_variants_detected():
         (LibreConvNeXt, "convnext_tiny", "t"),
         (LibreConvNeXt, "convnext_small", "s"),
         (LibreConvNeXt, "convnext_base", "b"),
+        (LibreDeiT, "deit_tiny_patch16_224", "t"),
+        (LibreDeiT, "deit_small_patch16_224", "s"),
+        (LibreDeiT, "deit_base_patch16_224", "b"),
         (LibreEfficientNetV2, "tf_efficientnetv2_b0", "b0"),
         (LibreEfficientNetV2, "tf_efficientnetv2_b1", "b1"),
         (LibreEfficientNetV2, "tf_efficientnetv2_b2", "b2"),
@@ -52,6 +56,7 @@ def test_unsupported_variants_rejected():
     timm = pytest.importorskip("timm")
     from libreyolo import (
         LibreConvNeXt,
+        LibreDeiT,
         LibreEfficientNetV2,
         LibreMobileNetV4,
         LibreResNet,
@@ -60,6 +65,8 @@ def test_unsupported_variants_rejected():
     cases = [
         (LibreResNet, "resnet152"),                  # deeper bottleneck, must not be "101"
         (LibreConvNeXt, "convnext_large"),           # wider dims, must not be "b"
+        (LibreDeiT, "deit_base_distilled_patch16_224"),  # extra token/head
+        (LibreDeiT, "deit_base_patch16_384"),        # different pos_embed
         (LibreEfficientNetV2, "tf_efficientnetv2_s"),  # not a base tier (stem 24)
         (LibreMobileNetV4, "mobilenetv4_conv_small_050"),  # 0.5x width
         (LibreMobileNetV4, "mobilenetv4_hybrid_medium"),   # MQA attention variant
@@ -76,6 +83,7 @@ def test_classify_filenames_require_cls_suffix():
     be accepted as a classify checkpoint (detect families keep it optional)."""
     from libreyolo import (
         LibreConvNeXt,
+        LibreDeiT,
         LibreEfficientNetV2,
         LibreMobileNetV4,
         LibreResNet,
@@ -84,6 +92,7 @@ def test_classify_filenames_require_cls_suffix():
     for cls, size in [
         (LibreResNet, "50"),
         (LibreConvNeXt, "t"),
+        (LibreDeiT, "t"),
         (LibreEfficientNetV2, "b0"),
         (LibreMobileNetV4, "s"),
     ]:
