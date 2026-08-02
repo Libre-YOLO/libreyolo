@@ -420,6 +420,7 @@ After the repo is uploaded, add it to a collection:
 | Repo type | Collection |
 |---|---|
 | Detection weights | `LibreYOLO/libreyolo-models-698875bf2b5f695708415169` |
+| Classification weights | `LibreYOLO/libreyolo-classification-6a4164414d64a10aa8576885` |
 | RF-DETR segmentation | `LibreYOLO/rf-detr-instance-segmentation-69bde2744d6c285366a69603` |
 | New seg family (e.g. YOLOX-seg) | **Ask the user** — create a new collection or extend existing |
 | New detection family with no siblings yet | Add to `LibreYOLO Models` |

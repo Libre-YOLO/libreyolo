@@ -79,6 +79,19 @@ def test_openvocab_model_names_flags_set_classes_families():
     assert not any(n.startswith("yolo9-") for n in flagged)
 
 
+def test_vit_cli_alias_is_ui_downloadable():
+    from libreyolo.cli.config import get_all_cli_names
+    from libreyolo.ui.server import _resolve_download_url
+
+    names = get_all_cli_names()
+    assert "vit-ti" in names
+    assert "vit-ti-cls" in names
+    assert _resolve_download_url("vit-ti") == (
+        "https://huggingface.co/LibreYOLO/LibreViTti-cls/resolve/main/"
+        "LibreViTti-cls.pt"
+    )
+
+
 def test_factory_openvocab_names_resolve_in_the_factory():
     """Every UI-listed factory name must stay a valid LibreOpenVocab alias."""
     from libreyolo.models.openvocab import _ALIASES
