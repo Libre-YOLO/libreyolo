@@ -351,6 +351,7 @@ testpaths = ["tests"]
 timeout_method = "thread"
 markers = [
     "unit: fast tests that avoid external weights or large files",
+    "swin: tests covering the Swin classification family",
     "external_data: tests that require external datasets, weights, or staged large files",
     "network: tests that intentionally use non-local network access",
     "e2e: end-to-end tests requiring full model loading and inference",

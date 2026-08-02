@@ -93,6 +93,16 @@ class LibreSwin(BaseModel):
         head = weights_dict.get("head.fc.weight")
         return int(head.shape[0]) if head is not None and head.ndim == 2 else None
 
+    @classmethod
+    def convert_upstream_state_dict(cls, weights_dict: dict) -> Optional[dict]:
+        """Normalize released Microsoft/timm layouts for runtime conversion."""
+        from .convert import convert_upstream, is_upstream_state_dict
+
+        if not is_upstream_state_dict(weights_dict):
+            return None
+        converted = convert_upstream(weights_dict)
+        return converted if cls.can_load(converted) else None
+
     def __init__(
         self,
         model_path=None,
