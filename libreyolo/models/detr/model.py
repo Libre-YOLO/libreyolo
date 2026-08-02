@@ -104,12 +104,16 @@ class LibreDETR(BaseModel):
 
     def __init__(
         self,
-        model_path=None,
-        size: str = "r50",
+        model_path,
+        size: str,
         nb_classes: int = 80,
         device: str = "auto",
         **kwargs,
     ) -> None:
+        # ``size`` is deliberately required: DC5 dilation changes the runtime
+        # graph without changing any serialized tensor shape, so a renamed raw
+        # DC5 checkpoint would strict-load into the wrong (non-dilated) graph
+        # if a default were silently applied.
         architectural = self._peek_arch_classes(model_path)
         if architectural is None:
             architectural = _COCO91_CLASS_SLOTS if nb_classes == 80 else nb_classes

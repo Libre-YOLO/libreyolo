@@ -9,6 +9,15 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
+  in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
+  Native outputs are bit-exact against the pinned facebookresearch/detr
+  Apache-2.0 source; TorchScript export is bit-exact and fixed-800 ONNX
+  Runtime prediction parity is verified. DC5 dilation is stored explicitly in
+  checkpoint metadata because it changes the runtime graph without changing
+  any tensor shape, and `size` is required when constructing `LibreDETR`
+  directly. The 500-epoch Hungarian-matching training recipe is not
+  implemented and `train()` raises
 - LibreFasterRCNN, an inference-only museum port of torchvision's Faster
   R-CNN in sizes n/s/m/l (MobileNetV3-Large 320-FPN, MobileNetV3-Large FPN,
   ResNet-50 FPN v1, ResNet-50 FPN v2). Native detections are exact against
