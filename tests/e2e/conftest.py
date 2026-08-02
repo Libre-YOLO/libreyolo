@@ -540,6 +540,7 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("rtdetrv4", "s", "weights/LibreRTDETRv4s.pt"),
     ("picodet", "s", "LibrePICODETs.pt"),
     ("rtmdet", "t", "LibreRTMDett.pt"),
+    ("swin", "t", "LibreSwint-cls.pt"),
 ]
 
 # Derived lists (no manual maintenance)
@@ -604,6 +605,7 @@ FAMILY_MARKERS = {
     "rtmdet": pytest.mark.rtmdet,
     "l2cs": pytest.mark.l2cs,
     "fomo": pytest.mark.fomo,
+    "swin": pytest.mark.swin,
 }
 
 

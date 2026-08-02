@@ -779,7 +779,7 @@ License: Apache License 2.0
 Copyright (c) Ross Wightman and the timm contributors.
 Used for: the native image-classification model families ported from
           timm architectures — libreyolo/models/{mobilenetv4,convnext,
-          efficientnetv2,resnet}/ — and the shared Swin backbone at
+          efficientnetv2,resnet,swin}/ — including the shared Swin backbone at
           libreyolo/models/swin/. Module/attribute names mirror timm so
           its Apache-2.0 ImageNet-1k pretrained weights load unchanged and
           inference is bit-identical. Architecture lineage: ConvNeXt also
@@ -788,6 +788,15 @@ Used for: the native image-classification model families ported from
           (timm *.in1k / *.fb_in1k / a1_in1k, Apache-2.0) are mirrored on
           the LibreYOLO Hugging Face org. ConvNeXt-V2 fcmae weights
           (CC-BY-NC) are NOT used.
+
+Swin Transformer V1 model and weight lineage: microsoft/Swin-Transformer at
+commit f82860bfb5225915aca09c3227159ee9e1df874d and
+SwinTransformer/storage release v1.0.0 at commit
+3cc359915d3a6079b176a871f68d5fb0d8dfdea2, both MIT. The Tiny, Small, Base, and
+Large patch-4/window-7 learned tensors are mirrored through timm's pinned
+Hugging Face repositories and converted without numerical changes. Large was
+pretrained on ImageNet-22k and fine-tuned on ImageNet-1k. See
+libreyolo/models/swin/NOTICE for exact source revisions.
 
 --------------------------------------------------------------------
 Apache License 2.0 (full text)

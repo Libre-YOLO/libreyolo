@@ -9,6 +9,7 @@ from mis-claiming or mis-sizing same-architecture checkpoints.
 from __future__ import annotations
 
 import pytest
+import torch
 
 pytestmark = pytest.mark.unit
 
@@ -24,6 +25,7 @@ def test_supported_variants_detected():
         LibreEfficientNetV2,
         LibreMobileNetV4,
         LibreResNet,
+        LibreSwin,
     )
 
     cases = [
@@ -41,6 +43,10 @@ def test_supported_variants_detected():
         (LibreMobileNetV4, "mobilenetv4_conv_small", "s"),
         (LibreMobileNetV4, "mobilenetv4_conv_medium", "m"),
         (LibreMobileNetV4, "mobilenetv4_conv_large", "l"),
+        (LibreSwin, "swin_tiny_patch4_window7_224", "t"),
+        (LibreSwin, "swin_small_patch4_window7_224", "s"),
+        (LibreSwin, "swin_base_patch4_window7_224", "b"),
+        (LibreSwin, "swin_large_patch4_window7_224", "l"),
     ]
     for cls, tag, expected in cases:
         sd = _sd(timm, tag)
@@ -55,6 +61,7 @@ def test_unsupported_variants_rejected():
         LibreEfficientNetV2,
         LibreMobileNetV4,
         LibreResNet,
+        LibreSwin,
     )
 
     cases = [
@@ -63,6 +70,8 @@ def test_unsupported_variants_rejected():
         (LibreEfficientNetV2, "tf_efficientnetv2_s"),  # not a base tier (stem 24)
         (LibreMobileNetV4, "mobilenetv4_conv_small_050"),  # 0.5x width
         (LibreMobileNetV4, "mobilenetv4_hybrid_medium"),   # MQA attention variant
+        (LibreSwin, "swin_base_patch4_window12_384"),  # unsupported window size
+        (LibreSwin, "swinv2_tiny_window8_256"),  # Swin V2 has a different graph
     ]
     for cls, tag in cases:
         sd = _sd(timm, tag)
@@ -79,6 +88,7 @@ def test_classify_filenames_require_cls_suffix():
         LibreEfficientNetV2,
         LibreMobileNetV4,
         LibreResNet,
+        LibreSwin,
     )
 
     for cls, size in [
@@ -86,6 +96,7 @@ def test_classify_filenames_require_cls_suffix():
         (LibreConvNeXt, "t"),
         (LibreEfficientNetV2, "b0"),
         (LibreMobileNetV4, "s"),
+        (LibreSwin, "t"),
     ]:
         stem = f"{cls.FILENAME_PREFIX}{size}"
         assert cls.detect_size_from_filename(f"{stem}-cls.pt") == size, (
@@ -94,3 +105,57 @@ def test_classify_filenames_require_cls_suffix():
         assert cls.detect_size_from_filename(f"{stem}.pt") is None, (
             f"{cls.__name__} must reject a suffixless filename"
         )
+
+
+def test_swin_and_closed_set_classifiers_reject_each_other_bidirectionally():
+    timm = pytest.importorskip("timm")
+    from libreyolo import (
+        LibreConvNeXt,
+        LibreEfficientNetV2,
+        LibreMobileNetV4,
+        LibreResNet,
+        LibreSwin,
+    )
+
+    swin = _sd(timm, "swin_tiny_patch4_window7_224")
+    siblings = [
+        (LibreResNet, "resnet18"),
+        (LibreConvNeXt, "convnext_tiny"),
+        (LibreEfficientNetV2, "tf_efficientnetv2_b0"),
+        (LibreMobileNetV4, "mobilenetv4_conv_small"),
+    ]
+    for cls, tag in siblings:
+        sibling = _sd(timm, tag)
+        assert LibreSwin.can_load(sibling) is False
+        assert cls.can_load(swin) is False
+
+
+def test_swin_rejects_other_vit_signatures_and_they_reject_swin():
+    timm = pytest.importorskip("timm")
+    from libreyolo import LibreCLIP, LibreSwin
+    from libreyolo.models.dinov2.model import LibreDINOv2
+
+    swin = _sd(timm, "swin_tiny_patch4_window7_224")
+    clip = {
+        "logit_scale": torch.empty(()),
+        "text_projection": torch.empty(512, 512),
+        "visual.conv1.weight": torch.empty(768, 3, 16, 16),
+    }
+    dinov2 = {
+        "backbone.embeddings.patch_embeddings.projection.weight": torch.empty(
+            384, 3, 14, 14
+        ),
+        "linear.weight": torch.empty(1000, 384),
+    }
+    sam = {
+        "image_encoder.patch_embed.proj.weight": torch.empty(768, 3, 16, 16),
+        "prompt_encoder.pe_layer.positional_encoding_gaussian_matrix": torch.empty(
+            2, 128
+        ),
+        "mask_decoder.iou_prediction_head.layers.2.weight": torch.empty(4, 256),
+    }
+
+    for state_dict in (clip, dinov2, sam):
+        assert LibreSwin.can_load(state_dict) is False
+    assert LibreCLIP.can_load(swin) is False
+    assert LibreDINOv2.can_load(swin) is False

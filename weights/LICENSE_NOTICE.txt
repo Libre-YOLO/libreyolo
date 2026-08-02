@@ -94,6 +94,11 @@ project the weights were derived from. Per-family summary:
     ResNet   (LibreResNet{18,34,50,101}-cls)           Apache-2.0
              upstream: timm (a1_in1k "ResNet Strikes Back" recipe), ImageNet-1k
 
+    Swin     (LibreSwin{t,s,b,l}-cls)                  MIT
+             upstream: microsoft/Swin-Transformer via timm; t/s/b ImageNet-1k,
+             l ImageNet-22k pretraining to ImageNet-1k fine-tuning
+             Convert with weights/convert_swin_weights.py.
+
     CLIP     (LibreCLIP{b32,b16}-cls)                  MIT (weights)
              upstream: mlfoundations/open_clip LAION-2B checkpoints;
              see libreyolo/models/clip/NOTICE.md for the LAION

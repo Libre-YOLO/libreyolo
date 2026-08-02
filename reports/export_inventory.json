@@ -1319,6 +1319,30 @@
     "available": true,
     "group": "s"
   },
+  "swin": {
+    "class": "libreyolo.models.swin.model.LibreSwin",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "t": 224,
+      "s": 224,
+      "b": 224,
+      "l": 224
+    },
+    "default_imgsz": {
+      "t": 224,
+      "s": 224,
+      "b": 224,
+      "l": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "swinir": {
     "class": "libreyolo.models.swinir.model.LibreSwinIR",
     "tasks": [
