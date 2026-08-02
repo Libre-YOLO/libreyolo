@@ -55,6 +55,17 @@ project the weights were derived from. Per-family summary:
              must determine permission for their use case.
              Public mirrors: https://huggingface.co/LibreYOLO/LibreFasterRCNN{n,s,m,l}
 
+    RetinaNet (LibreRetinaNet{r50,r50v2})               BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official COCO checkpoints carry no per-object license file.
+             Rehosting uses BSD-3-Clause implied by the releasing project,
+             not a publisher-confirmed checkpoint grant. Every weight repo
+             ships the verbatim BSD text and states torchvision's warning that
+             pretrained-model terms may derive from training data and users
+             must determine permission for their use case.
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreRetinaNet{r50,r50v2}
+
     Deformable DETR                                     Apache-2.0
              (LibreDeformableDETR{r50ss,r50ssdc5,r50,
               r50refine,r50twostage})

@@ -100,6 +100,10 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "Faster R-CNN ships inference-only: RPN and sampled-RoI training "
         "are intentionally outside the museum-port scope, and train() raises."
     ),
+    "retinanet": (
+        "RetinaNet ships inference-only: focal-loss target assignment and "
+        "training losses are not implemented, and train() raises."
+    ),
     "deformable_detr": (
         "Deformable DETR ships inference-only: its Hungarian matcher, focal/L1/GIoU "
         "losses, auxiliary decoder losses, and backbone learning-rate recipe are "

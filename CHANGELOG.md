@@ -9,6 +9,11 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreRetinaNet, an inference-only torchvision RetinaNet port in ResNet-50
+  FPN v1 and v2 variants (`r50`, `r50v2`). Both official COCO checkpoints
+  have exact native head and detection parity against the pinned BSD-3-Clause
+  source. Batch-one ONNX export supports dynamic aspect-preserved inputs with
+  class-aware NMS in the unified backend; `train()` raises
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr
