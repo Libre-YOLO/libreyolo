@@ -17,10 +17,13 @@ from collections import OrderedDict
 from typing import Callable, Optional
 
 import torch
+import torchvision
 from torch import Tensor, nn
+from torch.nn import functional as F
 from torchvision.ops import Conv2dNormActivation, MultiScaleRoIAlign
 
 from ..faster_rcnn.nn import (
+    GeneralizedRCNNTransform,
     LibreFasterRCNNModel,
     RoIHeads,
 )
@@ -43,6 +46,191 @@ def maskrcnn_inference(
     indices = torch.arange(mask_logits.shape[0], device=concatenated_labels.device)
     selected = mask_probabilities[indices, concatenated_labels][:, None]
     return list(selected.split(boxes_per_image, dim=0))
+
+
+def _onnx_expand_boxes(boxes: Tensor, scale) -> Tensor:
+    half_width = (boxes[:, 2] - boxes[:, 0]) * 0.5
+    half_height = (boxes[:, 3] - boxes[:, 1]) * 0.5
+    center_x = (boxes[:, 2] + boxes[:, 0]) * 0.5
+    center_y = (boxes[:, 3] + boxes[:, 1]) * 0.5
+    half_width = half_width.to(dtype=torch.float32) * scale
+    half_height = half_height.to(dtype=torch.float32) * scale
+    return torch.stack(
+        (
+            center_x - half_width,
+            center_y - half_height,
+            center_x + half_width,
+            center_y + half_height,
+        ),
+        dim=1,
+    )
+
+
+def _expand_boxes(boxes: Tensor, scale) -> Tensor:
+    if torchvision._is_tracing():
+        return _onnx_expand_boxes(boxes, scale)
+    half_width = (boxes[:, 2] - boxes[:, 0]) * 0.5
+    half_height = (boxes[:, 3] - boxes[:, 1]) * 0.5
+    center_x = (boxes[:, 2] + boxes[:, 0]) * 0.5
+    center_y = (boxes[:, 3] + boxes[:, 1]) * 0.5
+    half_width *= scale
+    half_height *= scale
+    expanded = torch.zeros_like(boxes)
+    expanded[:, 0] = center_x - half_width
+    expanded[:, 1] = center_y - half_height
+    expanded[:, 2] = center_x + half_width
+    expanded[:, 3] = center_y + half_height
+    return expanded
+
+
+@torch.jit.unused
+def _expand_masks_tracing_scale(size: int, padding: int):
+    return torch.tensor(size + 2 * padding).to(torch.float32) / torch.tensor(
+        size
+    ).to(torch.float32)
+
+
+def _expand_masks(masks: Tensor, padding: int):
+    size = masks.shape[-1]
+    if torch._C._get_tracing_state():
+        scale = _expand_masks_tracing_scale(size, padding)
+    else:
+        scale = float(size + 2 * padding) / size
+    return F.pad(masks, (padding,) * 4), scale
+
+
+def _paste_mask_in_image(
+    mask: Tensor,
+    box: Tensor,
+    image_height: int,
+    image_width: int,
+) -> Tensor:
+    width = max(int(box[2] - box[0] + 1), 1)
+    height = max(int(box[3] - box[1] + 1), 1)
+    mask = F.interpolate(
+        mask.expand((1, 1, -1, -1)),
+        size=(height, width),
+        mode="bilinear",
+        align_corners=False,
+    )[0, 0]
+    image_mask = torch.zeros(
+        (image_height, image_width),
+        dtype=mask.dtype,
+        device=mask.device,
+    )
+    x0 = max(box[0], 0)
+    x1 = min(box[2] + 1, image_width)
+    y0 = max(box[1], 0)
+    y1 = min(box[3] + 1, image_height)
+    image_mask[y0:y1, x0:x1] = mask[
+        (y0 - box[1]) : (y1 - box[1]),
+        (x0 - box[0]) : (x1 - box[0]),
+    ]
+    return image_mask
+
+
+def _onnx_paste_mask_in_image(
+    mask: Tensor,
+    box: Tensor,
+    image_height: Tensor,
+    image_width: Tensor,
+) -> Tensor:
+    one = torch.ones(1, dtype=torch.int64)
+    zero = torch.zeros(1, dtype=torch.int64)
+    width = torch.max(torch.cat((box[2] - box[0] + one, one)))
+    height = torch.max(torch.cat((box[3] - box[1] + one, one)))
+    mask = F.interpolate(
+        mask.expand((1, 1, mask.size(0), mask.size(1))),
+        size=(int(height), int(width)),
+        mode="bilinear",
+        align_corners=False,
+    )[0, 0]
+
+    x0 = torch.max(torch.cat((box[0].unsqueeze(0), zero)))
+    x1 = torch.min(torch.cat((box[2].unsqueeze(0) + one, image_width.unsqueeze(0))))
+    y0 = torch.max(torch.cat((box[1].unsqueeze(0), zero)))
+    y1 = torch.min(torch.cat((box[3].unsqueeze(0) + one, image_height.unsqueeze(0))))
+    unpadded = mask[
+        (y0 - box[1]) : (y1 - box[1]),
+        (x0 - box[0]) : (x1 - box[0]),
+    ]
+    zeros_y0 = torch.zeros(y0, unpadded.size(1))
+    zeros_y1 = torch.zeros(image_height - y1, unpadded.size(1))
+    rows = torch.cat((zeros_y0, unpadded.to(torch.float32), zeros_y1), dim=0)[
+        :image_height, :
+    ]
+    zeros_x0 = torch.zeros(rows.size(0), x0)
+    zeros_x1 = torch.zeros(rows.size(0), image_width - x1)
+    return torch.cat((zeros_x0, rows, zeros_x1), dim=1)[:, :image_width]
+
+
+@torch.jit._script_if_tracing
+def _onnx_paste_masks_loop(
+    masks: Tensor,
+    boxes: Tensor,
+    image_height: Tensor,
+    image_width: Tensor,
+) -> Tensor:
+    pasted = torch.zeros(0, image_height, image_width)
+    for index in range(masks.size(0)):
+        current = _onnx_paste_mask_in_image(
+            masks[index][0],
+            boxes[index],
+            image_height,
+            image_width,
+        )
+        pasted = torch.cat((pasted, current.unsqueeze(0)))
+    return pasted
+
+
+def paste_masks_in_image(
+    masks: Tensor,
+    boxes: Tensor,
+    image_shape: tuple[int, int],
+    padding: int = 1,
+) -> Tensor:
+    """Paste fixed-resolution soft RoI masks into an image canvas."""
+    masks, scale = _expand_masks(masks, padding)
+    boxes = _expand_boxes(boxes, scale).to(dtype=torch.int64)
+    image_height, image_width = image_shape
+    if torchvision._is_tracing():
+        return _onnx_paste_masks_loop(
+            masks,
+            boxes,
+            torch.scalar_tensor(image_height, dtype=torch.int64),
+            torch.scalar_tensor(image_width, dtype=torch.int64),
+        )[:, None]
+    pasted = [
+        _paste_mask_in_image(mask[0], box, image_height, image_width)
+        for mask, box in zip(masks, boxes)
+    ]
+    if pasted:
+        return torch.stack(pasted, dim=0)[:, None]
+    return masks.new_empty((0, 1, image_height, image_width))
+
+
+class MaskRCNNTransform(GeneralizedRCNNTransform):
+    """Restore boxes and paste soft masks onto each original image canvas."""
+
+    def postprocess(
+        self,
+        detections: list[dict[str, Tensor]],
+        image_shapes: list[tuple[int, int]],
+        original_image_sizes: list[tuple[int, int]],
+    ) -> list[dict[str, Tensor]]:
+        detections = super().postprocess(
+            detections,
+            image_shapes,
+            original_image_sizes,
+        )
+        for detection, original_shape in zip(detections, original_image_sizes):
+            if "masks" in detection:
+                detection["masks"] = paste_masks_in_image(
+                    detection["masks"],
+                    detection["boxes"],
+                    original_shape,
+                )
+        return detections
 
 
 class MaskRCNNHeads(nn.Sequential):
@@ -244,5 +432,11 @@ class LibreMaskRCNNModel(LibreFasterRCNNModel):
             nms_thresh=box_heads.nms_thresh,
             detections_per_img=box_heads.detections_per_img,
             return_masks=return_masks,
+        )
+        self.transform = MaskRCNNTransform(
+            800,
+            1333,
+            [0.485, 0.456, 0.406],
+            [0.229, 0.224, 0.225],
         )
         self.size = size

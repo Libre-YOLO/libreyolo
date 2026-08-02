@@ -141,14 +141,19 @@ def test_torchvision_r50_exact_box_and_mask_logit_parity():
         captured["upstream"]["mask_logits"],
         captured["ours"]["mask_logits"],
     )
+    final_masks_diff = _max_abs_diff(expected["masks"], actual["masks"])
     print(
         "r50 parity: "
         f"rpn={rpn_diff} box_head={box_head_diff} "
-        f"boxes={boxes_diff} raw_mask_logits={mask_logits_diff}"
+        f"boxes={boxes_diff} raw_mask_logits={mask_logits_diff} "
+        f"final_masks={final_masks_diff}"
     )
     assert rpn_diff == 0.0, f"r50 RPN max_abs_diff={rpn_diff}"
     assert box_head_diff == 0.0, f"r50 box head max_abs_diff={box_head_diff}"
     assert boxes_diff == 0.0, f"r50 boxes max_abs_diff={boxes_diff}"
     assert mask_logits_diff == 0.0, (
         f"r50 raw mask logits max_abs_diff={mask_logits_diff}"
+    )
+    assert final_masks_diff == 0.0, (
+        f"r50 final soft masks max_abs_diff={final_masks_diff}"
     )

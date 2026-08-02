@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, Tuple
 
 import torch.nn as nn
 
+from ...postprocess.mask_rcnn import postprocess
+from ...utils.coco import COCO91_TO_COCO80
 from ...validation.preprocessors import FasterRCNNValPreprocessor
 from ..faster_rcnn.model import LibreFasterRCNN
 from .nn import LibreMaskRCNNModel
@@ -76,6 +78,31 @@ class LibreMaskRCNN(LibreFasterRCNN):
             size=self.size,
             num_classes=head_width,
             return_masks=self.task == "segment",
+        )
+
+    def _postprocess(
+        self,
+        output: Any,
+        conf_thres: float,
+        iou_thres: float,
+        original_size: Tuple[int, int],
+        max_det: int = 300,
+        **kwargs,
+    ) -> dict:
+        class_map = (
+            COCO91_TO_COCO80
+            if self._arch_num_classes == 91 and self.nb_classes == 80
+            else None
+        )
+        return postprocess(
+            output,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            original_size=original_size,
+            max_det=max_det,
+            class_map=class_map,
+            include_masks=self.task == "segment",
+            **kwargs,
         )
 
     def train(self, *args, **kwargs):

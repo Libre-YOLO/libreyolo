@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
+from ...postprocess.mask_rcnn import postprocess
 from ..faster_rcnn.utils import preprocess_image, preprocess_numpy
-from ...postprocess.faster_rcnn import postprocess
 
 __all__ = ["postprocess", "preprocess_image", "preprocess_numpy"]

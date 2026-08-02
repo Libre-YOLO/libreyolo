@@ -56,4 +56,5 @@ upstream Mask R-CNN model at runtime.
 
 - Eager parity for `r50` on the bundled parkour image: `max_abs_diff == 0.0`
   for RPN outputs, box-head outputs, final boxes/labels/scores, and raw
-  pre-sigmoid mask logits.
+  pre-sigmoid mask logits. Original-canvas soft masks also match exactly after
+  per-RoI mask pasting.
