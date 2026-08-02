@@ -8,6 +8,8 @@ from typing import Any, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from ...postprocess.faster_rcnn import postprocess
+from ...utils.coco import COCO91_TO_COCO80
 from ...utils.image_loader import ImageInput
 from ..base import BaseModel
 from .nn import LibreFasterRCNNModel
@@ -42,6 +44,7 @@ class LibreFasterRCNN(BaseModel):
         )
         if isinstance(model_path, str):
             self._load_weights(model_path)
+        self._arch_num_classes = self.model.num_classes
         self.model.eval()
 
     @classmethod
@@ -131,8 +134,20 @@ class LibreFasterRCNN(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> dict:
-        del output, conf_thres, iou_thres, original_size, max_det, kwargs
-        raise NotImplementedError("Faster R-CNN postprocessing is not wired yet")
+        class_map = (
+            COCO91_TO_COCO80
+            if self._arch_num_classes == 91 and self.nb_classes == 80
+            else None
+        )
+        return postprocess(
+            output,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            original_size=original_size,
+            max_det=max_det,
+            class_map=class_map,
+            **kwargs,
+        )
 
     def train(self, *args, **kwargs):
         raise NotImplementedError(

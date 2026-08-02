@@ -9,6 +9,9 @@ import torch
 from PIL import Image
 
 from ...utils.image_loader import ImageInput, ImageLoader
+from ...postprocess.faster_rcnn import postprocess
+
+__all__ = ["postprocess", "preprocess_image", "preprocess_numpy"]
 
 
 def preprocess_numpy(img_rgb_hwc: np.ndarray) -> Tuple[np.ndarray, float]:
