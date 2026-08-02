@@ -51,3 +51,9 @@ the checkpoint license as publisher-confirmed.
 The runtime continues to import torchvision's BSD-licensed low-level ResNet,
 FPN, anchor, RoIAlign, and box operations. It does not wrap or instantiate an
 upstream Mask R-CNN model at runtime.
+
+## Measured evidence
+
+- Eager parity for `r50` on the bundled parkour image: `max_abs_diff == 0.0`
+  for RPN outputs, box-head outputs, final boxes/labels/scores, and raw
+  pre-sigmoid mask logits.
