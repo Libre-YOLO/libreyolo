@@ -51,6 +51,7 @@ file = name + ".pt"
 | YOLO9-P2 | `LibreYOLO9P2` | `LibreYOLO9P2s.pt`, `LibreYOLO9P2s-visdrone.pt` (dataset-variant suffix) |
 | RFDETR | `LibreRFDETR` | `LibreRFDETRn.pt`, `LibreRFDETRn-seg.pt`, `LibreRFDETRx-pose.pt` |
 | LWDETR | `LibreLWDETR` | `LibreLWDETRt.pt` (LW-DETR, RF-DETR's ancestor; Apache-2.0 code + weights; inference-only) |
+| Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
 | RTDETRv2 | `LibreRTDETRv2` | `LibreRTDETRv2r50.pt` |
 | RTDETRv4 | `LibreRTDETRv4` | `LibreRTDETRv4s.pt` |
@@ -158,6 +159,10 @@ LibreRFDETRl-obb.pt,
 
 LibreLWDETRt.pt, LibreLWDETRs.pt, LibreLWDETRm.pt,
 LibreLWDETRl.pt, LibreLWDETRx.pt,
+
+LibreDeformableDETRr50ss.pt, LibreDeformableDETRr50ssdc5.pt,
+LibreDeformableDETRr50.pt, LibreDeformableDETRr50refine.pt,
+LibreDeformableDETRr50twostage.pt,
 
 LibreECs.pt, LibreECm.pt, LibreECl.pt, LibreECx.pt,
 LibreECs-pose.pt, LibreECm-pose.pt, LibreECl-pose.pt,
