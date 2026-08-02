@@ -206,9 +206,8 @@ corrected.
 - **`from_pretrained` does not exist.** `LibreYOLO` is a factory *function*
   (`libreyolo/models/__init__.py`) that takes a path. The auto-download check is
   `LibreYOLO("Libre<Family><size>.pt")` on a cleared cache with no staged copy
-  under `weights/`. Note that `libreyolo-port-model` and
-  `libreyolo-upload-hf-model` both still show a stale `from_pretrained` form;
-  do not copy it into a PRD.
+  under `weights/`. Do not write a `from_pretrained` call into a PRD; the bare
+  canonical filename is the download trigger.
 - **A non-YOLO-grid export needs two backend edits, not one.**
   `_is_nms_free_family()` is a module-level function in
   `libreyolo/backends/base.py` (not a `BaseBackend` method) and only decides

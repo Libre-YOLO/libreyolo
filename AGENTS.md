@@ -85,6 +85,10 @@
 - Never add new sections, restructure, or grow the README without an
   explicit user request. It balances being a landing page against being
   documentation; depth belongs in `/docs` or on the website.
+- One sanctioned exception: when a new model family lands, adding its single
+  row to the existing family support table is expected. One row, in the
+  existing table, and nothing else; only tick export columns that were
+  actually run.
 - Style: no em dashes, no decorative or AI-flavored characters, no fluff.
 - The detailed editing contract lives in `skills/libreyolo-update-readme/`.
 

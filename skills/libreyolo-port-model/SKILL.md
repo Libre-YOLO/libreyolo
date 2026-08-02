@@ -78,7 +78,11 @@ For weights, check the HF model card YAML at the top:
 ```yaml
 license: apache-2.0    # ← permissive
 license: gpl-3.0       # ← copyleft
-license: cc-by-nc-4.0  # ← non-commercial: usually a hard "no"
+license: cc-by-nc-4.0  # ← non-commercial: still hostable — redistributable is
+                       #   the only bar for weights. Ship the license verbatim
+                       #   and lead the card with a non-commercial banner
+                       #   (SegFormer precedent); users are responsible for
+                       #   complying with the weight license.
 ```
 
 **Already-shipped reference cases**:
@@ -1164,7 +1168,13 @@ Always edited:
 | `libreyolo/training/config.py` | append `<Family>Config(TrainConfig)` if shared route. Family-local `models/<family>/config.py` is also fine — RF-DETR, RT-DETR, YOLOv9-E2E |
 | `libreyolo/validation/preprocessors.py` | append `<Family>ValPreprocessor` |
 | `tests/unit/test_<family>_*.py` | parity / shape / loss / smoke / sibling-rejection |
-| `tests/e2e/conftest.py` | append rows to `MODEL_CATALOG` |
+| `tests/e2e/conftest.py` | task-appropriate registration: for detect, append rows to `MODEL_CATALOG` and `GENERAL_NIGHTLY_INFERENCE_MODELS` (plus `_EXPERIMENTAL_TRAINING_SKIP` when training is out of scope). `MODEL_CATALOG` is detect-only — its mAP gate fails classify / semantic / depth rows by construction; mirror the closest merged non-detect family instead |
+| `CHANGELOG.md` | `Unreleased / Added` entry for the new family |
+| `README.md` | one row in the family support table — nothing else (README policy in `AGENTS.md`; tick only export columns you actually ran) |
+| `reports/export_inventory.json` | regenerate — `tests/unit` checks the committed snapshot matches the runtime inventory (including the family's `group`) |
+| `docs/testing.md` | bump the general-nightly test count when nightly models were added |
+| `pyproject.toml` | add the `<family>` pytest marker |
+| `docs/nomenclature.md` | family / filename rows |
 
 Conditional:
 
