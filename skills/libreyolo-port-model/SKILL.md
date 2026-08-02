@@ -240,6 +240,13 @@ using template §6.1. Implement:
 
 Add `from .<family>.model import Libre<FAMILY>` to `libreyolo/models/__init__.py` in the **right registry order** (most distinctive markers first). Add `Libre<FAMILY>` to `libreyolo/__init__.py` exports.
 
+**Enroll the family in the model registry**: add one `"<family>": "<group>"`
+line to `MODEL_GROUPS` in `libreyolo/models/registry.py`. Group semantics are
+in `docs/nomenclature.md` ("Model groups"); new ports usually enter `g2`
+(trainable) or `g3` (inference-only) — `g0`/`g1` placement is a maintainer
+decision, take the group from the PRD. `tests/unit/test_model_registry.py`
+fails until the family is enrolled.
+
 **Verify**: `python -c "from libreyolo import Libre<FAMILY>; m = Libre<FAMILY>(size='s'); print(m.task, m.family)"` runs.
 
 ### Commit 2 — `nn.py` + forward smoke
@@ -1151,6 +1158,7 @@ Always edited:
 | `libreyolo/models/<family>/{__init__.py, model.py, nn.py, utils.py}` | family-local code (preprocess + checkpoint helpers) |
 | `libreyolo/postprocess/<family>.py` | postprocessing — one module per family (ADR 0005) |
 | `libreyolo/models/__init__.py` | one-line family import (drives auto-registration order) |
+| `libreyolo/models/registry.py` | one-line `MODEL_GROUPS` enrollment — `tests/unit/test_model_registry.py` fails without it |
 | `libreyolo/__init__.py` | `Libre<Family>` export + `__all__` |
 | `libreyolo/training/config.py` | append `<Family>Config(TrainConfig)` if shared route. Family-local `models/<family>/config.py` is also fine — RF-DETR, RT-DETR, YOLOv9-E2E |
 | `libreyolo/validation/preprocessors.py` | append `<Family>ValPreprocessor` |
