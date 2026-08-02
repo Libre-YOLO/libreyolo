@@ -45,7 +45,12 @@ basis. Every LibreYOLO weight repository therefore carries the verbatim
 torchvision BSD-3-Clause license, an attribution notice, and the caveat above;
 the cards must never describe the checkpoint license as publisher-confirmed.
 `weights/upload_retinanet_hf.py` builds and validates the exact five-file
-repositories before publication.
+repositories before publication. The public mirrors are
+[`r50`](https://huggingface.co/LibreYOLO/LibreRetinaNetr50) and
+[`r50v2`](https://huggingface.co/LibreYOLO/LibreRetinaNetr50v2). Each is
+public, contains exactly `.gitattributes`, `README.md`, `LICENSE`, `NOTICE`,
+and its canonical checkpoint, belongs to the LibreYOLO Models collection, and
+has passed a strict-load CUDA prediction from a fresh bare-filename download.
 
 ## Ported surface
 
