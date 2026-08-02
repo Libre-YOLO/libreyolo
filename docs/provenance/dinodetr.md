@@ -35,6 +35,12 @@ source and converted hashes below.
 | `r50s5` | `checkpoint0011_5scale.pth` | `1ccc1b6b7139813e4d3bfbeecfcf88347ebc226829769a0bf16c4a114c275cc0` | `8dd59b36fff9750835fac7eb14c07a00f244bc0ec3f205dceac74907f0ef723a` | 49.4 |
 | `swinl` | `checkpoint0027_5scale_swin.pth` | `17ddce1592816a0c63a2edc94d4a0877ffeb086f397a6657e151c703a4c850b5` | `1532135001dff0fa6ba688eac52df9d92af83c2c6bb13a06139fbfcd81574118` | 58.5 |
 
+The public LibreYOLO mirrors are pinned at revisions
+`462f5afabb53146d933827814199564a9bd6ed93` (`r50`),
+`7d04c21564296ed31385c2f93db749a568940ab1` (`r50s5`), and
+`c73afa85c93fced1cc31e23a9925c96638d140b0` (`swinl`). The external ONNX
+test downloads only these immutable revisions.
+
 Conversion does not rename or transform learned tensors. It strips an optional
 distributed `module.` prefix, strictly loads the complete native state dict,
 then wraps it with LibreYOLO checkpoint-schema metadata. The released 91-column
