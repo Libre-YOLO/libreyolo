@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import pytest
 import torch
+from torchvision.models.segmentation import fcn_resnet50
 
 from libreyolo import LibreFCN
+from libreyolo.models.fcn.nn import LibreFCNModel
 from libreyolo.models.registry import group_of
+
+pytestmark = pytest.mark.unit
 
 
 def _fcn_state(depth: int = 50, nc: int = 21) -> dict[str, torch.Tensor]:
@@ -23,7 +27,7 @@ def _fcn_state(depth: int = 50, nc: int = 21) -> dict[str, torch.Tensor]:
     }
 
 
-def test_fcn_public_factory_shell():
+def test_fcn_public_factory():
     model = LibreFCN(size="r50", nb_classes=21, device="cpu")
     assert model.family == "fcn"
     assert model.task == "semantic"
@@ -31,6 +35,34 @@ def test_fcn_public_factory_shell():
     assert model.names[0] == "__background__"
     assert model.names[20] == "tvmonitor"
     assert group_of("fcn") == "g3"
+
+
+def test_fcn_native_graph_matches_torchvision_with_shared_weights():
+    torch.manual_seed(0)
+    reference = fcn_resnet50(weights=None, weights_backbone=None, aux_loss=True).eval()
+    actual = LibreFCNModel(size="r50", normalize_input=False).eval()
+    actual.load_state_dict(reference.state_dict(), strict=True)
+    image = torch.rand(1, 3, 32, 32)
+
+    with torch.inference_mode():
+        expected_output = reference(image)
+        actual_output = actual(image)
+
+    assert tuple(actual_output) == ("out", "aux")
+    torch.testing.assert_close(
+        actual_output["out"], expected_output["out"], rtol=0, atol=0
+    )
+    torch.testing.assert_close(
+        actual_output["aux"], expected_output["aux"], rtol=0, atol=0
+    )
+
+
+@pytest.mark.parametrize(
+    ("size", "parameters"), [("r50", 35_322_218), ("r101", 54_314_346)]
+)
+def test_fcn_published_parameter_counts(size, parameters):
+    model = LibreFCNModel(size=size)
+    assert sum(parameter.numel() for parameter in model.parameters()) == parameters
 
 
 @pytest.mark.parametrize(("depth", "size"), [(50, "r50"), (101, "r101")])
