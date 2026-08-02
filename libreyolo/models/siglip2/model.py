@@ -516,26 +516,52 @@ class LibreSigLIP2(BaseModel):
     # =========================================================================
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        """Export a **frozen-class** ONNX classifier for the current labels.
+        """Export image embeddings or a frozen-class ONNX classifier.
 
-        The current ``set_classes`` text embeddings are baked into a final linear
-        (``weight = logit_scale.exp() * text_embeds``, ``bias = logit_bias``),
-        giving a standard ``[B, K]`` image-classifier graph (no text tower /
-        tokenizer at inference). The exported logits match native; apply softmax
-        (single-label) or sigmoid (multi-label) downstream. The ONNX is fixed to
-        the labels and input resolution set at export time; re-export to change
-        either.
+        ``task='embed'`` traces the normalized image tower through the shared
+        exporters. For ``task='classify'``, the current ``set_classes`` text
+        embeddings are baked into a final linear projection with the learned
+        scale and bias, giving a standard ``[B, K]`` classifier graph without
+        the text tower or tokenizer.
         """
-        if self.task != "classify":
+        if self.task == "embed":
+            if format.lower() in {
+                "onnx",
+                "torchscript",
+                "executorch",
+                "tensorrt",
+                "openvino",
+                "tflite",
+            }:
+                kwargs.setdefault("opset", 17)
+                return super().export(format=format, **kwargs)
             raise NotImplementedError(
-                "LibreSigLIP2 task='embed' export is not implemented. Export a "
-                "task='classify' model to freeze its current label set."
+                "LibreSigLIP2 task='embed' export currently supports ONNX, "
+                "TorchScript, ExecuTorch, TensorRT, OpenVINO, and TFLite only."
             )
+        if format.lower() in {
+            "torchscript",
+            "executorch",
+            "tensorrt",
+            "openvino",
+            "tflite",
+        }:
+            if self._text_embeds is None:
+                raise RuntimeError(
+                    "No classes set; call set_classes() before export()."
+                )
+            if self._multi_label:
+                raise NotImplementedError(
+                    "LibreSigLIP2 multi-label exported-backend prediction is "
+                    "not implemented; set multi_label=False before export()."
+                )
+            kwargs.setdefault("opset", 17)
+            return super().export(format=format, **kwargs)
         if format.lower() not in {"onnx", "coreai"}:
             raise NotImplementedError(
-                f"LibreSigLIP2 export to {format!r} is not implemented; only 'onnx' "
-                "and 'coreai' (frozen-class) are supported. Open-vocabulary export (two towers "
-                "+ tokenizer) is out of scope for v1."
+                f"LibreSigLIP2 export to {format!r} is not implemented. "
+                "Open-vocabulary export (two towers + tokenizer) is out of "
+                "scope for v1."
             )
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() before export().")

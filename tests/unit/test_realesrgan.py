@@ -259,8 +259,10 @@ def test_onnx_dynamic_export_roundtrip(tmp_path):
     assert int(np.abs(native.astype(int) - onnx_out.astype(int)).max()) <= 1
 
 
-@pytest.mark.parametrize("format", ["torchscript", "ncnn", "tflite"])
+@pytest.mark.parametrize("format", ["torchscript", "openvino", "ncnn", "tflite"])
 def test_fixed_export_roundtrip(tmp_path, format):
+    if format == "openvino":
+        pytest.importorskip("openvino")
     if format == "ncnn":
         pytest.importorskip("pnnx")
         pytest.importorskip("ncnn")

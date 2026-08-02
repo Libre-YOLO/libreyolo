@@ -490,10 +490,6 @@ class LibreSegformer(BaseModel):
         self.model.eval()
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        if format.lower() != "executorch":
-            raise NotImplementedError(
-                "LibreSegformer export currently supports ExecuTorch only."
-            )
         return super().export(format=format, **kwargs)
 
 

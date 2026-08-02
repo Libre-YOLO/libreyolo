@@ -193,11 +193,15 @@ class TestPIDNetForwardAndPredict:
         with pytest.raises(NotImplementedError):
             model.train(data="cityscapes.yaml")
 
-    @pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn", "tflite"])
+    @pytest.mark.parametrize(
+        "format", ["onnx", "torchscript", "openvino", "ncnn", "tflite"]
+    )
     def test_exported_semantic_parity(self, tmp_path, format):
         if format == "onnx":
             pytest.importorskip("onnx")
             pytest.importorskip("onnxruntime")
+        if format == "openvino":
+            pytest.importorskip("openvino")
         if format == "tflite" and (
             importlib.util.find_spec("onnx2tf") is None
             or importlib.util.find_spec("ai_edge_litert") is None

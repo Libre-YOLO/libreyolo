@@ -12,11 +12,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize("class_name", ["LibreYOLO2", "LibreYOLO3", "LibreYOLO4"])
-@pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino", "ncnn"])
 def test_darknet_edge_raw_parity(tmp_path, class_name, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
     if format == "ncnn" and (
         importlib.util.find_spec("pnnx") is None
         or importlib.util.find_spec("ncnn") is None
@@ -47,17 +49,34 @@ def test_darknet_edge_raw_parity(tmp_path, class_name, format):
         simplify=False,
         output_path=str(tmp_path / f"{class_name}.{format}"),
     )
-    actual = libreyolo.LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())[
-        0
-    ]
-    np.testing.assert_allclose(actual, native, rtol=1e-3, atol=1e-3)
+    backend = libreyolo.LibreYOLO(artifact, device="cpu")
+    actual = backend._run_inference(tensor.numpy())[0]
+    # YOLO2's decoded coordinate graph accumulates a slightly larger OpenVINO
+    # FP32 rounding error: measured worst case is 0.0088 absolute / 0.21%
+    # relative, across three of 315 values. Keep every other path on the
+    # tighter shared threshold.
+    tolerance = (
+        {"rtol": 3e-3, "atol": 1e-2}
+        if format == "openvino" and class_name == "LibreYOLO2"
+        else {"rtol": 1e-3, "atol": 1e-3}
+    )
+    np.testing.assert_allclose(actual, native, **tolerance)
+    if format == "openvino":
+        image = np.random.default_rng(41).integers(
+            0, 256, size=(72, 96, 3), dtype=np.uint8
+        )
+        result = backend.predict(image, conf=0.99)
+        assert result.boxes is not None
+        assert result.orig_shape == (72, 96)
 
 
-@pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino", "ncnn"])
 def test_yolo7_edge_raw_parity(tmp_path, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
     if format == "ncnn" and (
         importlib.util.find_spec("pnnx") is None
         or importlib.util.find_spec("ncnn") is None
@@ -87,17 +106,25 @@ def test_yolo7_edge_raw_parity(tmp_path, format):
         simplify=False,
         output_path=str(tmp_path / f"yolo7.{format}"),
     )
-    actual = libreyolo.LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())[
-        0
-    ]
+    backend = libreyolo.LibreYOLO(artifact, device="cpu")
+    actual = backend._run_inference(tensor.numpy())[0]
     np.testing.assert_allclose(actual, native, rtol=1e-3, atol=1e-3)
+    if format == "openvino":
+        image = np.random.default_rng(42).integers(
+            0, 256, size=(72, 96, 3), dtype=np.uint8
+        )
+        result = backend.predict(image, conf=0.99)
+        assert result.boxes is not None
+        assert result.orig_shape == (72, 96)
 
 
-@pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino", "ncnn"])
 def test_yolo1_raw_parity(tmp_path, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
     if format == "ncnn" and (
         importlib.util.find_spec("pnnx") is None
         or importlib.util.find_spec("ncnn") is None
@@ -122,7 +149,13 @@ def test_yolo1_raw_parity(tmp_path, format):
         simplify=False,
         output_path=str(tmp_path / f"yolo1.{format}"),
     )
-    actual = libreyolo.LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())[
-        0
-    ]
+    backend = libreyolo.LibreYOLO(artifact, device="cpu")
+    actual = backend._run_inference(tensor.numpy())[0]
     np.testing.assert_allclose(actual, native, rtol=1e-3, atol=1e-3)
+    if format == "openvino":
+        image = np.random.default_rng(43).integers(
+            0, 256, size=(320, 448, 3), dtype=np.uint8
+        )
+        result = backend.predict(image, conf=0.99)
+        assert result.boxes is not None
+        assert result.orig_shape == (320, 448)

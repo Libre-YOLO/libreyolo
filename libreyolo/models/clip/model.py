@@ -456,24 +456,44 @@ class LibreCLIP(BaseModel):
     # =========================================================================
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        """Export a **frozen-class** ONNX classifier for the current labels.
+        """Export image embeddings or a frozen-class ONNX classifier.
 
-        The current ``set_classes`` text embeddings are baked into a final
-        ``Linear`` (weight = ``logit_scale.exp() * text_embeds``), giving a
-        standard ``[B, K]`` image-classifier graph (no text tower / tokenizer at
-        inference). The ONNX is fixed to the labels set at export time and to a
-        fixed input resolution; re-export to change either.
+        ``task='embed'`` traces the normalized image tower through the shared
+        exporters. For ``task='classify'``, the current ``set_classes`` text
+        embeddings are baked into a final ``Linear`` projection, giving a
+        standard ``[B, K]`` classifier graph without the text tower or tokenizer.
         """
-        if self.task != "classify":
+        if self.task == "embed":
+            if format.lower() in {
+                "onnx",
+                "torchscript",
+                "executorch",
+                "tensorrt",
+                "openvino",
+            }:
+                kwargs.setdefault("opset", 17)
+                return super().export(format=format, **kwargs)
             raise NotImplementedError(
-                "LibreCLIP task='embed' export is not implemented. Export a "
-                "task='classify' model to freeze its current label set."
+                "LibreCLIP task='embed' export currently supports ONNX, "
+                "TorchScript, ExecuTorch, TensorRT, and OpenVINO only."
             )
+        if format.lower() in {
+            "torchscript",
+            "executorch",
+            "tensorrt",
+            "openvino",
+        }:
+            if self._text_embeds is None:
+                raise RuntimeError(
+                    "No classes set; call set_classes() before export()."
+                )
+            kwargs.setdefault("opset", 17)
+            return super().export(format=format, **kwargs)
         if format.lower() not in {"onnx", "coreai"}:
             raise NotImplementedError(
-                f"LibreCLIP export to {format!r} is not implemented; only 'onnx' "
-                "and 'coreai' (frozen-class) are supported. Open-vocabulary export (two towers "
-                "+ tokenizer) is out of scope for v1."
+                f"LibreCLIP export to {format!r} is not implemented. "
+                "Open-vocabulary export (two towers + tokenizer) is out of "
+                "scope for v1."
             )
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() before export().")

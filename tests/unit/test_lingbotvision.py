@@ -233,6 +233,30 @@ class TestLingBotVisionWrapper:
         with pytest.raises(ValueError, match="semantic"):
             LibreLingBotVision(size="s", task="detect")
 
+    def test_openvino_semantic_predict_parity(self, tmp_path):
+        pytest.importorskip("openvino")
+        from libreyolo import LibreYOLO
+        from libreyolo.models.lingbotvision.model import LibreLingBotVision
+
+        torch.manual_seed(0)
+        model = LibreLingBotVision(size="s", nb_classes=3, device="cpu")
+        model.model.eval()
+        image = np.random.default_rng(54).integers(
+            0, 256, size=(64, 64, 3), dtype=np.uint8
+        )
+        native = model.predict(image, imgsz=64).semantic_mask.data
+        artifact = model.export(
+            format="openvino",
+            output_path=str(tmp_path / "lingbotvision_openvino"),
+            imgsz=64,
+            dynamic=False,
+            simplify=False,
+        )
+        actual = LibreYOLO(artifact, device="cpu").predict(image).semantic_mask.data
+
+        agreement = (native == actual).float().mean().item()
+        assert agreement > 0.95
+
 
 def test_lingbotvision_checkpoint_round_trip(tmp_path):
     """A metadata-wrapped checkpoint loads back through the factory as the

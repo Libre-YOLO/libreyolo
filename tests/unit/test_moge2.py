@@ -179,16 +179,20 @@ def test_backend_normal_decode_accepts_bchw_and_repairs_invalid_vectors():
     assert normal[-1, -1].tolist() == pytest.approx([0.0, 0.0, -1.0])
 
 
-def test_moge2_export_support_matrix():
-    """onnx and executorch are validated (each backed by its own parity
-    evidence: same-canvas angular parity for onnx, the XNNPACK flagship
-    e2e test for executorch); every other format stays blocked."""
+def test_moge2_export_support_matches_validated_runtimes():
     from libreyolo.export.support import EXPORT_FORMATS, get_support
 
-    validated = {"onnx", "executorch"}
+    validated = {
+        "onnx",
+        "torchscript",
+        "executorch",
+        "tensorrt",
+        "openvino",
+    }
     for format_name in validated:
         assert get_support("moge2", "normal", format_name).tier == "validated"
-    for format_name in set(EXPORT_FORMATS) - validated:
+    assert get_support("moge2", "normal", "ncnn").tier == "experimental"
+    for format_name in set(EXPORT_FORMATS) - validated - {"ncnn"}:
         assert get_support("moge2", "normal", format_name).tier == "blocked"
 
 

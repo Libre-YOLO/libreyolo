@@ -299,11 +299,13 @@ def test_assigner_handles_empty_gt():
     assert (out["assigned_labels"] == 80).all()
 
 
-@pytest.mark.parametrize("format", ["onnx", "torchscript"])
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino"])
 def test_exported_raw_parity(tmp_path, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
     from libreyolo import LibreYOLO
 
     torch.manual_seed(0)
@@ -321,8 +323,16 @@ def test_exported_raw_parity(tmp_path, format):
         dynamic=False,
         output_path=str(tmp_path / f"rtmdet.{format}"),
     )
-    actual = LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())[0]
+    backend = LibreYOLO(artifact, device="cpu")
+    actual = backend._run_inference(tensor.numpy())[0]
     np.testing.assert_allclose(actual, native, rtol=1e-4, atol=1e-4)
+    if format == "openvino":
+        image = np.random.default_rng(46).integers(
+            0, 256, size=(72, 96, 3), dtype=np.uint8
+        )
+        result = backend.predict(image, conf=0.99)
+        assert result.boxes is not None
+        assert result.orig_shape == (72, 96)
 
 
 def test_head_init_uses_focal_prior_bias():

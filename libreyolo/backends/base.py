@@ -27,7 +27,14 @@ from ..models.yolonas.utils import (
 )
 from ..models.yolox.utils import preprocess_image as yolox_preprocess_image
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
-from ..utils.drawing import draw_boxes, draw_keypoints, draw_masks, draw_obb
+from ..utils.drawing import (
+    draw_boxes,
+    draw_keypoints,
+    draw_masks,
+    draw_obb,
+    draw_points,
+    draw_semantic_mask,
+)
 from ..utils.general import (
     COCO_CLASSES,
     get_safe_stem,
@@ -170,6 +177,24 @@ def _read_pose_metadata(meta: dict) -> dict[str, Any]:
         if raw_schema is not None:
             pose_meta["num_keypoints_per_class"] = [int(count) for count in raw_schema]
     return pose_meta
+
+
+def _read_runtime_metadata(meta: dict) -> dict[str, Any]:
+    """Extract preprocessing and graph-contract metadata shared by backends."""
+    runtime_meta: dict[str, Any] = {
+        "embedded_nms": str(meta.get("nms", "")).lower() == "true",
+    }
+    if meta.get("crop_pct") is not None:
+        runtime_meta["crop_pct"] = float(meta["crop_pct"])
+    if meta.get("interpolation") is not None:
+        runtime_meta["interpolation"] = str(meta["interpolation"])
+    if meta.get("num_bins") is not None:
+        runtime_meta["num_bins"] = int(meta["num_bins"])
+    if meta.get("bin_width_deg") is not None:
+        runtime_meta["bin_width_deg"] = float(meta["bin_width_deg"])
+    if meta.get("offset_deg") is not None:
+        runtime_meta["offset_deg"] = float(meta["offset_deg"])
+    return runtime_meta
 
 
 def _nms_numpy(
@@ -553,11 +578,33 @@ class BaseBackend(ABC):
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
+        transform_kwargs = {
+            "crop_pct": getattr(self, "crop_pct", 0.875),
+            "interpolation": getattr(self, "interpolation", "bilinear"),
+        }
+        if self.model_family == "clip":
+            from ..models.clip.model import CLIP_MEAN, CLIP_STD
+
+            transform_kwargs.update(
+                mean=CLIP_MEAN,
+                std=CLIP_STD,
+                crop_pct=1.0,
+                interpolation="bicubic",
+            )
+        elif self.model_family == "siglip2":
+            from ..models.siglip2.model import SIGLIP_MEAN, SIGLIP_STD
+
+            transform_kwargs.update(
+                mean=SIGLIP_MEAN,
+                std=SIGLIP_STD,
+                crop_pct=1.0,
+                interpolation="bilinear",
+                square_resize=True,
+            )
         transform = build_classify_transforms(
             h,
             augment=False,
-            crop_pct=getattr(self, "crop_pct", 0.875),
-            interpolation=getattr(self, "interpolation", "bilinear"),
+            **transform_kwargs,
         )
         img_tensor = transform(img).unsqueeze(0)
         return img_tensor, img, original_size, 1.0
@@ -571,6 +618,10 @@ class BaseBackend(ABC):
         arr = np.asarray(img.convert("RGB"))
         if self.model_family == "pidnet":
             from ..models.pidnet.model import preprocess_numpy
+
+            chw, ratio = preprocess_numpy(arr, (input_h, input_w))
+        elif self.model_family == "segformer":
+            from ..models.segformer.model import preprocess_numpy
 
             chw, ratio = preprocess_numpy(arr, (input_h, input_w))
         else:
@@ -1547,8 +1598,6 @@ class BaseBackend(ABC):
 
         boxes[:, [0, 2]] *= orig_w
         boxes[:, [1, 3]] *= orig_h
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
 
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask].astype(np.int64)
@@ -2158,8 +2207,6 @@ class BaseBackend(ABC):
         boxes = boxes_xyxy[query_idx]
         boxes[:, [0, 2]] *= orig_w
         boxes[:, [1, 3]] *= orig_h
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
 
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask]
@@ -2453,7 +2500,7 @@ class BaseBackend(ABC):
         orig_w, orig_h = original_size
         logits_t = torch.from_numpy(np.ascontiguousarray(logits))
         align_corners = False
-        if self.model_family == "pidnet":
+        if self.model_family in {"pidnet", "segformer"}:
             input_h, input_w = _imgsz_hw(effective_imgsz)
             scale_y = logits_t.shape[-2] / input_h
             scale_x = logits_t.shape[-1] / input_w
@@ -2464,7 +2511,7 @@ class BaseBackend(ABC):
                 logits_t.shape[-1], max(int(round(orig_w * ratio * scale_x)), 1)
             )
             logits_t = logits_t[..., :valid_h, :valid_w]
-            align_corners = True
+            align_corners = self.model_family == "pidnet"
         logits_t = F.interpolate(
             logits_t,
             size=(orig_h, orig_w),
@@ -2765,6 +2812,7 @@ class BaseBackend(ABC):
     def _save_annotated(self, result, original_img, image_path, output_path):
         """Save annotated image to disk."""
         annotated_img = original_img
+        forced_ext = None
         if result.boxes is None and getattr(result, "probs", None) is not None:
             pass
         elif result.boxes is None and getattr(result, "restored", None) is not None:
@@ -2790,6 +2838,25 @@ class BaseBackend(ABC):
             if isinstance(edge_data, torch.Tensor):
                 edge_data = edge_data.cpu().numpy()
             annotated_img = draw_edge_map(original_img, edge_data)
+        elif (
+            result.boxes is None and getattr(result, "semantic_mask", None) is not None
+        ):
+            mask_data = result.semantic_mask.data
+            if isinstance(mask_data, torch.Tensor):
+                mask_data = mask_data.cpu().numpy()
+            annotated_img = draw_semantic_mask(original_img, mask_data)
+        elif result.boxes is None and getattr(result, "matte", None) is not None:
+            annotated_img = Image.fromarray(result.cutout(original_img), mode="RGBA")
+            forced_ext = "png"
+        elif result.boxes is None and getattr(result, "points", None) is not None:
+            if len(result.points) > 0:
+                annotated_img = draw_points(
+                    original_img,
+                    result.points.xy.tolist(),
+                    result.points.conf.tolist(),
+                    result.points.cls.tolist(),
+                    class_names=result.names,
+                )
         elif len(result) > 0:
             if result.masks is not None:
                 annotated_img = draw_masks(
@@ -2819,7 +2886,9 @@ class BaseBackend(ABC):
                     kpts_np = kpts_np.cpu().numpy()
                 annotated_img = draw_keypoints(annotated_img, kpts_np)
 
-        ext = Path(image_path).suffix.lstrip(".") if image_path else "jpg"
+        ext = forced_ext or (
+            Path(image_path).suffix.lstrip(".") if image_path else "jpg"
+        )
         if not ext:
             ext = "jpg"
         if output_path:
@@ -2831,6 +2900,8 @@ class BaseBackend(ABC):
             save_dir = Path("runs/detections")
             save_dir.mkdir(parents=True, exist_ok=True)
             final_path = save_dir / f"{stem}_{model_tag}_{timestamp}.{ext}"
+        if forced_ext is not None:
+            final_path = Path(final_path).with_suffix(f".{forced_ext}")
 
         annotated_img.save(final_path)
         log_saved_result(result, final_path)

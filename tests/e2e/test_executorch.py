@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from scipy.optimize import linear_sum_assignment
 
 pytestmark = [pytest.mark.e2e, pytest.mark.executorch]
 
@@ -55,8 +56,6 @@ def _box_iou(first: np.ndarray, second: np.ndarray) -> float:
 
 def _align_unordered_queries(reference, candidate):
     """Apply one logits-and-box assignment to every query-indexed output."""
-    from scipy.optimize import linear_sum_assignment
-
     reference_parts = []
     candidate_parts = []
     for expected, actual in zip(reference[:2], candidate[:2]):
@@ -73,6 +72,309 @@ def _align_unordered_queries(reference, candidate):
     rows, columns = linear_sum_assignment(cost)
     order = columns[np.argsort(rows)]
     return [output[:, order, ...] for output in candidate]
+
+
+def _scalar_result(result):
+    return result[0] if isinstance(result, list) else result
+
+
+def _psnr(expected: np.ndarray, actual: np.ndarray, peak: float) -> float:
+    error = expected.astype(np.float64) - actual.astype(np.float64)
+    mse = float(np.mean(np.square(error)))
+    return float("inf") if mse == 0 else 20.0 * np.log10(peak / np.sqrt(mse))
+
+
+def _match_detection_rows(expected, actual):
+    expected_data = expected.boxes.data.detach().float().cpu().numpy()
+    actual_data = actual.boxes.data.detach().float().cpu().numpy()
+    assert len(expected_data) == len(actual_data)
+    assert len(expected_data) > 0
+
+    expected_classes = expected_data[:, 5].astype(np.int64)
+    actual_classes = actual_data[:, 5].astype(np.int64)
+    assert sorted(expected_classes.tolist()) == sorted(actual_classes.tolist())
+    matches = []
+    for class_id in np.unique(expected_classes):
+        expected_indices = np.flatnonzero(expected_classes == class_id)
+        actual_indices = np.flatnonzero(actual_classes == class_id)
+        expected_rows = expected_data[expected_indices]
+        actual_rows = actual_data[actual_indices]
+        cost = np.max(
+            np.abs(expected_rows[:, None, :4] - actual_rows[None, :, :4]),
+            axis=2,
+        )
+        expected_order, actual_order = linear_sum_assignment(cost)
+        for expected_index, actual_index in zip(expected_order, actual_order):
+            np.testing.assert_allclose(
+                actual_rows[actual_index, :4],
+                expected_rows[expected_index, :4],
+                rtol=2e-3,
+                atol=1.0,
+            )
+            assert (
+                abs(
+                    float(actual_rows[actual_index, 4])
+                    - float(expected_rows[expected_index, 4])
+                )
+                < 0.02
+            )
+            matches.append(
+                (
+                    int(expected_indices[expected_index]),
+                    int(actual_indices[actual_index]),
+                )
+            )
+    return matches
+
+
+def _assert_point_parity(expected, actual):
+    expected_data = expected.points.data.detach().float().cpu().numpy()
+    actual_data = actual.points.data.detach().float().cpu().numpy()
+    assert len(expected_data) == len(actual_data)
+    assert len(expected_data) > 0
+    expected_classes = expected_data[:, 2].astype(np.int64)
+    actual_classes = actual_data[:, 2].astype(np.int64)
+    assert sorted(expected_classes.tolist()) == sorted(actual_classes.tolist())
+    for class_id in np.unique(expected_classes):
+        expected_rows = expected_data[expected_classes == class_id]
+        actual_rows = actual_data[actual_classes == class_id]
+        cost = np.max(
+            np.abs(expected_rows[:, None, :2] - actual_rows[None, :, :2]),
+            axis=2,
+        )
+        expected_order, actual_order = linear_sum_assignment(cost)
+        np.testing.assert_allclose(
+            actual_rows[actual_order, :2],
+            expected_rows[expected_order, :2],
+            rtol=1e-3,
+            atol=1.0,
+        )
+        np.testing.assert_allclose(
+            actual_rows[actual_order, 3],
+            expected_rows[expected_order, 3],
+            rtol=2e-3,
+            atol=0.02,
+        )
+
+
+def _assert_public_task_parity(case, native, runtime, image, imgsz):
+    if case == "l2cs_gaze":
+        height, width = image.shape[:2]
+        expected = _scalar_result(
+            native.predict(
+                image,
+                face_boxes=[(0, 0, width, height)],
+            )
+        )
+        actual = _scalar_result(runtime.predict(image))
+        np.testing.assert_allclose(
+            actual.gaze.data.detach().float().cpu().numpy(),
+            expected.gaze.data.detach().float().cpu().numpy(),
+            rtol=1e-3,
+            atol=1e-4,
+        )
+        return
+
+    confidence = 0.1 if case == "fomo_point" else 0.0
+    expected = _scalar_result(
+        native.predict(
+            image,
+            imgsz=imgsz,
+            conf=confidence,
+            max_det=10,
+        )
+    )
+    actual = _scalar_result(
+        runtime.predict(
+            image,
+            conf=confidence,
+            max_det=10,
+        )
+    )
+
+    if case in {"convnext_classify", "dinov2_classify"}:
+        expected_probs = expected.probs.data.detach().float().cpu()
+        actual_probs = actual.probs.data.detach().float().cpu()
+        cosine = torch.nn.functional.cosine_similarity(
+            expected_probs[None],
+            actual_probs[None],
+        )
+        assert float(cosine) > 0.999
+        assert int(expected_probs.argmax()) == int(actual_probs.argmax())
+        return
+
+    if case in {"nafnet_restore", "realesrgan_restore"}:
+        expected_rgb = expected.restored.array
+        actual_rgb = actual.restored.array
+        assert actual_rgb.shape == expected_rgb.shape
+        assert _psnr(expected_rgb, actual_rgb, 255.0) > 40.0
+        return
+
+    if case in {
+        "depth_anything_depth",
+        "depth_anything3_depth",
+        "zipdepth_depth",
+    }:
+        expected_depth = expected.depth_map.data.detach().float().cpu().numpy()
+        actual_depth = actual.depth_map.data.detach().float().cpu().numpy()
+        assert actual_depth.shape == expected_depth.shape
+        peak = max(float(np.max(np.abs(expected_depth))), 1e-6)
+        assert _psnr(expected_depth, actual_depth, peak) > 40.0
+        return
+
+    if case == "segformer_semantic":
+        expected_mask = expected.semantic_mask.data.detach().cpu().numpy()
+        actual_mask = actual.semantic_mask.data.detach().cpu().numpy()
+        assert actual_mask.shape == expected_mask.shape
+        assert float(np.mean(actual_mask == expected_mask)) > 0.95
+        return
+
+    if case == "fomo_point":
+        _assert_point_parity(expected, actual)
+        return
+
+    if case == "rfdetr_obb":
+        expected_obb = expected.obb.data.detach().float().cpu().numpy()
+        actual_obb = actual.obb.data.detach().float().cpu().numpy()
+        assert len(expected_obb) == len(actual_obb)
+        expected_classes = expected_obb[:, 6].astype(np.int64)
+        actual_classes = actual_obb[:, 6].astype(np.int64)
+        assert sorted(expected_classes.tolist()) == sorted(actual_classes.tolist())
+        for class_id in np.unique(expected_classes):
+            expected_rows = expected_obb[expected_classes == class_id]
+            actual_rows = actual_obb[actual_classes == class_id]
+            cost = np.max(
+                np.abs(expected_rows[:, None, :2] - actual_rows[None, :, :2]),
+                axis=2,
+            )
+            expected_order, actual_order = linear_sum_assignment(cost)
+            np.testing.assert_allclose(
+                actual_rows[actual_order, :4],
+                expected_rows[expected_order, :4],
+                rtol=2e-3,
+                atol=2e-2,
+            )
+            for expected_row, actual_row in zip(
+                expected_rows[expected_order],
+                actual_rows[actual_order],
+            ):
+                square = abs(float(expected_row[2] - expected_row[3])) < 0.05
+                period = np.pi / 2.0 if square else np.pi
+                angle_error = (
+                    float(actual_row[4] - expected_row[4]) + period / 2.0
+                ) % period - period / 2.0
+                assert abs(angle_error) < 0.02
+            np.testing.assert_allclose(
+                actual_rows[actual_order, 5],
+                expected_rows[expected_order, 5],
+                rtol=2e-3,
+                atol=0.01,
+            )
+        return
+
+    matches = _match_detection_rows(expected, actual)
+    if case in {"ec_pose", "rfdetr_pose", "yolonas_pose"}:
+        expected_keypoints = expected.keypoints.data.detach().float().cpu().numpy()
+        actual_keypoints = actual.keypoints.data.detach().float().cpu().numpy()
+        for expected_index, actual_index in matches:
+            coordinate_error = np.linalg.norm(
+                expected_keypoints[expected_index, :, :2]
+                - actual_keypoints[actual_index, :, :2],
+                axis=1,
+            )
+            assert float(np.max(coordinate_error)) < 2.0
+            if expected_keypoints.shape[-1] > 2:
+                confidence_error = np.max(
+                    np.abs(
+                        expected_keypoints[expected_index, :, 2]
+                        - actual_keypoints[actual_index, :, 2]
+                    )
+                )
+                assert float(confidence_error) < 0.02
+        return
+
+    if case in {"ec_segment", "rfdetr_segment"}:
+        expected_masks = expected.masks.data.detach().float().cpu().numpy()
+        actual_masks = actual.masks.data.detach().float().cpu().numpy()
+        for expected_index, actual_index in matches:
+            expected_mask = expected_masks[expected_index] > 0.5
+            actual_mask = actual_masks[actual_index] > 0.5
+            union = np.logical_or(expected_mask, actual_mask).sum()
+            if union:
+                intersection = np.logical_and(expected_mask, actual_mask).sum()
+                assert float(intersection / union) > 0.95
+        return
+
+def _build_synthetic_yolonas_detect(imgsz: int):
+    from libreyolo import LibreYOLONAS
+    from libreyolo.models.yolonas.loss import PPYoloELoss
+
+    model = LibreYOLONAS(None, size="s", nb_classes=2, device="cpu")
+    network = model.model.train()
+    loss_fn = PPYoloELoss(num_classes=2)
+    optimizer = torch.optim.SGD(network.parameters(), lr=0.01, momentum=0.9)
+    for step in range(12):
+        images = torch.rand(2, 3, imgsz, imgsz)
+        targets = torch.zeros(2, 10, 5)
+        targets[0, 0] = torch.tensor(
+            [float(step % 2), 22.0 + step % 5, 28.0, 16.0, 20.0]
+        )
+        targets[1, 0] = torch.tensor(
+            [float((step + 1) % 2), 42.0, 36.0, 14.0, 18.0]
+        )
+        loss, _ = loss_fn(network(images), targets)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+    network.eval()
+    with torch.no_grad():
+        for head in (
+            network.heads.head1,
+            network.heads.head2,
+            network.heads.head3,
+        ):
+            head.reg_pred.weight.mul_(20.0)
+            head.cls_pred.weight.mul_(100.0)
+            head.cls_pred.bias.zero_()
+    return model
+
+
+def _strengthen_yolo9_p2_fixture(model) -> None:
+    with torch.no_grad():
+        for name, parameter in model.model.named_parameters():
+            if "head.cv2" not in name:
+                continue
+            if name.endswith(".weight"):
+                parameter.mul_(32.0)
+            elif name.endswith(".bias"):
+                parameter.zero_()
+        for class_tower in model.model.head.cv3:
+            class_tower[-1].weight[0].mul_(4000.0)
+            class_tower[-1].weight[1].zero_()
+            class_tower[-1].bias.copy_(torch.tensor([0.0, -20.0]))
+    model.model.eval()
+
+
+def _strengthen_yolonas_pose_fixture(model) -> None:
+    with torch.no_grad():
+        for head in (
+            model.model.heads.head1,
+            model.model.heads.head2,
+            model.model.heads.head3,
+        ):
+            head.reg_pred.weight.mul_(10.0)
+            head.cls_pred.weight.mul_(100.0)
+            head.cls_pred.bias.zero_()
+            head.pose_pred.weight.mul_(10.0)
+            head.pose_pred.bias.zero_()
+
+
+def _strengthen_rfdetr_obb_fixture(model) -> None:
+    """Make the zero-initialized angle head input-sensitive for conversion parity."""
+    with torch.no_grad():
+        angle_head = model.model.model.angle_embed.layers[-1]
+        torch.nn.init.uniform_(angle_head.weight, -0.02, 0.02)
+        torch.nn.init.uniform_(angle_head.bias, -0.02, 0.02)
 
 
 @pytest.mark.parametrize(
@@ -192,6 +494,7 @@ def test_edge_map_runtime_parity(
         0, 256, (40, 64, 3), dtype=np.uint8
     )
     expected = model.predict(first, imgsz=64).edges.data.numpy()
+    expected_changed = model.predict(second, imgsz=64).edges.data.numpy()
 
     artifact = model.export(
         "executorch",
@@ -205,7 +508,21 @@ def test_edge_map_runtime_parity(
     changed = runtime.predict(second).edges.data.numpy()
 
     np.testing.assert_allclose(actual, expected, rtol=1e-4, atol=2e-4)
-    assert float(np.max(np.abs(actual - changed))) > 1e-4
+    np.testing.assert_allclose(
+        changed,
+        expected_changed,
+        rtol=1e-4,
+        atol=2e-4,
+    )
+    parity_error = max(
+        float(np.max(np.abs(actual - expected))),
+        float(np.max(np.abs(changed - expected_changed))),
+    )
+    sensitivity = float(np.max(np.abs(expected - expected_changed)))
+    assert sensitivity > max(parity_error * 100.0, 1e-4)
+    assert runtime.model_family == family
+    assert runtime.task == "edge"
+    assert runtime.imgsz == 64
 
 
 @pytest.mark.experimental_backend
@@ -262,7 +579,12 @@ def test_dinov2_semantic_runtime_parity(tmp_path, monkeypatch):
     image = np.random.default_rng(44).integers(
         0, 256, (518, 518, 3), dtype=np.uint8
     )
-    assert runtime.predict(image).semantic_mask is not None
+    expected_result = _scalar_result(model.predict(image, imgsz=518))
+    actual_result = _scalar_result(runtime.predict(image))
+    expected_mask = expected_result.semantic_mask.data.detach().cpu().numpy()
+    actual_mask = actual_result.semantic_mask.data.detach().cpu().numpy()
+    assert actual_mask.shape == expected_mask.shape
+    assert float(np.mean(actual_mask == expected_mask)) > 0.95
 
 
 @pytest.mark.experimental_backend
@@ -375,18 +697,19 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     """Cover detector families lacking redistributable trained parity data."""
     _require_executorch(monkeypatch)
 
-    from libreyolo import LibreRTMDet, LibreYOLO, LibreYOLO9P2, LibreYOLONAS
+    from libreyolo import LibreRTMDet, LibreYOLO, LibreYOLO9P2
     from libreyolo.export.exporter import ExecuTorchExporter
 
     torch.manual_seed(11)
     if family == "rtmdet":
         model = LibreRTMDet(None, size="t", nb_classes=2, device="cpu")
     elif family == "yolonas":
-        model = LibreYOLONAS(None, size="s", nb_classes=2, device="cpu")
+        model = _build_synthetic_yolonas_detect(64)
     else:
         model = LibreYOLO9P2(
             None, size="t", nb_classes=2, device="cpu"
         )
+        _strengthen_yolo9_p2_fixture(model)
 
     first = torch.from_numpy(
         np.random.default_rng(11).standard_normal(
@@ -407,8 +730,10 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
         torch.device("cpu"), False, False, 1, (64, 64)
     ) as (prepared, _), torch.no_grad():
         expected = prepared(first)
+        expected_changed = prepared(second)
     if isinstance(expected, torch.Tensor):
         expected = (expected,)
+        expected_changed = (expected_changed,)
 
     artifact = model.export(
         "executorch",
@@ -417,33 +742,56 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
         batch=1,
         dynamic=False,
     )
+    if family == "yolo9_p2":
+        assert model.model.head.export is False
     runtime = LibreYOLO(artifact)
     actual = runtime._run_inference(first.numpy())
     changed = runtime._run_inference(second.numpy())
 
     assert len(expected) == len(actual)
-    parity_error = 0.0
-    for expected_output, actual_output in zip(expected, actual):
+    for expected_output, expected_changed_output, actual_output, changed_output in zip(
+        expected,
+        expected_changed,
+        actual,
+        changed,
+    ):
         expected_array = expected_output.detach().cpu().numpy()
+        expected_changed_array = expected_changed_output.detach().cpu().numpy()
         np.testing.assert_allclose(
             actual_output, expected_array, rtol=1e-3, atol=2e-4
         )
-        parity_error = max(
-            parity_error,
-            float(np.max(np.abs(actual_output - expected_array))),
+        np.testing.assert_allclose(
+            changed_output,
+            expected_changed_array,
+            rtol=1e-3,
+            atol=2e-4,
         )
-    sensitivity = max(
-        float(np.max(np.abs(first_output - second_output)))
-        for first_output, second_output in zip(actual, changed)
-    )
-    sensitivity_floor = 1e-8 if family == "rtmdet" else 1e-4
-    assert sensitivity > max(parity_error * 100, sensitivity_floor)
+        parity_error = max(
+            float(np.max(np.abs(actual_output - expected_array))),
+            float(np.max(np.abs(changed_output - expected_changed_array))),
+        )
+        sensitivity = float(
+            np.max(np.abs(expected_array - expected_changed_array))
+        )
+        sensitivity_floor = 1e-8 if family == "rtmdet" else 1e-4
+        assert sensitivity > max(parity_error * 100.0, sensitivity_floor)
 
     image = np.random.default_rng(13).integers(
         0, 256, (64, 64, 3), dtype=np.uint8
     )
-    result = runtime.predict(image, conf=0.0, max_det=20)
-    assert result.boxes is not None
+    confidence = 0.1 if family == "yolo9_p2" else 0.0
+    actual_result = _scalar_result(
+        runtime.predict(image, conf=confidence, max_det=20)
+    )
+    assert actual_result.boxes is not None
+    if family != "rtmdet":
+        expected_result = _scalar_result(
+            model.predict(image, imgsz=64, conf=confidence, max_det=20)
+        )
+        _match_detection_rows(expected_result, actual_result)
+    assert runtime.model_family == family
+    assert runtime.task == "detect"
+    assert runtime.imgsz == 64
 
 
 @pytest.mark.experimental_backend
@@ -451,14 +799,31 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     ("case", "imgsz"),
     [
         ("convnext_classify", 64),
+        ("dinov2_classify", 224),
         ("depth_anything3_depth", 56),
         ("nafnet_restore", 64),
+        pytest.param(
+            "depth_anything_depth",
+            56,
+            marks=pytest.mark.network,
+        ),
         ("ec_pose", 64),
         ("ec_segment", 128),
         ("fomo_point", 64),
         ("l2cs_gaze", 448),
         ("realesrgan_restore", 32),
+        pytest.param(
+            "rfdetr_segment",
+            312,
+            marks=pytest.mark.external_data,
+        ),
+        pytest.param(
+            "rfdetr_pose",
+            576,
+            marks=pytest.mark.external_data,
+        ),
         ("rfdetr_obb", 384),
+        ("zipdepth_depth", 64),
         ("segformer_semantic", 64),
         ("yolonas_pose", 64),
     ],
@@ -470,6 +835,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
     from libreyolo import (
         LibreConvNeXt,
         LibreDepthAnything3,
+        LibreDINOv2,
         LibreEC,
         LibreFOMO,
         LibreL2CS,
@@ -479,6 +845,7 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         LibreSegformer,
         LibreYOLO,
         LibreYOLONAS,
+        LibreZipDepth,
     )
     from libreyolo.export.exporter import ExecuTorchExporter
 
@@ -486,10 +853,17 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         "convnext_classify": lambda: LibreConvNeXt(
             None, size="t", nb_classes=3, device="cpu"
         ),
+        "dinov2_classify": lambda: LibreDINOv2(
+            None, size="n", task="classify", nb_classes=3, device="cpu"
+        ),
         "depth_anything3_depth": lambda: LibreDepthAnything3(
             None, size="l", device="cpu"
         ),
         "nafnet_restore": lambda: LibreNAFNet(None, size="s", device="cpu"),
+        "depth_anything_depth": lambda: LibreYOLO(
+            "weights/LibreDepthAnythingV2s-depth.pt",
+            device="cpu",
+        ),
         "ec_pose": lambda: LibreEC(None, size="s", task="pose", device="cpu"),
         "ec_segment": lambda: LibreEC(
             None, size="s", task="segment", nb_classes=2, device="cpu"
@@ -501,8 +875,23 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
         "realesrgan_restore": lambda: LibreRealESRGAN(
             None, size="x4t", device="cpu"
         ),
+        "rfdetr_segment": lambda: LibreYOLO(
+            "weights/LibreRFDETRn-seg.pt",
+            device="cpu",
+        ),
+        "rfdetr_pose": lambda: LibreYOLO(
+            "weights/LibreRFDETRx-pose.pt",
+            device="cpu",
+        ),
         "rfdetr_obb": lambda: LibreRFDETR(
-            {}, size="n", task="obb", nb_classes=2, device="cpu"
+            {},
+            size="n",
+            task="obb",
+            nb_classes=2,
+            device="cpu",
+        ),
+        "zipdepth_depth": lambda: LibreZipDepth(
+            None, size="b", device="cpu"
         ),
         "segformer_semantic": lambda: LibreSegformer(
             None, size="b0", nb_classes=3, device="cpu"
@@ -513,20 +902,35 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
     }
     torch.manual_seed(21)
     model = constructors[case]()
-    first = torch.from_numpy(
-        np.random.default_rng(21).standard_normal(
-            (1, 3, imgsz, imgsz), dtype=np.float32
-        )
+    if case == "yolonas_pose":
+        _strengthen_yolonas_pose_fixture(model)
+    elif case == "rfdetr_obb":
+        _strengthen_rfdetr_obb_fixture(model)
+    model.model.eval()
+    first = torch.rand(
+        1,
+        3,
+        imgsz,
+        imgsz,
+        generator=torch.Generator().manual_seed(21),
     )
-    second = torch.full_like(first, 100.0)
+    second = torch.rand(
+        1,
+        3,
+        imgsz,
+        imgsz,
+        generator=torch.Generator().manual_seed(22),
+    )
 
     exporter = ExecuTorchExporter(model)
     with exporter._model_context(
         torch.device("cpu"), False, False, 1, (imgsz, imgsz)
     ) as (prepared, _), torch.no_grad():
         expected = prepared(first)
+        expected_changed = prepared(second)
     if isinstance(expected, torch.Tensor):
         expected = (expected,)
+        expected_changed = (expected_changed,)
 
     artifact = model.export(
         "executorch",
@@ -541,41 +945,55 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
 
     assert len(expected) == len(actual)
     expected_arrays = [output.detach().cpu().numpy() for output in expected]
-    if case == "ec_segment":
+    expected_changed_arrays = [
+        output.detach().cpu().numpy() for output in expected_changed
+    ]
+    if case in {
+        "ec_segment",
+        "rfdetr_obb",
+        "rfdetr_pose",
+        "rfdetr_segment",
+    }:
         actual = _align_unordered_queries(expected_arrays, actual)
-    parity_error = 0.0
-    for expected_array, actual_output in zip(expected_arrays, actual):
+        changed = _align_unordered_queries(expected_changed_arrays, changed)
+    raw_rtol = 5e-3 if case.startswith("rfdetr_") else 1e-3
+    raw_atol = 2e-2 if case.startswith("rfdetr_") else 2e-4
+    for (
+        expected_array,
+        expected_changed_array,
+        actual_output,
+        changed_output,
+    ) in zip(
+        expected_arrays,
+        expected_changed_arrays,
+        actual,
+        changed,
+    ):
         np.testing.assert_allclose(
-            actual_output, expected_array, rtol=1e-3, atol=2e-4
+            actual_output, expected_array, rtol=raw_rtol, atol=raw_atol
+        )
+        np.testing.assert_allclose(
+            changed_output,
+            expected_changed_array,
+            rtol=raw_rtol,
+            atol=raw_atol,
         )
         parity_error = max(
-            parity_error,
             float(np.max(np.abs(actual_output - expected_array))),
+            float(np.max(np.abs(changed_output - expected_changed_array))),
         )
-    sensitivity = max(
-        float(np.max(np.abs(first_output - second_output)))
-        for first_output, second_output in zip(actual, changed)
-    )
-    assert sensitivity > max(parity_error * 100, 1e-4)
+        sensitivity = float(
+            np.max(np.abs(expected_array - expected_changed_array))
+        )
+        assert sensitivity > max(parity_error * 100.0, 1e-4)
 
     image = np.random.default_rng(22).integers(
         0, 256, (imgsz, imgsz, 3), dtype=np.uint8
     )
-    result = runtime.predict(image, conf=0.0, max_det=10)
-    expected_attribute = {
-        "convnext_classify": "probs",
-        "depth_anything3_depth": "depth_map",
-        "nafnet_restore": "restored",
-        "ec_pose": "keypoints",
-        "ec_segment": "masks",
-        "fomo_point": "points",
-        "l2cs_gaze": "gaze",
-        "realesrgan_restore": "restored",
-        "rfdetr_obb": "obb",
-        "segformer_semantic": "semantic_mask",
-        "yolonas_pose": "keypoints",
-    }[case]
-    assert getattr(result, expected_attribute) is not None
+    _assert_public_task_parity(case, model, runtime, image, imgsz)
+    assert runtime.model_family == model.FAMILY
+    assert runtime.task == model.task
+    assert runtime.imgsz == imgsz
 
 
 @pytest.mark.external_data

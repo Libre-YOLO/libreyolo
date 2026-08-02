@@ -183,11 +183,13 @@ class TestForwardAndPredict:
         with pytest.raises(NotImplementedError):
             da_small.train(data="x.yaml")
 
-    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    @pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino"])
     def test_exported_depth_parity(self, da_small, tmp_path, format):
         if format == "onnx":
             pytest.importorskip("onnx")
             pytest.importorskip("onnxruntime")
+        if format == "openvino":
+            pytest.importorskip("openvino")
         from libreyolo import LibreYOLO
 
         image = np.zeros((70, 70, 3), dtype=np.uint8)

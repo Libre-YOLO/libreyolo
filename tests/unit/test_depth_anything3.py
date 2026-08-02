@@ -231,11 +231,23 @@ def test_zero_shot_val_plumbing_is_finite(lightweight_model, tmp_path):
     assert np.isfinite(metrics["metrics/delta1"])
 
 
-def test_out_of_scope_surfaces(lightweight_model):
+def test_out_of_scope_surfaces(lightweight_model, monkeypatch):
+    from libreyolo.models.base.model import BaseModel
+
     with pytest.raises(NotImplementedError, match="Training"):
         lightweight_model.train(data="unused.yaml")
-    with pytest.raises(NotImplementedError, match="Export"):
-        lightweight_model.export(format="onnx")
+
+    captured = {}
+
+    def fake_export(self, format="onnx", **kwargs):
+        captured.update(format=format, **kwargs)
+        return f"depth-anything3.{format}"
+
+    monkeypatch.setattr(BaseModel, "export", fake_export)
+    assert lightweight_model.export(format="onnx", dynamic=False) == (
+        "depth-anything3.onnx"
+    )
+    assert captured == {"format": "onnx", "opset": 17, "dynamic": False}
 
 
 def test_apply_mono_sky_uses_per_image_statistics():
