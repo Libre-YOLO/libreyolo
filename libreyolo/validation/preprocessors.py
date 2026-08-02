@@ -294,6 +294,52 @@ class FasterRCNNValPreprocessor(BaseValPreprocessor):
         return rgb_chw, padded_targets
 
 
+class RetinaNetValPreprocessor(BaseValPreprocessor):
+    """Upstream min/max aspect resize, ImageNet normalization, and P3-P7 pad."""
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        return True
+
+    @property
+    def uses_letterbox(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def letterbox_scale(
+        self, orig_h: int, orig_w: int, imgsz: int
+    ) -> Tuple[float, float, float]:
+        from ..models.retinanet.utils import resize_scale
+
+        return resize_scale((orig_w, orig_h), int(imgsz)), 0.0, 0.0
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.retinanet.utils import preprocess_numpy
+
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError("RetinaNet validation requires a scalar min-side size")
+        rgb = np.ascontiguousarray(img[:, :, ::-1])
+        processed, ratio = preprocess_numpy(rgb, int(target_h))
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, :4] *= ratio
+            padded_targets[:count] = scaled[:count]
+        return processed, padded_targets
+
+
 class DeformableDETRValPreprocessor(RFDETRValPreprocessor):
     """Deformable DETR fixed-square ImageNet-normalized preprocessor.
 

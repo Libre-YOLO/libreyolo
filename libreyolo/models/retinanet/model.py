@@ -10,9 +10,11 @@ from torch import nn
 
 from ...postprocess.retinanet import postprocess
 from ...utils.image_loader import ImageInput
+from ...validation.preprocessors import RetinaNetValPreprocessor
 from ..base import BaseModel
 from .nn import LibreRetinaNetModel
 from .utils import preprocess_image
+from .validator import RetinaNetValidator
 
 
 class LibreRetinaNet(BaseModel):
@@ -28,6 +30,8 @@ class LibreRetinaNet(BaseModel):
     SUPPORTED_TASKS = ("detect",)
     DEFAULT_TASK = "detect"
     TRAIN_CONFIG = None
+    val_preprocessor_class = RetinaNetValPreprocessor
+    validator_class = RetinaNetValidator
     SUPPORTS_BATCHED_PREDICT = False
     TTA_ENABLED = False
 
