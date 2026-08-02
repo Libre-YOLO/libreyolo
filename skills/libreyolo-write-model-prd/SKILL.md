@@ -118,6 +118,35 @@ a maturity target from `libreyolo-port-model` section 2, and remember that
 working trainer will usually stall. Make the trainer a follow-up unless training
 is the point of the port.
 
+Whether the PRD requires a trainer is a three-gate test, not taste:
+
+1. **Task shape.** The task is closed-set and label-supervised: the user's
+   dataset is images plus plain labels the existing pipeline already carries
+   (boxes, masks, keypoints, class ids). Prompt-driven, text-conditioned,
+   zero-shot and multimodal models (SAM, VLMs, CLIP, open-vocab detectors,
+   foundation backbones) fail this gate and never ship training code: their
+   "training" is web-scale pretraining, not user fine-tuning.
+2. **Upstream recipe.** Upstream ships a permissively licensed *fine-tuning*
+   implementation (loss, assignment, recipe) that converges on a small dataset
+   on a single GPU. A pretraining pipeline needing multi-node or web-scale
+   data does not count (Depth Anything V2's teacher-student distillation is
+   the precedent: supervised task, no user-facing recipe, inference-only).
+3. **Audience.** The port is meant for practitioners to fine-tune (headed for
+   `g2` or better). Museum/historic ports and inference-only specialists
+   (`g3`/`g4` candidates: original DETR, Faster R-CNN) ship inference-only
+   even for classical detection; the trainer is an optional follow-up.
+
+All three pass: the PRD requires a trainer (production-grade when e2e
+convergence is validated, otherwise gated experimental behind
+`allow_experimental=True`). Any gate fails: inference-only, and the PRD names
+the failed gate. Genuinely unsure: write "maturity: maintainer call" in the
+PRD and ask, instead of guessing.
+
+The one-line intuition: ship a trainer when a real user could run
+`model.train(data="their_small_dataset.yaml")` on one GPU and expect a better
+model; ship inference-only when "training" really means "pretraining nobody
+can reproduce".
+
 Also name the **rollout group** the family enters (`MODEL_GROUPS` in
 `libreyolo/models/registry.py`; semantics in `docs/nomenclature.md`, "Model
 groups"). New ports normally enter `g2` (trainable) or `g3` (inference-only);

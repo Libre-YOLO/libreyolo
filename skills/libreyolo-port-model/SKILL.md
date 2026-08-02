@@ -123,6 +123,11 @@ Pick one and document scope explicitly:
 
 **Inference-only is a legitimate ship state.** Don't gate the port on a working trainer.
 
+Which target to pick belongs to the PRD: `libreyolo-write-model-prd` section 4
+carries the three-gate trainer rule (task shape, upstream fine-tune recipe,
+audience/rollout tier). If the PRD is silent on maturity, apply the same gates
+and record the answer in the PR description.
+
 ## 3. Pick your scaffold
 
 Use this decision tree to pick the family you'll clone as your starting point.
