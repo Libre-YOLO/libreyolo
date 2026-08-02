@@ -561,6 +561,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         if fmt == "openvino" and entry.tier == "validated"
     }
     assert validated == {
+        ("alexnet", "classify"),
         ("clip", "classify"),
         ("clip", "embed"),
         ("convnext", "classify"),
