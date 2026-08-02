@@ -17,6 +17,7 @@ pytestmark = [
     pytest.mark.export_backend,
     pytest.mark.supported_backend,
     pytest.mark.onnx,
+    pytest.mark.deformable_detr,
     pytest.mark.external_data,
     pytest.mark.network,
     pytest.mark.slow,
