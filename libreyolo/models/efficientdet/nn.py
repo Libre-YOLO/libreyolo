@@ -724,9 +724,95 @@ class LibreEfficientDetModel(nn.Module):
         return self.class_net(features), self.box_net(features)
 
 
+class EfficientDetExportWrapper(nn.Module):
+    """Bake fixed anchors and top-candidate decode into one export output."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        input_size: int,
+        *,
+        max_candidates: int = 5000,
+        sparse_coco: bool = True,
+    ) -> None:
+        super().__init__()
+        from ...postprocess.efficientdet import generate_anchors
+        from ...utils.coco import COCO91_TO_COCO80
+
+        self.model = model
+        self.input_size = int(input_size)
+        self.num_classes = int(getattr(model, "num_classes", 90))
+        self.max_candidates = int(max_candidates)
+        self.sparse_coco = bool(sparse_coco)
+        self.register_buffer("anchors", generate_anchors(self.input_size))
+        class_map = [
+            COCO91_TO_COCO80.get(index + 1, -1) for index in range(self.num_classes)
+        ]
+        self.register_buffer("class_map", torch.tensor(class_map, dtype=torch.long))
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        class_outputs, box_outputs = self.model(images)
+        batch = class_outputs[0].shape[0]
+        logits = torch.cat(
+            [
+                level.permute(0, 2, 3, 1).reshape(batch, -1, self.num_classes)
+                for level in class_outputs
+            ],
+            dim=1,
+        )
+        regression = torch.cat(
+            [level.permute(0, 2, 3, 1).reshape(batch, -1, 4) for level in box_outputs],
+            dim=1,
+        )
+        flat_logits = logits.reshape(batch, -1)
+        top_logits, flat_indices = torch.topk(flat_logits, self.max_candidates, dim=1)
+        anchor_indices = flat_indices // self.num_classes
+        classes = flat_indices % self.num_classes
+        regression = torch.gather(
+            regression,
+            1,
+            anchor_indices.unsqueeze(-1).expand(-1, -1, 4),
+        )
+        anchors = torch.gather(
+            self.anchors.unsqueeze(0).expand(batch, -1, -1),
+            1,
+            anchor_indices.unsqueeze(-1).expand(-1, -1, 4),
+        )
+
+        anchor_y = (anchors[..., 0] + anchors[..., 2]) * 0.5
+        anchor_x = (anchors[..., 1] + anchors[..., 3]) * 0.5
+        anchor_h = anchors[..., 2] - anchors[..., 0]
+        anchor_w = anchors[..., 3] - anchors[..., 1]
+        ty, tx, th, tw = regression.unbind(dim=-1)
+        center_y = ty * anchor_h + anchor_y
+        center_x = tx * anchor_w + anchor_x
+        height = torch.exp(th) * anchor_h
+        width = torch.exp(tw) * anchor_w
+        boxes = torch.stack(
+            (
+                center_x - width * 0.5,
+                center_y - height * 0.5,
+                center_x + width * 0.5,
+                center_y + height * 0.5,
+            ),
+            dim=-1,
+        )
+        if self.sparse_coco:
+            classes = self.class_map[classes]
+        return torch.cat(
+            (
+                boxes,
+                top_logits.sigmoid().unsqueeze(-1),
+                classes.to(boxes.dtype).unsqueeze(-1),
+            ),
+            dim=-1,
+        )
+
+
 __all__ = [
     "ANCHOR_SCALE",
     "ASPECT_RATIOS",
+    "EfficientDetExportWrapper",
     "LibreEfficientDetModel",
     "MAX_LEVEL",
     "MIN_LEVEL",

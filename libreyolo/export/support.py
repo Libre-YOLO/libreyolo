@@ -72,6 +72,51 @@ _add(
 )
 _add(
     "validated",
+    ("efficientdet",),
+    ("detect",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The official Apache-2.0 D0 checkpoint is covered by one-output "
+        "artifact reload, metadata, runtime execution, and matched public "
+        "post-NMS detection parity in tests/e2e/test_efficientdet_export.py."
+    ),
+    since="1.6",
+    constraint="FP32, batch 1, fixed per-variant square input",
+)
+_add(
+    "validated",
+    ("efficientdet",),
+    ("detect",),
+    ("openvino",),
+    reason=(
+        "The official Apache-2.0 D0 checkpoint is covered by one-output "
+        "artifact reload, metadata, OpenVINO CPU execution, and matched public "
+        "post-NMS detection parity in tests/e2e/test_efficientdet_export.py."
+    ),
+    since="1.6",
+    constraint=(
+        "OpenVINO 2026.2, FP32, batch 1, fixed per-variant square input on CPU"
+    ),
+)
+_add(
+    "validated",
+    ("efficientdet",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "The official Apache-2.0 D0 checkpoint is covered by engine build, "
+        "artifact reload, metadata, runtime execution, and matched public "
+        "post-NMS detection parity in tests/e2e/test_efficientdet_export.py."
+    ),
+    since="1.6",
+    constraint=(
+        "TensorRT 10.16, FP32, batch 1, fixed per-variant square input; "
+        "TensorRT's ITopK limit uses 3840 candidates instead of the native "
+        "5000-candidate budget"
+    ),
+)
+_add(
+    "validated",
     ("yolo9", "rfdetr"),
     ("detect",),
     ("executorch",),

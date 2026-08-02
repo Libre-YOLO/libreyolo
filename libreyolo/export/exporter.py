@@ -869,6 +869,25 @@ class BaseExporter(ABC):
             nn_model = FasterRCNNExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "efficientdet":
+            from ..models.efficientdet.nn import EfficientDetExportWrapper
+
+            if imgsz[0] != imgsz[1] or imgsz[0] != self.model.input_size:
+                raise ValueError(
+                    f"EfficientDet {self.model.size} exports require imgsz="
+                    f"{self.model.input_size}; got {imgsz}."
+                )
+            nn_model = EfficientDetExportWrapper(
+                nn_model,
+                input_size=imgsz[0],
+                # TensorRT's ITopK layer rejects K > 3840. Keep the exact
+                # upstream 5000-point budget on every other runtime and use
+                # its maximum only for the TensorRT graph.
+                max_candidates=3840 if self.format_name == "tensorrt" else 5000,
+                sparse_coco=getattr(self.model, "nb_classes", None) == 80,
+            ).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "deformable_detr":
             from ..models.deformable_detr.nn import DeformableDETRExportWrapper
 

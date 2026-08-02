@@ -165,11 +165,12 @@ class LibreEfficientDet(BaseModel):
         ratio: float = 1.0,
         **kwargs,
     ) -> Dict:
+        actual_input_size = kwargs.pop("input_size", self.input_size)
         return postprocess(
             output,
             conf_thres=conf_thres,
             iou_thres=iou_thres,
-            input_size=self.input_size,
+            input_size=actual_input_size,
             original_size=original_size,
             max_det=max_det,
             ratio=ratio,

@@ -16,7 +16,7 @@ import pytest
 import torch
 
 from libreyolo.models.efficientdet.nn import LibreEfficientDetModel
-from libreyolo.postprocess.efficientdet import generate_anchors
+from libreyolo.postprocess.efficientdet import decode_candidates, generate_anchors
 
 UPSTREAM_DIR = os.environ.get("LIBREYOLO_EFFICIENTDET_UPSTREAM_DIR")
 
@@ -42,7 +42,8 @@ def test_effdet_raw_outputs_are_bit_exact(size: str) -> None:
     pytest.importorskip("effdet")
     assert importlib.metadata.version("effdet") == "0.4.1"
     from effdet import get_efficientdet_config
-    from effdet.anchors import Anchors
+    from effdet.anchors import Anchors, decode_box_outputs
+    from effdet.bench import _post_process
     from effdet.efficientdet import EfficientDet
 
     checkpoint_path = Path(UPSTREAM_DIR) / CHECKPOINTS[size]
@@ -77,3 +78,29 @@ def test_effdet_raw_outputs_are_bit_exact(size: str) -> None:
             assert expected.shape == observed.shape
             maximum = max(maximum, float((expected - observed).abs().max().item()))
     assert maximum == 0.0, f"EfficientDet {size} max_abs_diff={maximum}"
+
+    reference_logits, reference_regression, indices, classes = _post_process(
+        *expected_outputs,
+        num_levels=5,
+        num_classes=90,
+        max_detection_points=5000,
+    )
+    selected_anchors = expected_anchors.to(device)[indices[0]]
+    reference_boxes = decode_box_outputs(
+        reference_regression[0].float(), selected_anchors, output_xyxy=True
+    )
+    reference_candidates = torch.cat(
+        (
+            reference_boxes,
+            reference_logits[0].sigmoid(),
+            classes[0].to(reference_boxes.dtype).unsqueeze(-1),
+        ),
+        dim=-1,
+    )
+    actual_candidates = decode_candidates(
+        actual_outputs,
+        input_size=actual.image_size,
+        max_candidates=5000,
+        sparse_coco=False,
+    )[0]
+    torch.testing.assert_close(actual_candidates, reference_candidates, rtol=0, atol=0)

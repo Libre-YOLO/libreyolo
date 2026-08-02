@@ -539,6 +539,8 @@ class BaseBackend(ABC):
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
+        elif self.model_family == "efficientdet":
+            return self._preprocess_efficientdet(image, effective_imgsz, color_format)
         elif self.model_family == "rtmdet":
             tensor, img, size, ratio = self._preprocess_rtmdet(
                 image, effective_imgsz, color_format
@@ -1001,6 +1003,13 @@ class BaseBackend(ABC):
         return img_tensor, original_img, original_size
 
     @staticmethod
+    def _preprocess_efficientdet(image, input_size, color_format):
+        """EfficientDet top-left resize-pad plus ImageNet normalization."""
+        from ..models.efficientdet.utils import preprocess_image
+
+        return preprocess_image(image, input_size=input_size, color_format=color_format)
+
+    @staticmethod
     def _preprocess_rtmdet(image, input_size, color_format):
         """RTMDet preprocessing: BGR letterbox + mmdet mean/std normalization."""
         from ..models.rtmdet.utils import preprocess_numpy as rtmdet_preprocess_numpy
@@ -1153,6 +1162,16 @@ class BaseBackend(ABC):
         elif self.model_family == "picodet":
             boxes, scores, cls = self._parse_picodet(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf
+            )
+            return boxes, scores, cls, None
+        elif self.model_family == "efficientdet":
+            boxes, scores, cls = self._parse_efficientdet(
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+                ratio,
             )
             return boxes, scores, cls, None
         elif self.model_family == "rtmdet":
@@ -1354,6 +1373,35 @@ class BaseBackend(ABC):
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
 
         return boxes, max_scores, class_ids
+
+    @staticmethod
+    def _parse_efficientdet(
+        all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=1.0
+    ):
+        """Parse ``(B, 5000, 6)`` decoded EfficientDet candidates."""
+        candidates = np.asarray(all_outputs[0])[0]
+        keep = (candidates[:, 4] > conf) & (candidates[:, 5] >= 0)
+        candidates = candidates[keep]
+        if candidates.shape[0] == 0:
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int64),
+            )
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        boxes = candidates[:, :4].astype(np.float32, copy=True)
+        scores = candidates[:, 4].astype(np.float32, copy=False)
+        class_ids = candidates[:, 5].astype(np.int64, copy=False)
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, input_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, input_h)
+        if ratio is None or ratio <= 0:
+            ratio = min(input_h / orig_h, input_w / orig_w)
+        boxes /= ratio
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        return boxes[valid], scores[valid], class_ids[valid]
 
     def _parse_embedded_nms(self, all_outputs, effective_imgsz, orig_w, orig_h, conf):
         """Parse a graph-embedded-NMS detection output.
@@ -2908,6 +2956,7 @@ class BaseBackend(ABC):
             # backend clipping so letterboxed-image behavior stays aligned with
             # native YOLO9 postprocess.
             if self.model_family in (
+                "efficientdet",
                 "picodet",
                 "rtmdet",
                 "yolo9",
@@ -3116,6 +3165,7 @@ class BaseBackend(ABC):
             DETRValPreprocessor,
             DFINEValPreprocessor,
             ECValPreprocessor,
+            EfficientDetValPreprocessor,
             LWDETRValPreprocessor,
             PICODETValPreprocessor,
             RFDETRValPreprocessor,
@@ -3146,6 +3196,7 @@ class BaseBackend(ABC):
             "detr": DETRValPreprocessor,
             "dfine": DFINEValPreprocessor,
             "ec": ECValPreprocessor,
+            "efficientdet": EfficientDetValPreprocessor,
             "lwdetr": LWDETRValPreprocessor,
             "picodet": PICODETValPreprocessor,
             "rfdetr": RFDETRValPreprocessor,
