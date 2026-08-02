@@ -72,7 +72,11 @@ class LibreMaskRCNN(LibreFasterRCNN):
 
     def _init_model(self) -> nn.Module:
         head_width = 91 if self.nb_classes == 80 else self.nb_classes + 1
-        return LibreMaskRCNNModel(size=self.size, num_classes=head_width)
+        return LibreMaskRCNNModel(
+            size=self.size,
+            num_classes=head_width,
+            return_masks=self.task == "segment",
+        )
 
     def train(self, *args, **kwargs):
         raise NotImplementedError(

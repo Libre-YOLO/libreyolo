@@ -631,6 +631,30 @@ license with every checkpoint, and repeat the caveat. The source distribution
 does not bundle the checkpoint files; conversion only adds metadata.
 
 --------------------------------------------------------------------
+TorchVision Mask R-CNN (PyTorch contributors)
+--------------------------------------------------------------------
+Source: https://github.com/pytorch/vision
+Commit: 336d36e8db990a905498c73933e35231876e28bc
+Version: torchvision 0.26.0
+License: BSD-3-Clause
+Copyright (c) Soumith Chintala 2016
+Used for: the native inference-only Mask R-CNN family in
+          libreyolo/models/mask_rcnn/nn.py. The mask-specific implementation
+          derives its RoIAlign mask head, class-specific mask selection, and
+          ResNet-50-FPN v2 construction from the pinned BSD source, on top of
+          LibreYOLO's separately attributed native Faster R-CNN graph. The
+          full BSD license text and code-vs-weights distinction are recorded
+          in libreyolo/models/mask_rcnn/NOTICE.
+
+NOTE - code vs. weights: the upstream source is BSD-3-Clause. The official
+COCO checkpoint does not carry an explicit checkpoint-specific license, and
+torchvision warns that pretrained-model terms may differ based on training
+data. LibreYOLO's separate weight mirror applies BSD-3-Clause on an explicitly
+disclosed implied basis, ships the verbatim license, and repeats the caveat.
+The source distribution does not bundle the checkpoint file; conversion only
+adds metadata.
+
+--------------------------------------------------------------------
 NAFNet (Megvii Research)
 --------------------------------------------------------------------
 Source: https://github.com/megvii-research/NAFNet
