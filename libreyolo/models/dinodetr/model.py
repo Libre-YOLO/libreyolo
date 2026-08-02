@@ -1,15 +1,25 @@
-"""Register DINO-DETR with the checkpoint-driven LibreYOLO factory."""
+"""Register DINO-DETR with the checkpoint-driven LibreYOLO factory.
+
+DINO was published by IDEA in 2022 as a DETR-lineage detector combining
+contrastive denoising, mixed query selection, and improved anchor boxes. This
+inference-only port preserves the three released detector configurations.
+"""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import torch
 from torch import nn
 
 from ...validation.preprocessors import DeformableDETRValPreprocessor
+from ...utils.serialization import load_untrusted_torch_file
 from ..base import BaseModel
 from .nn import LibreDINODETRModel
+from .utils import unwrap_dinodetr_checkpoint
+
+_COCO91_HEAD_WIDTH = 91
 
 
 class LibreDINODETR(BaseModel):
@@ -53,15 +63,81 @@ class LibreDINODETR(BaseModel):
 
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:
-        head = weights_dict.get("class_embed.0.weight")
-        if not isinstance(head, torch.Tensor):
+        width = cls._arch_classes_from_state_dict(weights_dict)
+        if width is None:
             return None
-        width = int(head.shape[0])
-        return 80 if width == 91 else width
+        return 80 if width == _COCO91_HEAD_WIDTH else width
+
+    @staticmethod
+    def _arch_classes_from_state_dict(weights_dict: dict) -> Optional[int]:
+        head = weights_dict.get("class_embed.0.weight")
+        return None if not isinstance(head, torch.Tensor) else int(head.shape[0])
+
+    def __init__(
+        self,
+        model_path,
+        size: str,
+        nb_classes: int = 80,
+        device: str = "auto",
+        **kwargs,
+    ):
+        architecture_classes = self._peek_arch_classes(model_path)
+        if architecture_classes is None:
+            architecture_classes = (
+                _COCO91_HEAD_WIDTH if nb_classes == 80 else nb_classes
+            )
+        self._arch_num_classes = architecture_classes
+        public_classes = (
+            80 if architecture_classes == _COCO91_HEAD_WIDTH else architecture_classes
+        )
+        super().__init__(
+            model_path=None,
+            size=size,
+            nb_classes=public_classes,
+            device=device,
+            **kwargs,
+        )
+        self.model_path = model_path if isinstance(model_path, (str, Path)) else None
+        if isinstance(model_path, dict):
+            state_dict = self._prepare_state_dict(
+                self._strip_ddp_prefix(unwrap_dinodetr_checkpoint(model_path))
+            )
+            self.model.load_state_dict(state_dict, strict=True)
+            self.model.to(self.device).eval()
+        elif model_path is not None:
+            self._load_weights(str(model_path))
+
+    @staticmethod
+    def _peek_arch_classes(model_path) -> Optional[int]:
+        if isinstance(model_path, dict):
+            return LibreDINODETR._arch_classes_from_state_dict(
+                unwrap_dinodetr_checkpoint(model_path)
+            )
+        if not isinstance(model_path, (str, Path)):
+            return None
+        path = Path(BaseModel._resolve_weights_path(str(model_path)))
+        if not path.exists():
+            return None
+        try:
+            loaded = load_untrusted_torch_file(
+                str(path),
+                map_location="cpu",
+                context="DINO-DETR head inspection",
+            )
+        except Exception:
+            return None
+        if not isinstance(loaded, dict):
+            return None
+        return LibreDINODETR._arch_classes_from_state_dict(
+            unwrap_dinodetr_checkpoint(loaded)
+        )
 
     def _init_model(self) -> nn.Module:
-        architecture_classes = 91 if self.nb_classes == 80 else self.nb_classes
-        return LibreDINODETRModel(size=self.size, nc=architecture_classes)
+        return LibreDINODETRModel(size=self.size, nc=self._arch_num_classes)
+
+    def _rebuild_for_new_classes(self, new_nb_classes: int):
+        self._arch_num_classes = new_nb_classes
+        super()._rebuild_for_new_classes(new_nb_classes)
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
         return {
