@@ -488,6 +488,11 @@ def _wrap_claim(
         # class label. Foreign restoration releases normally carry no names.
         nc = 1
         names = {0: "image"}
+    if task == "depth":
+        # Dense depth checkpoints use a schema-only class slot. Foreign depth
+        # releases normally carry no names, so never fabricate ``class_0``.
+        nc = 1
+        names = {0: "depth"}
     if task == "pose":
         num_keypoints = None
         detect_keypoints = getattr(cls, "detect_num_keypoints", None)

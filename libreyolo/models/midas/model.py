@@ -27,6 +27,7 @@ from PIL import Image
 
 from ...utils.image_loader import ImageInput, ImageLoader
 from ..base.model import BaseModel
+from .convert import UPSTREAM_URLS, verify_and_wrap_download
 from .nn import build_midas_model
 from .utils import IMGSZ_DIVISOR, preprocess_numpy
 
@@ -70,6 +71,27 @@ class LibreMiDaS(BaseModel):
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:
         return 1 if cls.can_load(weights_dict) else None
+
+    @classmethod
+    def get_download_url(cls, filename: str) -> Optional[str]:
+        """Use checksum-pinned official assets while ADR 0006 blocks rehosting."""
+        size = cls.detect_size_from_filename(filename)
+        task = cls.detect_task_from_filename(filename)
+        return UPSTREAM_URLS.get(size) if size is not None and task == "depth" else None
+
+    @classmethod
+    def get_download_notice(cls, filename: str, url: str) -> Optional[str]:
+        del filename, url
+        return (
+            "MiDaS depth weights are downloaded from the official isl-org/MiDaS "
+            "release and SHA-256 verified. LibreYOLO does not rehost them while "
+            "the training-dataset commercial-use clearance required by ADR 0006 "
+            "remains unresolved."
+        )
+
+    @classmethod
+    def verify_downloaded_file(cls, local_path: str, source_url: str) -> None:
+        verify_and_wrap_download(local_path, source_url)
 
     def __init__(
         self,
