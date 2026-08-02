@@ -12,7 +12,7 @@ from PIL import Image
 from ...postprocess.deit import postprocess as _deit_postprocess
 from ...utils.image_loader import ImageInput
 from ..base import BaseModel
-from .nn import ARCH_DEFS, DeiT
+from .nn import DeiT
 from .utils import preprocess_image as _deit_preprocess
 
 
