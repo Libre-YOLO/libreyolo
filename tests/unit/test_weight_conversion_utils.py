@@ -101,6 +101,25 @@ def test_wrap_libreyolo_checkpoint_does_not_write_task_catalog_fields():
     assert "default_task" not in checkpoint
 
 
+def test_wrap_libreyolo_checkpoint_forwards_extra_metadata():
+    checkpoint = conversion_utils.wrap_libreyolo_checkpoint(
+        {"layer.weight": 1},
+        model_family="hrnet",
+        size="w32",
+        task="pose",
+        nc=1,
+        names={0: "person"},
+        imgsz=256,
+        imgsz_h=256,
+        imgsz_w=192,
+        num_keypoints=17,
+    )
+
+    assert checkpoint["imgsz_h"] == 256
+    assert checkpoint["imgsz_w"] == 192
+    assert checkpoint["num_keypoints"] == 17
+
+
 def test_save_checkpoint_creates_parent_directory(tmp_path):
     output_path = tmp_path / "nested" / "checkpoint.pt"
 
