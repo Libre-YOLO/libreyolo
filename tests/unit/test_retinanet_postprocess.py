@@ -60,9 +60,7 @@ def test_non_square_geometry_restores_and_clips_coordinates():
     original_size = (200, 100)
     output = _output(original_size=original_size, input_size=64)
     resized_h, resized_w, scale_x, scale_y = resize_geometry(original_size, 64)
-    output[0, 0, :4] = torch.tensor(
-        [-5.0, 10.0, resized_w + 10.0, resized_h - 5.0]
-    )
+    output[0, 0, :4] = torch.tensor([-5.0, 10.0, resized_w + 10.0, resized_h - 5.0])
     output[0, 0, 4] = 0.9
     result = postprocess(
         output,

@@ -55,8 +55,9 @@ def test_topology_head_and_decoded_output_match_pinned_reference(size):
     reference = _build_reference(size)
     ours = LibreRetinaNetModel(size, num_classes=91).eval()
 
-    assert sum(parameter.numel() for parameter in ours.parameters()) == (
-        EXPECTED_PARAMETERS[size]
+    assert (
+        sum(parameter.numel() for parameter in ours.parameters())
+        == (EXPECTED_PARAMETERS[size])
     )
     assert set(ours.state_dict()) == set(reference.state_dict())
     for key, tensor in reference.state_dict().items():
@@ -72,9 +73,7 @@ def test_topology_head_and_decoded_output_match_pinned_reference(size):
         reference_anchors = reference.anchor_generator(
             ImageList(image, [image.shape[-2:]]), reference_features
         )[0]
-        actual_anchors, _ = ours.anchor_generator(
-            image.shape[-2:], actual_features
-        )
+        actual_anchors, _ = ours.anchor_generator(image.shape[-2:], actual_features)
         reference_boxes = reference.box_coder.decode_single(
             reference_heads["bbox_regression"][0], reference_anchors
         ).unsqueeze(0)
@@ -87,9 +86,9 @@ def test_topology_head_and_decoded_output_match_pinned_reference(size):
             ],
             dtype=torch.int64,
         )
-        reference_scores = torch.sigmoid(
-            reference_heads["cls_logits"]
-        ).index_select(2, source_indices)
+        reference_scores = torch.sigmoid(reference_heads["cls_logits"]).index_select(
+            2, source_indices
+        )
         expected_output = torch.cat((reference_boxes, reference_scores), dim=2)
         actual_output = ours(image)
 

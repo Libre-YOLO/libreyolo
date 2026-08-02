@@ -86,6 +86,8 @@ def test_default_runtime_autoconvert_claim_is_strict():
     converted = LibreRetinaNet.convert_upstream_state_dict(retina_state)
     assert converted is not None
     assert set(converted) == set(retina_state)
-    assert all(torch.equal(converted[key], value) for key, value in retina_state.items())
+    assert all(
+        torch.equal(converted[key], value) for key, value in retina_state.items()
+    )
     assert LibreRetinaNet.convert_upstream_state_dict(_rtdetr_state()) is None
     assert LibreRetinaNet.convert_upstream_state_dict(_resnet_state()) is None

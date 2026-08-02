@@ -27,9 +27,7 @@ _VARIANTS = {
     "r50": {
         "description": "ResNet-50 FPN v1 with FrozenBatchNorm",
         "upstream_file": "retinanet_resnet50_fpn_coco-eeacb38b.pth",
-        "sha256": (
-            "eeacb38b7cec8cf93c57867e05eaab621047f19b0d2ec5accaa405f690da15b7"
-        ),
+        "sha256": ("eeacb38b7cec8cf93c57867e05eaab621047f19b0d2ec5accaa405f690da15b7"),
         "bytes": 136_595_076,
         "box_map": "36.4",
         "parameters": "34,014,999",
@@ -37,9 +35,7 @@ _VARIANTS = {
     "r50v2": {
         "description": "ResNet-50 FPN v2 with GroupNorm heads",
         "upstream_file": "retinanet_resnet50_fpn_v2_coco-5905b1c5.pth",
-        "sha256": (
-            "5905b1c544219215e544dbe319720397bc4e68de61a733a59350d7976645b769"
-        ),
+        "sha256": ("5905b1c544219215e544dbe319720397bc4e68de61a733a59350d7976645b769"),
         "bytes": 153_130_989,
         "box_map": "41.5",
         "parameters": "38,198,935",
@@ -60,9 +56,9 @@ def _sha256(path: Path) -> str:
 
 
 def _bsd_license() -> str:
-    notice = (
-        _REPO_ROOT / "libreyolo" / "models" / "retinanet" / "NOTICE"
-    ).read_text(encoding="utf-8")
+    notice = (_REPO_ROOT / "libreyolo" / "models" / "retinanet" / "NOTICE").read_text(
+        encoding="utf-8"
+    )
     marker = "BSD 3-Clause License"
     if marker not in notice:
         raise RuntimeError("RetinaNet NOTICE does not contain the BSD license text")
@@ -88,8 +84,8 @@ tags:
 
 # {name}
 
-RetinaNet ({variant['description']}), repackaged for LibreYOLO. This is an
-inference-only model with {variant['parameters']} parameters.
+RetinaNet ({variant["description"]}), repackaged for LibreYOLO. This is an
+inference-only model with {variant["parameters"]} parameters.
 
 ```python
 from libreyolo import LibreYOLO
@@ -105,13 +101,13 @@ Derived from [pytorch/vision](https://github.com/pytorch/vision) at commit
 Copyright (c) Soumith Chintala 2016 and torchvision contributors. The source
 implementation is BSD-3-Clause.
 
-Official checkpoint: [{variant['upstream_file']}]({source_url})
+Official checkpoint: [{variant["upstream_file"]}]({source_url})
 
-- Official file bytes: {variant['bytes']}
-- Official SHA-256: `{variant['sha256']}`
+- Official file bytes: {variant["bytes"]}
+- Official SHA-256: `{variant["sha256"]}`
 - Converted file bytes: {converted_bytes}
 - Converted SHA-256: `{converted_sha256}`
-- Published COCO val2017 box mAP: {variant['box_map']}
+- Published COCO val2017 box mAP: {variant["box_map"]}
 
 ## Model contract
 
@@ -147,12 +143,12 @@ def _notice(size: str, converted_sha256: str) -> str:
     name = _canonical_name(size)
     variant = _VARIANTS[size]
     return f"""{name} weights
-{'-' * (len(name) + 8)}
+{"-" * (len(name) + 8)}
 
 This product contains weights released by torchvision
 (https://github.com/pytorch/vision) at commit {_UPSTREAM_COMMIT}.
-Official checkpoint: {variant['upstream_file']}
-Official SHA-256: {variant['sha256']}
+Official checkpoint: {variant["upstream_file"]}
+Official SHA-256: {variant["sha256"]}
 Converted SHA-256: {converted_sha256}
 Copyright (c) Soumith Chintala 2016 and torchvision contributors.
 
@@ -236,9 +232,7 @@ def build_repo_dir(size: str, pt_path: Path, out_dir: Path) -> Path:
         encoding="utf-8",
         newline="\n",
     )
-    (out_dir / "LICENSE").write_text(
-        _bsd_license(), encoding="utf-8", newline="\n"
-    )
+    (out_dir / "LICENSE").write_text(_bsd_license(), encoding="utf-8", newline="\n")
     (out_dir / "NOTICE").write_text(
         _notice(size, converted_sha256), encoding="utf-8", newline="\n"
     )

@@ -78,9 +78,7 @@ def convert_weights(
     print(f"Missing keys: {sorted(result.missing_keys)}")
     print(f"Unexpected keys: {sorted(result.unexpected_keys)}")
     if result.missing_keys or result.unexpected_keys:
-        raise ValueError(
-            f"State dict does not match RetinaNet size {size!r} exactly."
-        )
+        raise ValueError(f"State dict does not match RetinaNet size {size!r} exactly.")
 
     checkpoint = wrap_libreyolo_checkpoint(
         state_dict,
@@ -117,9 +115,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", help="Official torchvision .pth checkpoint")
     parser.add_argument("output", help="Destination LibreRetinaNet<size>.pt")
-    parser.add_argument(
-        "--size", required=True, choices=["r50", "r50v2"]
-    )
+    parser.add_argument("--size", required=True, choices=["r50", "r50v2"])
     parser.add_argument("--nc", type=int, default=80)
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()

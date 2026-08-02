@@ -44,8 +44,7 @@ pytestmark = [
     pytest.mark.skipif(
         not CHECKPOINT_DIR and not ACCEPTANCE,
         reason=(
-            "set LIBREYOLO_RETINANET_CHECKPOINT_DIR or "
-            "LIBREYOLO_RETINANET_ACCEPTANCE=1"
+            "set LIBREYOLO_RETINANET_CHECKPOINT_DIR or LIBREYOLO_RETINANET_ACCEPTANCE=1"
         ),
     ),
 ]

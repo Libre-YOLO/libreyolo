@@ -79,8 +79,7 @@ class LibreRetinaNet(BaseModel):
             if in_channels == 256:
                 return "r50"
         has_group_norm = any(
-            key.startswith("head.classification_head.conv.")
-            and ".1.weight" in key
+            key.startswith("head.classification_head.conv.") and ".1.weight" in key
             for key in weights_dict
         )
         return "r50v2" if has_group_norm else "r50"

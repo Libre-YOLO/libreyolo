@@ -22,10 +22,7 @@ def test_family_metadata_and_filename_detection():
     assert LibreRetinaNet.DEFAULT_TASK == "detect"
     assert LibreRetinaNet.TRAIN_CONFIG is None
     assert LibreRetinaNet.detect_size_from_filename("LibreRetinaNetr50.pt") == "r50"
-    assert (
-        LibreRetinaNet.detect_size_from_filename("LibreRetinaNetr50v2.pt")
-        == "r50v2"
-    )
+    assert LibreRetinaNet.detect_size_from_filename("LibreRetinaNetr50v2.pt") == "r50v2"
     assert (
         LibreRetinaNet.detect_size_from_filename(
             "retinanet_resnet50_fpn_v2_coco-5905b1c5.pth"
@@ -73,9 +70,7 @@ def test_validation_preprocessor_matches_inference_and_scales_targets():
     image_bgr = rng.integers(0, 256, (41, 67, 3), dtype=np.uint8)
     targets = np.array([[1, 2, 30, 35, 4]], dtype=np.float32)
     preprocessor = RetinaNetValPreprocessor(img_size=(64, 64))
-    actual, scaled_targets = preprocessor(
-        image_bgr, targets, input_size=(64, 64)
-    )
+    actual, scaled_targets = preprocessor(image_bgr, targets, input_size=(64, 64))
     expected, ratio = preprocess_numpy(image_bgr[:, :, ::-1], 64)
 
     np.testing.assert_array_equal(actual, expected)
@@ -91,9 +86,7 @@ def test_validator_forces_single_image_batches(monkeypatch):
     from libreyolo.models.retinanet.validator import RetinaNetValidator
     from libreyolo.validation.detection_validator import DetectionValidator
 
-    monkeypatch.setattr(
-        DetectionValidator, "_setup_dataloader", lambda _self: "loader"
-    )
+    monkeypatch.setattr(DetectionValidator, "_setup_dataloader", lambda _self: "loader")
     validator = RetinaNetValidator.__new__(RetinaNetValidator)
     validator.config = SimpleNamespace(batch_size=4)
     assert validator._setup_dataloader() == "loader"

@@ -44,7 +44,8 @@ _ANCHOR_SIZES = tuple(
 )
 _ASPECT_RATIOS = ((0.5, 1.0, 2.0),) * len(_ANCHOR_SIZES)
 _COCO91_SOURCE_INDICES = tuple(
-    source for source, _target in sorted(COCO91_TO_COCO80.items(), key=lambda item: item[1])
+    source
+    for source, _target in sorted(COCO91_TO_COCO80.items(), key=lambda item: item[1])
 )
 
 
@@ -97,10 +98,7 @@ class RetinaNetClassificationHead(nn.Module):
     ) -> None:
         super().__init__()
         self.conv = nn.Sequential(
-            *[
-                _Conv2dNormActivation(in_channels, norm_layer)
-                for _ in range(4)
-            ]
+            *[_Conv2dNormActivation(in_channels, norm_layer) for _ in range(4)]
         )
         for layer in self.conv.modules():
             if isinstance(layer, nn.Conv2d):
@@ -151,9 +149,7 @@ class RetinaNetClassificationHead(nn.Module):
         for feature in features:
             logits = self.cls_logits(self.conv(feature))
             batch, _, height, width = logits.shape
-            logits = logits.view(
-                batch, -1, self.num_classes, height, width
-            )
+            logits = logits.view(batch, -1, self.num_classes, height, width)
             logits = logits.permute(0, 3, 4, 1, 2)
             all_logits.append(logits.reshape(batch, -1, self.num_classes))
         return torch.cat(all_logits, dim=1)
@@ -172,10 +168,7 @@ class RetinaNetRegressionHead(nn.Module):
     ) -> None:
         super().__init__()
         self.conv = nn.Sequential(
-            *[
-                _Conv2dNormActivation(in_channels, norm_layer)
-                for _ in range(4)
-            ]
+            *[_Conv2dNormActivation(in_channels, norm_layer) for _ in range(4)]
         )
         self.bbox_reg = nn.Conv2d(
             in_channels,
@@ -320,16 +313,12 @@ class AnchorGenerator(nn.Module):
         device: torch.device = torch.device("cpu"),
     ) -> Tensor:
         scales_tensor = torch.as_tensor(scales, dtype=dtype, device=device)
-        ratios_tensor = torch.as_tensor(
-            aspect_ratios, dtype=dtype, device=device
-        )
+        ratios_tensor = torch.as_tensor(aspect_ratios, dtype=dtype, device=device)
         height_ratios = torch.sqrt(ratios_tensor)
         width_ratios = 1 / height_ratios
         widths = (width_ratios[:, None] * scales_tensor[None, :]).reshape(-1)
         heights = (height_ratios[:, None] * scales_tensor[None, :]).reshape(-1)
-        return (
-            torch.stack((-widths, -heights, widths, heights), dim=1) / 2
-        ).round()
+        return (torch.stack((-widths, -heights, widths, heights), dim=1) / 2).round()
 
     def num_anchors_per_location(self) -> list[int]:
         return [
@@ -354,27 +343,21 @@ class AnchorGenerator(nn.Module):
         level_counts: list[int] = []
         for grid_size, base_anchors in zip(grid_sizes, self.cell_anchors):
             grid_height, grid_width = grid_size
-            stride_height = torch.empty(
-                (), dtype=torch.int64, device=device
-            ).fill_(image_size[0] // grid_height)
-            stride_width = torch.empty(
-                (), dtype=torch.int64, device=device
-            ).fill_(image_size[1] // grid_width)
+            stride_height = torch.empty((), dtype=torch.int64, device=device).fill_(
+                image_size[0] // grid_height
+            )
+            stride_width = torch.empty((), dtype=torch.int64, device=device).fill_(
+                image_size[1] // grid_width
+            )
             shifts_x = (
-                torch.arange(
-                    0, grid_width, dtype=torch.int32, device=device
-                )
+                torch.arange(0, grid_width, dtype=torch.int32, device=device)
                 * stride_width
             )
             shifts_y = (
-                torch.arange(
-                    0, grid_height, dtype=torch.int32, device=device
-                )
+                torch.arange(0, grid_height, dtype=torch.int32, device=device)
                 * stride_height
             )
-            shift_y, shift_x = torch.meshgrid(
-                shifts_y, shifts_x, indexing="ij"
-            )
+            shift_y, shift_x = torch.meshgrid(shifts_y, shifts_x, indexing="ij")
             shifts = torch.stack(
                 (
                     shift_x.reshape(-1),
@@ -384,9 +367,9 @@ class AnchorGenerator(nn.Module):
                 ),
                 dim=1,
             )
-            level = (
-                shifts.reshape(-1, 1, 4) + base_anchors.reshape(1, -1, 4)
-            ).reshape(-1, 4)
+            level = (shifts.reshape(-1, 1, 4) + base_anchors.reshape(1, -1, 4)).reshape(
+                -1, 4
+            )
             anchors_per_level.append(level)
             level_counts.append(level.shape[0])
         return torch.cat(anchors_per_level, dim=0), level_counts
@@ -420,12 +403,18 @@ class BoxCoder:
         predicted_center_y = dy * heights[:, None] + center_y[:, None]
         predicted_width = torch.exp(dw) * widths[:, None]
         predicted_height = torch.exp(dh) * heights[:, None]
-        half_width = torch.tensor(
-            0.5, dtype=predicted_center_x.dtype, device=predicted_width.device
-        ) * predicted_width
-        half_height = torch.tensor(
-            0.5, dtype=predicted_center_y.dtype, device=predicted_height.device
-        ) * predicted_height
+        half_width = (
+            torch.tensor(
+                0.5, dtype=predicted_center_x.dtype, device=predicted_width.device
+            )
+            * predicted_width
+        )
+        half_height = (
+            torch.tensor(
+                0.5, dtype=predicted_center_y.dtype, device=predicted_height.device
+            )
+            * predicted_height
+        )
         return torch.stack(
             (
                 predicted_center_x - half_width,
@@ -468,9 +457,7 @@ class LibreRetinaNetModel(nn.Module):
                 if isinstance(module, FrozenBatchNorm2d):
                     module.eps = 0.0
 
-    def forward_head(
-        self, images: Tensor
-    ) -> tuple[dict[str, Tensor], list[Tensor]]:
+    def forward_head(self, images: Tensor) -> tuple[dict[str, Tensor], list[Tensor]]:
         """Return raw heads and ordered P3-P7 features for parity tests."""
         features_dict = self.backbone(images)
         if isinstance(features_dict, Tensor):

@@ -137,9 +137,7 @@ def postprocess(
         pair_scores, order = pair_scores.topk(keep_count)
         pairs = pairs[order]
         level_boxes = boxes[pairs[:, 0]]
-        level_boxes = clip_boxes_to_image(
-            level_boxes, (resized_height, resized_width)
-        )
+        level_boxes = clip_boxes_to_image(level_boxes, (resized_height, resized_width))
         selected_boxes.append(level_boxes)
         selected_scores.append(pair_scores)
         selected_classes.append(pairs[:, 1].to(torch.int64))

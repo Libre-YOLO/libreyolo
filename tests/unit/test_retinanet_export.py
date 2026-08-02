@@ -160,9 +160,7 @@ def test_official_r50_onnx_and_backend_parity(tmp_path):
     wrapper = RetinaNetExportWrapper(native.model).eval()
     with torch.inference_mode():
         expected = wrapper(blob).numpy()
-    session = ort.InferenceSession(
-        str(output_path), providers=["CPUExecutionProvider"]
-    )
+    session = ort.InferenceSession(str(output_path), providers=["CPUExecutionProvider"])
     assert session.get_inputs()[0].shape == [1, 3, "height", "width"]
     actual = session.run(None, {"images": blob.numpy()})[0]
 
