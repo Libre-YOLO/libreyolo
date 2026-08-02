@@ -55,6 +55,20 @@ project the weights were derived from. Per-family summary:
              must determine permission for their use case.
              Public mirrors: https://huggingface.co/LibreYOLO/LibreFasterRCNN{n,s,m,l}
 
+    Mask R-CNN (LibreMaskRCNNr50)                      BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             official checkpoint:
+               maskrcnn_resnet50_fpn_v2_coco-73cbd019.pth
+             official SHA-256:
+               73cbd0190fcbe3ba339921fbce2c3a0b6bb9126c9a133c85e43a2a8e060a109e
+             The checkpoint carries no per-object license file. Rehosting
+             uses BSD-3-Clause implied by the releasing project, not a
+             publisher-confirmed checkpoint grant. The weight repository
+             ships the verbatim BSD text and torchvision pretrained-model
+             caveat. Conversion adds metadata without changing learned tensors.
+             Public mirror: https://huggingface.co/LibreYOLO/LibreMaskRCNNr50
+
     Deformable DETR                                     Apache-2.0
              (LibreDeformableDETR{r50ss,r50ssdc5,r50,
               r50refine,r50twostage})
