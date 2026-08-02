@@ -581,6 +581,27 @@ distillation lineage is documented in
 libreyolo/models/zipdepth/NOTICE.
 
 --------------------------------------------------------------------
+TorchVision Faster R-CNN (PyTorch contributors)
+--------------------------------------------------------------------
+Source: https://github.com/pytorch/vision
+Commit: 336d36e8db990a905498c73933e35231876e28bc
+Version: torchvision 0.26.0
+License: BSD-3-Clause
+Copyright (c) Soumith Chintala 2016
+Used for: the native inference-only Faster R-CNN family in
+          libreyolo/models/faster_rcnn/nn.py. The implementation derives its
+          two-stage orchestration, RPN, RoI box head, image transform, box
+          coder, and FPN-backbone construction from the pinned BSD source.
+          The full BSD license text and the code-vs-weights distinction are
+          recorded in libreyolo/models/faster_rcnn/NOTICE.
+
+NOTE - code vs. weights: the upstream source code is BSD-3-Clause. The four
+official COCO checkpoint files do not carry an explicit checkpoint-specific
+permissive license, and torchvision's README warns that pretrained-model terms
+may differ based on training data. LibreYOLO does not bundle or rehost those
+files. The local converter only wraps user-supplied tensors in metadata.
+
+--------------------------------------------------------------------
 NAFNet (Megvii Research)
 --------------------------------------------------------------------
 Source: https://github.com/megvii-research/NAFNet

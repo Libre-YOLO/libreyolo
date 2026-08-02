@@ -270,6 +270,22 @@ YOLOv7 / MultimediaTechLab/YOLO (MIT License)
     the model-definition v7.yaml is bundled under libreyolo/models/yolo7/.
     MIT is MIT-compatible; these terms add only attribution obligations.
 
+Faster R-CNN / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/faster_rcnn/,
+             libreyolo/postprocess/faster_rcnn.py
+    License: libreyolo/models/faster_rcnn/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreFasterRCNN inference graph is derived from torchvision
+    v0.26.0's Faster R-CNN, RPN, RoI box heads, transform, box coder, and FPN
+    backbone builders (BSD-3-Clause, Copyright (c) Soumith Chintala 2016).
+    Upstream state-dict names are retained for strict local conversion. The
+    port adds LibreYOLO metadata, contiguous COCO-80 mapping, validation, and
+    fixed-batch ONNX integration; it excludes training-only matching,
+    sampling, and losses. Official COCO checkpoints are not bundled or
+    rehosted because their standalone redistribution terms are not explicit.
+
 LW-DETR (Apache License 2.0)
     Path:    libreyolo/models/lwdetr/, libreyolo/postprocess/lwdetr.py,
              weights/convert_lwdetr_weights.py
