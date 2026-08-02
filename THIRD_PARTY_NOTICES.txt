@@ -631,6 +631,30 @@ license with every checkpoint, and repeat the caveat. The source distribution
 does not bundle the checkpoint files; conversion only adds metadata.
 
 --------------------------------------------------------------------
+TorchVision VGG (PyTorch contributors)
+--------------------------------------------------------------------
+Source: https://github.com/pytorch/vision
+Commit: 10f68dbd78b9aa5cab9328f3b2e99cfb0b608122
+File: torchvision/models/vgg.py
+License: BSD-3-Clause
+Copyright (c) Soumith Chintala 2016
+Used for: the native inference-only VGG image-classification family in
+          libreyolo/models/vgg/nn.py. The implementation derives its feature
+          configuration, classifier layout, adaptive pooling, and parameter
+          initialization from the pinned BSD source. The full BSD license text
+          and the code-vs-weights distinction are recorded in
+          libreyolo/models/vgg/NOTICE.
+
+NOTE - code vs. weights: the upstream source code is BSD-3-Clause. The four
+official ImageNet-1k V1 checkpoint files do not carry an explicit
+checkpoint-specific license, and torchvision warns that pretrained-model terms
+can depend on training data. LibreYOLO's separate weight mirrors apply
+BSD-3-Clause on an explicitly disclosed implied basis, ship the verbatim
+license with every checkpoint, and repeat the caveat. The source distribution
+does not bundle the checkpoint files; conversion preserves learned tensors and
+only adds metadata.
+
+--------------------------------------------------------------------
 NAFNet (Megvii Research)
 --------------------------------------------------------------------
 Source: https://github.com/megvii-research/NAFNet

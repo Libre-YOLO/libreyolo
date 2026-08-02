@@ -55,6 +55,19 @@ project the weights were derived from. Per-family summary:
              must determine permission for their use case.
              Public mirrors: https://huggingface.co/LibreYOLO/LibreFasterRCNN{n,s,m,l}
 
+    VGG      (LibreVGG{16,19,16bn,19bn}-cls)           BSD-3-Clause (implied)
+             upstream code: pytorch/vision at commit
+               10f68dbd78b9aa5cab9328f3b2e99cfb0b608122 (BSD-3-Clause)
+             The official ImageNet-1k V1 checkpoints carry no per-object
+             license file. Rehosting uses BSD-3-Clause implied by the
+             releasing project, not a publisher-confirmed checkpoint grant.
+             Every weight repo ships the verbatim BSD text and states
+             torchvision's warning that pretrained-model terms can depend on
+             training data and users must determine permission for their use
+             case. Conversion leaves every learned tensor unchanged and only
+             adds LibreYOLO checkpoint metadata.
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreVGG{16,19,16bn,19bn}-cls
+
     Deformable DETR                                     Apache-2.0
              (LibreDeformableDETR{r50ss,r50ssdc5,r50,
               r50refine,r50twostage})

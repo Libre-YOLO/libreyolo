@@ -63,6 +63,7 @@ file = name + ".pt"
 | ConvNeXt | `LibreConvNeXt` | `LibreConvNeXtt-cls.pt` |
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
+| VGG | `LibreVGG` | `LibreVGG16-cls.pt` |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 | SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
@@ -193,6 +194,9 @@ LibreEfficientNetV2b2-cls.pt, LibreEfficientNetV2b3-cls.pt,
 LibreResNet18-cls.pt, LibreResNet34-cls.pt,
 LibreResNet50-cls.pt, LibreResNet101-cls.pt,
 
+LibreVGG16-cls.pt, LibreVGG19-cls.pt,
+LibreVGG16bn-cls.pt, LibreVGG19bn-cls.pt,
+
 LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 
 LibreSigLIP2b16-cls.pt, LibreSigLIP2so400m-cls.pt,
@@ -280,8 +284,11 @@ appears in the upstream model's "Quantizations" sidebar on Hugging Face.
 
 Classification (`-cls`) repos use `pipeline_tag: image-classification`,
 `datasets: imagenet-1k`, and **omit the Benchmarks section** (Vision Analysis
-tracks detection only). The architecture is a native timm-derived port; weights
-are Apache-2.0 ImageNet-1k and load bit-identically (`max_abs_diff == 0`).
+tracks detection only). Record the exact architecture and weight source on each
+card. The timm-derived classifier weights are Apache-2.0; torchvision VGG uses
+BSD-3-Clause implied by the releasing project and must carry the upstream
+pretrained-model caveat. Learned tensors load bit-identically
+(`max_abs_diff == 0`).
 
 LibreCLIP is the zero-shot, open-vocabulary classifier (CLIP). Its HF cards use
 `pipeline_tag: zero-shot-image-classification`, **must document the LAION-2B
@@ -416,6 +423,7 @@ After the repo is uploaded, add it to a collection:
 | Repo type | Collection |
 |---|---|
 | Detection weights | `LibreYOLO/libreyolo-models-698875bf2b5f695708415169` |
+| Classification weights | `LibreYOLO/libreyolo-classification-6a4164414d64a10aa8576885` |
 | RF-DETR segmentation | `LibreYOLO/rf-detr-instance-segmentation-69bde2744d6c285366a69603` |
 | New seg family (e.g. YOLOX-seg) | **Ask the user** — create a new collection or extend existing |
 | New detection family with no siblings yet | Add to `LibreYOLO Models` |
