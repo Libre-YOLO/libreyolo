@@ -8,9 +8,9 @@ import torch
 import torch.nn.functional as F
 
 
-def postprocess(output: Any, **kwargs) -> Dict[str, torch.Tensor]:
+def postprocess(output: Any, *args, **kwargs) -> Dict[str, torch.Tensor]:
     """Convert one classifier output into a probability vector."""
-    del kwargs
+    del args, kwargs
     logits = output
     if isinstance(logits, (list, tuple)):
         logits = logits[0]

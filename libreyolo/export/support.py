@@ -607,6 +607,18 @@ _add(
 )
 _add(
     "validated",
+    ("vit",),
+    ("classify",),
+    ("onnx",),
+    reason=(
+        "A real AugReg ImageNet-1k checkpoint is covered by raw-logit and "
+        "public probability parity in tests/unit/test_vit_export.py."
+    ),
+    since="1.5",
+    constraint="FP32, fixed 224x224 input",
+)
+_add(
+    "validated",
     ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
     ("classify",),
     ("openvino",),

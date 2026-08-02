@@ -170,8 +170,8 @@ class LibreViT(BaseModel):
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         return self.model(input_tensor)
 
-    def _postprocess(self, output: Any, **kwargs) -> Dict:
-        return _vit_postprocess(output, **kwargs)
+    def _postprocess(self, output: Any, *args, **kwargs) -> Dict:
+        return _vit_postprocess(output, *args, **kwargs)
 
     def train(self, *args, **kwargs):
         del args, kwargs
