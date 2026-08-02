@@ -2103,6 +2103,61 @@ _add(
 )
 _add(
     "validated",
+    ("fcn",),
+    ("semantic",),
+    ("onnx", "torchscript"),
+    reason=(
+        "Both official trained checkpoints have two-input raw-logit parity, "
+        "metadata reload, and public semantic-mask parity coverage."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed square input divisible by 8",
+)
+_add(
+    "validated",
+    ("fcn",),
+    ("semantic",),
+    ("openvino",),
+    reason=(
+        "Both official trained checkpoints have OpenVINO CPU FP32 raw-logit "
+        "parity, input-sensitivity, metadata, and public-mask coverage."
+    ),
+    since="1.5",
+    constraint="OpenVINO 2026.2 CPU FP32, batch 1, fixed square input divisible by 8",
+)
+_add(
+    "validated",
+    ("fcn",),
+    ("semantic",),
+    ("tensorrt",),
+    reason=(
+        "Both official trained checkpoints have TensorRT FP32 raw-logit "
+        "parity, input-sensitivity, metadata, and public-mask coverage."
+    ),
+    since="1.5",
+    constraint=(
+        "TensorRT 10.16 FP32, batch 1, fixed square input divisible by 8"
+    ),
+)
+_add(
+    "blocked",
+    ("fcn",),
+    ("semantic",),
+    ("executorch", "ncnn", "tflite", "coreai"),
+    reason=(
+        "This runtime has no parity-valid FCN artifact yet; only ONNX, "
+        "TorchScript, TensorRT, and OpenVINO were assessed for this port."
+    ),
+)
+_add(
+    "blocked",
+    ("fcn",),
+    ("semantic",),
+    ("coreml",),
+    reason="The CoreML wrapper does not implement the dense semantic-logits contract.",
+)
+_add(
+    "validated",
     ("segformer",),
     ("semantic",),
     ("onnx", "torchscript"),
