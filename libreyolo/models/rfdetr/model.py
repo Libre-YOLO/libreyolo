@@ -155,6 +155,17 @@ class LibreRFDETR(BaseModel):
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
+        # Vanilla DETR has a top-level query table and stock packed
+        # MultiheadAttention projections. RF-DETR's historical discriminator is
+        # intentionally broad, so reject this exact sibling signature first.
+        if (
+            "query_embed.weight" in weights_dict
+            and "transformer.decoder.layers.0.multihead_attn.in_proj_weight"
+            in weights_dict
+            and "backbone.0.body.conv1.weight" in weights_dict
+        ):
+            return False
+
         # LW-DETR is this architecture's ancestor and shares the decoder,
         # projector, and two-stage head key names. Its plain-ViT encoder
         # (patch_embed.proj + CAE q_bias) is absent from RF-DETR, whose DINOv2

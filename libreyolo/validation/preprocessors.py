@@ -250,6 +250,16 @@ class LWDETRValPreprocessor(RFDETRValPreprocessor):
         return preprocess_numpy
 
 
+class DETRValPreprocessor(RFDETRValPreprocessor):
+    """DETR preprocessor: fixed square RGB resize plus ImageNet normalization."""
+
+    @staticmethod
+    def _family_preprocess_numpy():
+        from ..models.detr.utils import preprocess_numpy
+
+        return preprocess_numpy
+
+
 class YOLO9ValPreprocessor(BaseValPreprocessor):
     """YOLOv9 preprocessor: letterbox with gray padding, 0-1 range, RGB format."""
 
