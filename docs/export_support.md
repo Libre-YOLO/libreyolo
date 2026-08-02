@@ -30,6 +30,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | eomt | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |  |
+| faster_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |
 | feynobg | matte | exp | ✓ | exp |  |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
@@ -171,6 +172,7 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `semantic` / `torchscript`: fixed 512x512 input
 - `eomt` / `semantic` / `tensorrt`: FP32 with a fixed family-native export canvas
 - `eomt` / `semantic` / `openvino`: fixed family-native export canvas
+- `faster_rcnn` / `detect` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, fixed square input; final class-wise NMS is embedded in the graph
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
 - `fomo` / `point` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape
 - `fomo` / `point` / `tensorrt`: FP32 with a fixed 96x96 input
@@ -430,6 +432,14 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `panoptic` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreml`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreai`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `faster_rcnn` / `detect` / `torchscript`: The variable-length two-stage detection graph has only been validated through the ONNX runtime contract.
+- `faster_rcnn` / `detect` / `executorch`: The variable-length two-stage detection graph has only been validated through the ONNX runtime contract.
+- `faster_rcnn` / `detect` / `tensorrt`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
+- `faster_rcnn` / `detect` / `openvino`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
+- `faster_rcnn` / `detect` / `ncnn`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
+- `faster_rcnn` / `detect` / `tflite`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
+- `faster_rcnn` / `detect` / `coreml`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
+- `faster_rcnn` / `detect` / `coreai`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `feynobg` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `feynobg` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `feynobg` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.

@@ -855,6 +855,12 @@ class BaseExporter(ABC):
             nn_model = LWDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "faster_rcnn":
+            from ..models.faster_rcnn.nn import FasterRCNNExportWrapper
+
+            nn_model = FasterRCNNExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "rtmdet":
             # RTMDet intentionally aliases the head convolution weights across
             # feature levels while keeping one batch norm per level. XNNPACK's

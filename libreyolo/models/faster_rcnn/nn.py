@@ -34,7 +34,13 @@ from torchvision.ops.feature_pyramid_network import (
 )
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-__all__ = ["FASTER_RCNN_CONFIGS", "LibreFasterRCNNModel"]
+from ...utils.coco import COCO91_TO_COCO80
+
+__all__ = [
+    "FASTER_RCNN_CONFIGS",
+    "FasterRCNNExportWrapper",
+    "LibreFasterRCNNModel",
+]
 
 
 FASTER_RCNN_CONFIGS = {
@@ -148,7 +154,12 @@ class BoxCoder:
     def decode(self, rel_codes: Tensor, boxes: list[Tensor]) -> Tensor:
         boxes_per_image = [box.size(0) for box in boxes]
         concatenated = torch.cat(boxes, dim=0)
-        box_sum = sum(boxes_per_image)
+        # Accumulate explicitly so the legacy ONNX tracer preserves the final
+        # ``(proposals, classes, 4)`` reshape instead of flattening class 0
+        # into the coordinate axis.
+        box_sum = 0
+        for count in boxes_per_image:
+            box_sum += count
         if box_sum > 0:
             rel_codes = rel_codes.reshape(box_sum, -1)
         decoded = self.decode_single(rel_codes, concatenated)
@@ -507,6 +518,11 @@ class RoIHeads(nn.Module):
         num_classes = class_logits.shape[-1]
         boxes_per_image = [proposal.shape[0] for proposal in proposals]
         pred_boxes = self.box_coder.decode(box_regression, proposals)
+        # Keep the class axis explicit for ONNX. The legacy tracer can erase
+        # the equivalent reshape inside BoxCoder across the later split/clip
+        # sequence, which would make ``boxes[:, 1:]`` slice coordinates rather
+        # than the background class for inputs unlike the trace dummy.
+        pred_boxes = pred_boxes.reshape(-1, num_classes, 4)
         pred_scores = F.softmax(class_logits, dim=-1)
         pred_boxes_list = pred_boxes.split(boxes_per_image, 0)
         pred_scores_list = pred_scores.split(boxes_per_image, 0)
@@ -520,9 +536,12 @@ class RoIHeads(nn.Module):
             boxes = box_ops.clip_boxes_to_image(boxes, image_shape)
             labels = torch.arange(num_classes, device=class_logits.device)
             labels = labels.view(1, -1).expand_as(scores)
-            boxes = boxes[:, 1:].reshape(-1, 4)
-            scores = scores[:, 1:].reshape(-1)
-            labels = labels[:, 1:].reshape(-1)
+            boxes = boxes[:, 1:]
+            scores = scores[:, 1:]
+            labels = labels[:, 1:]
+            boxes = boxes.reshape(-1, 4)
+            scores = scores.reshape(-1)
+            labels = labels.reshape(-1)
             keep = torch.where(scores > self.score_thresh)[0]
             boxes, scores, labels = boxes[keep], scores[keep], labels[keep]
             keep = box_ops.remove_small_boxes(boxes, min_size=1e-2)
@@ -826,4 +845,28 @@ class LibreFasterRCNNModel(nn.Module):
         )
         return self.transform.postprocess(
             detections, image_list.image_sizes, original_image_sizes
+        )
+
+
+class FasterRCNNExportWrapper(nn.Module):
+    """Expose one image's final detections as three ONNX-friendly tensors."""
+
+    def __init__(self, model: LibreFasterRCNNModel) -> None:
+        super().__init__()
+        self.model = model
+        label_map = torch.arange(model.num_classes, dtype=torch.int64) - 1
+        if model.num_classes == 91:
+            label_map.fill_(-1)
+            for source, target in COCO91_TO_COCO80.items():
+                label_map[source] = target
+        self.register_buffer("label_map", label_map, persistent=False)
+
+    def forward(self, images: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        detection = self.model(images)[0]
+        labels = self.label_map[detection["labels"]]
+        keep = labels >= 0
+        return (
+            detection["boxes"][keep],
+            detection["scores"][keep],
+            labels[keep],
         )

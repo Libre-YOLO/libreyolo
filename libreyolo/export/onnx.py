@@ -230,11 +230,13 @@ def export_onnx(
     is_normal = task == "normal"
     is_edge = task == "edge"
     is_gaze = task == "gaze"
+    is_faster_rcnn = model_family == "faster_rcnn"
     known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
     if (
         not is_seg
         and not known_detr_detection
+        and not is_faster_rcnn
         and not is_restore
         and not is_matte
         and not is_depth
@@ -252,7 +254,10 @@ def export_onnx(
             "detection-only in LibreYOLO."
         )
 
-    if is_semantic:
+    if is_faster_rcnn:
+        output_names = ["boxes", "scores", "labels"]
+        dynamic_axes = None
+    elif is_semantic:
         output_names = ["semantic_logits"]
         dynamic_axes = (
             {

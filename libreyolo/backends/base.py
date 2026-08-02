@@ -271,6 +271,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "deim",
         "deimv2",
         "ec",
+        "faster_rcnn",
         "lwdetr",
         "rfdetr",
         "rtdetr",
@@ -1028,6 +1029,11 @@ class BaseBackend(ABC):
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
             return boxes, scores, cls, None
+        elif self.model_family == "faster_rcnn":
+            boxes, scores, cls = self._parse_faster_rcnn(
+                all_outputs, effective_imgsz, orig_w, orig_h, conf
+            )
+            return boxes, scores, cls, None
         elif self.model_family in ("dfine", "rtdetrv4"):
             if self.model_family == "dfine" and self.task == "segment":
                 return self._parse_dfine_segment(
@@ -1300,6 +1306,31 @@ class BaseBackend(ABC):
         scores = scores[valid]
         class_ids = class_ids[valid]
         return boxes, scores, class_ids
+
+    @staticmethod
+    def _parse_faster_rcnn(
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+    ):
+        """Parse final, already-NMSed boxes emitted by the export wrapper."""
+        boxes = np.asarray(all_outputs[0], dtype=np.float32).reshape(-1, 4)
+        scores = np.asarray(all_outputs[1], dtype=np.float32).reshape(-1)
+        class_ids = np.asarray(all_outputs[2], dtype=np.int64).reshape(-1)
+        keep = scores > conf
+        boxes, scores, class_ids = boxes[keep], scores[keep], class_ids[keep]
+        if not len(boxes):
+            return boxes, scores, class_ids
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        ratio = min(input_h / orig_h, input_w / orig_w)
+        boxes = boxes / ratio
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        return boxes[valid], scores[valid], class_ids[valid]
 
     def _parse_yolo9(
         self,

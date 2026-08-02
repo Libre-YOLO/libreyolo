@@ -1907,6 +1907,41 @@ _add(
 )
 _add(
     "validated",
+    ("faster_rcnn",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "Official trained-checkpoint parity covers graph outputs and unified "
+        "ONNX-backend detections against native PyTorch."
+    ),
+    since="1.7",
+    constraint=(
+        "ONNX Runtime, FP32, opset 18, batch 1, fixed square input; final "
+        "class-wise NMS is embedded in the graph"
+    ),
+)
+_add(
+    "blocked",
+    ("faster_rcnn",),
+    ("detect",),
+    ("torchscript", "executorch"),
+    reason=(
+        "The variable-length two-stage detection graph has only been "
+        "validated through the ONNX runtime contract."
+    ),
+)
+_add(
+    "blocked",
+    ("faster_rcnn",),
+    ("detect",),
+    ("tensorrt", "openvino", "ncnn", "tflite", "coreml", "coreai"),
+    reason=(
+        "This runtime has no parity evidence for Faster R-CNN's proposal, "
+        "RoIAlign, variable-length output, and embedded-NMS graph."
+    ),
+)
+_add(
+    "validated",
     ("deim",),
     ("detect",),
     ("onnx",),

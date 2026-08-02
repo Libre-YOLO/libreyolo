@@ -159,5 +159,23 @@ class LibreFasterRCNN(BaseModel):
             "training are not implemented."
         )
 
+    def export(
+        self,
+        format: str = "onnx",
+        *,
+        opset: int = 18,
+        **kwargs,
+    ) -> str:
+        if format.lower() == "onnx":
+            if int(kwargs.get("batch", 1)) != 1:
+                raise NotImplementedError(
+                    "Faster R-CNN ONNX export supports batch=1 only."
+                )
+            if bool(kwargs.get("dynamic", False)):
+                raise NotImplementedError(
+                    "Faster R-CNN ONNX export requires dynamic=False."
+                )
+        return super().export(format=format, opset=opset, **kwargs)
+
     def _strict_loading(self) -> bool:
         return True
