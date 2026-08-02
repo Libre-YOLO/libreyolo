@@ -83,7 +83,10 @@ class LibreSSD(BaseModel):
         return LibreSSDModel(num_classes=head_width)
 
     def _get_available_layers(self) -> dict[str, nn.Module]:
-        return {"model": self.model}
+        return {
+            "backbone": self.model.backbone,
+            "head": self.model.head,
+        }
 
     @staticmethod
     def _get_preprocess_numpy():
