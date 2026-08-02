@@ -47,6 +47,12 @@ def test_registered_and_classify_only_contract():
     assert model.crop_pct == 0.9
     assert model.interpolation == "bicubic"
     assert model.validator_class is ViTClassifyValidator
+    assert ViTClassifyValidator._dataset_transform_kwargs(None) == {
+        "mean": (0.5, 0.5, 0.5),
+        "std": (0.5, 0.5, 0.5),
+        "interpolation": "bicubic",
+        "crop_pct": 0.9,
+    }
 
 
 def test_canonical_multichar_filename_and_required_suffix():

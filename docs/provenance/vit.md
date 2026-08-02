@@ -35,3 +35,15 @@ Conversion is reproducible with `weights/convert_vit_weights.py`. Each output
 passes the strict checkpoint metadata validator and strict native state-dict
 loading. Pretrained logits match timm exactly (`max_abs_diff == 0`) for all
 four sizes.
+
+## Published artifacts
+
+Each public repository contains exactly `.gitattributes`, `README.md`,
+`LICENSE`, `NOTICE`, and its one canonical checkpoint:
+
+| Size | LibreYOLO repository | Initial verified revision |
+|---|---|---|
+| `ti` | [`LibreYOLO/LibreViTti-cls`](https://huggingface.co/LibreYOLO/LibreViTti-cls/tree/b5275cde8067f04681f8b1536538544cc311d95f) | `b5275cde8067f04681f8b1536538544cc311d95f` |
+| `s` | [`LibreYOLO/LibreViTs-cls`](https://huggingface.co/LibreYOLO/LibreViTs-cls/tree/c68ab6f37c533bf32580f400fb10b00d0c2aed3a) | `c68ab6f37c533bf32580f400fb10b00d0c2aed3a` |
+| `b` | [`LibreYOLO/LibreViTb-cls`](https://huggingface.co/LibreYOLO/LibreViTb-cls/tree/003b0fede7e890fc994478c8dac3dfc48bcbab86) | `003b0fede7e890fc994478c8dac3dfc48bcbab86` |
+| `l` | [`LibreYOLO/LibreViTl-cls`](https://huggingface.co/LibreYOLO/LibreViTl-cls/tree/4aa51c2ee7149c97b277154ec8b09e160b26fce8) | `4aa51c2ee7149c97b277154ec8b09e160b26fce8` |

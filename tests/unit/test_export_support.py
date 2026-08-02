@@ -65,6 +65,13 @@ def test_experimental_export_warns_in_preflight():
         exporter._preflight(half=False, int8=False, data=None)
 
 
+def test_vit_onnx_is_parity_validated():
+    entry = get_support("vit", "classify", "onnx")
+    assert entry.tier == "validated"
+    assert entry.constraint == "FP32, fixed 224x224 input"
+    assert "test_vit_export.py" in entry.reason
+
+
 def test_executorch_realtime_support_is_evidence_backed():
     validated = {
         ("clip", "embed"),
