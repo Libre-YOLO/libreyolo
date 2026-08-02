@@ -390,6 +390,7 @@ markers = [
     "rtmdet: tests covering the RTMDet model family",
     "l2cs: tests covering the L2CS gaze estimation family",
     "fomo: tests covering the LibreFOMO point-localizer family",
+    "vgg: tests covering the LibreVGG classification family",
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",
     "sam: tests covering the LibreSAM (promptable-segmentation) tier",
     "openvocab: tests covering the LibreOpenVocab detector tier",
