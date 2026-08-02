@@ -250,6 +250,22 @@ class LWDETRValPreprocessor(RFDETRValPreprocessor):
         return preprocess_numpy
 
 
+class DeformableDETRValPreprocessor(RFDETRValPreprocessor):
+    """Deformable DETR fixed-square ImageNet-normalized preprocessor.
+
+    Upstream evaluation preserves aspect ratio at a short side of 800 with a
+    1333-pixel cap. LibreYOLO uses its fixed-shape deployment convention: PIL
+    bilinear resize directly to 800 x 800, with independent x/y box scaling.
+    Validation and interactive inference deliberately share that transform.
+    """
+
+    @staticmethod
+    def _family_preprocess_numpy():
+        from ..models.deformable_detr.utils import preprocess_numpy
+
+        return preprocess_numpy
+
+
 class YOLO9ValPreprocessor(BaseValPreprocessor):
     """YOLOv9 preprocessor: letterbox with gray padding, 0-1 range, RGB format."""
 
@@ -341,6 +357,7 @@ class YOLONASValPreprocessor(YOLO9ValPreprocessor):
     ) -> Tuple[float, float, float]:
         # YOLO-NAS resizes to YOLO_NAS_RESIZE_SIZE first, then center-pads to imgsz.
         from ..models.yolonas.utils import YOLO_NAS_RESIZE_SIZE
+
         r = min(YOLO_NAS_RESIZE_SIZE / orig_h, YOLO_NAS_RESIZE_SIZE / orig_w)
         new_w = int(round(orig_w * r))
         new_h = int(round(orig_h * r))

@@ -19,7 +19,7 @@ from ...postprocess.deformable_detr import postprocess
 from ...utils.coco import COCO91_TO_COCO80
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
-from ...validation.preprocessors import RFDETRValPreprocessor
+from ...validation.preprocessors import DeformableDETRValPreprocessor
 from ..base import BaseModel
 from .nn import LibreDeformableDETRModel
 from .utils import preprocess_image, unwrap_deformable_detr_checkpoint
@@ -42,7 +42,7 @@ class LibreDeformableDETR(BaseModel):
     SUPPORTED_TASKS = ("detect",)
     DEFAULT_TASK = "detect"
     TRAIN_CONFIG = None
-    val_preprocessor_class = RFDETRValPreprocessor
+    val_preprocessor_class = DeformableDETRValPreprocessor
     TTA_FIXED_SIZE = True
 
     @classmethod
