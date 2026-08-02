@@ -105,6 +105,7 @@ from .segformer.model import LibreSegformer  # noqa: E402,F401  (semantic-only; 
 from .lingbotvision.model import LibreLingBotVision  # noqa: E402,F401  (semantic-only; can_load keyed on backbone.rope_embed.periods + storage_tokens + predict head)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
+from .swin.model import LibreSwin  # noqa: E402  (classify-only; V1 window-bias signature rejects SwinV2/backbone-only checkpoints)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
 from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
 
@@ -767,6 +768,7 @@ __all__ = [
     "LibreLingBotVision",
     "LibreMobileNetV4",
     "LibreConvNeXt",
+    "LibreSwin",
     "LibreEfficientNetV2",
     "LibreResNet",
     "LibreCLIP",
