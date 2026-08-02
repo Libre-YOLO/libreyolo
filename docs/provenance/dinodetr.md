@@ -38,7 +38,7 @@ source and converted hashes below.
 The public LibreYOLO mirrors are pinned at revisions
 `462f5afabb53146d933827814199564a9bd6ed93` (`r50`),
 `7d04c21564296ed31385c2f93db749a568940ab1` (`r50s5`), and
-`c73afa85c93fced1cc31e23a9925c96638d140b0` (`swinl`). The external ONNX
+`3bc6420403413741e224529ff58dd6220e902220` (`swinl`). The external ONNX
 test downloads only these immutable revisions.
 
 Conversion does not rename or transform learned tensors. It strips an optional
@@ -76,7 +76,11 @@ variants, every output tensor leaf is bit-exact (`max_abs_diff == 0.0`).
 
 ONNX Runtime was checked against native PyTorch for all three converted
 checkpoints. Maximum absolute differences were `3.00e-5` logits and `3.96e-6`
-boxes (`r50`), `9.78e-5` and `4.17e-6` (`r50s5`), and `1.55e-4` and `1.29e-5`
-(`swinl`). The public `r50` backend comparison on a real image retained the
-same 85 detections and classes with maximum matched box/score difference below
-`3.7e-4`.
+boxes (`r50`) and `9.78e-5` and `4.17e-6` (`r50s5`). Swin-L has near-tied,
+low-scoring encoder proposals that can select different background query slots
+across runtimes; on the real-image fixture its logit mean / p99 errors were
+`0.00566` / `0.0254` and box mean / p99 errors were `0.000451` / `0.00172`.
+All 11 public Swin-L detections and classes matched, minimum matched IoU was
+`0.9990`, and maximum score difference was `0.00034`. The public `r50` backend
+comparison retained the same 85 detections and classes with maximum matched
+box/score difference below `3.7e-4`.
