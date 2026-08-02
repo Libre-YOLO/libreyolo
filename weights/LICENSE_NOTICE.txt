@@ -44,7 +44,7 @@ project the weights were derived from. Per-family summary:
              upstream: roboflow/rf-detr
              (backbone: facebookresearch/dinov2, Apache-2.0)
 
-    Faster R-CNN (LibreFasterRCNN{n,s,m,l})            HF-ready; not yet hosted
+    Faster R-CNN (LibreFasterRCNN{n,s,m,l})            BSD-3-Clause (implied)
              upstream code: pytorch/vision v0.26.0 at commit
                336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
              The official COCO checkpoints carry no per-object license file.
@@ -53,6 +53,7 @@ project the weights were derived from. Per-family summary:
              ships the verbatim BSD text and states torchvision's warning that
              pretrained-model terms may derive from training data and users
              must determine permission for their use case.
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreFasterRCNN{n,s,m,l}
 
     RT-DETR  (LibreRTDETR{r18,r34,r50,r50m,r101})      Apache-2.0
              upstream: lyuwenyu/RT-DETR

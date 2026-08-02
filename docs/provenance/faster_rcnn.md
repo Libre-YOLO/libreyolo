@@ -46,9 +46,14 @@ basis. Every LibreYOLO weight repository therefore carries the verbatim
 torchvision BSD-3-Clause license, an attribution notice, and the caveat above;
 the cards must never describe the checkpoint license as publisher-confirmed.
 `weights/upload_faster_rcnn_hf.py` builds and validates the exact five-file
-repositories before publication. Public e2e catalog rows are intentionally
-deferred until those repositories are published so the nightly suite never
-depends on an unavailable download route.
+repositories before publication. The public mirrors are
+[`n`](https://huggingface.co/LibreYOLO/LibreFasterRCNNn),
+[`s`](https://huggingface.co/LibreYOLO/LibreFasterRCNNs),
+[`m`](https://huggingface.co/LibreYOLO/LibreFasterRCNNm), and
+[`l`](https://huggingface.co/LibreYOLO/LibreFasterRCNNl). Each was verified
+public with exactly five files, added to the LibreYOLO Models collection, and
+strict-loaded through its bare-filename autodownload route from a fresh local
+directory before the e2e and general-nightly catalog rows were enabled.
 
 ## Ported surface
 
@@ -83,8 +88,9 @@ background plus `nc` classes and subtract the background index.
 - Eager parity for `n`, `s`, `m`, and `l`: `max_abs_diff == 0.0` at the RPN
   head, RoI classifier/regressor, and final detections on the bundled parkour
   image.
-- Official `n` checkpoint on COCO128: mAP50-95 `0.34931876998581457`, mAP50
-  `0.5067003520164212`.
+- Public checkpoints on COCO128 (mAP50-95 / mAP50): `n`
+  `0.3493 / 0.5067`, `s` `0.4289 / 0.6247`, `m` `0.4916 / 0.7334`, and
+  `l` `0.5740 / 0.7821`.
 - Dynamic-spatial, batch-one ONNX Runtime parity for `n` on the original
   1280x852 parity image: identical output shapes and labels, boxes within
   `5e-3`, scores within `2e-5`; unified backend prediction returns the same

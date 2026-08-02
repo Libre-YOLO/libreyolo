@@ -91,6 +91,10 @@ DETR_RF1_FAMILIES = {"dfine", "deim", "deimv2", "rtdetr"}
 # convergence has not been validated against the RF1 mAP floor. Every RF1
 # training test skips them — keep the two tests consistent via this map.
 _EXPERIMENTAL_TRAINING_SKIP = {
+    "faster_rcnn": (
+        "Faster R-CNN ships inference-only: RPN and sampled-RoI training "
+        "are intentionally outside the museum-port scope, and train() raises."
+    ),
     "lwdetr": (
         "LW-DETR ships inference-only: its Group-DETR one-to-many recipe "
         "(13 query groups, IoU-aware classification loss, two-stage encoder "

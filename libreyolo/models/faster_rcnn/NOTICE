@@ -14,13 +14,13 @@ export/backend integration. Training-only matching, sampling, and loss code is
 not included.
 
 The four official COCO checkpoints used for parity are not distributed in the
-LibreYOLO source tree. When published, their separate Hugging Face mirrors use
+LibreYOLO source tree. Their separate LibreYOLO Hugging Face mirrors use
 BSD-3-Clause on an explicitly disclosed implied basis: the checkpoints are
 released by the BSD-licensed project but do not carry per-object license files.
 Torchvision's README warns that pretrained-model terms may derive from training
 data and that users remain responsible for determining permission for their
 use case.
-Each prepared mirror ships this BSD text and repeats that caveat; it must not
+Each mirror ships this BSD text and repeats that caveat; it must not
 be described as an explicit checkpoint-specific grant.
 
 BSD 3-Clause License

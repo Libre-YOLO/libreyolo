@@ -478,6 +478,10 @@ MODEL_CATALOG = [
     ("lwdetr", "m", "LibreLWDETRm.pt"),
     ("lwdetr", "l", "LibreLWDETRl.pt"),
     ("lwdetr", "x", "LibreLWDETRx.pt"),
+    ("faster_rcnn", "n", "LibreFasterRCNNn.pt"),
+    ("faster_rcnn", "s", "LibreFasterRCNNs.pt"),
+    ("faster_rcnn", "m", "LibreFasterRCNNm.pt"),
+    ("faster_rcnn", "l", "LibreFasterRCNNl.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("ec", "m", "LibreECm.pt"),
     ("ec", "l", "LibreECl.pt"),
@@ -514,6 +518,7 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("dfine", "n", "LibreDFINEn.pt"),
     ("deim", "n", "weights/LibreDEIMn.pt"),
     ("deimv2", "atto", "LibreDEIMv2atto.pt"),
+    ("faster_rcnn", "n", "LibreFasterRCNNn.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("rtdetr", "r18", "LibreRTDETRr18.pt"),
     ("rtdetrv2", "r18", "weights/LibreRTDETRv2r18.pt"),
@@ -536,6 +541,7 @@ RTDETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 RTDETRV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv2"]
 RTDETRV4_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv4"]
 PICODET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "picodet"]
+FASTER_RCNN_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "faster_rcnn"]
 
 ALL_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG]
 ALL_MODELS_WITH_WEIGHTS = MODEL_CATALOG
@@ -544,8 +550,14 @@ NON_RFDETR_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f != "rfdetr"]
 # Quick test set (for CI — smallest auto-available models only)
 QUICK_TEST_MODELS = [("yolox", "n"), ("yolo9", "t"), ("rtdetr", "r18")]
 
-# Full test set (all non-RF-DETR models)
-FULL_TEST_MODELS = NON_RFDETR_MODELS
+# Full legacy export test set. Faster R-CNN is ONNX-only and has its own
+# official-checkpoint runtime parity gate, so blocked formats must not attempt
+# to export it merely because its public weights are now in MODEL_CATALOG.
+FULL_TEST_MODELS = [
+    (family, size)
+    for family, size in NON_RFDETR_MODELS
+    if family != "faster_rcnn"
+]
 
 # RF-DETR test set (separate due to dependency)
 RFDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rfdetr"]
@@ -561,6 +573,7 @@ FAMILY_MARKERS = {
     "yolonas": pytest.mark.yolonas,
     "rfdetr": pytest.mark.rfdetr,
     "lwdetr": pytest.mark.lwdetr,
+    "faster_rcnn": pytest.mark.faster_rcnn,
     "dfine": pytest.mark.dfine,
     "deim": pytest.mark.deim,
     "deimv2": pytest.mark.deimv2,
