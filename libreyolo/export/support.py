@@ -2201,6 +2201,21 @@ _add(
 )
 _add(
     "validated",
+    ("midas",),
+    ("depth",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The official Small and DPT-Large checkpoints cover opset-17 "
+        "conversion, artifact reload, two-image public depth-map parity above "
+        "40 dB PSNR, and a signal/error margin above 20x for both runtimes."
+    ),
+    constraint=(
+        "FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend "
+        "inference follows the ADR 0006 stretch-resize contract"
+    ),
+)
+_add(
+    "validated",
     ("depth_anything",),
     ("depth",),
     ("openvino",),

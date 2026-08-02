@@ -699,6 +699,26 @@
     "available": true,
     "group": "g3"
   },
+  "midas": {
+    "class": "libreyolo.models.midas.model.LibreMiDaS",
+    "tasks": [
+      "depth"
+    ],
+    "default_task": "depth",
+    "sizes": {
+      "s": 256,
+      "l": 384
+    },
+    "default_imgsz": {
+      "s": 256,
+      "l": 384
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "mobilenetv4": {
     "class": "libreyolo.models.mobilenetv4.model.LibreMobileNetV4",
     "tasks": [

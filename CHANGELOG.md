@@ -21,6 +21,13 @@ before 1.4.0 are documented in the
   the evaluator falls back to pycocotools with a warning if the package
   is missing. Install via `pip install libreyolo[fast-eval]`.
 
+- LibreMiDaS, an inference-only museum port of MiDaS v2.1 Small (`s`, 256)
+  and DPT-Large (`l`, 384). Both native graphs are bit-exact against the
+  pinned MIT upstream implementation and official checkpoints. Predictions
+  are relative inverse depth with no metric unit; zero-shot depth validation
+  and fixed-resolution ONNX/TorchScript export are supported. Official
+  release assets are downloaded directly and checksum-verified rather than
+  rehosted while ADR 0006 training-data clearance remains unresolved
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr

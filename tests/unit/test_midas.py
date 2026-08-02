@@ -8,6 +8,8 @@ import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
+import yaml
+from PIL import Image
 
 from libreyolo.models.autoconvert import autoconvert_upstream_checkpoint
 from libreyolo.models.midas.convert import (
@@ -289,6 +291,45 @@ def test_small_exported_depth_parity(midas_small, tmp_path: Path, format: str):
     assert backend.size == "s"
     assert backend.task == "depth"
     assert backend.names == {0: "depth"}
+
+
+def _make_depth_yaml(root: Path) -> Path:
+    for split in ("train", "val"):
+        image_dir = root / "images" / split
+        depth_dir = root / "depths" / split
+        image_dir.mkdir(parents=True, exist_ok=True)
+        depth_dir.mkdir(parents=True, exist_ok=True)
+        for index in range(2):
+            image = np.zeros((64, 64, 3), dtype=np.uint8)
+            image[:, :32] = (200, 40 + index, 40)
+            image[:, 32:] = (40, 40, 200 - index)
+            Image.fromarray(image).save(image_dir / f"image{index}.jpg")
+            depth = np.full((64, 64), 8.0, dtype=np.float32)
+            depth[:, :32] = 2.0
+            encoded = np.rint(depth * 256.0).astype(np.uint16)
+            Image.fromarray(encoded).save(depth_dir / f"image{index}.png")
+    config = root / "depth.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {"path": str(root), "train": "images/train", "val": "images/val"}
+        ),
+        encoding="utf-8",
+    )
+    return config
+
+
+def test_zero_shot_depth_validation_runs(midas_small, tmp_path: Path):
+    metrics = midas_small.val(
+        data=str(_make_depth_yaml(tmp_path)),
+        imgsz=64,
+        batch=1,
+        workers=0,
+        verbose=False,
+    )
+    assert np.isfinite(metrics["metrics/abs_rel"])
+    assert np.isfinite(metrics["metrics/rmse"])
+    assert "metrics/delta1" in metrics
+    assert metrics["fitness"] == metrics["metrics/delta1"]
 
 
 def test_bad_imgsz_and_training_fail_explicitly():

@@ -454,6 +454,14 @@ def test_round24_promotes_six_embedding_and_depth_cells():
     assert get_support("moge2", "normal", "tflite").tier == "blocked"
 
 
+def test_midas_trained_export_cells_are_validated():
+    for format in ("onnx", "torchscript"):
+        entry = get_support("midas", "depth", format)
+        assert entry.tier == "validated"
+        assert "parity" in entry.reason
+        assert "fixed square" in entry.constraint
+
+
 def test_round13_records_ten_measured_tflite_holds():
     measured_holds = {
         ("yolo1", "detect"): "ONNX_EINSUM",
