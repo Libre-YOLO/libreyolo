@@ -121,6 +121,13 @@ class LibreFCN(BaseModel):
             return None
         return int(weight.shape[0])
 
+    @classmethod
+    def default_checkpoint_names(cls, nc: int) -> Optional[Dict[int, str]]:
+        """Supply the published VOC-style labels for bare official weights."""
+        if nc != len(VOC_NAMES):
+            return None
+        return dict(enumerate(VOC_NAMES))
+
     def _init_model(self) -> nn.Module:
         return LibreFCNModel(size=self.size, num_classes=self.nb_classes)
 

@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 import torch
 
+from libreyolo.models.autoconvert import autoconvert_upstream_checkpoint
+
 pytestmark = pytest.mark.unit
 
 WEIGHTS_DIR = Path(__file__).resolve().parents[2] / "weights"
@@ -45,3 +47,20 @@ def test_converter_rejects_noncanonical_head_width(tmp_path):
 
     with pytest.raises(ValueError, match="21-class"):
         convert_weights(str(source), str(tmp_path / "converted.pt"), size="r50")
+
+
+def test_bare_upstream_checkpoint_autoconverts_with_voc_names(tmp_path):
+    source = tmp_path / "fcn_resnet50_coco.pth"
+    torch.save(_recognizable_state(50), source)
+
+    converted = autoconvert_upstream_checkpoint(str(source))
+
+    assert converted is not None
+    assert Path(converted).name == "fcn_resnet50_coco-LibreFCNr50-sem.pt"
+    checkpoint = torch.load(converted, map_location="cpu", weights_only=True)
+    assert checkpoint["model_family"] == "fcn"
+    assert checkpoint["size"] == "r50"
+    assert checkpoint["task"] == "semantic"
+    assert checkpoint["nc"] == 21
+    assert checkpoint["names"][0] == "__background__"
+    assert checkpoint["names"][20] == "tvmonitor"
