@@ -6,6 +6,7 @@ The pose family consumes person crops and emits one COCO-17 heatmap per crop.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import ClassVar, Optional
 
 import numpy as np
@@ -14,6 +15,7 @@ from torch import nn
 
 from ...postprocess.hrnet import postprocess_hrnet
 from ..base import BaseModel
+from .detector import PersonDetector, resolve_person_detector
 from .nn import HRNetPoseModel
 from .utils import box_to_center_scale, preprocess_crop_image, preprocess_numpy
 
@@ -32,6 +34,7 @@ class LibreHRNet(BaseModel):
     REQUIRE_TASK_SUFFIX = True
     TRAIN_CONFIG = None
     TTA_ENABLED = False
+    SUPPORTS_BATCHED_PREDICT = False
     POSE_NUM_KEYPOINTS = 17
 
     _STAGE_KEY = "stage3.0.branches.0.0.conv1.weight"
@@ -79,6 +82,7 @@ class LibreHRNet(BaseModel):
         nb_classes: int = 1,
         device: str = "auto",
         task: str | None = None,
+        person_detector: PersonDetector | object | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -91,12 +95,16 @@ class LibreHRNet(BaseModel):
         )
         self.num_keypoints = self.POSE_NUM_KEYPOINTS
         self.keypoint_dim = 3
-        if model_path is not None and isinstance(model_path, str):
-            self._load_weights(model_path)
+        if model_path is not None and isinstance(model_path, (str, Path)):
+            self._load_weights(str(model_path))
         # HRNet's released pose head is fixed to the COCO person category.
         # Keep this semantic name even when a metadata-less upstream file was
         # auto-wrapped with the generic one-class fallback.
         self.names = {0: "person"}
+        self.person_detector = resolve_person_detector(
+            person_detector,
+            device=str(self.device),
+        )
         self.model.eval()
 
     def _init_model(self) -> nn.Module:
@@ -154,3 +162,11 @@ class LibreHRNet(BaseModel):
             "LibreHRNet is inference-only. Pose training requires a keypoint-aware "
             "data path and augmentations that LibreYOLO does not yet provide."
         )
+
+    @property
+    def _runner(self):
+        if getattr(self, "_runner_instance", None) is None:
+            from .inference import HRNetPoseInferenceRunner
+
+            self._runner_instance = HRNetPoseInferenceRunner(self)
+        return self._runner_instance
