@@ -233,12 +233,14 @@ def export_onnx(
     is_edge = task == "edge"
     is_gaze = task == "gaze"
     is_faster_rcnn = model_family == "faster_rcnn"
+    is_ssd = model_family == "ssd"
     known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
     if (
         not is_seg
         and not known_detr_detection
         and not is_faster_rcnn
+        and not is_ssd
         and not is_restore
         and not is_matte
         and not is_depth
@@ -269,6 +271,15 @@ def export_onnx(
                 "scores": {0: "detections"},
                 "labels": {0: "detections"},
             }
+            if dynamic
+            else None
+        )
+    elif is_ssd:
+        # One fixed-anchor tensor: decoded xyxy boxes followed by contiguous
+        # class probabilities, transposed to the standard detector layout.
+        output_names = ["output"]
+        dynamic_axes = (
+            {"images": {0: "batch"}, "output": {0: "batch"}}
             if dynamic
             else None
         )

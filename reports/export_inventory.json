@@ -1319,6 +1319,24 @@
     "available": true,
     "group": "s"
   },
+  "ssd": {
+    "class": "libreyolo.models.ssd.model.LibreSSD",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "300": 300
+    },
+    "default_imgsz": {
+      "300": 300
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "swinir": {
     "class": "libreyolo.models.swinir.model.LibreSwinIR",
     "tasks": [

@@ -1945,6 +1945,37 @@ _add(
     ),
 )
 _add(
+    "validated",
+    ("ssd",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "The official trained checkpoint preserves the decoded raw grid and "
+        "public post-NMS predictions through ONNX Runtime."
+    ),
+    since="1.7",
+    constraint="ONNX Runtime, FP32, opset 13, fixed 300 x 300 input",
+)
+_add(
+    "blocked",
+    ("ssd",),
+    ("detect",),
+    (
+        "torchscript",
+        "executorch",
+        "tensorrt",
+        "openvino",
+        "ncnn",
+        "tflite",
+        "coreml",
+        "coreai",
+    ),
+    reason=(
+        "SSD's decoded fixed-default-box head has only been parity-validated "
+        "through the ONNX Runtime contract."
+    ),
+)
+_add(
     "blocked",
     ("faster_rcnn",),
     ("detect",),

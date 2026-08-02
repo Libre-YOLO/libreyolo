@@ -76,6 +76,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | siglip2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  | ✓ |
 | siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
+| ssd | detect | ✓ |  |  |  |  |  |  |  |  |
 | swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
@@ -276,6 +277,7 @@ A check mark applies only under any constraint listed here.
 - `siglip2` / `embed` / `tensorrt`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
 - `siglip2` / `embed` / `openvino`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
 - `siglip2` / `embed` / `tflite`: onnx2tf 2.6.7, LiteRT 2.1.2 CPU FP32, batch 1, fixed square input
+- `ssd` / `detect` / `onnx`: ONNX Runtime, FP32, opset 13, fixed 300 x 300 input
 - `swinir` / `restore` / `onnx`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `torchscript`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `tensorrt`: FP32 with a fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas.
@@ -696,6 +698,14 @@ A check mark applies only under any constraint listed here.
 - `smolvlm2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `ssd` / `detect` / `torchscript`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `executorch`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `tensorrt`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `openvino`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `ncnn`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `tflite`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `coreml`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `coreai`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
 - `swinir` / `restore` / `executorch`: The fixed-canvas graph captures, lowers, serializes, and reloads, but ExecuTorch 1.2 runtime execution fails in aten::alias_copy.out because the source and destination tensors have different dimension orders.
 - `swinir` / `restore` / `ncnn`: PNNX writes NCNN artifacts after reporting unsupported 5-rank Permute operations, but the NCNN runtime process exits while loading or executing the resulting graph.
 - `swinir` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.

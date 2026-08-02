@@ -65,6 +65,13 @@ def test_experimental_export_warns_in_preflight():
         exporter._preflight(half=False, int8=False, data=None)
 
 
+def test_ssd_exports_only_through_its_validated_onnx_contract():
+    assert get_support("ssd", "detect", "onnx").tier == "validated"
+    for fmt in EXPORT_FORMATS:
+        if fmt != "onnx":
+            assert get_support("ssd", "detect", fmt).tier == "blocked"
+
+
 def test_executorch_realtime_support_is_evidence_backed():
     validated = {
         ("clip", "embed"),

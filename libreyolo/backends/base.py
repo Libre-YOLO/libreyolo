@@ -504,6 +504,14 @@ class BaseBackend(ABC):
             return self._preprocess_faster_rcnn(
                 image, effective_imgsz, color_format
             )
+        elif self.model_family == "ssd":
+            from ..models.ssd.utils import preprocess_image as ssd_preprocess_image
+
+            return ssd_preprocess_image(
+                image,
+                input_size=effective_imgsz,
+                color_format=color_format,
+            )
         elif self.model_family == "deformable_detr":
             tensor, img, size = self._preprocess_deformable_detr(
                 image, effective_imgsz, color_format
@@ -1108,6 +1116,17 @@ class BaseBackend(ABC):
                 all_outputs, effective_imgsz, orig_w, orig_h, conf
             )
             return boxes, scores, cls, None
+        elif self.model_family == "ssd":
+            boxes, scores, cls = self._parse_ssd(
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+                iou=iou,
+                max_det=max_det,
+            )
+            return boxes, scores, cls, None
         elif self.model_family == "deformable_detr":
             boxes, scores, cls = self._parse_deformable_detr(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
@@ -1412,6 +1431,65 @@ class BaseBackend(ABC):
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
         valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
         return boxes[valid], scores[valid], class_ids[valid]
+
+    def _parse_ssd(
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+        iou: float = 0.45,
+        max_det: int = 300,
+    ):
+        """Parse SSD's decoded YOLO-grid tensor before shared class-wise NMS."""
+        del iou, max_det
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        if (input_h, input_w) != (300, 300):
+            raise ValueError(
+                "SSD exported inference requires the fixed 300 x 300 canvas"
+            )
+
+        packed = np.asarray(all_outputs[0], dtype=np.float32)
+        if packed.ndim == 3 and packed.shape[0] == 1:
+            packed = packed[0]
+        if packed.ndim != 2:
+            raise ValueError("SSD backend expects one packed rank-3 output")
+        if packed.shape[1] == 8732:
+            packed = packed.T
+        if packed.shape[0] != 8732 or packed.shape[1] != 4 + self.nb_classes:
+            raise ValueError(
+                "SSD backend output must have shape "
+                f"(1, {4 + self.nb_classes}, 8732)"
+            )
+
+        boxes_all = packed[:, :4]
+        scores_all = packed[:, 4:]
+        image_boxes = []
+        image_scores = []
+        image_classes = []
+        for class_id in range(scores_all.shape[1]):
+            class_scores = scores_all[:, class_id]
+            indices = np.flatnonzero(class_scores > conf)
+            if indices.size > 400:
+                top = np.argpartition(-class_scores[indices], 399)[:400]
+                indices = indices[top]
+            image_boxes.append(boxes_all[indices])
+            image_scores.append(class_scores[indices])
+            image_classes.append(np.full(indices.shape, class_id, dtype=np.int64))
+
+        boxes = np.concatenate(image_boxes, axis=0).astype(np.float32, copy=True)
+        scores = np.concatenate(image_scores, axis=0).astype(np.float32, copy=False)
+        classes = np.concatenate(image_classes, axis=0)
+        if not len(boxes):
+            return boxes, scores, classes
+
+        boxes[:, [0, 2]] *= orig_w / input_w
+        boxes[:, [1, 3]] *= orig_h / input_h
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        return boxes[valid], scores[valid], classes[valid]
 
     def _parse_yolo9(
         self,
@@ -2910,6 +2988,7 @@ class BaseBackend(ABC):
             if self.model_family in (
                 "picodet",
                 "rtmdet",
+                "ssd",
                 "yolo9",
                 "yolonas",
                 "yolox",

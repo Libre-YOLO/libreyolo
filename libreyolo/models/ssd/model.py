@@ -145,6 +145,24 @@ class LibreSSD(BaseModel):
             "mining, and training losses are not implemented."
         )
 
+    def export(self, format: str = "onnx", **kwargs) -> str:
+        requested_size = kwargs.get("imgsz", self.input_size)
+        if isinstance(requested_size, (list, tuple)):
+            size_hw = tuple(int(value) for value in requested_size)
+        else:
+            size_hw = (int(requested_size), int(requested_size))
+        if size_hw != (300, 300):
+            raise ValueError(
+                f"SSD300 export requires imgsz=300, got {requested_size!r}."
+            )
+        if kwargs.get("nms", False):
+            raise NotImplementedError(
+                "SSD300 export exposes its raw packed head; nms=True is not "
+                "supported. LibreYOLO backends apply the native SSD decoder."
+            )
+        kwargs["imgsz"] = 300
+        return super().export(format=format, **kwargs)
+
     def _strict_loading(self) -> bool:
         return True
 

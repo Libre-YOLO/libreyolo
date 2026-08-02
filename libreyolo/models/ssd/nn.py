@@ -14,6 +14,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from ...postprocess.ssd import _default_boxes
+from ...utils.coco import COCO91_CATEGORY_IDS
+
 
 def _xavier_init(module: nn.Module) -> None:
     for layer in module.modules():
@@ -229,9 +232,57 @@ class LibreSSDModel(nn.Module):
         return self.head(features)
 
 
+class SSDExportWrapper(nn.Module):
+    """Export decoded boxes and class probabilities as a YOLO-grid tensor."""
+
+    def __init__(self, model: LibreSSDModel) -> None:
+        super().__init__()
+        self.model = model
+        anchors = _default_boxes(device=torch.device("cpu"), dtype=torch.float32)
+        self.register_buffer("anchors", anchors, persistent=False)
+        if model.num_classes == 91:
+            class_indices = torch.as_tensor(COCO91_CATEGORY_IDS, dtype=torch.long)
+        else:
+            class_indices = torch.arange(1, model.num_classes, dtype=torch.long)
+        self.register_buffer("class_indices", class_indices, persistent=False)
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        outputs = self.model(images)
+        regression = outputs["bbox_regression"]
+        anchors = self.anchors.to(dtype=regression.dtype)
+        widths = anchors[:, 2] - anchors[:, 0]
+        heights = anchors[:, 3] - anchors[:, 1]
+        center_x = anchors[:, 0] + 0.5 * widths
+        center_y = anchors[:, 1] + 0.5 * heights
+
+        dx = regression[..., 0] / 10.0
+        dy = regression[..., 1] / 10.0
+        dw = (regression[..., 2] / 5.0).clamp(max=4.135166556742356)
+        dh = (regression[..., 3] / 5.0).clamp(max=4.135166556742356)
+        predicted_center_x = dx * widths + center_x
+        predicted_center_y = dy * heights + center_y
+        predicted_width = dw.exp() * widths
+        predicted_height = dh.exp() * heights
+        boxes = torch.stack(
+            (
+                predicted_center_x - 0.5 * predicted_width,
+                predicted_center_y - 0.5 * predicted_height,
+                predicted_center_x + 0.5 * predicted_width,
+                predicted_center_y + 0.5 * predicted_height,
+            ),
+            dim=-1,
+        )
+        boxes = boxes.clamp(min=0.0, max=300.0)
+        probabilities = outputs["cls_logits"].softmax(dim=-1)
+        probabilities = probabilities.index_select(-1, self.class_indices)
+        packed = torch.cat((boxes, probabilities), dim=-1)
+        return packed.transpose(1, 2)
+
+
 __all__ = [
     "LibreSSDModel",
     "SSDClassificationHead",
+    "SSDExportWrapper",
     "SSDFeatureExtractorVGG",
     "SSDHead",
     "SSDRegressionHead",
