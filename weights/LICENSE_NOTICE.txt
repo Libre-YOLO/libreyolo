@@ -44,6 +44,14 @@ project the weights were derived from. Per-family summary:
              upstream: roboflow/rf-detr
              (backbone: facebookresearch/dinov2, Apache-2.0)
 
+    Deformable DETR                                     Apache-2.0
+             (LibreDeformableDETR{r50ss,r50ssdc5,r50,
+              r50refine,r50twostage})
+             upstream code: fundamentalvision/Deformable-DETR
+             upstream weights: SenseTime/deformable-detr* on Hugging Face
+             Converted without changing learned tensors; the 91-column COCO
+             head is retained and mapped to contiguous COCO-80 at runtime.
+
     RT-DETR  (LibreRTDETR{r18,r34,r50,r50m,r101})      Apache-2.0
              upstream: lyuwenyu/RT-DETR
              (backbone: PaddlePaddle/PaddleClas ResNet_vd, Apache-2.0)

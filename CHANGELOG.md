@@ -9,6 +9,11 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreDeformableDETR, an inference-only museum port of the original
+  Apache-2.0 Deformable DETR in all five released ResNet-50 variants
+  (`r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage`). The portable
+  `grid_sample` attention path is bit-exact against upstream's pure-PyTorch
+  reference, and all variants have fixed-800 ONNX Runtime prediction parity
 - LibreLWDETR (LW-DETR), a detect-only family in sizes t/s/m/l/x at 640px:
   plain-ViT encoder with interleaved window/global attention, multi-scale
   projector, and a shallow deformable DETR decoder. Code and weights are

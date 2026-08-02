@@ -267,6 +267,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
     valid detections and make exported runtimes diverge from native PyTorch.
     """
     return model_family in {
+        "deformable_detr",
         "dfine",
         "deim",
         "deimv2",
@@ -489,6 +490,11 @@ class BaseBackend(ABC):
             return tensor, img, size, 1.0
         elif self.model_family == "lwdetr":
             tensor, img, size = self._preprocess_lwdetr(
+                image, effective_imgsz, color_format
+            )
+            return tensor, img, size, 1.0
+        elif self.model_family == "deformable_detr":
+            tensor, img, size = self._preprocess_deformable_detr(
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
@@ -858,6 +864,19 @@ class BaseBackend(ABC):
         return img_tensor, original_img, original_size
 
     @staticmethod
+    def _preprocess_deformable_detr(image, input_size, color_format):
+        """Deformable DETR preprocessing: square resize and ImageNet norm."""
+        from ..models.deformable_detr.utils import preprocess_numpy
+
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+
+        img_chw, _ = preprocess_numpy(np.array(img), input_size)
+        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        return img_tensor, original_img, original_size
+
+    @staticmethod
     def _preprocess_dfine(image, input_size, color_format):
         """D-FINE preprocessing: plain resize + RGB + /255, no ImageNet norm."""
         from ..models.dfine.utils import preprocess_numpy as dfine_preprocess_numpy
@@ -1025,6 +1044,11 @@ class BaseBackend(ABC):
             )
         elif self.model_family == "lwdetr":
             boxes, scores, cls = self._parse_lwdetr(
+                all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
+            return boxes, scores, cls, None
+        elif self.model_family == "deformable_detr":
+            boxes, scores, cls = self._parse_deformable_detr(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
             return boxes, scores, cls, None
@@ -1630,6 +1654,21 @@ class BaseBackend(ABC):
             # is already the contiguous LibreYOLO ordering.
             return boxes, scores, class_ids
 
+        return self._parse_dfine(
+            all_outputs, orig_w, orig_h, conf, max_det=effective_max_det
+        )
+
+    def _parse_deformable_detr(
+        self, all_outputs, orig_w, orig_h, conf, max_det: int = 300
+    ):
+        """Parse NMS-free outputs and remove unused COCO columns before top-K."""
+        effective_max_det = min(max_det, 300)
+        num_classes = all_outputs[0].shape[-1]
+        if num_classes == 91 and self.nb_classes == 80:
+            from ..utils.coco import COCO91_CATEGORY_IDS
+
+            columns = np.asarray(COCO91_CATEGORY_IDS, dtype=np.int64)
+            all_outputs = [all_outputs[0][:, :, columns], *all_outputs[1:]]
         return self._parse_dfine(
             all_outputs, orig_w, orig_h, conf, max_det=effective_max_det
         )
@@ -2934,6 +2973,7 @@ class BaseBackend(ABC):
             DEIMValPreprocessor,
             DEIMv2DINOValPreprocessor,
             DEIMv2ValPreprocessor,
+            DeformableDETRValPreprocessor,
             DFINEValPreprocessor,
             ECValPreprocessor,
             LWDETRValPreprocessor,
@@ -2962,6 +3002,7 @@ class BaseBackend(ABC):
 
         preprocessor_cls = {
             "deim": DEIMValPreprocessor,
+            "deformable_detr": DeformableDETRValPreprocessor,
             "dfine": DFINEValPreprocessor,
             "ec": ECValPreprocessor,
             "lwdetr": LWDETRValPreprocessor,

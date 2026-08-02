@@ -34,7 +34,11 @@ def test_val_coco128(family, size, weights):
     weights = require_test_weights(weights)
     model = LibreYOLO(weights, size=size)
 
-    results = model.val(data="coco128.yaml", batch=16, conf=0.001, iou=0.6)
+    # The portable Deformable DETR implementation deliberately uses GridSample
+    # instead of its upstream CUDA extension. Multi-scale encoder attention is
+    # memory-heavy at 800 px, so validate it one image at a time.
+    batch = 1 if family == "deformable_detr" else 16
+    results = model.val(data="coco128.yaml", batch=batch, conf=0.001, iou=0.6)
 
     map50_95 = results["metrics/mAP50-95"]
     map50 = results["metrics/mAP50"]

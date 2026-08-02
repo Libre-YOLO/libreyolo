@@ -1895,6 +1895,18 @@ _add(
 )
 _add(
     "validated",
+    ("deformable_detr",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "All five official ResNet-50 variants preserve raw-logit, box, and "
+        "public prediction parity through ONNX Runtime at a fixed square canvas."
+    ),
+    since="1.5",
+    constraint="FP32, fixed square input, ONNX opset 17",
+)
+_add(
+    "validated",
     ("lwdetr",),
     ("detect",),
     ("onnx", "torchscript"),
@@ -2703,6 +2715,7 @@ _FAMILY_BLOCKS = {
 }
 
 _NCNN_BLOCKS = {
+    "deformable_detr": "Deformable DETR",
     "dfine": "D-FINE",
     "lwdetr": "LW-DETR",
     "deim": "DEIM",
