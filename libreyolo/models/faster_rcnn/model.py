@@ -42,6 +42,7 @@ class LibreFasterRCNN(BaseModel):
         )
         if isinstance(model_path, str):
             self._load_weights(model_path)
+        self.model.eval()
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
