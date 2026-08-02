@@ -166,6 +166,20 @@ class LibreRFDETR(BaseModel):
         ):
             return False
 
+        # The original Deformable DETR shares generic transformer/query/head
+        # names with RF-DETR. Its ResNet body plus native deformable-attention
+        # key hierarchy is a distinct core family and must never reach the
+        # broad descendant marker test below.
+        if (
+            "backbone.0.body.conv1.weight" in weights_dict
+            and "transformer.encoder.layers.0.self_attn.sampling_offsets.weight"
+            in weights_dict
+            and "input_proj.0.0.weight" in weights_dict
+            and "class_embed.0.weight" in weights_dict
+            and any(key.startswith("bbox_embed.0.") for key in weights_dict)
+        ):
+            return False
+
         # LW-DETR is this architecture's ancestor and shares the decoder,
         # projector, and two-stage head key names. Its plain-ViT encoder
         # (patch_embed.proj + CAE q_bias) is absent from RF-DETR, whose DINOv2

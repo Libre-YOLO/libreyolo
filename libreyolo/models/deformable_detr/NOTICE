@@ -1,0 +1,24 @@
+LibreDeformableDETR includes code ported from Deformable DETR:
+
+Source: https://github.com/fundamentalvision/Deformable-DETR
+Commit: 11169a60c33333af00a4849f1808023eba96a931
+License: Apache License 2.0.
+Copyright (c) 2020 SenseTime. All Rights Reserved.
+
+The upstream implementation contains work modified from DETR:
+
+Source: https://github.com/facebookresearch/detr
+License: Apache License 2.0.
+Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+
+LibreYOLO ports the five released ResNet-50 inference architectures and the
+upstream pure-PyTorch multi-scale deformable-attention reference path. The
+custom CUDA extension and training-only matcher, criterion, losses, optimizer,
+and data pipeline are not included.
+
+The official Hugging Face checkpoint-key mapping is adapted from Transformers:
+
+Source: https://github.com/huggingface/transformers
+Commit: 4a224b1e2182d1f8f27d1d76fb8de6ab40b7ff62 (v4.25.1)
+License: Apache License 2.0.
+Copyright 2022-2024 The HuggingFace Team. All Rights Reserved.

@@ -9,6 +9,7 @@ from importlib import metadata as importlib_metadata
 import torch
 
 _DETR_TUPLE_OUTPUT_FAMILIES = {
+    "deformable_detr",
     "detr",
     "dfine",
     "deim",
@@ -161,7 +162,7 @@ def export_onnx(
         output_path: Destination file path for the .onnx file.
         opset: ONNX opset version.
         simplify: Run onnxsim graph simplification.
-        dynamic: Enable dynamic batch axis.
+        dynamic: Enable the format's supported dynamic axes.
         half: Whether the model/input are FP16.
         metadata: Dict of metadata to embed in the ONNX model
             (keys like model_family, model_size, nb_classes, names, imgsz, etc.).
@@ -231,11 +232,13 @@ def export_onnx(
     is_normal = task == "normal"
     is_edge = task == "edge"
     is_gaze = task == "gaze"
+    is_faster_rcnn = model_family == "faster_rcnn"
     known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
     if (
         not is_seg
         and not known_detr_detection
+        and not is_faster_rcnn
         and not is_restore
         and not is_matte
         and not is_depth
@@ -253,7 +256,23 @@ def export_onnx(
             "detection-only in LibreYOLO."
         )
 
-    if is_semantic:
+    if is_faster_rcnn:
+        output_names = ["boxes", "scores", "labels"]
+        # Batch stays fixed at one, but the source spatial axes must remain
+        # dynamic. GeneralizedRCNNTransform performs the upstream min/max
+        # aspect resize in-graph; forcing a square canvas here would require
+        # an extra resize/letterbox and break non-square prediction parity.
+        dynamic_axes = (
+            {
+                "images": {2: "height", 3: "width"},
+                "boxes": {0: "detections"},
+                "scores": {0: "detections"},
+                "labels": {0: "detections"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_semantic:
         output_names = ["semantic_logits"]
         dynamic_axes = (
             {

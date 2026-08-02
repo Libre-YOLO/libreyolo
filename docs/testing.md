@@ -232,12 +232,13 @@ make test_nightly
 make test_e2e E2E_TIMEOUT=1800
 ```
 
-V2.1 contract:
+V2.2 contract:
 
 - `general_nightly`: one smallest native inference case for every public
-  detector family that has a public auto-download route (LibreYOLO HF, or Deci's
-  CDN for YOLO-NAS), plus batched/sequential parity and selected open-vocabulary
-  smoke cases; currently 30 tests.
+  detector family, including inference-only museum families, that has a public
+  auto-download route (LibreYOLO HF, or Deci's CDN for YOLO-NAS), plus
+  batched/sequential parity and selected open-vocabulary smoke cases; currently
+  34 tests.
 - `flagship_nightly`: heavier YOLO9/RF-DETR native validation, video, tracking,
   CLI, and one RF1 training/reload size per flagship family; currently 48 tests
   with `not export_backend`. The full RF1 size matrix remains available under

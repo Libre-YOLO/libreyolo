@@ -61,6 +61,31 @@
     "optional_extra": null,
     "available": true
   },
+  "deformable_detr": {
+    "class": "libreyolo.models.deformable_detr.model.LibreDeformableDETR",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r50ss": 800,
+      "r50ssdc5": 800,
+      "r50": 800,
+      "r50refine": 800,
+      "r50twostage": 800
+    },
+    "default_imgsz": {
+      "r50ss": 800,
+      "r50ssdc5": 800,
+      "r50": 800,
+      "r50refine": 800,
+      "r50twostage": 800
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
   "deim": {
     "class": "libreyolo.models.deim.model.LibreDEIM",
     "tasks": [
@@ -395,6 +420,29 @@
         "l": 640
       }
     },
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
+  "faster_rcnn": {
+    "class": "libreyolo.models.faster_rcnn.model.LibreFasterRCNN",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "n": 320,
+      "s": 800,
+      "m": 800,
+      "l": 800
+    },
+    "default_imgsz": {
+      "n": 320,
+      "s": 800,
+      "m": 800,
+      "l": 800
+    },
+    "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
     "available": true

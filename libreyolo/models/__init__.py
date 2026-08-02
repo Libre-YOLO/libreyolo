@@ -60,10 +60,16 @@ from .deim.model import LibreDEIM  # noqa: E402
 # vocabulary checks (notably the optional RF-DETR family).
 from .detr.model import LibreDETR  # noqa: E402
 
+# Original Deformable DETR is a core, dependency-free family. Register its
+# precise ResNet/deformable-attention fingerprint before descendants whose lazy
+# discriminators intentionally accept broad transformer key patterns.
+from .deformable_detr.model import LibreDeformableDETR  # noqa: E402
+
 # LW-DETR is RF-DETR's ancestor and shares its decoder/projector key names, so
 # it registers eagerly and ahead of the lazy RF-DETR import; its plain-ViT
 # encoder keys (patch_embed.proj + CAE q_bias) are the discriminator.
 from .lwdetr.model import LibreLWDETR  # noqa: E402
+from .faster_rcnn.model import LibreFasterRCNN  # noqa: E402
 from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
@@ -196,6 +202,9 @@ def _unwrap_state_dict(state_dict: dict) -> dict:
 def _needs_rfdetr_registration(weights_dict: dict) -> bool:
     """Return True when checkpoint keys require lazy RF-DETR registration."""
     if LibreRTDETR.can_load(weights_dict):
+        return False
+
+    if LibreDeformableDETR.can_load(weights_dict):
         return False
 
     # LW-DETR carries enc_out_class_embed / enc_out_bbox_embed (RF-DETR forked
@@ -728,6 +737,8 @@ __all__ = [
     "LibreDEIM",
     "LibreDETR",
     "LibreDEIMv2",
+    "LibreFasterRCNN",
+    "LibreDeformableDETR",
     "LibreEC",
     "LibrePICODET",
     "LibreRTMDet",
