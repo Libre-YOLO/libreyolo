@@ -13,7 +13,6 @@ decoder or CRF.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
 import numpy as np
@@ -24,6 +23,7 @@ from PIL import Image
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
 from ..base.model import BaseModel
+from .convert import convert_upstream_deeplabv3_state_dict
 from .nn import SIZE_CONFIGS, LibreDeepLabv3Net
 from .utils import preprocess_numpy
 
@@ -122,8 +122,7 @@ class LibreDeepLabv3(BaseModel):
 
     @classmethod
     def convert_upstream_state_dict(cls, state_dict: dict) -> Optional[dict]:
-        # Added with the strict converter after the native graph lands.
-        return None
+        return convert_upstream_deeplabv3_state_dict(state_dict)
 
     def __init__(
         self,

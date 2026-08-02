@@ -26,34 +26,7 @@ from _conversion_utils import (
 )
 
 
-_COMMON_PREFIXES = ("module.", "model.")
-_AUX_PREFIX = "aux_classifier."
 _IMGSZ = 520
-
-
-def _strip_known_prefix(key: str) -> str:
-    changed = True
-    while changed:
-        changed = False
-        for prefix in _COMMON_PREFIXES:
-            if key.startswith(prefix):
-                key = key[len(prefix) :]
-                changed = True
-                break
-    return key
-
-
-def normalize_deeplabv3_state_dict(
-    state_dict: dict,
-) -> dict[str, torch.Tensor]:
-    """Strip common wrappers and remove the training-only auxiliary head."""
-    normalized: dict[str, torch.Tensor] = {}
-    for raw_key, value in state_dict.items():
-        key = _strip_known_prefix(str(raw_key))
-        if key.startswith(_AUX_PREFIX):
-            continue
-        normalized[key] = value
-    return normalized
 
 
 def _strict_runtime_check(
@@ -94,13 +67,22 @@ def convert_weights(
     if not isinstance(extracted, dict):
         raise TypeError("DeepLabv3 checkpoint does not contain a state dict")
     upstream_count = len(extracted)
-    state_dict = normalize_deeplabv3_state_dict(extracted)
+    add_repo_root_to_path()
+    from libreyolo.models.deeplabv3.convert import (
+        convert_upstream_deeplabv3_state_dict,
+    )
+
+    state_dict = convert_upstream_deeplabv3_state_dict(extracted)
+    if state_dict is None:
+        raise ValueError(
+            "This is not an official-layout torchvision DeepLabv3 checkpoint "
+            "with both ASPP and auxiliary FCN fingerprints."
+        )
     print(
         f"Extracted {upstream_count} entries; retained {len(state_dict)} "
         f"runtime entries and removed {upstream_count - len(state_dict)} auxiliary entries"
     )
 
-    add_repo_root_to_path()
     from libreyolo.models.deeplabv3.model import LibreDeepLabv3, VOC_NAMES
 
     if not LibreDeepLabv3.can_load(state_dict):
