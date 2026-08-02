@@ -6,11 +6,11 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 
 from ...utils.image_loader import ImageInput
+from ...utils.coco import COCO91_TO_COCO80
 from ...utils.serialization import load_untrusted_torch_file
 from ...validation.preprocessors import DETRValPreprocessor
 from ..base import BaseModel
@@ -200,13 +200,20 @@ class LibreDETR(BaseModel):
         max_det: int = 100,
         **kwargs,
     ) -> Dict:
-        del output, conf_thres, iou_thres, original_size, max_det, kwargs
-        return {
-            "num_detections": 0,
-            "boxes": np.zeros((0, 4), dtype=np.float32),
-            "scores": np.zeros((0,), dtype=np.float32),
-            "classes": np.zeros((0,), dtype=np.int64),
-        }
+        from ...postprocess.detr import postprocess
+
+        class_map = (
+            COCO91_TO_COCO80 if self._arch_num_classes == _COCO91_CLASS_SLOTS else None
+        )
+        return postprocess(
+            output,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            original_size=original_size,
+            max_det=max_det,
+            class_map=class_map,
+            **kwargs,
+        )
 
     def train(self, *args, **kwargs):
         del args, kwargs

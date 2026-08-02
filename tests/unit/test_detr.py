@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 import torch
+import numpy as np
 
 pytestmark = pytest.mark.unit
 
@@ -92,3 +93,74 @@ def test_detr_native_model_is_inference_only():
     model = LibreDETR(None, size="r50", nb_classes=3, device="cpu")
     with pytest.raises(NotImplementedError, match="inference-only"):
         model.train(data="coco128.yaml")
+
+
+def test_detr_postprocess_uses_softmax_no_object_and_coco_mapping():
+    from libreyolo.postprocess.detr import postprocess
+    from libreyolo.utils.coco import COCO91_TO_COCO80
+
+    logits = torch.zeros(1, 3, 92)
+    logits[0, 0, 1] = 4.0  # COCO category 1 -> public class 0
+    logits[0, 1, 90] = 3.0  # COCO category 90 -> public class 79
+    logits[0, 2, -1] = 5.0  # no-object wins this query
+    boxes = torch.tensor([[[0.5, 0.5, 0.2, 0.4], [0.25, 0.25, 0.1, 0.1], [0.5] * 4]])
+
+    result = postprocess(
+        {"pred_logits": logits, "pred_boxes": boxes},
+        conf_thres=0.1,
+        original_size=(200, 100),
+        max_det=3,
+        class_map=COCO91_TO_COCO80,
+    )
+
+    assert result["num_detections"] == 2
+    assert result["classes"].tolist() == [0, 79]
+    np.testing.assert_allclose(
+        result["boxes"],
+        [[80.0, 30.0, 120.0, 70.0], [40.0, 20.0, 60.0, 30.0]],
+        rtol=0,
+        atol=1e-5,
+    )
+    expected_score = torch.softmax(logits, dim=-1)[0, 0, 1].item()
+    assert result["scores"][0] == pytest.approx(expected_score)
+
+
+def test_detr_unmapped_coco_ids_do_not_consume_max_det():
+    from libreyolo.postprocess.detr import postprocess
+    from libreyolo.utils.coco import COCO91_TO_COCO80
+
+    queries = 8
+    logits = torch.full((1, queries, 92), -10.0)
+    unmapped = [index for index in range(91) if index not in COCO91_TO_COCO80]
+    for query in range(queries):
+        logits[0, query, unmapped[query]] = 20.0
+        logits[0, query, query + 1] = float(8 - query)
+
+    result = postprocess(
+        {
+            "pred_logits": logits,
+            "pred_boxes": torch.full((1, queries, 4), 0.5),
+        },
+        conf_thres=0.0,
+        max_det=5,
+        class_map=COCO91_TO_COCO80,
+    )
+
+    assert result["num_detections"] == 5
+    assert set(result["classes"].tolist()) <= set(COCO91_TO_COCO80.values())
+
+
+def test_detr_val_preprocessor_matches_inference_preprocess():
+    from libreyolo.models.detr.utils import preprocess_numpy
+    from libreyolo.validation.preprocessors import DETRValPreprocessor
+
+    rng = np.random.default_rng(0)
+    image_bgr = rng.integers(0, 256, (7, 5, 3), dtype=np.uint8)
+    preprocessor = DETRValPreprocessor(img_size=(64, 64))
+
+    actual, _ = preprocessor(image_bgr, np.zeros((0, 5), dtype=np.float32), (64, 64))
+    expected, _ = preprocess_numpy(image_bgr[:, :, ::-1], 64)
+
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=0)
+    assert preprocessor.custom_normalization is True
+    assert preprocessor.uses_letterbox is False
