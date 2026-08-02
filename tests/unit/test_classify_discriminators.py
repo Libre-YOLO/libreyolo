@@ -20,6 +20,7 @@ def _sd(timm, tag):
 def test_supported_variants_detected():
     timm = pytest.importorskip("timm")
     from libreyolo import (
+        LibreAlexNet,
         LibreConvNeXt,
         LibreEfficientNetV2,
         LibreMobileNetV4,
@@ -46,6 +47,12 @@ def test_supported_variants_detected():
         sd = _sd(timm, tag)
         assert cls.detect_size(sd) == expected, f"{cls.__name__}: {tag} -> {cls.detect_size(sd)} != {expected}"
         assert cls.can_load(sd) is True, f"{cls.__name__} should claim {tag}"
+
+    from torchvision.models import alexnet
+
+    alexnet_sd = alexnet(weights=None).state_dict()
+    assert LibreAlexNet.detect_size(alexnet_sd) == "b"
+    assert LibreAlexNet.can_load(alexnet_sd) is True
 
 
 def test_unsupported_variants_rejected():
@@ -75,6 +82,7 @@ def test_classify_filenames_require_cls_suffix():
     in weight filenames; a suffixless name (e.g. ``LibreResNet50.pt``) must not
     be accepted as a classify checkpoint (detect families keep it optional)."""
     from libreyolo import (
+        LibreAlexNet,
         LibreConvNeXt,
         LibreEfficientNetV2,
         LibreMobileNetV4,
@@ -82,6 +90,7 @@ def test_classify_filenames_require_cls_suffix():
     )
 
     for cls, size in [
+        (LibreAlexNet, "b"),
         (LibreResNet, "50"),
         (LibreConvNeXt, "t"),
         (LibreEfficientNetV2, "b0"),
