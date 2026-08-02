@@ -85,8 +85,12 @@ background plus `nc` classes and subtract the background index.
   image.
 - Official `n` checkpoint on COCO128: mAP50-95 `0.34931876998581457`, mAP50
   `0.5067003520164212`.
-- Fixed 320x320, batch-one ONNX Runtime parity for `n`: identical output shapes
-  and labels, boxes within `5e-4`, scores within `1e-5`; unified backend
-  prediction returns the same five detections on the parity image.
+- Dynamic-spatial, batch-one ONNX Runtime parity for `n` on the original
+  1280x852 parity image: identical output shapes and labels, boxes within
+  `5e-3`, scores within `2e-5`; unified backend prediction returns the same
+  five detections as native PyTorch.
 - ONNX emits final boxes/scores/labels after the model's class-wise RoI NMS.
-  Exported-backend parsing deliberately bypasses generic NMS.
+  Exported-backend parsing deliberately bypasses generic NMS. The backend
+  passes unresized RGB pixels to dynamic graphs so the in-graph upstream
+  transform remains the single owner of normalization and aspect resizing;
+  ONNX export therefore forces dynamic spatial axes while keeping batch one.

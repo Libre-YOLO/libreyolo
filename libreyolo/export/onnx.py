@@ -160,7 +160,7 @@ def export_onnx(
         output_path: Destination file path for the .onnx file.
         opset: ONNX opset version.
         simplify: Run onnxsim graph simplification.
-        dynamic: Enable dynamic batch axis.
+        dynamic: Enable the format's supported dynamic axes.
         half: Whether the model/input are FP16.
         metadata: Dict of metadata to embed in the ONNX model
             (keys like model_family, model_size, nb_classes, names, imgsz, etc.).
@@ -256,7 +256,20 @@ def export_onnx(
 
     if is_faster_rcnn:
         output_names = ["boxes", "scores", "labels"]
-        dynamic_axes = None
+        # Batch stays fixed at one, but the source spatial axes must remain
+        # dynamic. GeneralizedRCNNTransform performs the upstream min/max
+        # aspect resize in-graph; forcing a square canvas here would require
+        # an extra resize/letterbox and break non-square prediction parity.
+        dynamic_axes = (
+            {
+                "images": {2: "height", 3: "width"},
+                "boxes": {0: "detections"},
+                "scores": {0: "detections"},
+                "labels": {0: "detections"},
+            }
+            if dynamic
+            else None
+        )
     elif is_semantic:
         output_names = ["semantic_logits"]
         dynamic_axes = (

@@ -1916,8 +1916,8 @@ _add(
     ),
     since="1.7",
     constraint=(
-        "ONNX Runtime, FP32, opset 18, batch 1, fixed square input; final "
-        "class-wise NMS is embedded in the graph"
+        "ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream "
+        "aspect resize and final class-wise NMS are embedded in the graph"
     ),
 )
 _add(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
@@ -171,10 +172,14 @@ class LibreFasterRCNN(BaseModel):
                 raise NotImplementedError(
                     "Faster R-CNN ONNX export supports batch=1 only."
                 )
-            if bool(kwargs.get("dynamic", False)):
-                raise NotImplementedError(
-                    "Faster R-CNN ONNX export requires dynamic=False."
+            if kwargs.get("dynamic") is False:
+                warnings.warn(
+                    "Faster R-CNN ONNX keeps its upstream resize inside the "
+                    "graph; forcing dynamic=True for non-square source parity.",
+                    RuntimeWarning,
+                    stacklevel=2,
                 )
+            kwargs["dynamic"] = True
         return super().export(format=format, opset=opset, **kwargs)
 
     def _strict_loading(self) -> bool:

@@ -172,7 +172,7 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `semantic` / `torchscript`: fixed 512x512 input
 - `eomt` / `semantic` / `tensorrt`: FP32 with a fixed family-native export canvas
 - `eomt` / `semantic` / `openvino`: fixed family-native export canvas
-- `faster_rcnn` / `detect` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, fixed square input; final class-wise NMS is embedded in the graph
+- `faster_rcnn` / `detect` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream aspect resize and final class-wise NMS are embedded in the graph
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
 - `fomo` / `point` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape
 - `fomo` / `point` / `tensorrt`: FP32 with a fixed 96x96 input
