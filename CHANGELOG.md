@@ -9,6 +9,14 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreLWDETR (LW-DETR), a detect-only family in sizes t/s/m/l/x at 640px:
+  plain-ViT encoder with interleaved window/global attention, multi-scale
+  projector, and a shallow deformable DETR decoder. Code and weights are
+  Apache-2.0 (Atten4Vis/Baidu); ported outputs are bit-exact against the
+  official implementation on all five released sizes. Inference-only — the
+  Group-DETR one-to-many training recipe is not implemented and `train()`
+  raises. LW-DETR is the architecture RF-DETR was forked from, so LibreYOLO
+  now ships both the ancestor and its descendant
 - Canonical `edge` and `normal` dense-prediction task contracts, including
   original-canvas result payloads and visualization, dataset schemas,
   validators (edge ODS/OIS and normal angular metrics), and public API aliases
@@ -25,6 +33,22 @@ before 1.4.0 are documented in the
 - Quantization support for the birefnet and feynobg families (fp16/bf16/fp8/int8/w4a16/w4a8/nvfp4/mxfp4; int2 rejected since these families are inference-only and cannot heal); pre-quantized fp16 and fp8 LibreFeyNobg checkpoints published on the LibreYOLO Hugging Face org, loadable by passing the downloaded .pt as the weights argument (fp16 is GPU-oriented; bf16 is blocked by torchvision's missing BFloat16 deform_conv2d kernel; an nvfp4 variant was built, measured, and withdrawn: no kernel path beats fp16 on these GEMM shapes and 4-bit noise can flip foreground selection on ambiguous scenes)
 - Native fp8 execution tier: finalized fp8 QuantLinear runs on the fp8 tensor cores via torch._scaled_mm (Ada/Hopper/Blackwell); optional Triton kernels fuse activation conversion and the per-channel scale/bias epilogue, while validation-selected FeyNobg Swin stage-0 Linears use manifest-recorded tensorwise weight scales for a fully fused cuBLASLt epilogue. Finalized fp8 QuantConv2d convolves in fp16 on cached dequantized weights, and fp16-remainder checkpoints get float32 I/O root hooks. On LibreFeyNobg/RTX 5070 Ti, fp8 is 123.1 vs 129.3 ms for batch-1 graphed predict and 515.4 vs 535.3 ms at batch 4, with a 275 vs 531 MB file.
 - CUDA graph capture for the birefnet and feynobg families via encoder-only capture (the deformable decoder replays wrong under capture and stays eager; graphed output is bit-identical to eager); GraphRunner warms up on the capture stream so lazily-allocated cuBLASLt/cuDNN workspaces stop invalidating capture, and quant modules cache the calibration flag as a host bool (the per-forward .item() sync also invalidated capture)
+
+### Fixed
+
+- CUDA graph capture no longer races with DataLoader pin-memory threads:
+  training capture (`train(..., cuda_graph=True)`) and inference/validation
+  capture now run with `capture_error_mode="thread_local"`, so a
+  `cudaHostAlloc` from a pin-memory thread staging the next batch can no
+  longer invalidate the capture and poison that thread (previously the run
+  died with "AcceleratorError ... in pin memory thread" /
+  `cudaErrorStreamCaptureUnsupported`; observed twice on an RF100-VL
+  campaign with `pin_memory` dataloaders)
+- D-FINE training now applies upstream's per-size multi-scale recipe instead
+  of a hardcoded `base_size_repeat=3`: n trains at fixed size, s uses 20,
+  m 6, l 4, x 3 (Peterande/D-FINE custom fine-tune configs; only X matched
+  before). New `DFINEConfig.base_size_repeat` field overrides the per-size
+  default when set (#675)
 
 ## [1.4.0] - 2026-07-24
 

@@ -101,11 +101,13 @@ def test_exported_backend_restore_preprocess_rejects_images_larger_than_canvas()
         BaseBackend._preprocess_restore(img, input_size=(16, 16), color_format="rgb")
 
 
-@pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino", "ncnn"])
 def test_nafnet_fixed_export_roundtrip(tmp_path, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
     if format == "ncnn" and (
         importlib.util.find_spec("pnnx") is None
         or importlib.util.find_spec("ncnn") is None

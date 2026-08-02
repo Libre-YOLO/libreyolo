@@ -13,6 +13,7 @@ _DETR_TUPLE_OUTPUT_FAMILIES = {
     "deim",
     "deimv2",
     "ec",
+    "lwdetr",
     "rfdetr",
     "rtdetr",
     "rtdetrv2",

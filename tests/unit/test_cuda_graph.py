@@ -463,3 +463,52 @@ def test_capture_raises_rather_than_falling_back():
     with torch.no_grad():
         with pytest.raises(CudaGraphUnavailable, match="capture failed"):
             runner.capture(torch.randn(1, 3, 32, 32, device="cuda"))
+
+
+@requires_cuda
+def test_capture_survives_concurrent_pinned_allocations():
+    """Capture must use capture_error_mode="thread_local".
+
+    Under the default "global" mode a cudaHostAlloc from any other host
+    thread — which is exactly what a DataLoader pin-memory thread does while
+    staging the next batch — invalidates the capture and poisons that
+    thread. Seen in the wild during training-time validation on the first
+    RF100-VL Vast campaign.
+    """
+    import threading
+
+    net = torch.nn.Conv2d(3, 8, 3, padding=1).cuda().eval()
+    runner = GraphRunner(forward_fn=net, family="fake")
+    x = torch.randn(1, 3, 32, 32, device="cuda")
+
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def hammer():
+        held = []
+        size = 0
+        while not stop.is_set():
+            try:
+                # Strictly growing sizes defeat the caching host allocator,
+                # so every iteration is a real cudaHostAlloc.
+                held.append(
+                    torch.empty(4096 + size * 640, dtype=torch.uint8).pin_memory()
+                )
+                size += 1
+            except BaseException as exc:  # must never happen
+                errors.append(exc)
+                return
+
+    thread = threading.Thread(target=hammer, daemon=True)
+    thread.start()
+    try:
+        with torch.no_grad():
+            out = runner.run(x)
+    finally:
+        stop.set()
+        thread.join(timeout=30)
+
+    assert not errors, f"pin-memory stand-in thread was poisoned: {errors[0]!r}"
+    assert runner.info()["graph_count"] == 1
+    assert runner.info()["fallback_reason"] is None
+    torch.testing.assert_close(out, net(x))

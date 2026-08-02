@@ -351,13 +351,15 @@ def test_libre_l2cs_blocks_train_val_export(tmp_path):
     with pytest.raises(NotImplementedError, match="upstream"):
         model.val()
     with pytest.raises(NotImplementedError):
-        model.export("torchscript")
+        model.export("tflite")
 
 
-def test_l2cs_onnx_face_crop_parity(tmp_path):
-    """The ONNX gaze contract decodes one already-cropped face per input."""
-    pytest.importorskip("onnx")
-    pytest.importorskip("onnxruntime")
+@pytest.mark.parametrize("format", ["onnx", "torchscript"])
+def test_l2cs_exported_face_crop_parity(tmp_path, format):
+    """Exported gaze contracts decode one already-cropped face per input."""
+    if format == "onnx":
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
 
     from libreyolo import LibreYOLO
 
@@ -367,9 +369,9 @@ def test_l2cs_onnx_face_crop_parity(tmp_path):
     image[..., 0] = np.arange(80, dtype=np.uint8)[None, :]
     native = model(image, face_boxes=[(0, 0, 80, 64)])
 
-    artifact = tmp_path / "l2cs.onnx"
+    artifact = tmp_path / f"l2cs.{format}"
     model.export(
-        "onnx",
+        format,
         output_path=str(artifact),
         dynamic=False,
         simplify=False,

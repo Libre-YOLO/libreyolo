@@ -61,10 +61,7 @@ class TestDINOv2Metadata:
         assert "embed" in LibreDINOv2.SUPPORTED_TASKS
         assert LibreDINOv2.INPUT_SIZES["n"] == 518
         assert LibreDINOv2.TASK_INPUT_SIZES["embed"]["n"] == 224
-        assert (
-            LibreDINOv2.detect_size_from_filename("LibreDINOv2n-embed.pt")
-            is None
-        )
+        assert LibreDINOv2.detect_size_from_filename("LibreDINOv2n-embed.pt") is None
         assert LibreDINOv2.semantic_resize_mode == "stretch"
 
     def test_family_is_dinov2(self):
@@ -146,7 +143,9 @@ class TestDINOv2SemanticSegmenter:
         assert result.semantic_mask is not None
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
 
-    def test_wrapper_predict_augment_returns_semantic_mask(self, fake_backbone, tmp_path):
+    def test_wrapper_predict_augment_returns_semantic_mask(
+        self, fake_backbone, tmp_path
+    ):
         from libreyolo.models.dinov2.model import LibreDINOv2
 
         img_path = tmp_path / "img.jpg"
@@ -182,11 +181,13 @@ class TestDINOv2SemanticSegmenter:
                 model_path=None, size="n", task="detect", nb_classes=3, device="cpu"
             )
 
-    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    @pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino"])
     def test_exported_semantic_parity(self, fake_backbone, tmp_path, format):
         if format == "onnx":
             pytest.importorskip("onnx")
             pytest.importorskip("onnxruntime")
+        if format == "openvino":
+            pytest.importorskip("openvino")
 
         from libreyolo import LibreYOLO
         from libreyolo.models.dinov2.model import LibreDINOv2
@@ -199,8 +200,11 @@ class TestDINOv2SemanticSegmenter:
             0, 256, size=(70, 70, 3), dtype=np.uint8
         )
         native = model.predict(image, imgsz=70).semantic_mask.data
-        suffix = ".onnx" if format == "onnx" else ".torchscript"
-        artifact = tmp_path / f"dinov2_semantic{suffix}"
+        artifact = tmp_path / {
+            "onnx": "dinov2_semantic.onnx",
+            "torchscript": "dinov2_semantic.torchscript",
+            "openvino": "dinov2_semantic_openvino",
+        }[format]
         model.export(
             format=format,
             output_path=str(artifact),
@@ -211,6 +215,39 @@ class TestDINOv2SemanticSegmenter:
         exported = LibreYOLO(str(artifact), device="cpu").predict(image)
         agreement = (native == exported.semantic_mask.data).float().mean().item()
         assert agreement > 0.95
+
+
+def test_dinov2_classify_torchscript_predict_parity(fake_backbone, tmp_path):
+    from libreyolo import LibreYOLO
+    from libreyolo.models.dinov2.model import LibreDINOv2
+
+    torch.manual_seed(7)
+    model = LibreDINOv2(
+        model_path=None,
+        size="n",
+        task="classify",
+        nb_classes=3,
+        device="cpu",
+    )
+    image = np.random.default_rng(7).integers(
+        0, 256, size=(180, 260, 3), dtype=np.uint8
+    )
+    native = model.predict(image, imgsz=224)
+    artifact = tmp_path / "dinov2_classify.torchscript"
+
+    model.export(
+        format="torchscript",
+        output_path=str(artifact),
+        imgsz=224,
+    )
+    exported = LibreYOLO(str(artifact), device="cpu").predict(image)
+
+    torch.testing.assert_close(
+        exported.probs.data,
+        native.probs.data,
+        rtol=1e-5,
+        atol=1e-6,
+    )
 
 
 class TestDINOv2Embed:
@@ -345,7 +382,11 @@ class TestDINOv2Embed:
         assert model.embed([image_a, image_b]).shape == (2, 6)
         assert not hasattr(model, "embed_text")
 
-    def test_train_val_and_export_are_explicitly_out_of_scope(self):
+    @pytest.mark.parametrize("format", ["onnx", "tflite"])
+    def test_train_val_are_out_of_scope_and_embed_export_routes(
+        self, monkeypatch, format
+    ):
+        from libreyolo.models.base.model import BaseModel
         from libreyolo.models.dinov2.model import LibreDINOv2
 
         model = object.__new__(LibreDINOv2)
@@ -355,8 +396,18 @@ class TestDINOv2Embed:
             model.train(data="unused")
         with pytest.raises(NotImplementedError, match="retrieval validation"):
             model.val(data="unused")
-        with pytest.raises(NotImplementedError, match="embed.*export"):
-            model.export(format="onnx")
+
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return f"dinov2-embed.{format}"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+        assert model.export(format=format, dynamic=False) == (
+            f"dinov2-embed.{format}"
+        )
+        assert captured == {"format": format, "opset": 17, "dynamic": False}
 
     def test_classify_unsupported_export_keeps_classify_error(self):
         from libreyolo.models.dinov2.model import LibreDINOv2
@@ -364,7 +415,7 @@ class TestDINOv2Embed:
         model = object.__new__(LibreDINOv2)
         model.task = "classify"
         with pytest.raises(NotImplementedError, match="classify export"):
-            model.export(format="torchscript")
+            model.export(format="tflite")
 
 
 def _make_semantic_yaml(root, n_images=4, size=70):
@@ -489,8 +540,6 @@ def test_dinov2_semantic_forward_real_backbone():
 @pytest.mark.parametrize(("task", "imgsz"), [("semantic", 518), ("classify", 224)])
 @pytest.mark.parametrize("format", ["onnx", "torchscript"])
 def test_dinov2_real_export_raw_parity(tmp_path, task, imgsz, format):
-    if task == "classify" and format != "onnx":
-        pytest.skip("LibreDINOv2 classify export is intentionally ONNX-only")
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")

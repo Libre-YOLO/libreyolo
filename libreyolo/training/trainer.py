@@ -2622,6 +2622,21 @@ class BaseTrainer(ABC):
                 num_workers=self.config.workers,
                 save_plots=val_save_plots,
                 save_dir=val_save_dir,
+                # One knob for both loops: a run that opts into image caching
+                # for training gets the same for its (deterministic) validation.
+                cache=getattr(self.config, "cache", False),
+                # Same principle for graph replay, gated on the inference-side
+                # capability: training capture (CudaGraphTrainSpec) and forward
+                # capture (SUPPORTS_CUDA_GRAPH) are separate opt-ins, and a
+                # family with only the former must validate eagerly rather
+                # than fail. Replay is bit-identical, so this is an execution
+                # detail, not a protocol change.
+                cuda_graph=(
+                    bool(getattr(self.config, "cuda_graph", False))
+                    and bool(
+                        getattr(self.wrapper_model, "SUPPORTS_CUDA_GRAPH", False)
+                    )
+                ),
             )
 
             if self.wrapper_model is None:
@@ -2646,24 +2661,38 @@ class BaseTrainer(ABC):
                     validator_cls = PointValidator
                 else:
                     validator_cls = DetectionValidator
-                validator_kwargs = {}
-                if task == "detect" and getattr(self.config, "val_loss", False):
-                    try:
-                        validator_kwargs["loss_adapter"] = (
-                            self.build_validation_loss_adapter(eval_pytorch_model)
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "Validation loss could not be initialized; detection "
-                            "metrics will continue without it: %s",
-                            exc,
-                            exc_info=logger.isEnabledFor(logging.DEBUG),
-                        )
-                validator = validator_cls(
-                    model=self.wrapper_model,
-                    config=val_config,
-                    **validator_kwargs,
-                )
+                # One validator instance for the whole run, so the dataset,
+                # dataloader workers, pinned buffers and parsed ground truth
+                # survive between epochs instead of being rebuilt ~100 times.
+                # The per-epoch config is still honored: only save_plots and
+                # save_dir ever differ between the configs this loop builds,
+                # and neither is baked into the reused state.
+                validator = getattr(self, "_epoch_validator", None)
+                if validator is None or type(validator) is not validator_cls:
+                    validator_kwargs = {}
+                    if task == "detect" and getattr(self.config, "val_loss", False):
+                        # The adapter is built once with the cached validator:
+                        # the EMA/eval module object is stable across epochs,
+                        # and _init_metrics() re-arms the adapter every run.
+                        try:
+                            validator_kwargs["loss_adapter"] = (
+                                self.build_validation_loss_adapter(eval_pytorch_model)
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Validation loss could not be initialized; detection "
+                                "metrics will continue without it: %s",
+                                exc,
+                                exc_info=logger.isEnabledFor(logging.DEBUG),
+                            )
+                    validator = validator_cls(
+                        model=self.wrapper_model,
+                        config=val_config,
+                        **validator_kwargs,
+                    )
+                    self._epoch_validator = validator
+                else:
+                    validator.config = val_config
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model

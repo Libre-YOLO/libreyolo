@@ -179,11 +179,20 @@ def test_backend_normal_decode_accepts_bchw_and_repairs_invalid_vectors():
     assert normal[-1, -1].tolist() == pytest.approx([0.0, 0.0, -1.0])
 
 
-def test_moge2_export_support_is_onnx_only():
+def test_moge2_export_support_matches_validated_runtimes():
     from libreyolo.export.support import EXPORT_FORMATS, get_support
 
-    assert get_support("moge2", "normal", "onnx").tier == "validated"
-    for format_name in set(EXPORT_FORMATS) - {"onnx"}:
+    validated = {
+        "onnx",
+        "torchscript",
+        "executorch",
+        "tensorrt",
+        "openvino",
+    }
+    for format_name in validated:
+        assert get_support("moge2", "normal", format_name).tier == "validated"
+    assert get_support("moge2", "normal", "ncnn").tier == "experimental"
+    for format_name in set(EXPORT_FORMATS) - validated - {"ncnn"}:
         assert get_support("moge2", "normal", format_name).tier == "blocked"
 
 

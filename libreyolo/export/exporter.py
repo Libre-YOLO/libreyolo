@@ -140,15 +140,18 @@ def _pose_keypoint_shape_metadata(model) -> dict:
 
 
 _FIXED_SQUARE_EXPORT_FAMILIES = {
+    "clip",
     "dfine",
     "deim",
     "deimv2",
     "ec",
+    "lwdetr",
     "moge2",
     "rtdetr",
     "rtdetrv2",
     "rtdetrv4",
     "rfdetr",
+    "siglip2",
 }
 _RECTANGULAR_EXPORT_FAMILIES = {
     "yolo9",
@@ -200,6 +203,17 @@ class _SemanticExportWrapper(torch.nn.Module):
         if isinstance(output, (list, tuple)):
             return output[-1]
         return output
+
+
+class _ImageEmbeddingExportWrapper(torch.nn.Module):
+    """Trace an image tower as a normalized whole-image embedding graph."""
+
+    def __init__(self, image_tower: torch.nn.Module):
+        super().__init__()
+        self.image_tower = image_tower
+
+    def forward(self, x):
+        return torch.nn.functional.normalize(self.image_tower(x).float(), dim=-1)
 
 
 class _YOLONASExportWrapper(torch.nn.Module):
@@ -644,12 +658,13 @@ class BaseExporter(ABC):
                     f"downsample factor {padder_size}, got {imgsz}."
                 )
         dense_task = getattr(self.model, "task", "detect")
-        if dense_task in {"depth", "normal"}:
-            divisor_attr = (
-                "depth_imgsz_divisor"
-                if dense_task == "depth"
-                else "normal_imgsz_divisor"
-            )
+        divisor_attrs = {
+            "depth": "depth_imgsz_divisor",
+            "normal": "normal_imgsz_divisor",
+            "semantic": "semantic_imgsz_divisor",
+        }
+        if dense_task in divisor_attrs:
+            divisor_attr = divisor_attrs[dense_task]
             divisor = int(getattr(self.model, divisor_attr, 1) or 1)
             if imgsz[0] % divisor or imgsz[1] % divisor:
                 raise ValueError(
@@ -834,6 +849,12 @@ class BaseExporter(ABC):
             nn_model = _RTDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "lwdetr":
+            from ..models.lwdetr.nn import LWDETRExportWrapper
+
+            nn_model = LWDETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "rtmdet":
             # RTMDet intentionally aliases the head convolution weights across
             # feature levels while keeping one batch norm per level. XNNPACK's
@@ -877,6 +898,39 @@ class BaseExporter(ABC):
                 encoder.shape = (imgsz[0], imgsz[1])
                 encoder.export()
                 rfdetr_export_activated = True
+            dfine_wrapped = True
+        elif family in {"clip", "siglip2"} and task == "embed":
+            image_tower = (
+                nn_model.visual if family == "clip" else nn_model.vision_model
+            )
+            nn_model = _ImageEmbeddingExportWrapper(image_tower).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family in {"clip", "siglip2"} and task == "classify":
+            text_embeds = getattr(self.model, "_text_embeds", None)
+            if text_embeds is None:
+                raise RuntimeError(
+                    "No classes set; call set_classes() before export()."
+                )
+            scale = float(nn_model.logit_scale.exp().detach().cpu())
+            weight = (scale * text_embeds).detach().to(device, torch.float32)
+            if family == "clip":
+                from ..models.clip.export import _FrozenCLIPClassifier
+
+                nn_model = _FrozenCLIPClassifier(nn_model.visual, weight).to(device)
+            else:
+                from ..models.siglip2.export import _FrozenSigLIP2Classifier
+
+                bias = nn_model.logit_bias.detach().to(
+                    device=device,
+                    dtype=torch.float32,
+                )
+                nn_model = _FrozenSigLIP2Classifier(
+                    nn_model.vision_model,
+                    weight,
+                    bias.reshape(()),
+                ).to(device)
+            nn_model.eval()
             dfine_wrapped = True
         elif family == "rfdetr":
             from ..models.rfdetr.nn import RFDETRExportWrapper
@@ -1066,6 +1120,17 @@ class BaseExporter(ABC):
         }
         if onnx_path is not None:
             meta["exported_from"] = str(Path(onnx_path).name)
+        # Classification eval preprocessing must travel with every artifact,
+        # not just ONNX. Exported-backend predict() otherwise falls back to
+        # crop_pct=0.875 and bilinear resize, which changes classifier logits
+        # for families such as ResNet (0.95/bicubic).
+        if task == "classify":
+            crop_pct = getattr(self.model, "crop_pct", None)
+            interpolation = getattr(self.model, "interpolation", None)
+            if crop_pct is not None:
+                meta["crop_pct"] = float(crop_pct)
+            if interpolation is not None:
+                meta["interpolation"] = str(interpolation)
         if task == "pose":
             meta.update(_pose_keypoint_shape_metadata(self.model))
         if task == "gaze":

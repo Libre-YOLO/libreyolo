@@ -270,6 +270,25 @@ YOLOv7 / MultimediaTechLab/YOLO (MIT License)
     the model-definition v7.yaml is bundled under libreyolo/models/yolo7/.
     MIT is MIT-compatible; these terms add only attribution obligations.
 
+LW-DETR (Apache License 2.0)
+    Path:    libreyolo/models/lwdetr/, libreyolo/postprocess/lwdetr.py,
+             weights/convert_lwdetr_weights.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/Atten4Vis/LW-DETR
+             Copyright (c) 2024 Baidu. All Rights Reserved.
+    Weights: https://huggingface.co/xbsu/LW-DETR (apache-2.0), rehosted at
+             LibreYOLO/LibreLWDETR{t,s,m,l,x}
+
+    The LibreLWDETR family is a native port of Atten4Vis/LW-DETR: plain-ViT
+    encoder with interleaved window/global attention, multi-scale projector,
+    and a shallow deformable DETR decoder. Module names mirror upstream so the
+    Apache-2.0 COCO checkpoints load unchanged; ported outputs are bit-exact
+    against the official implementation for all five released sizes. Upstream's
+    own Conditional DETR / DETR / Deformable DETR / ViTDet lineage headers are
+    preserved in the ported modules and cited separately in
+    THIRD_PARTY_NOTICES.txt. Ported inference only — the Group-DETR training
+    recipe is not included. See docs/provenance/lwdetr.md.
+
 D-FINE-seg (Apache License 2.0)
     Path:    libreyolo/models/dfine/, libreyolo/postprocess/dfine.py
     Source:  https://github.com/ArgoHA/D-FINE-seg

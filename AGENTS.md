@@ -27,17 +27,20 @@
 ## Agent conduct
 
 - Agents must not open GitHub issues.
-- Agents must not open pull requests.
+- Agents may open pull requests. The PR must target `dev`, and its description
+  must include a `## Code provenance` section that is accurate for the actual
+  diff (see `.github/pull_request_template.md` and the `merge-to-dev` skill).
+  Opening a PR is where an agent's authority stops: it does not approve, does
+  not merge, and does not dismiss review findings.
 - Agents must not post issue comments or PR comments unless a human explicitly
-  asks for it.
-- Humans handle issue creation, PR creation, review submission, and final merge
-  decisions.
-- Agents may reply with a one-click GitHub URL so the human can open the PR or
-  issue themselves, and should pre-fill it. For a PR, pre-fill the title and a
-  description that includes the required `## Code provenance` section (see
-  `.github/pull_request_template.md` and the `merge-to-dev` skill); for an
-  issue, the `libreyolo-report-issue` skill already does this. Pre-filling the
-  handoff URL is expected; opening the PR itself (e.g. `gh pr create`) is not.
+  asks for it. This holds on the agent's own PR too: address review findings by
+  pushing a commit, and put anything else in the summary to the human.
+- Humans handle issue creation, review submission, and final merge decisions.
+- Handing over a one-click pre-filled GitHub URL instead of opening the PR
+  remains a valid option, and is the better one when the work is exploratory or
+  the human wants the description in their own words. For an issue, which an
+  agent still may not open, the `libreyolo-report-issue` skill produces that
+  pre-filled link.
 - When possible, work in git worktrees
 - `release` is the default branch that visitors land on and clone; `dev` is the
   integration branch where all development lands before it is promoted to a release.
@@ -110,11 +113,15 @@
 - Keep PRs to the least code needed to solve the stated problem.
 - Do not mention other computer vision libraries in PR titles or descriptions
   unless the comparison is necessary to explain compatibility or API behavior.
-- The agent pre-fills a draft PR title and description (including the required
-  `## Code provenance` section); the human edits it into their own words before
-  submitting, so the history stays easy for reviewers and future readers to
-  follow. The provenance section must be accurate for the actual diff, never a
-  placeholder, or the `provenance-check` CI gate fails.
+- **Agent-written PR descriptions are short and factual.** Bullets, not prose.
+  What changed, why, what the reviewer should check, what was not verified.
+  No narration of the agent's process, no restating of its own reasoning, no
+  adjectives, no selling. Ten lines beats fifty. A human who wants the longer
+  story will ask for it or write it themselves.
+- The required `## Code provenance` section must be accurate for the actual
+  diff, never a placeholder, or the `provenance-check` CI gate fails.
+- An agent that opens a PR says so in one line, and states what it verified and
+  what it did not. It never implies review or approval it does not have.
 
 ## General library constraints
 - Generally every user facing API (Python, yamls, etc) has to follow the de-facto YOLO CLI/API conventions

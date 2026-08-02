@@ -161,11 +161,13 @@ def test_export_rejects_batch_gt_1():
         model.export(format="onnx", batch=2)
 
 
-@pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino", "ncnn"])
 def test_exported_depth_parity(tmp_path, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
     if format == "ncnn" and (
         importlib.util.find_spec("pnnx") is None
         or importlib.util.find_spec("ncnn") is None

@@ -27,7 +27,14 @@ from ..models.yolonas.utils import (
 )
 from ..models.yolox.utils import preprocess_image as yolox_preprocess_image
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
-from ..utils.drawing import draw_boxes, draw_keypoints, draw_masks, draw_obb
+from ..utils.drawing import (
+    draw_boxes,
+    draw_keypoints,
+    draw_masks,
+    draw_obb,
+    draw_points,
+    draw_semantic_mask,
+)
 from ..utils.general import (
     COCO_CLASSES,
     get_safe_stem,
@@ -172,6 +179,24 @@ def _read_pose_metadata(meta: dict) -> dict[str, Any]:
     return pose_meta
 
 
+def _read_runtime_metadata(meta: dict) -> dict[str, Any]:
+    """Extract preprocessing and graph-contract metadata shared by backends."""
+    runtime_meta: dict[str, Any] = {
+        "embedded_nms": str(meta.get("nms", "")).lower() == "true",
+    }
+    if meta.get("crop_pct") is not None:
+        runtime_meta["crop_pct"] = float(meta["crop_pct"])
+    if meta.get("interpolation") is not None:
+        runtime_meta["interpolation"] = str(meta["interpolation"])
+    if meta.get("num_bins") is not None:
+        runtime_meta["num_bins"] = int(meta["num_bins"])
+    if meta.get("bin_width_deg") is not None:
+        runtime_meta["bin_width_deg"] = float(meta["bin_width_deg"])
+    if meta.get("offset_deg") is not None:
+        runtime_meta["offset_deg"] = float(meta["offset_deg"])
+    return runtime_meta
+
+
 def _nms_numpy(
     boxes: np.ndarray, scores: np.ndarray, iou_threshold: float = 0.45
 ) -> list:
@@ -246,12 +271,18 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "deim",
         "deimv2",
         "ec",
+        "lwdetr",
         "rfdetr",
         "rtdetr",
         "rtdetrv2",
         "rtdetrv4",
         "yolo9_e2e",
     }
+
+
+def _lwdetr_num_select(model_size: Optional[str]) -> int:
+    """Return LW-DETR's configured top-k selection for exported backends."""
+    return 100 if model_size == "t" else 300
 
 
 def _rfdetr_num_select(task: str, model_size: Optional[str]) -> int:
@@ -456,6 +487,11 @@ class BaseBackend(ABC):
                 task=self.task,
             )
             return tensor, img, size, 1.0
+        elif self.model_family == "lwdetr":
+            tensor, img, size = self._preprocess_lwdetr(
+                image, effective_imgsz, color_format
+            )
+            return tensor, img, size, 1.0
         elif self.model_family in ("dfine", "rtdetrv4"):
             tensor, img, size = self._preprocess_dfine(
                 image, effective_imgsz, color_format
@@ -542,11 +578,33 @@ class BaseBackend(ABC):
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
+        transform_kwargs = {
+            "crop_pct": getattr(self, "crop_pct", 0.875),
+            "interpolation": getattr(self, "interpolation", "bilinear"),
+        }
+        if self.model_family == "clip":
+            from ..models.clip.model import CLIP_MEAN, CLIP_STD
+
+            transform_kwargs.update(
+                mean=CLIP_MEAN,
+                std=CLIP_STD,
+                crop_pct=1.0,
+                interpolation="bicubic",
+            )
+        elif self.model_family == "siglip2":
+            from ..models.siglip2.model import SIGLIP_MEAN, SIGLIP_STD
+
+            transform_kwargs.update(
+                mean=SIGLIP_MEAN,
+                std=SIGLIP_STD,
+                crop_pct=1.0,
+                interpolation="bilinear",
+                square_resize=True,
+            )
         transform = build_classify_transforms(
             h,
             augment=False,
-            crop_pct=getattr(self, "crop_pct", 0.875),
-            interpolation=getattr(self, "interpolation", "bilinear"),
+            **transform_kwargs,
         )
         img_tensor = transform(img).unsqueeze(0)
         return img_tensor, img, original_size, 1.0
@@ -560,6 +618,10 @@ class BaseBackend(ABC):
         arr = np.asarray(img.convert("RGB"))
         if self.model_family == "pidnet":
             from ..models.pidnet.model import preprocess_numpy
+
+            chw, ratio = preprocess_numpy(arr, (input_h, input_w))
+        elif self.model_family == "segformer":
+            from ..models.segformer.model import preprocess_numpy
 
             chw, ratio = preprocess_numpy(arr, (input_h, input_w))
         else:
@@ -782,6 +844,20 @@ class BaseBackend(ABC):
         return img_tensor, original_img, original_size
 
     @staticmethod
+    def _preprocess_lwdetr(image, input_size, color_format):
+        """LW-DETR preprocessing: square resize + RGB + ImageNet mean/std."""
+        from ..models.lwdetr.utils import preprocess_numpy as lwdetr_preprocess_numpy
+
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+
+        img_chw, _ = lwdetr_preprocess_numpy(np.array(img), input_size)
+        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+
+        return img_tensor, original_img, original_size
+
+    @staticmethod
     def _preprocess_dfine(image, input_size, color_format):
         """D-FINE preprocessing: plain resize + RGB + /255, no ImageNet norm."""
         from ..models.dfine.utils import preprocess_numpy as dfine_preprocess_numpy
@@ -947,6 +1023,11 @@ class BaseBackend(ABC):
                 conf,
                 max_det=max_det,
             )
+        elif self.model_family == "lwdetr":
+            boxes, scores, cls = self._parse_lwdetr(
+                all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
+            return boxes, scores, cls, None
         elif self.model_family in ("dfine", "rtdetrv4"):
             if self.model_family == "dfine" and self.task == "segment":
                 return self._parse_dfine_segment(
@@ -1517,11 +1598,41 @@ class BaseBackend(ABC):
 
         boxes[:, [0, 2]] *= orig_w
         boxes[:, [1, 3]] *= orig_h
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
 
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask].astype(np.int64)
+
+    def _parse_lwdetr(self, all_outputs, orig_w, orig_h, conf, max_det: int = 300):
+        """Parse LW-DETR outputs — same top-K decode as D-FINE, plus COCO remap.
+
+        Upstream never returns more than its configured ``num_select``, and the
+        released COCO head has one column per COCO category id, so the ids are
+        mapped down to the contiguous 80-class interface the native path exposes.
+
+        The unmapped columns are sliced out *before* the top-K, matching
+        ``postprocess.lwdetr``: filtering after selection would let one of the
+        11 annotation-free COCO ids consume a slot of the max_det budget with no
+        replacement, so exported graphs would drop a detection the native path
+        keeps.
+        """
+        effective_max_det = min(max_det, _lwdetr_num_select(self.model_size))
+
+        num_classes = all_outputs[0].shape[-1]
+        if num_classes == 91 and self.nb_classes == 80:
+            from ..utils.coco import COCO91_CATEGORY_IDS
+
+            columns = np.asarray(COCO91_CATEGORY_IDS, dtype=np.int64)
+            sliced = [all_outputs[0][:, :, columns], *all_outputs[1:]]
+            boxes, scores, class_ids = self._parse_dfine(
+                sliced, orig_w, orig_h, conf, max_det=effective_max_det
+            )
+            # _parse_dfine returns indices into the sliced 80-column head, which
+            # is already the contiguous LibreYOLO ordering.
+            return boxes, scores, class_ids
+
+        return self._parse_dfine(
+            all_outputs, orig_w, orig_h, conf, max_det=effective_max_det
+        )
 
     def _parse_dfine_segment(
         self, all_outputs, orig_w, orig_h, conf, max_det: int = 300
@@ -1942,9 +2053,12 @@ class BaseBackend(ABC):
 
         # COCO 91→80 class mapping
         if num_classes == 91 and self.nb_classes == 80:
-            from ..models.rfdetr.model import _COCO91_TO_COCO80
+            # Shared module, not models.rfdetr.model: that import pulls in the
+            # optional transformers dependency, which LW-DETR exports (also a
+            # 91-wide head) must not require.
+            from ..utils.coco import COCO91_TO_COCO80
 
-            mapped = np.array([_COCO91_TO_COCO80.get(int(c), -1) for c in class_ids])
+            mapped = np.array([COCO91_TO_COCO80.get(int(c), -1) for c in class_ids])
             valid = mapped >= 0
             boxes_raw = boxes_raw[valid]
             max_scores = max_scores[valid]
@@ -2093,8 +2207,6 @@ class BaseBackend(ABC):
         boxes = boxes_xyxy[query_idx]
         boxes[:, [0, 2]] *= orig_w
         boxes[:, [1, 3]] *= orig_h
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
 
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask]
@@ -2388,7 +2500,7 @@ class BaseBackend(ABC):
         orig_w, orig_h = original_size
         logits_t = torch.from_numpy(np.ascontiguousarray(logits))
         align_corners = False
-        if self.model_family == "pidnet":
+        if self.model_family in {"pidnet", "segformer"}:
             input_h, input_w = _imgsz_hw(effective_imgsz)
             scale_y = logits_t.shape[-2] / input_h
             scale_x = logits_t.shape[-1] / input_w
@@ -2399,7 +2511,7 @@ class BaseBackend(ABC):
                 logits_t.shape[-1], max(int(round(orig_w * ratio * scale_x)), 1)
             )
             logits_t = logits_t[..., :valid_h, :valid_w]
-            align_corners = True
+            align_corners = self.model_family == "pidnet"
         logits_t = F.interpolate(
             logits_t,
             size=(orig_h, orig_w),
@@ -2700,6 +2812,7 @@ class BaseBackend(ABC):
     def _save_annotated(self, result, original_img, image_path, output_path):
         """Save annotated image to disk."""
         annotated_img = original_img
+        forced_ext = None
         if result.boxes is None and getattr(result, "probs", None) is not None:
             pass
         elif result.boxes is None and getattr(result, "restored", None) is not None:
@@ -2725,6 +2838,25 @@ class BaseBackend(ABC):
             if isinstance(edge_data, torch.Tensor):
                 edge_data = edge_data.cpu().numpy()
             annotated_img = draw_edge_map(original_img, edge_data)
+        elif (
+            result.boxes is None and getattr(result, "semantic_mask", None) is not None
+        ):
+            mask_data = result.semantic_mask.data
+            if isinstance(mask_data, torch.Tensor):
+                mask_data = mask_data.cpu().numpy()
+            annotated_img = draw_semantic_mask(original_img, mask_data)
+        elif result.boxes is None and getattr(result, "matte", None) is not None:
+            annotated_img = Image.fromarray(result.cutout(original_img), mode="RGBA")
+            forced_ext = "png"
+        elif result.boxes is None and getattr(result, "points", None) is not None:
+            if len(result.points) > 0:
+                annotated_img = draw_points(
+                    original_img,
+                    result.points.xy.tolist(),
+                    result.points.conf.tolist(),
+                    result.points.cls.tolist(),
+                    class_names=result.names,
+                )
         elif len(result) > 0:
             if result.masks is not None:
                 annotated_img = draw_masks(
@@ -2754,7 +2886,9 @@ class BaseBackend(ABC):
                     kpts_np = kpts_np.cpu().numpy()
                 annotated_img = draw_keypoints(annotated_img, kpts_np)
 
-        ext = Path(image_path).suffix.lstrip(".") if image_path else "jpg"
+        ext = forced_ext or (
+            Path(image_path).suffix.lstrip(".") if image_path else "jpg"
+        )
         if not ext:
             ext = "jpg"
         if output_path:
@@ -2766,6 +2900,8 @@ class BaseBackend(ABC):
             save_dir = Path("runs/detections")
             save_dir.mkdir(parents=True, exist_ok=True)
             final_path = save_dir / f"{stem}_{model_tag}_{timestamp}.{ext}"
+        if forced_ext is not None:
+            final_path = Path(final_path).with_suffix(f".{forced_ext}")
 
         annotated_img.save(final_path)
         log_saved_result(result, final_path)
@@ -2800,6 +2936,7 @@ class BaseBackend(ABC):
             DEIMv2ValPreprocessor,
             DFINEValPreprocessor,
             ECValPreprocessor,
+            LWDETRValPreprocessor,
             PICODETValPreprocessor,
             RFDETRValPreprocessor,
             RTDETRValPreprocessor,
@@ -2827,6 +2964,7 @@ class BaseBackend(ABC):
             "deim": DEIMValPreprocessor,
             "dfine": DFINEValPreprocessor,
             "ec": ECValPreprocessor,
+            "lwdetr": LWDETRValPreprocessor,
             "picodet": PICODETValPreprocessor,
             "rfdetr": RFDETRValPreprocessor,
             "rtdetr": RTDETRValPreprocessor,

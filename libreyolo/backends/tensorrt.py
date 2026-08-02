@@ -11,7 +11,13 @@ import torch
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, ImageSize, _read_metadata_imgsz, _read_pose_metadata
+from .base import (
+    BaseBackend,
+    ImageSize,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+    _read_runtime_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,13 +80,18 @@ class TensorRTBackend(BaseBackend):
             else self._metadata.get("nb_classes", self._metadata.get("nc", 80))
         )
         model_family = self._metadata.get("model_family")
-        default_task = normalize_task(self._metadata.get("default_task"), default="detect")
+        default_task = normalize_task(
+            self._metadata.get("default_task"), default="detect"
+        )
         metadata_task = normalize_task(self._metadata.get("task"), default=default_task)
         supported_tasks = normalize_supported_tasks(
             self._metadata.get("supported_tasks", (metadata_task,))
         )
         pose_metadata = _read_pose_metadata(self._metadata)
-        self._sidecar_size = self._metadata.get("model_size") or self._metadata.get("size")
+        runtime_metadata = _read_runtime_metadata(self._metadata)
+        self._sidecar_size = self._metadata.get("model_size") or self._metadata.get(
+            "size"
+        )
 
         sidecar_names = self._metadata.get("names")
         if sidecar_names is not None and nb_classes is None:
@@ -158,6 +169,11 @@ class TensorRTBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            crop_pct=runtime_metadata.get("crop_pct"),
+            interpolation=runtime_metadata.get("interpolation"),
+            num_bins=runtime_metadata.get("num_bins"),
+            bin_width_deg=runtime_metadata.get("bin_width_deg"),
+            offset_deg=runtime_metadata.get("offset_deg"),
             **pose_metadata,
         )
 
@@ -424,11 +440,50 @@ class TensorRTBackend(BaseBackend):
                         orig_shape=orig_shape,
                         image_path=image_path,
                     )
+                elif self.task == "restore":
+                    result = self._build_restore_result(
+                        per_image,
+                        orig_shape=orig_shape,
+                        original_size=orig_size,
+                        image_path=image_path,
+                    )
                 elif self.task == "depth":
                     result = self._build_depth_result(
                         per_image,
                         orig_shape=orig_shape,
                         original_size=orig_size,
+                        image_path=image_path,
+                    )
+                elif self.task == "matte":
+                    result = self._build_matte_result(
+                        per_image,
+                        orig_shape=orig_shape,
+                        original_size=orig_size,
+                        image_path=image_path,
+                    )
+                elif self.task == "gaze":
+                    result = self._build_gaze_result(
+                        per_image,
+                        orig_shape=orig_shape,
+                        image_path=image_path,
+                    )
+                elif self.task == "semantic":
+                    result = self._build_semantic_result(
+                        per_image,
+                        orig_shape=orig_shape,
+                        original_size=orig_size,
+                        effective_imgsz=effective_imgsz,
+                        ratio=float(ratio or 1.0),
+                        image_path=image_path,
+                    )
+                elif self.task == "point":
+                    result = self._build_point_result(
+                        per_image,
+                        orig_shape=orig_shape,
+                        original_size=orig_size,
+                        effective_imgsz=effective_imgsz,
+                        conf=conf,
+                        max_det=max_det,
                         image_path=image_path,
                     )
                 else:

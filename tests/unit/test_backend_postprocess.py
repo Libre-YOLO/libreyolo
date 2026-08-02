@@ -712,6 +712,22 @@ def test_ec_segment_backend_does_not_clip_boxes():
     assert parsed_masks.shape == (1, 100, 200)
 
 
+@pytest.mark.parametrize("family", ("dfine", "rtdetrv4", "rtdetr", "rtdetrv2"))
+def test_detr_detection_backend_does_not_clip_boxes(family):
+    backend = _DummyBackend(family)
+    logits = np.array([[[10.0]]], dtype=np.float32)
+    boxes = np.array([[[0.05, 0.5, 0.3, 0.5]]], dtype=np.float32)
+
+    parsed_boxes, scores, classes, masks = backend._parse_outputs(
+        [logits, boxes], 64, (200, 100), conf=0.5
+    )
+
+    np.testing.assert_allclose(parsed_boxes, [[-20.0, 25.0, 40.0, 75.0]])
+    assert scores[0] > 0.99
+    np.testing.assert_array_equal(classes, [0])
+    assert masks is None
+
+
 def test_ec_segment_backend_honors_max_det():
     backend = _DummyBackend(
         "ec",
@@ -1755,6 +1771,46 @@ def test_backend_save_annotated_accepts_directory_output_path(tmp_path):
     )
 
     expected = output_dir / "source.jpg"
+    assert expected.exists()
+    assert result.saved_path == str(expected)
+
+
+@pytest.mark.parametrize("task", ["semantic", "matte", "point"])
+def test_backend_save_annotated_handles_boxless_dense_results(tmp_path, task):
+    from libreyolo.utils.results import Matte, Points, Results, SemanticMask
+
+    backend = _DummyBackend(
+        "fomo" if task == "point" else "test",
+        task=task,
+        supported_tasks=(task,),
+        imgsz=8,
+    )
+    payload = {}
+    if task == "semantic":
+        payload["semantic_mask"] = SemanticMask(torch.zeros(8, 8), (8, 8))
+    elif task == "matte":
+        payload["matte"] = Matte(torch.ones(8, 8), (8, 8))
+    else:
+        payload["points"] = Points(
+            torch.tensor([[4.0, 4.0, 0.0, 0.9]]),
+            (8, 8),
+        )
+    result = Results(
+        boxes=None,
+        orig_shape=(8, 8),
+        names={0: "object"},
+        **payload,
+    )
+    output = tmp_path / f"{task}.jpg"
+
+    backend._save_annotated(
+        result,
+        Image.new("RGB", (8, 8), "white"),
+        output.name,
+        str(output),
+    )
+
+    expected = output.with_suffix(".png") if task == "matte" else output
     assert expected.exists()
     assert result.saved_path == str(expected)
 

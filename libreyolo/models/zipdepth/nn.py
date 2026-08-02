@@ -173,7 +173,6 @@ class ChannelAttention(nn.Module):
     def __init__(self, dim: int, reduction: int = 8):
         super().__init__()
         hidden = max(dim // reduction, 4)
-        self.pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Conv2d(dim, hidden, 1, bias=False),
             nn.ReLU(inplace=True),
