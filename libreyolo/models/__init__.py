@@ -54,10 +54,17 @@ from .deimv2.model import LibreDEIMv2  # noqa: E402
 from .rtdetrv4.model import LibreRTDETRv4  # noqa: E402  (must precede LibreDFINE — sibling arch, more-specific can_load)
 from .dfine.model import LibreDFINE  # noqa: E402
 from .deim.model import LibreDEIM  # noqa: E402
+
+# Vanilla DETR uses a unique top-level query embedding plus packed PyTorch
+# cross-attention weights. Register it before descendants with broader DETR
+# vocabulary checks (notably the optional RF-DETR family).
+from .detr.model import LibreDETR  # noqa: E402
+
 # Original Deformable DETR is a core, dependency-free family. Register its
 # precise ResNet/deformable-attention fingerprint before descendants whose lazy
 # discriminators intentionally accept broad transformer key patterns.
 from .deformable_detr.model import LibreDeformableDETR  # noqa: E402
+
 # LW-DETR is RF-DETR's ancestor and shares its decoder/projector key names, so
 # it registers eagerly and ahead of the lazy RF-DETR import; its plain-ViT
 # encoder keys (patch_embed.proj + CAE q_bias) are the discriminator.
@@ -204,7 +211,7 @@ def _needs_rfdetr_registration(weights_dict: dict) -> bool:
     # them from it), but is a core family with no transformers dependency.
     # Without this guard, loading LW-DETR weights would import RF-DETR and hard
     # fail whenever the optional ``rfdetr`` extra is not installed.
-    if LibreLWDETR.can_load(weights_dict):
+    if LibreDETR.can_load(weights_dict) or LibreLWDETR.can_load(weights_dict):
         return False
 
     if "linear.weight" in weights_dict and any(
@@ -728,6 +735,7 @@ __all__ = [
     "LibreYOLONAS",
     "LibreDFINE",
     "LibreDEIM",
+    "LibreDETR",
     "LibreDEIMv2",
     "LibreFasterRCNN",
     "LibreDeformableDETR",

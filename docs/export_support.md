@@ -17,6 +17,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
 | depth_anything | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | depth_anything3 | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
+| detr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | dexined | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | dfine | detect | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ |  | exp | ✓ |  |  |  |  |
@@ -134,6 +135,8 @@ A check mark applies only under any constraint listed here.
 - `depth_anything3` / `depth` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape divisible by 14
 - `depth_anything3` / `depth` / `tensorrt`: FP32, batch 1, fixed square input divisible by 14; TensorRT evidence uses TensorRT 10.16 and OpenVINO evidence uses OpenVINO 2026.2
 - `depth_anything3` / `depth` / `openvino`: FP32, batch 1, fixed square input divisible by 14; TensorRT evidence uses TensorRT 10.16 and OpenVINO evidence uses OpenVINO 2026.2
+- `detr` / `detect` / `onnx`: FP32, batch 1, fixed square input
+- `detr` / `detect` / `torchscript`: FP32, batch 1, fixed square input
 - `dexined` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
 - `dexined` / `edge` / `torchscript`: TorchScript CPU FP32, batch 1, fixed input shape
 - `dexined` / `edge` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
@@ -372,6 +375,10 @@ A check mark applies only under any constraint listed here.
 - `depth_anything3` / `depth` / `tflite`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `coreml`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `coreai`: The model raises NotImplementedError for every format: depth export is out of scope per ADR 0006, the depth task contract. Depth Anything V2 exports and validates at 5.2e-06, so this is specific to the V3 family and not a Core AI limitation.
+- `detr` / `detect` / `ncnn`: NCNN export is not supported for DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
+- `detr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `detr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `detr` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `dexined` / `edge` / `ncnn`: PNNX 20260526 leaves an unsupported Tensor.index channel-reversal node, so the generated NCNN network has no runnable input.
 - `dexined` / `edge` / `coreml`: This edge runtime has no parity-valid artifact for the requested format.
 - `dexined` / `edge` / `coreai`: This edge runtime has no parity-valid artifact for the requested format.

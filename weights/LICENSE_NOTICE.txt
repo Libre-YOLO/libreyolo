@@ -67,6 +67,13 @@ project the weights were derived from. Per-family summary:
              upstream: lyuwenyu/RT-DETR
              (backbone: PaddlePaddle/PaddleClas ResNet_vd, Apache-2.0)
 
+    DETR     (LibreDETR{r50,r50dc5,r101,r101dc5})      Apache-2.0
+             upstream: facebookresearch/detr, commit
+             29901c51d7fe8712168b8d0d64351170bc0f83e0.
+             Official COCO model-zoo tensors are unchanged; conversion only
+             adds LibreYOLO checkpoint metadata. Every Hugging Face weight
+             repository carries the upstream Apache-2.0 LICENSE and NOTICE.
+
     EoMT     (LibreEoMTl-sem, LibreEoMTl-seg,          MIT
               LibreEoMTl-seg-1280, LibreEoMT{s,b,l}-panoptic)
              upstream: tue-mps/eomt

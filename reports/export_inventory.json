@@ -182,6 +182,29 @@
     "optional_extra": null,
     "available": true
   },
+  "detr": {
+    "class": "libreyolo.models.detr.model.LibreDETR",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r50": 800,
+      "r50dc5": 800,
+      "r101": 800,
+      "r101dc5": 800
+    },
+    "default_imgsz": {
+      "r50": 800,
+      "r50dc5": 800,
+      "r101": 800,
+      "r101dc5": 800
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
   "dexined": {
     "class": "libreyolo.models.dexined.model.LibreDexiNed",
     "tasks": [

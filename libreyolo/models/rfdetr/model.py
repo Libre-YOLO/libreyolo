@@ -155,6 +155,17 @@ class LibreRFDETR(BaseModel):
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
+        # Vanilla DETR has a top-level query table and stock packed
+        # MultiheadAttention projections. RF-DETR's historical discriminator is
+        # intentionally broad, so reject this exact sibling signature first.
+        if (
+            "query_embed.weight" in weights_dict
+            and "transformer.decoder.layers.0.multihead_attn.in_proj_weight"
+            in weights_dict
+            and "backbone.0.body.conv1.weight" in weights_dict
+        ):
+            return False
+
         # The original Deformable DETR shares generic transformer/query/head
         # names with RF-DETR. Its ResNet body plus native deformable-attention
         # key hierarchy is a distinct core family and must never reach the

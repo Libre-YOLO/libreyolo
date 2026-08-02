@@ -50,6 +50,7 @@ file = name + ".pt"
 | YOLO9 | `LibreYOLO9` | `LibreYOLO9m.pt` |
 | YOLO9-P2 | `LibreYOLO9P2` | `LibreYOLO9P2s.pt`, `LibreYOLO9P2s-visdrone.pt` (dataset-variant suffix) |
 | RFDETR | `LibreRFDETR` | `LibreRFDETRn.pt`, `LibreRFDETRn-seg.pt`, `LibreRFDETRx-pose.pt` |
+| DETR | `LibreDETR` | `LibreDETRr50.pt` (original DETR; Apache-2.0 code + weights; inference-only) |
 | LWDETR | `LibreLWDETR` | `LibreLWDETRt.pt` (LW-DETR, RF-DETR's ancestor; Apache-2.0 code + weights; inference-only) |
 | FasterRCNN | `LibreFasterRCNN` | `LibreFasterRCNNn.pt` (modernized torchvision Faster R-CNN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
 | Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
@@ -157,6 +158,9 @@ LibreRFDETRl.pt, LibreRFDETRn-seg.pt, LibreRFDETRs-seg.pt,
 LibreRFDETRm-seg.pt, LibreRFDETRl-seg.pt, LibreRFDETRx-pose.pt,
 LibreRFDETRn-obb.pt, LibreRFDETRs-obb.pt, LibreRFDETRm-obb.pt,
 LibreRFDETRl-obb.pt,
+
+LibreDETRr50.pt, LibreDETRr50dc5.pt,
+LibreDETRr101.pt, LibreDETRr101dc5.pt,
 
 LibreLWDETRt.pt, LibreLWDETRs.pt, LibreLWDETRm.pt,
 LibreLWDETRl.pt, LibreLWDETRx.pt,
@@ -366,10 +370,10 @@ Rules:
 
 - **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
   section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
-- **No slug exists** for `lwdetr`, `deformable_detr`, `yolo9_e2e`, `yolo9_p2`,
-  `l2cs`, RTMDet, the VLM / SAM / open-vocab tiers, or the Darknet-lineage
-  families (`yolo1`, `yolo2`, `yolo3`, `yolo4`) and `yolo7` — omit the
-  Benchmarks section and tell the user.
+- **No slug exists** for `detr`, `lwdetr`, `deformable_detr`, `yolo9_e2e`,
+  `yolo9_p2`, `l2cs`, RTMDet, the VLM / SAM / open-vocab tiers, or the
+  Darknet-lineage families (`yolo1`, `yolo2`, `yolo3`, `yolo4`) and `yolo7` —
+  omit the Benchmarks section and tell the user.
   Semantic / depth / restore / point repos also omit it (detection only).
 - **The page may lag the upload.** Model pages are generated from
   `website/src/data/metadata/models.json` in

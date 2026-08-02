@@ -270,6 +270,23 @@ YOLOv7 / MultimediaTechLab/YOLO (MIT License)
     the model-definition v7.yaml is bundled under libreyolo/models/yolo7/.
     MIT is MIT-compatible; these terms add only attribution obligations.
 
+DETR (Apache License 2.0)
+    Path:    libreyolo/models/detr/, libreyolo/postprocess/detr.py,
+             weights/convert_detr_weights.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/facebookresearch/detr
+             commit 29901c51d7fe8712168b8d0d64351170bc0f83e0
+             Copyright (c) Facebook, Inc. and its affiliates.
+    Weights: https://dl.fbaipublicfiles.com/detr/ (Apache-2.0), rehosted at
+             LibreYOLO/LibreDETR{r50,r50dc5,r101,r101dc5}
+
+    LibreDETR is a native inference port of the original DETR ResNet-50/101
+    and DC5 detector variants. Module names mirror upstream so all four
+    official COCO checkpoints load unchanged. The transformer source inherits
+    its stated ``torch.nn.Transformer`` lineage from PyTorch (BSD-3-Clause).
+    Copyright headers are retained in the ported architecture; family-level
+    details live in libreyolo/models/detr/NOTICE.
+
 Faster R-CNN / TorchVision (BSD-3-Clause)
     Path:    libreyolo/models/faster_rcnn/,
              libreyolo/postprocess/faster_rcnn.py
