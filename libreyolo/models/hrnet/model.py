@@ -88,10 +88,14 @@ class LibreHRNet(BaseModel):
             task=task,
             **kwargs,
         )
-        self.names = {0: "person"}
         self.num_keypoints = self.POSE_NUM_KEYPOINTS
+        self.keypoint_dim = 3
         if model_path is not None and isinstance(model_path, str):
             self._load_weights(model_path)
+        # HRNet's released pose head is fixed to the COCO person category.
+        # Keep this semantic name even when a metadata-less upstream file was
+        # auto-wrapped with the generic one-class fallback.
+        self.names = {0: "person"}
         self.model.eval()
 
     def _init_model(self) -> nn.Module:

@@ -171,7 +171,7 @@ def _infer_checkpoint_imgsz(
     size: str,
     task: str,
 ) -> int | None:
-    """Infer square input size from registered family metadata when possible."""
+    """Infer input height from registered family metadata when possible."""
     try:
         from ..models.base import BaseModel
     except Exception:
@@ -186,6 +186,8 @@ def _infer_checkpoint_imgsz(
         )
         value = input_sizes.get(size)
         if value is not None:
+            if isinstance(value, (tuple, list)) and len(value) == 2:
+                return int(value[0])
             return int(value)
     return None
 
