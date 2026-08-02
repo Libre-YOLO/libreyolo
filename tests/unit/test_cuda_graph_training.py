@@ -18,6 +18,7 @@ from libreyolo.training.cuda_graph import (
     CudaGraphTrainSpec,
     GraphableNetwork,
     TrainGraphManager,
+    _thread_local_capture_errors,
     flatten_tree,
     unflatten_tree,
 )
@@ -160,6 +161,137 @@ class TestTrainGraphManager:
             assert manager.run(spec, imgs) == ("flat",)
         assert manager.run(spec, imgs) is None
         assert manager.disabled
+
+
+# =============================================================================
+# Capture error mode (pin-memory thread race)
+# =============================================================================
+#
+# Capture defaults to capture_error_mode="global", under which a cudaHostAlloc
+# from a DataLoader pin-memory thread invalidates the capture AND poisons the
+# pin thread, killing the run on the next batch fetch (seen twice on the first
+# RF100-VL Vast campaign as "AcceleratorError ... in pin memory thread").
+# Capture must therefore run in "thread_local" mode, where other threads'
+# CUDA calls proceed normally.
+
+
+class TestThreadLocalCaptureErrors:
+    def test_swaps_and_restores_cudagraph_symbol(self):
+        original = torch.cuda.CUDAGraph
+        with _thread_local_capture_errors():
+            assert torch.cuda.CUDAGraph is not original
+            assert issubclass(torch.cuda.CUDAGraph, original)
+        assert torch.cuda.CUDAGraph is original
+
+    def test_restores_on_exception(self):
+        original = torch.cuda.CUDAGraph
+        with pytest.raises(RuntimeError, match="boom"):
+            with _thread_local_capture_errors():
+                raise RuntimeError("boom")
+        assert torch.cuda.CUDAGraph is original
+
+    def test_concurrent_contexts_serialize_and_restore_the_original(self):
+        """Unsynchronized, two overlapping contexts would each save a
+        different "original" (the second saves the first's subclass) and
+        the interleaved restores could leave a temporary subclass installed
+        for the rest of the process. The patch lock must serialize them:
+        every context sees the true original as its base class, and the
+        true original is what remains at the end."""
+        import threading
+        import time
+
+        original = torch.cuda.CUDAGraph
+        bases = []
+
+        def use_context():
+            with _thread_local_capture_errors():
+                bases.append(torch.cuda.CUDAGraph.__mro__[1])
+                time.sleep(0.02)
+
+        threads = [threading.Thread(target=use_context) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert torch.cuda.CUDAGraph is original
+        assert bases == [original] * 4
+
+    def test_forces_thread_local_at_capture_begin(self):
+        class FakeGraph:
+            def capture_begin(self, *args, **kwargs):
+                self.begin_kwargs = kwargs
+
+        with patch("torch.cuda.CUDAGraph", FakeGraph):
+            with _thread_local_capture_errors():
+                graph = torch.cuda.CUDAGraph()
+                # torch.cuda.graph.__enter__ passes the default explicitly;
+                # the subclass must override it.
+                graph.capture_begin(capture_error_mode="global")
+        assert graph.begin_kwargs["capture_error_mode"] == "thread_local"
+
+    def test_manager_captures_under_the_patch(self):
+        """The capture path must instantiate the patched graph class."""
+        manager = TrainGraphManager(warmup_threshold=1)
+        original = torch.cuda.CUDAGraph
+        seen = {}
+
+        def record_class(*args, **kwargs):
+            seen["cls"] = torch.cuda.CUDAGraph
+            return MagicMock(return_value=("flat",))
+
+        with patch("torch.cuda.make_graphed_callables", side_effect=record_class):
+            assert manager.run(_spec(), _fake_cuda_batch()) == ("flat",)
+        assert seen["cls"] is not original
+        assert issubclass(seen["cls"], original)
+        assert torch.cuda.CUDAGraph is original
+
+    @requires_cuda
+    def test_capture_survives_concurrent_pinned_allocations(self):
+        """Regression for the campaign killer: capture while a stand-in for
+        the DataLoader pin-memory thread keeps calling cudaHostAlloc."""
+        import threading
+
+        net = GraphableNetwork(nn.Conv2d(3, 8, 3, padding=1).cuda())
+        spec = CudaGraphTrainSpec(
+            network=net,
+            assemble=lambda flat, *args: {"total_loss": flat[0].sum()},
+        )
+        manager = TrainGraphManager(warmup_threshold=1)
+        imgs = torch.randn(2, 3, 32, 32, device="cuda")
+
+        stop = threading.Event()
+        errors: list[BaseException] = []
+
+        def hammer():
+            held = []
+            size = 0
+            while not stop.is_set():
+                try:
+                    # Strictly growing sizes defeat the caching host
+                    # allocator, so every iteration is a real cudaHostAlloc,
+                    # exactly what the pin-memory thread issues per batch.
+                    held.append(
+                        torch.empty(4096 + size * 640, dtype=torch.uint8).pin_memory()
+                    )
+                    size += 1
+                except BaseException as exc:  # must never happen
+                    errors.append(exc)
+                    return
+
+        thread = threading.Thread(target=hammer, daemon=True)
+        thread.start()
+        try:
+            out = manager.run(spec, imgs)
+        finally:
+            stop.set()
+            thread.join(timeout=30)
+
+        assert not errors, f"pin-memory stand-in thread was poisoned: {errors[0]!r}"
+        assert out is not None
+        assert manager.captured and not manager.disabled
+        # And the graph still replays.
+        assert manager.run(spec, imgs) is not None
 
 
 # =============================================================================

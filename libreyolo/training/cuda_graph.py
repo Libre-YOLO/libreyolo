@@ -55,13 +55,63 @@ trajectory as identical between eager and graphed runs.
 from __future__ import annotations
 
 import logging
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import torch
 from torch import nn
 
 logger = logging.getLogger(__name__)
+
+# Serializes the torch.cuda.CUDAGraph swap below. Without it, two host
+# threads capturing concurrently would each save a different "original"
+# (the second thread saves the first thread's subclass) and the interleaved
+# restores could leave a temporary subclass installed for the rest of the
+# process. Capture is rare and takes seconds, so holding the lock across
+# the whole capture is fine.
+_capture_patch_lock = threading.Lock()
+
+
+@contextmanager
+def _thread_local_capture_errors() -> Iterator[None]:
+    """Make ``make_graphed_callables`` capture with ``thread_local`` errors.
+
+    Capture defaults to ``capture_error_mode="global"``, under which a CUDA
+    call from *any* host thread invalidates the capture. A DataLoader with
+    ``pin_memory=True`` keeps a pin-memory thread alive that calls
+    ``cudaHostAlloc`` whenever it stages the next prefetched batch, so a
+    lazy capture taken on a live training batch races with it: the capture
+    dies with ``cudaErrorStreamCaptureUnsupported`` and, worse, the error
+    poisons the pin-memory thread, which re-raises on the next batch fetch
+    and kills the whole run (observed twice on the first RF100-VL Vast
+    campaign, as "AcceleratorError ... in pin memory thread").
+
+    ``thread_local`` is PyTorch's documented mode for exactly this
+    situation: only the capturing thread is restricted during capture, and
+    other threads' CUDA calls proceed normally without being captured. The
+    pin-memory thread touches only its own pinned host buffers, never the
+    capturing stream, so nothing it does belongs in the graph.
+
+    ``make_graphed_callables`` constructs its own ``CUDAGraph`` objects and
+    exposes no way to choose the mode, so for the duration of the call the
+    ``torch.cuda.CUDAGraph`` symbol it instantiates is swapped for a
+    subclass that forces the mode at ``capture_begin``.
+    """
+    with _capture_patch_lock:
+        original = torch.cuda.CUDAGraph
+
+        class _ThreadLocalCaptureGraph(original):  # type: ignore[misc, valid-type]
+            def capture_begin(self, *args: Any, **kwargs: Any) -> None:
+                kwargs["capture_error_mode"] = "thread_local"
+                super().capture_begin(*args, **kwargs)
+
+        torch.cuda.CUDAGraph = _ThreadLocalCaptureGraph
+        try:
+            yield
+        finally:
+            torch.cuda.CUDAGraph = original
 
 # A shape must repeat this many times before capture pays off. One-shot
 # shapes (a lone odd-size batch) then never capture, while any steady-state
@@ -301,19 +351,20 @@ class TrainGraphManager:
             # modes to the same trajectory. The TypeError retry keeps older
             # torch versions without the keyword working.
             sample = (imgs.detach().clone(),)
-            try:
-                graphed = torch.cuda.make_graphed_callables(
-                    spec.network,
-                    sample,
-                    num_warmup_iters=self.num_warmup_iters,
-                    allow_unused_input=True,
-                )
-            except TypeError:
-                graphed = torch.cuda.make_graphed_callables(
-                    spec.network,
-                    sample,
-                    num_warmup_iters=self.num_warmup_iters,
-                )
+            with _thread_local_capture_errors():
+                try:
+                    graphed = torch.cuda.make_graphed_callables(
+                        spec.network,
+                        sample,
+                        num_warmup_iters=self.num_warmup_iters,
+                        allow_unused_input=True,
+                    )
+                except TypeError:
+                    graphed = torch.cuda.make_graphed_callables(
+                        spec.network,
+                        sample,
+                        num_warmup_iters=self.num_warmup_iters,
+                    )
         except Exception as exc:
             self._disable(f"graph capture failed: {exc!r}")
             # A failed capture can leave asynchronous stream-capture errors

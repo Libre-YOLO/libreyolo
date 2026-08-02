@@ -36,6 +36,14 @@ before 1.4.0 are documented in the
 
 ### Fixed
 
+- CUDA graph capture no longer races with DataLoader pin-memory threads:
+  training capture (`train(..., cuda_graph=True)`) and inference/validation
+  capture now run with `capture_error_mode="thread_local"`, so a
+  `cudaHostAlloc` from a pin-memory thread staging the next batch can no
+  longer invalidate the capture and poison that thread (previously the run
+  died with "AcceleratorError ... in pin memory thread" /
+  `cudaErrorStreamCaptureUnsupported`; observed twice on an RF100-VL
+  campaign with `pin_memory` dataloaders)
 - D-FINE training now applies upstream's per-size multi-scale recipe instead
   of a hardcoded `base_size_repeat=3`: n trains at fixed size, s uses 20,
   m 6, l 4, x 3 (Peterande/D-FINE custom fine-tune configs; only X matched
