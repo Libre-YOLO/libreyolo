@@ -48,7 +48,8 @@ Libre<FAMILY><size>[-<task>].pt
 ## Family prefixes
 
 The model families registered into the model factory (the VLM tier is a
-separate category, covered in the note below). Most are detectors; `pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
+separate category, covered in the note below). Most are detectors; `fcn`,
+`pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
 instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 `efficientnetv2` / `resnet` families are classify-only:
 
@@ -75,6 +76,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
 | `lwdetr`    | `LibreLWDETR`   | All-caps acronym (hyphen dropped from `LW-DETR`) |
 | `faster_rcnn` | `LibreFasterRCNN` | Upstream acronym and underscore retained in the family id; canonical filename drops punctuation; inference-only two-stage detector |
+| `fcn`       | `LibreFCN`      | All-caps acronym; inference-only semantic family. This is torchvision's dilated-ResNet adaptation, not the original VGG FCN-8s graph |
 | `deformable_detr` | `LibreDeformableDETR` | Upstream name rendered as `DeformableDETR`; the family id retains the separator |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
 | `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic + instance + panoptic segmentation transformer family |
@@ -175,6 +177,7 @@ ships:
 | `rfdetr`    | `n`, `s`, `m`, `l` |
 | `lwdetr`    | `t`, `s`, `m`, `l`, `x` (upstream tiny / small / medium / large / xlarge; all at 640, which must stay a multiple of 64) |
 | `faster_rcnn` | `n`, `s`, `m`, `l` (MobileNetV3 320-FPN / MobileNetV3 FPN / ResNet-50 FPN v1 / ResNet-50 FPN v2; public input sizes 320 / 800 / 800 / 800) |
+| `fcn`       | `r50`, `r101` (dilated ResNet-50 / ResNet-101; both use 520-pixel square inputs) |
 | `deformable_detr` | `r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage` (single-scale, single-scale DC5, multi-scale base, iterative refinement, and refinement plus two-stage; all fixed at 800) |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
 | `eomt`      | `s`, `b`, `l` — semantic: ADE20K 150-class at 512 (l only); segment: COCO 80-class at 640 (l only, also 1280); panoptic: COCO 133-class at 640 (s/b/l) |
@@ -415,6 +418,7 @@ Detector-factory family support follows:
 | `rtdetrv4`  | `("detect",)` (default)             | detect | detect-only |
 | `lwdetr`    | `("detect",)`                       | detect | detect-only; inference-only (no trainer, `train()` raises) |
 | `faster_rcnn` | `("detect",)`                     | detect | detect-only; inference-only native RPN + RoI graph; official COCO heads map sparse 91-way ids to contiguous COCO-80 |
+| `fcn`       | `("semantic",)`                   | semantic | inference-only torchvision ResNet FCN, not the original VGG FCN-8s; 21 COCO-trained VOC-style labels; primary logits drive predict/val and the auxiliary head is retained for checkpoint fidelity |
 | `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is gated experimental, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
@@ -502,6 +506,11 @@ LibreDINOv2n.pt            # semantic (default task; dense head at 518)
 LibreDINOv2n-cls.pt        # classify (linear probe at 224)
 # Either artifact may be loaded with task="embed"; the head is bypassed and
 # the final 384-d DINOv2-S CLS token is returned. No duplicate -embed weights.
+
+# fcn - torchvision's ResNet FCN semantic models (not the original VGG FCN-8s)
+# Semantic is the default and only task, so the canonical names are suffixless.
+LibreFCNr50.pt            # ResNet-50, 21 COCO-trained VOC-style labels, 520px
+LibreFCNr101.pt           # ResNet-101, 21 COCO-trained VOC-style labels, 520px
 
 # eomt - semantic (ADE20K), instance segmentation (COCO), and panoptic (COCO things+stuff)
 LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone, 512px

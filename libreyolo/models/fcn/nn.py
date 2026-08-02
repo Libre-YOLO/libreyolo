@@ -5,10 +5,12 @@ This file is derived from torchvision v0.26.0 at commit
 license. See ``docs/provenance/fcn.md`` and the repository notice files.
 Copyright (c) Soumith Chintala 2016 and the torchvision contributors.
 
-These models use a dilated ResNet-50 or ResNet-101 backbone and a compact FCN
-head. They are not the original paper's VGG-based FCN-8s skip-fusion graph.
-Training losses are intentionally excluded; the complete inference graph,
-including the auxiliary head used by the published checkpoints, is retained.
+The 2015 FCN work established end-to-end pixels-to-pixels semantic prediction.
+These shipped models are torchvision's later dilated ResNet-50 and ResNet-101
+adaptation with a compact FCN head, not the original paper's VGG-based FCN-8s
+skip-fusion graph. Training losses are intentionally excluded; the complete
+inference graph, including the auxiliary head used by the published
+checkpoints, is retained.
 """
 
 from __future__ import annotations

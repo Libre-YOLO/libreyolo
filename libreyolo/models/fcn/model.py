@@ -44,9 +44,10 @@ VOC_NAMES = (
 class LibreFCN(BaseModel):
     """ResNet-50/101 FCN for dense semantic segmentation.
 
-    This is the modern dilated-ResNet FCN release, not the paper's VGG-based
-    FCN-8s skip-fusion graph. Inputs are RGB floats in ``[0, 1]`` at 520
-    pixels and use ImageNet mean/std normalization inside the network.
+    FCN established end-to-end pixels-to-pixels semantic prediction. This is
+    torchvision's modern dilated-ResNet adaptation, not the paper's VGG-based
+    FCN-8s skip-fusion graph. Inputs are RGB floats in ``[0, 1]`` at 520 pixels
+    and use ImageNet mean/std normalization inside the network.
     """
 
     FAMILY: ClassVar[str] = "fcn"

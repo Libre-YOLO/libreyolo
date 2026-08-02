@@ -9,6 +9,13 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreFCN, an inference-only semantic museum family in `r50` and `r101`
+  sizes with the official 21-class COCO-trained, VOC-label heads. The shipped
+  torchvision dilated-ResNet graph is not the original VGG FCN-8s topology;
+  primary and auxiliary logits are bit-exact against pytorch/vision v0.26.0.
+  ONNX, TorchScript, OpenVINO, and TensorRT prediction parity are validated,
+  and the BSD-3-Clause code attribution and pretrained-weight caveat ship with
+  the family (#637)
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr
