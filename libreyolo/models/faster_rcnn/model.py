@@ -11,9 +11,11 @@ import torch.nn as nn
 from ...postprocess.faster_rcnn import postprocess
 from ...utils.coco import COCO91_TO_COCO80
 from ...utils.image_loader import ImageInput
+from ...validation.preprocessors import FasterRCNNValPreprocessor
 from ..base import BaseModel
 from .nn import LibreFasterRCNNModel
 from .utils import preprocess_image
+from .validator import FasterRCNNValidator
 
 
 class LibreFasterRCNN(BaseModel):
@@ -25,6 +27,8 @@ class LibreFasterRCNN(BaseModel):
     SUPPORTED_TASKS = ("detect",)
     DEFAULT_TASK = "detect"
     TRAIN_CONFIG = None
+    val_preprocessor_class = FasterRCNNValPreprocessor
+    validator_class = FasterRCNNValidator
     SUPPORTS_BATCHED_PREDICT = False
 
     def __init__(
