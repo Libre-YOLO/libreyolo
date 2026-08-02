@@ -163,6 +163,17 @@ def _yolo9_e2e_t():
     }
 
 
+def _deit_t():
+    """Minimal plain DeiT-T state dict satisfying its exact shape signature."""
+    return {
+        "patch_embed.proj.weight": torch.zeros(192, 3, 16, 16),
+        "cls_token": torch.zeros(1, 1, 192),
+        "pos_embed": torch.zeros(1, 197, 192),
+        "blocks.11.mlp.fc2.weight": torch.zeros(192, 768),
+        "head.weight": torch.zeros(1000, 192),
+    }
+
+
 def _synthetic_numbered_yolo9():
     """Minimal upstream-shaped (numbered) YOLO9 detection dict, config t."""
     return {
@@ -215,6 +226,7 @@ CASES = [
     ("rtdetr-hgnetv2-l", _rtdetr_hgnetv2_l_upstream, _wrap_ema_module, "rtdetrv2_hgnetv2_l_6x_coco.pth", "rtdetr", "LibreRTDETR", "l", "detect", 80),
     ("faster-rcnn", _faster_rcnn_n, _identity, "fasterrcnn_mobilenet_v3_large_320_fpn-907ea3f9.pth", "faster_rcnn", "LibreFasterRCNN", "n", "detect", 80),
     ("yolo9-e2e", _yolo9_e2e_t, _wrap_model, "gelan_e2e_t.pt", "yolo9_e2e", "LibreYOLO9E2E", "t", "detect", 80),
+    ("deit", _deit_t, _wrap_model, "deit_tiny_patch16_224.pth", "deit", "LibreDeiT", "t", "classify", 1000),
 ]
 
 
@@ -232,7 +244,9 @@ def test_family_autoconverts(tmp_path, build_sd, wrapper, filename, family, pref
 
     assert out is not None, f"{family} upstream checkpoint was not recognized"
     out_path = Path(out)
-    suffix = {"pose": "-pose", "segment": "-seg"}.get(task, "")
+    suffix = {"pose": "-pose", "segment": "-seg", "classify": "-cls"}.get(
+        task, ""
+    )
     assert out_path.name == f"{src.stem}-{prefix}{size}{suffix}.pt"
     assert out_path.parent == tmp_path
 
