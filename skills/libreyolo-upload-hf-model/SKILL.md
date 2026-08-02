@@ -53,6 +53,7 @@ file = name + ".pt"
 | DETR | `LibreDETR` | `LibreDETRr50.pt` (original DETR; Apache-2.0 code + weights; inference-only) |
 | LWDETR | `LibreLWDETR` | `LibreLWDETRt.pt` (LW-DETR, RF-DETR's ancestor; Apache-2.0 code + weights; inference-only) |
 | FasterRCNN | `LibreFasterRCNN` | `LibreFasterRCNNn.pt` (modernized torchvision Faster R-CNN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
+| SSD | `LibreSSD` | `LibreSSD300.pt` (torchvision SSD300 VGG16; BSD-3-Clause implied for the checkpoint, Oxford VGG feature-weight lineage CC BY 4.0; inference-only) |
 | Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
 | RTDETRv2 | `LibreRTDETRv2` | `LibreRTDETRv2r50.pt` |
@@ -264,6 +265,11 @@ the maintainer approved BSD-3-Clause rehosting on the releasing-project
 **implied** basis. Every card and NOTICE must say that the grant is implied,
 must reproduce torchvision's pretrained-model caveat, and must not call the
 checkpoint license publisher-confirmed.
+SSD300 follows the same implied BSD-3-Clause checkpoint rule. Its card and
+NOTICE must additionally attribute Karen Simonyan and Andrew Zisserman's
+Oxford VGG-16 feature-weight lineage under CC BY 4.0, link the Oxford source
+and CC license, and state the torchvision training plus LibreYOLO metadata
+changes. Do not describe CC BY 4.0 as the license for torchvision's SSD code.
 A name being *valid* does not make it *hostable*; run the gate.
 
 The `-visdrone` suffix is a `WEIGHT_VARIANTS` dataset variant (grammar in
