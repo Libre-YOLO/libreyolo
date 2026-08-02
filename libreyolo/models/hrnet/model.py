@@ -163,6 +163,16 @@ class LibreHRNet(BaseModel):
             "data path and augmentations that LibreYOLO does not yet provide."
         )
 
+    def export(self, format: str = "onnx", **kwargs) -> str:
+        supported = {"onnx", "torchscript", "openvino", "tensorrt"}
+        if format.lower() not in supported:
+            raise NotImplementedError(
+                f"LibreHRNet export to {format!r} is not implemented. The pose-head "
+                "export contract supports ONNX, TorchScript, OpenVINO, and "
+                "TensorRT only."
+            )
+        return super().export(format=format, **kwargs)
+
     @property
     def _runner(self):
         if getattr(self, "_runner_instance", None) is None:

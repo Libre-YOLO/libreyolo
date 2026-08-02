@@ -220,6 +220,7 @@ def export_onnx(
     model_family = metadata.get("model_family")
     is_seg = metadata.get("segmentation") == "true" or task == "segment"
     is_yolo9_pose = model_family == "yolo9" and task == "pose"
+    is_hrnet_pose = model_family == "hrnet" and task == "pose"
     is_rfdetr_pose = model_family == "rfdetr" and task == "pose"
     is_ec_pose = model_family == "ec" and task == "pose"
     is_yolonas_pose = model_family == "yolonas" and task == "pose"
@@ -246,6 +247,7 @@ def export_onnx(
         and not is_edge
         and not is_semantic
         and not is_gaze
+        and not is_hrnet_pose
     ):
         num_outputs = _detect_num_outputs(nn_model, dummy)
         is_seg = num_outputs >= 3
@@ -296,6 +298,11 @@ def export_onnx(
             }
             if dynamic
             else None
+        )
+    elif is_hrnet_pose:
+        output_names = ["heatmaps"]
+        dynamic_axes = (
+            {"images": {0: "people"}, "heatmaps": {0: "people"}} if dynamic else None
         )
     elif is_classify:
         # Classification emits a single logits tensor (B, num_classes).

@@ -385,6 +385,7 @@ markers = [
     "picodet: tests covering the PICODET model family",
     "rtmdet: tests covering the RTMDet model family",
     "l2cs: tests covering the L2CS gaze estimation family",
+    "hrnet: tests covering the HRNet top-down pose family",
     "fomo: tests covering the LibreFOMO point-localizer family",
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",
     "sam: tests covering the LibreSAM (promptable-segmentation) tier",

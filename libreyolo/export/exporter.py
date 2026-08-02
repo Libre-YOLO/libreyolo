@@ -156,6 +156,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "siglip2",
 }
 _RECTANGULAR_EXPORT_FAMILIES = {
+    "hrnet",
     "yolo9",
     "yolo9_e2e",
     "yolo9_p2",
@@ -637,7 +638,15 @@ class BaseExporter(ABC):
         native_imgsz = self.model._get_input_size()
         model_name = self.model._get_model_name()
         if imgsz is None:
-            imgsz = (native_imgsz, native_imgsz)
+            if isinstance(native_imgsz, (tuple, list)):
+                if len(native_imgsz) != 2:
+                    raise ValueError(
+                        "Native input size must be an int or (height, width), "
+                        f"got {native_imgsz!r}."
+                    )
+                imgsz = (int(native_imgsz[0]), int(native_imgsz[1]))
+            else:
+                imgsz = (int(native_imgsz), int(native_imgsz))
         elif isinstance(imgsz, tuple):
             if len(imgsz) != 2:
                 raise ValueError(f"imgsz tuple must be (height, width), got {imgsz}")
@@ -646,6 +655,17 @@ class BaseExporter(ABC):
             imgsz = (int(imgsz), int(imgsz))
         if imgsz[0] <= 0 or imgsz[1] <= 0:
             raise ValueError(f"imgsz values must be positive, got {imgsz}.")
+        if model_name == "hrnet":
+            native_h, native_w = (
+                (int(native_imgsz[0]), int(native_imgsz[1]))
+                if isinstance(native_imgsz, (tuple, list))
+                else (int(native_imgsz), int(native_imgsz))
+            )
+            if imgsz != (native_h, native_w):
+                raise ValueError(
+                    "HRNet pose exports use the checkpoint's fixed person-crop "
+                    f"canvas {(native_h, native_w)}, got {imgsz}."
+                )
         imgsz_divisor = int(getattr(self.model, "IMGSZ_DIVISOR", 1) or 1)
         if imgsz[0] % imgsz_divisor or imgsz[1] % imgsz_divisor:
             raise ValueError(
@@ -703,7 +723,7 @@ class BaseExporter(ABC):
         ):
             raise NotImplementedError(
                 "Rectangular imgsz export is currently supported for "
-                "YOLO9-family exports only."
+                "YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports only."
             )
         if (
             _is_rectangular_imgsz(imgsz)
@@ -1115,8 +1135,12 @@ class BaseExporter(ABC):
                 meta_h = meta_w = int(imgsz)
         else:
             native = self.model._get_input_size()
-            metadata_imgsz = int(native)
-            meta_h = meta_w = int(native)
+            if isinstance(native, (tuple, list)):
+                meta_h, meta_w = int(native[0]), int(native[1])
+                metadata_imgsz = max(meta_h, meta_w)
+            else:
+                metadata_imgsz = int(native)
+                meta_h = meta_w = int(native)
         # TODO(schema-v1.1): keep legacy model_size/nb_classes aliases for one
         # transition window, then prefer the canonical size/nc keys only.
         meta = {
@@ -1153,6 +1177,8 @@ class BaseExporter(ABC):
                 meta["interpolation"] = str(interpolation)
         if task == "pose":
             meta.update(_pose_keypoint_shape_metadata(self.model))
+            if self.model._get_model_name() == "hrnet":
+                meta["pose_input"] = "person_crop"
         if task == "gaze":
             meta.update(
                 {
@@ -1184,8 +1210,13 @@ class BaseExporter(ABC):
                 meta_h = meta_w = str(int(imgsz))
         else:
             native = self.model._get_input_size()
-            metadata_imgsz = str(native)
-            meta_h = meta_w = str(native)
+            if isinstance(native, (tuple, list)):
+                native_h, native_w = int(native[0]), int(native[1])
+                metadata_imgsz = str(max(native_h, native_w))
+                meta_h, meta_w = str(native_h), str(native_w)
+            else:
+                metadata_imgsz = str(int(native))
+                meta_h = meta_w = str(int(native))
         # TODO(schema-v1.1): keep legacy model_size/nb_classes aliases for one
         # transition window, then prefer the canonical size/nc keys only.
         meta = {
@@ -1231,6 +1262,8 @@ class BaseExporter(ABC):
                 meta["num_keypoints_per_class"] = json.dumps(
                     pose_meta["num_keypoints_per_class"]
                 )
+            if self.model._get_model_name() == "hrnet":
+                meta["pose_input"] = "person_crop"
         if task == "gaze":
             meta.update(
                 {

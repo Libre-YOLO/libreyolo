@@ -1631,6 +1631,19 @@ class BaseModel(ABC):
         from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
         state_dict = {k: v.cpu() for k, v in self.model.state_dict().items()}
+        native_imgsz = self._get_input_size()
+        rectangular_metadata = {}
+        if isinstance(native_imgsz, (tuple, list)):
+            if len(native_imgsz) != 2:
+                raise ValueError(
+                    "Model input size must be an int or (height, width), "
+                    f"got {native_imgsz!r}."
+                )
+            imgsz_h, imgsz_w = int(native_imgsz[0]), int(native_imgsz[1])
+            checkpoint_imgsz = max(imgsz_h, imgsz_w)
+            rectangular_metadata = {"imgsz_h": imgsz_h, "imgsz_w": imgsz_w}
+        else:
+            checkpoint_imgsz = int(native_imgsz)
         checkpoint = wrap_libreyolo_checkpoint(
             state_dict,
             model_family=self._get_model_name(),
@@ -1638,7 +1651,8 @@ class BaseModel(ABC):
             task=self.task,
             nc=self.nb_classes,
             names=self.names,
-            imgsz=int(self._get_input_size()),
+            imgsz=checkpoint_imgsz,
+            **rectangular_metadata,
         )
         quant_manifest = getattr(self, "_quant_manifest", None)
         if quant_manifest:
