@@ -19,11 +19,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from libreyolo.models.deimv2.model import LibreDEIMv2
-from libreyolo.models.dfine.model import LibreDFINE
-from libreyolo.models.ec.model import LibreEC
-from libreyolo.models.rfdetr.model import LibreRFDETR
-from libreyolo.models.yolo9_e2e.model import LibreYOLO9E2E
 from libreyolo.validation.base import BaseValidator
 from libreyolo.validation.config import ValidationConfig
 
@@ -33,37 +28,57 @@ requires_cuda = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="CUDA graph capture requires a CUDA device"
 )
 
+
+# Model classes are imported inside the builders, not at module scope: RF-DETR's
+# DINOv2 backbone imports ``transformers``, which ships only with the ``rfdetr``
+# extra, and a module-scope import would fail collection for every family in an
+# environment without it.
+def _build_rfdetr(device):
+    pytest.importorskip(
+        "transformers",
+        reason="RF-DETR needs the rfdetr extra",
+        exc_type=ImportError,
+    )
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+
+    # ``model_path={}`` is the random-init convention RF-DETR's other unit tests
+    # use; ``None`` means "download pretrained" for this family.
+    return LibreRFDETR(model_path={}, size="n", nb_classes=2, device=device)
+
+
+def _build_dfine(device):
+    from libreyolo.models.dfine.model import LibreDFINE
+
+    return LibreDFINE(None, size="n", nb_classes=2, device=device)
+
+
+def _build_deimv2(device):
+    from libreyolo.models.deimv2.model import LibreDEIMv2
+
+    return LibreDEIMv2(None, size="atto", nb_classes=2, device=device)
+
+
+def _build_ec(device):
+    from libreyolo.models.ec.model import LibreEC
+
+    return LibreEC(None, size="s", nb_classes=2, device=device)
+
+
+def _build_yolo9_e2e(device):
+    from libreyolo.models.yolo9_e2e.model import LibreYOLO9E2E
+
+    return LibreYOLO9E2E(None, size="t", device=device)
+
+
 # (family, constructor, capture imgsz). Sizes are each family's smallest
 # variant at its native eval resolution, so the captured shape is the one a
-# real campaign validation would replay. RF-DETR takes ``model_path={}`` (the
-# random-init convention its other unit tests use) because ``None`` means
-# "download pretrained" for that family.
+# real campaign validation would replay.
 FAMILY_CASES = [
-    (
-        "rfdetr",
-        lambda device: LibreRFDETR(model_path={}, size="n", nb_classes=2, device=device),
-        384,
-    ),
-    (
-        "dfine",
-        lambda device: LibreDFINE(None, size="n", nb_classes=2, device=device),
-        640,
-    ),
-    (
-        "deimv2",
-        lambda device: LibreDEIMv2(None, size="atto", nb_classes=2, device=device),
-        320,
-    ),
-    (
-        "ec",
-        lambda device: LibreEC(None, size="s", nb_classes=2, device=device),
-        640,
-    ),
-    (
-        "yolo9_e2e",
-        lambda device: LibreYOLO9E2E(None, size="t", device=device),
-        320,
-    ),
+    ("rfdetr", _build_rfdetr, 384),
+    ("dfine", _build_dfine, 640),
+    ("deimv2", _build_deimv2, 320),
+    ("ec", _build_ec, 640),
+    ("yolo9_e2e", _build_yolo9_e2e, 320),
 ]
 
 CASE_IDS = [case[0] for case in FAMILY_CASES]
