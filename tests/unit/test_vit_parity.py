@@ -25,9 +25,7 @@ def test_timm_pretrained_parity(size):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     reference = timm.create_model(TAGS[size], pretrained=True).eval()
-    native = VisionTransformer(
-        size=size, num_classes=1000, init_weights=False
-    ).eval()
+    native = VisionTransformer(size=size, num_classes=1000, init_weights=False).eval()
     result = native.load_state_dict(reference.state_dict(), strict=True)
     assert not result.missing_keys and not result.unexpected_keys
 

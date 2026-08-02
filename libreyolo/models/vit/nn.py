@@ -54,9 +54,7 @@ class LayerNorm(nn.LayerNorm):
         super().__init__(dim, eps=NORM_EPS, elementwise_affine=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.layer_norm(
-            x, self.normalized_shape, self.weight, self.bias, self.eps
-        )
+        return F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
 
 
 class PatchEmbed(nn.Module):
@@ -252,9 +250,7 @@ class VisionTransformer(nn.Module):
         x = self.blocks(x)
         return self.norm(x)
 
-    def forward_head(
-        self, x: torch.Tensor, pre_logits: bool = False
-    ) -> torch.Tensor:
+    def forward_head(self, x: torch.Tensor, pre_logits: bool = False) -> torch.Tensor:
         x = x[:, 0]
         x = self.fc_norm(x)
         x = self.head_drop(x)

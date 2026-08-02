@@ -766,6 +766,7 @@ __all__ = [
     "LibrePIDNet",
     "LibreSegformer",
     "LibreLingBotVision",
+    "LibreViT",
     "LibreMobileNetV4",
     "LibreConvNeXt",
     "LibreEfficientNetV2",

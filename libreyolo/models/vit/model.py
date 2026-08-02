@@ -61,8 +61,7 @@ class LibreViT(BaseModel):
         head_key = "head.weight"
         cls_key = "cls_token"
         if any(
-            key not in weights_dict
-            for key in (patch_key, pos_key, head_key, cls_key)
+            key not in weights_dict for key in (patch_key, pos_key, head_key, cls_key)
         ):
             return None
 

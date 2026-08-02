@@ -30,7 +30,10 @@ def _signature_state(size: str, num_classes: int = 1000) -> dict:
         "head.weight": torch.empty(num_classes, embed_dim),
     }
     state.update(
-        {f"blocks.{index}.norm1.weight": torch.empty(embed_dim) for index in range(depth)}
+        {
+            f"blocks.{index}.norm1.weight": torch.empty(embed_dim)
+            for index in range(depth)
+        }
     )
     return state
 
@@ -115,12 +118,35 @@ def test_sibling_discriminators_reject_vit_bidirectionally():
         assert not sibling.can_load(vit_state), sibling.__name__
 
     sibling_signatures = (
-        {"backbone.patch_embed.proj.weight": torch.empty(1), "linear.weight": torch.empty(1)},
-        {"logit_scale": torch.empty(1), "text_projection": torch.empty(1), "visual.conv1.weight": torch.empty(1)},
-        {"conv1.weight": torch.empty(1), "fc.weight": torch.empty(1), "layer1.0.conv1.weight": torch.empty(1)},
-        {"stem.0.weight": torch.empty(1), "head.fc.weight": torch.empty(1), "stages.0.blocks.0.gamma": torch.empty(1)},
-        {"conv_stem.weight": torch.empty(1), "conv_head.weight": torch.empty(1), "blocks.0.pw_exp.conv.weight": torch.empty(1)},
-        {"conv_stem.weight": torch.empty(1), "conv_head.weight": torch.empty(1), "blocks.0.se.conv_reduce.weight": torch.empty(1)},
+        {
+            "backbone.patch_embed.proj.weight": torch.empty(1),
+            "linear.weight": torch.empty(1),
+        },
+        {
+            "logit_scale": torch.empty(1),
+            "text_projection": torch.empty(1),
+            "visual.conv1.weight": torch.empty(1),
+        },
+        {
+            "conv1.weight": torch.empty(1),
+            "fc.weight": torch.empty(1),
+            "layer1.0.conv1.weight": torch.empty(1),
+        },
+        {
+            "stem.0.weight": torch.empty(1),
+            "head.fc.weight": torch.empty(1),
+            "stages.0.blocks.0.gamma": torch.empty(1),
+        },
+        {
+            "conv_stem.weight": torch.empty(1),
+            "conv_head.weight": torch.empty(1),
+            "blocks.0.pw_exp.conv.weight": torch.empty(1),
+        },
+        {
+            "conv_stem.weight": torch.empty(1),
+            "conv_head.weight": torch.empty(1),
+            "blocks.0.se.conv_reduce.weight": torch.empty(1),
+        },
         {"transformer.decoder.weight": torch.empty(1)},
         {"decoder.swish_ffn.weight": torch.empty(1)},
         {
