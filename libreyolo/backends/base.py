@@ -272,6 +272,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "deim",
         "deimv2",
         "ec",
+        "faster_rcnn",
         "lwdetr",
         "rfdetr",
         "rtdetr",
@@ -493,6 +494,10 @@ class BaseBackend(ABC):
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
+        elif self.model_family == "faster_rcnn":
+            return self._preprocess_faster_rcnn(
+                image, effective_imgsz, color_format
+            )
         elif self.model_family == "deformable_detr":
             tensor, img, size = self._preprocess_deformable_detr(
                 image, effective_imgsz, color_format
@@ -863,6 +868,32 @@ class BaseBackend(ABC):
 
         return img_tensor, original_img, original_size
 
+    def _preprocess_faster_rcnn(self, image, input_size, color_format):
+        """Feed raw RGB pixels to the in-graph GeneralizedRCNNTransform.
+
+        Default Faster R-CNN ONNX exports have dynamic spatial axes, so the
+        source image must not be resized, letterboxed, or ImageNet-normalized
+        here.  The graph owns all three operations and returns boxes in source
+        coordinates.  A fixed-shape artifact is retained as a compatibility
+        fallback: it uses an explicit stretch resize whose independent x/y
+        inverse is handled by ``_parse_faster_rcnn``.
+        """
+        if getattr(self, "_dynamic_spatial_axes", False):
+            from ..models.faster_rcnn.utils import preprocess_image
+
+            return preprocess_image(image, color_format=color_format)
+
+        input_h, input_w = _imgsz_hw(input_size)
+        img = ImageLoader.load(image, color_format=color_format).convert("RGB")
+        original_size = img.size
+        resized = cv2.resize(
+            np.asarray(img), (input_w, input_h), interpolation=cv2.INTER_LINEAR
+        )
+        chw = np.ascontiguousarray(
+            resized.astype(np.float32).transpose(2, 0, 1) / 255.0
+        )
+        return torch.from_numpy(chw).unsqueeze(0), img.copy(), original_size, 1.0
+
     @staticmethod
     def _preprocess_deformable_detr(image, input_size, color_format):
         """Deformable DETR preprocessing: square resize and ImageNet norm."""
@@ -1045,6 +1076,11 @@ class BaseBackend(ABC):
         elif self.model_family == "lwdetr":
             boxes, scores, cls = self._parse_lwdetr(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
+            return boxes, scores, cls, None
+        elif self.model_family == "faster_rcnn":
+            boxes, scores, cls = self._parse_faster_rcnn(
+                all_outputs, effective_imgsz, orig_w, orig_h, conf
             )
             return boxes, scores, cls, None
         elif self.model_family == "deformable_detr":
@@ -1324,6 +1360,33 @@ class BaseBackend(ABC):
         scores = scores[valid]
         class_ids = class_ids[valid]
         return boxes, scores, class_ids
+
+    def _parse_faster_rcnn(
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+    ):
+        """Parse final, already-NMSed boxes emitted by the export wrapper."""
+        boxes = np.asarray(all_outputs[0], dtype=np.float32).reshape(-1, 4)
+        scores = np.asarray(all_outputs[1], dtype=np.float32).reshape(-1)
+        class_ids = np.asarray(all_outputs[2], dtype=np.int64).reshape(-1)
+        keep = scores > conf
+        boxes, scores, class_ids = boxes[keep], scores[keep], class_ids[keep]
+        if not len(boxes):
+            return boxes, scores, class_ids
+
+        boxes = boxes.copy()
+        if not getattr(self, "_dynamic_spatial_axes", False):
+            input_h, input_w = _imgsz_hw(effective_imgsz)
+            boxes[:, [0, 2]] *= orig_w / input_w
+            boxes[:, [1, 3]] *= orig_h / input_h
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        return boxes[valid], scores[valid], class_ids[valid]
 
     def _parse_yolo9(
         self,

@@ -9,6 +9,13 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreFasterRCNN, an inference-only museum port of torchvision's Faster
+  R-CNN in sizes n/s/m/l (MobileNetV3-Large 320-FPN, MobileNetV3-Large FPN,
+  ResNet-50 FPN v1, ResNet-50 FPN v2). Native detections are exact against
+  pytorch/vision v0.26.0; batch-one ONNX export keeps the upstream aspect
+  resize and final class-wise NMS in-graph with dynamic source H/W. The
+  BSD-3-Clause code attribution and the pretrained-weight caveat ship with
+  the family, and `train()` raises
 - LibreDeformableDETR, an inference-only museum port of the original
   Apache-2.0 Deformable DETR in all five released ResNet-50 variants
   (`r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage`). The portable

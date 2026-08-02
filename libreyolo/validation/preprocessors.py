@@ -250,6 +250,40 @@ class LWDETRValPreprocessor(RFDETRValPreprocessor):
         return preprocess_numpy
 
 
+class FasterRCNNValPreprocessor(BaseValPreprocessor):
+    """Keep source resolution for the model's in-graph detection transform."""
+
+    @property
+    def normalize(self) -> bool:
+        # The validator performs /255; ImageNet normalization remains in-graph.
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        rgb_chw = np.ascontiguousarray(
+            img[:, :, ::-1].transpose(2, 0, 1), dtype=np.float32
+        )
+
+        # Images stay in original coordinates, but DetectionValidator's shared
+        # GT parser expects non-letterboxed targets in validation-canvas space
+        # and divides this scale back out. Scale only the metric copy.
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, [0, 2]] *= target_w / orig_w
+            scaled[:count, [1, 3]] *= target_h / orig_h
+            padded_targets[:count] = scaled[:count]
+        return rgb_chw, padded_targets
+
+
 class DeformableDETRValPreprocessor(RFDETRValPreprocessor):
     """Deformable DETR fixed-square ImageNet-normalized preprocessor.
 

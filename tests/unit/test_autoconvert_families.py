@@ -146,6 +146,16 @@ def _rtdetr_hgnetv2_l_upstream():
     }
 
 
+def _faster_rcnn_n():
+    return {
+        "backbone.body.0.0.weight": torch.zeros(16, 3, 3, 3),
+        "rpn.head.conv.0.0.weight": torch.zeros(256, 256, 3, 3),
+        "rpn.head.cls_logits.weight": torch.zeros(15, 256, 1, 1),
+        "roi_heads.box_predictor.cls_score.weight": torch.zeros(91, 1024),
+        "roi_heads.box_predictor.bbox_pred.weight": torch.zeros(364, 1024),
+    }
+
+
 def _yolo9_e2e_t():
     return {
         "backbone.conv0.conv.weight": torch.zeros(16, 3, 3, 3),
@@ -203,6 +213,7 @@ CASES = [
     ("rtdetr-r18", _rtdetr_r18_upstream, _wrap_ema_module, "rtdetr_r18vd_coco.pth", "rtdetr", "LibreRTDETR", "r18", "detect", 80),
     ("rtdetrv2-r18", lambda: _rtdetr_r18_upstream(v2=True), _wrap_ema_module, "rtdetrv2_r18vd_120e_coco.pth", "rtdetrv2", "LibreRTDETRv2", "r18", "detect", 80),
     ("rtdetr-hgnetv2-l", _rtdetr_hgnetv2_l_upstream, _wrap_ema_module, "rtdetrv2_hgnetv2_l_6x_coco.pth", "rtdetr", "LibreRTDETR", "l", "detect", 80),
+    ("faster-rcnn", _faster_rcnn_n, _identity, "fasterrcnn_mobilenet_v3_large_320_fpn-907ea3f9.pth", "faster_rcnn", "LibreFasterRCNN", "n", "detect", 80),
     ("yolo9-e2e", _yolo9_e2e_t, _wrap_model, "gelan_e2e_t.pt", "yolo9_e2e", "LibreYOLO9E2E", "t", "detect", 80),
 ]
 

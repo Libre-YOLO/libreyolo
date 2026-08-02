@@ -120,6 +120,13 @@ class OnnxBackend(BaseBackend):
         self._dynamic_batch_axis = bool(input_shape) and not isinstance(
             input_shape[0], int
         )
+        # Faster R-CNN keeps its resize and normalization inside the graph.
+        # Record dynamic H/W separately from dynamic batch so the shared
+        # backend can pass original-resolution pixels through unchanged.
+        self._dynamic_spatial_axes = len(input_shape) == 4 and (
+            not isinstance(input_shape[2], int)
+            or not isinstance(input_shape[3], int)
+        )
         static_imgsz = self._read_static_input_imgsz(input_shape)
         if static_imgsz is not None:
             imgsz = static_imgsz

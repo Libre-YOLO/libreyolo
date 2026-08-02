@@ -401,6 +401,29 @@
     "optional_extra": null,
     "available": true
   },
+  "faster_rcnn": {
+    "class": "libreyolo.models.faster_rcnn.model.LibreFasterRCNN",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "n": 320,
+      "s": 800,
+      "m": 800,
+      "l": 800
+    },
+    "default_imgsz": {
+      "n": 320,
+      "s": 800,
+      "m": 800,
+      "l": 800
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
   "feynobg": {
     "class": "libreyolo.models.feynobg.model.LibreFeyNobg",
     "tasks": [

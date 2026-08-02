@@ -51,6 +51,7 @@ file = name + ".pt"
 | YOLO9-P2 | `LibreYOLO9P2` | `LibreYOLO9P2s.pt`, `LibreYOLO9P2s-visdrone.pt` (dataset-variant suffix) |
 | RFDETR | `LibreRFDETR` | `LibreRFDETRn.pt`, `LibreRFDETRn-seg.pt`, `LibreRFDETRx-pose.pt` |
 | LWDETR | `LibreLWDETR` | `LibreLWDETRt.pt` (LW-DETR, RF-DETR's ancestor; Apache-2.0 code + weights; inference-only) |
+| FasterRCNN | `LibreFasterRCNN` | `LibreFasterRCNNn.pt` (modernized torchvision Faster R-CNN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
 | Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
 | RTDETRv2 | `LibreRTDETRv2` | `LibreRTDETRv2r50.pt` |
@@ -160,6 +161,9 @@ LibreRFDETRl-obb.pt,
 LibreLWDETRt.pt, LibreLWDETRs.pt, LibreLWDETRm.pt,
 LibreLWDETRl.pt, LibreLWDETRx.pt,
 
+LibreFasterRCNNn.pt, LibreFasterRCNNs.pt,
+LibreFasterRCNNm.pt, LibreFasterRCNNl.pt,
+
 LibreDeformableDETRr50ss.pt, LibreDeformableDETRr50ssdc5.pt,
 LibreDeformableDETRr50.pt, LibreDeformableDETRr50refine.pt,
 LibreDeformableDETRr50twostage.pt,
@@ -245,6 +249,11 @@ through derivative works. Their cards use `license: other` +
 `license_name: nvidia-source-code-license-segformer` + `license_link`, lead with
 a non-commercial banner, and the loader prints the restriction before every
 auto-download. Never tag them `apache-2.0` because the *code* is Apache.
+Faster R-CNN's four torchvision checkpoints have no per-object license file;
+the maintainer approved BSD-3-Clause rehosting on the releasing-project
+**implied** basis. Every card and NOTICE must say that the grant is implied,
+must reproduce torchvision's pretrained-model caveat, and must not call the
+checkpoint license publisher-confirmed.
 A name being *valid* does not make it *hostable*; run the gate.
 
 The `-visdrone` suffix is a `WEIGHT_VARIANTS` dataset variant (grammar in
