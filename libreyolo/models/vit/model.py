@@ -109,7 +109,11 @@ class LibreViT(BaseModel):
             self._load_weights(model_path)
 
     def _init_model(self) -> nn.Module:
-        return VisionTransformer(size=self.size, num_classes=self.nb_classes)
+        return VisionTransformer(
+            size=self.size,
+            num_classes=self.nb_classes,
+            init_weights=not self._loading_from_weights,
+        )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
         return {
