@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 
 import numpy as np
 import pytest
@@ -72,6 +73,13 @@ def test_export_support_is_explicit_for_every_format():
 
 @pytest.mark.external_data
 @pytest.mark.network
+@pytest.mark.skipif(
+    os.environ.get("LIBREYOLO_FASTER_RCNN_ACCEPTANCE") != "1",
+    reason=(
+        "set LIBREYOLO_FASTER_RCNN_ACCEPTANCE=1 to run official-checkpoint "
+        "ONNX parity"
+    ),
+)
 @pytest.mark.skipif(
     importlib.util.find_spec("onnx") is None
     or importlib.util.find_spec("onnxruntime") is None,

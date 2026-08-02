@@ -10,6 +10,7 @@ earlier numerical drift.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -31,9 +32,15 @@ from torchvision.transforms.functional import pil_to_tensor
 from libreyolo.models.faster_rcnn.nn import LibreFasterRCNNModel
 
 pytestmark = [
-    pytest.mark.unit,
     pytest.mark.external_data,
     pytest.mark.network,
+    pytest.mark.skipif(
+        os.environ.get("LIBREYOLO_FASTER_RCNN_ACCEPTANCE") != "1",
+        reason=(
+            "set LIBREYOLO_FASTER_RCNN_ACCEPTANCE=1 to download the four "
+            "official checkpoints and run exact parity"
+        ),
+    ),
 ]
 
 
