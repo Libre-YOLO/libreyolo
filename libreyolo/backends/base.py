@@ -267,6 +267,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
     valid detections and make exported runtimes diverge from native PyTorch.
     """
     return model_family in {
+        "detr",
         "dfine",
         "deim",
         "deimv2",
@@ -489,6 +490,11 @@ class BaseBackend(ABC):
             return tensor, img, size, 1.0
         elif self.model_family == "lwdetr":
             tensor, img, size = self._preprocess_lwdetr(
+                image, effective_imgsz, color_format
+            )
+            return tensor, img, size, 1.0
+        elif self.model_family == "detr":
+            tensor, img, size = self._preprocess_detr(
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
@@ -858,6 +864,20 @@ class BaseBackend(ABC):
         return img_tensor, original_img, original_size
 
     @staticmethod
+    def _preprocess_detr(image, input_size, color_format):
+        """DETR preprocessing: square resize + RGB + ImageNet mean/std."""
+        from ..models.detr.utils import preprocess_numpy as detr_preprocess_numpy
+
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+
+        img_chw, _ = detr_preprocess_numpy(np.asarray(img), input_size)
+        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+
+        return img_tensor, original_img, original_size
+
+    @staticmethod
     def _preprocess_dfine(image, input_size, color_format):
         """D-FINE preprocessing: plain resize + RGB + /255, no ImageNet norm."""
         from ..models.dfine.utils import preprocess_numpy as dfine_preprocess_numpy
@@ -1025,6 +1045,11 @@ class BaseBackend(ABC):
             )
         elif self.model_family == "lwdetr":
             boxes, scores, cls = self._parse_lwdetr(
+                all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
+            return boxes, scores, cls, None
+        elif self.model_family == "detr":
+            boxes, scores, cls = self._parse_detr(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
             return boxes, scores, cls, None
@@ -1601,6 +1626,57 @@ class BaseBackend(ABC):
 
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask].astype(np.int64)
+
+    def _parse_detr(self, all_outputs, orig_w, orig_h, conf, max_det: int = 100):
+        """Parse vanilla DETR's softmax logits and one prediction per query."""
+        pred_logits = np.asarray(all_outputs[0][0], dtype=np.float32)
+        pred_boxes = np.asarray(all_outputs[1][0], dtype=np.float32)
+        if pred_logits.ndim != 2 or pred_boxes.ndim != 2:
+            raise ValueError("DETR backend expects (Q, classes) logits and (Q, 4) boxes")
+        if pred_logits.shape[0] != pred_boxes.shape[0] or pred_boxes.shape[1] != 4:
+            raise ValueError("DETR backend logits and boxes have incompatible shapes")
+
+        shifted = pred_logits - pred_logits.max(axis=-1, keepdims=True)
+        exponentials = np.exp(shifted)
+        probabilities = exponentials / exponentials.sum(axis=-1, keepdims=True)
+        object_probabilities = probabilities[:, :-1]
+
+        if pred_logits.shape[-1] == 92 and self.nb_classes == 80:
+            from ..utils.coco import COCO91_CATEGORY_IDS
+
+            object_probabilities = object_probabilities[
+                :, np.asarray(COCO91_CATEGORY_IDS, dtype=np.int64)
+            ]
+
+        scores = object_probabilities.max(axis=-1)
+        class_ids = object_probabilities.argmax(axis=-1).astype(np.int64)
+        budget = min(max(int(max_det), 0), int(scores.size))
+        if budget:
+            query_indices = np.argpartition(-scores, budget - 1)[:budget]
+            query_indices = query_indices[np.argsort(-scores[query_indices])]
+            scores = scores[query_indices]
+            class_ids = class_ids[query_indices]
+        else:
+            query_indices = np.zeros((0,), dtype=np.int64)
+            scores = scores[:0]
+            class_ids = class_ids[:0]
+
+        center_x, center_y, width, height = pred_boxes.T
+        boxes_xyxy = np.stack(
+            (
+                center_x - 0.5 * width,
+                center_y - 0.5 * height,
+                center_x + 0.5 * width,
+                center_y + 0.5 * height,
+            ),
+            axis=-1,
+        )
+        boxes = boxes_xyxy[query_indices]
+        boxes[:, [0, 2]] *= orig_w
+        boxes[:, [1, 3]] *= orig_h
+
+        keep = scores > conf
+        return boxes[keep], scores[keep], class_ids[keep]
 
     def _parse_lwdetr(self, all_outputs, orig_w, orig_h, conf, max_det: int = 300):
         """Parse LW-DETR outputs — same top-K decode as D-FINE, plus COCO remap.
@@ -2934,6 +3010,7 @@ class BaseBackend(ABC):
             DEIMValPreprocessor,
             DEIMv2DINOValPreprocessor,
             DEIMv2ValPreprocessor,
+            DETRValPreprocessor,
             DFINEValPreprocessor,
             ECValPreprocessor,
             LWDETRValPreprocessor,
@@ -2962,6 +3039,7 @@ class BaseBackend(ABC):
 
         preprocessor_cls = {
             "deim": DEIMValPreprocessor,
+            "detr": DETRValPreprocessor,
             "dfine": DFINEValPreprocessor,
             "ec": ECValPreprocessor,
             "lwdetr": LWDETRValPreprocessor,

@@ -9,6 +9,7 @@ from importlib import metadata as importlib_metadata
 import torch
 
 _DETR_TUPLE_OUTPUT_FAMILIES = {
+    "detr",
     "dfine",
     "deim",
     "deimv2",

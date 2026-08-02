@@ -1895,6 +1895,18 @@ _add(
 )
 _add(
     "validated",
+    ("detr",),
+    ("detect",),
+    ("onnx", "torchscript"),
+    reason=(
+        "Official-checkpoint raw outputs and public predict results are covered "
+        "by native, ONNX Runtime, and TorchScript parity tests."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed square input",
+)
+_add(
+    "validated",
     ("lwdetr",),
     ("detect",),
     ("onnx", "torchscript"),
@@ -2703,6 +2715,7 @@ _FAMILY_BLOCKS = {
 }
 
 _NCNN_BLOCKS = {
+    "detr": "DETR",
     "dfine": "D-FINE",
     "lwdetr": "LW-DETR",
     "deim": "DEIM",

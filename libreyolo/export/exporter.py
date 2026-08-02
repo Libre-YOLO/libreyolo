@@ -141,6 +141,7 @@ def _pose_keypoint_shape_metadata(model) -> dict:
 
 _FIXED_SQUARE_EXPORT_FAMILIES = {
     "clip",
+    "detr",
     "dfine",
     "deim",
     "deimv2",
@@ -790,6 +791,12 @@ class BaseExporter(ABC):
         )
         if task == "semantic":
             nn_model = _SemanticExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "detr":
+            from ..models.detr.nn import DETRExportWrapper
+
+            nn_model = DETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
         elif family == "dfine":
