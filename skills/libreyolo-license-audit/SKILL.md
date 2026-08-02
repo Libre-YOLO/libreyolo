@@ -51,9 +51,13 @@ They routinely differ and each can independently block:
 - **Weights**: learned parameters. Carry their own license, often inherited
   from *training data terms* (Gaze360 makes L2CS weights non-redistributable;
   some upstream checkpoints are CC-BY-NC even where the code is Apache-2.0;
-  VisDrone training data makes a fine-tune CC-BY-NC-SA). Apache code +
-  NC weights means: ship the code, do not host the weights, or host behind
-  an explicit variant notice (the `-visdrone` preview pattern).
+  VisDrone training data makes a fine-tune CC-BY-NC-SA). **Redistributable is
+  the only bar for hosting weights**: Apache code + NC weights means ship the
+  code and host the weights with the NC license shipped verbatim, the card
+  tagged correctly, and a non-commercial banner leading the card (SegFormer
+  and `-visdrone` precedents); downstream users are responsible for complying
+  with the weight license. Weights whose terms forbid redistribution (L2CS /
+  Gaze360) are never hosted.
 - **Datasets**: gate before hosting or wiring auto-download; that gate lives
   in `skills/libreyolo-upload-hf-dataset`.
 
@@ -63,9 +67,10 @@ Quick decision table (source license, what it means here):
 |---|---|---|
 | MIT / Apache-2.0 / BSD / public domain | yes, with attribution | yes, with LICENSE+NOTICE |
 | CC-BY (weights/data) | n/a | yes, attribute |
-| CC-BY-NC / research-only | **no** | **no**; surface to maintainer |
+| CC-BY-NC (redistributable, non-commercial) | **no** | yes — license verbatim + non-commercial banner on the card; users responsible for compliance |
+| Research-only / redistribution forbidden | **no** | **no** (link upstream when a CDN exists) |
 | GPL / AGPL / LGPL | **no** | **no** (weights from AGPL *code* are a maintainer call; ask) |
-| Custom (DINOv3-style, Deci, model-specific) | maintainer call | maintainer call; document verbatim |
+| Custom (DINOv3-style, Deci, model-specific) | maintainer call | if the terms clearly permit redistribution, host with the license verbatim + banner (NVIDIA SCL / SegFormer precedent); ambiguous terms are a maintainer call — document verbatim |
 | Unknown / no license | treat as all-rights-reserved: **no** | **no** |
 
 ## The four notice surfaces (what changes when)

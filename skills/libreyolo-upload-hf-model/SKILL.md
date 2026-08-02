@@ -83,8 +83,13 @@ file = name + ".pt"
 
 Never-upload families: **L2CS** (Gaze360 terms forbid redistribution) and any
 weight whose upstream/training-data license fails the gate in
-`skills/libreyolo-license-audit`. DepthAnythingV2 `b`/`l`/`g` weights are
-CC-BY-NC; hosting them is a maintainer decision, not a default. The
+`skills/libreyolo-license-audit`. **Redistributable is the only bar for
+hosting weights**: non-commercial but redistributable weights (CC-BY-NC, the
+NVIDIA Source Code License) are hosted — ship the upstream license verbatim,
+tag the card correctly, and lead with a non-commercial banner (SegFormer
+precedent); downstream users are responsible for complying with the weight
+license. Only weights whose terms forbid redistribution (L2CS) or whose
+license is unknown stay unhosted. The
 open-vocabulary and SAM/VLM tiers ship HF *snapshot directories*
 (`LibreGroundingDINOt`, `LibreOWLv2b16`, ...), not single `.pt` files; their
 repos mirror upstream snapshot layout plus card, so the 5-file contract below
@@ -242,7 +247,8 @@ and hosted; BiRefNet `t` (lite) weights have no explicit license tag on the
 upstream HF repo (MIT badge in the card body only), so hosting the lite weights
 is a maintainer decision, not a default (`weights/upload_birefnet_hf.py` guards
 it behind `--confirm-lite-license`). DepthAnythingV2 `b`/`l`/`g` are CC-BY-NC
-(maintainer decision to host); `-visdrone` variants are a research preview
+(redistributable, therefore hostable — license verbatim + non-commercial
+banner on the card); `-visdrone` variants are a research preview
 under VisDrone's CC BY-NC-SA (repo `LibreYOLO/LibreYOLO9P2s-visdrone`, with
 the license stated loudly on the card); FOMO weights have no cleared hosting
 license yet. **LibreSegformer b0-b5 are NON-COMMERCIAL**: they derive from
