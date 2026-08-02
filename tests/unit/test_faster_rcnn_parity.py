@@ -1,9 +1,11 @@
 """Exact native-port parity against torchvision's official COCO models.
 
-This network-gated acceptance test downloads the four BSD-3-Clause torchvision
-v0.26.0 checkpoints. It compares the RPN outputs and pre-postprocess Fast R-CNN
-head tensors before comparing final detections; in-graph NMS could otherwise
-hide an earlier numerical drift.
+This network-gated acceptance test downloads the four official torchvision
+v0.26.0 checkpoints. The implementation is BSD-3-Clause; the checkpoint
+redistribution basis is documented separately in the Faster R-CNN provenance
+notice. The test compares RPN outputs and pre-postprocess Fast R-CNN head
+tensors before final detections because in-graph NMS could otherwise hide an
+earlier numerical drift.
 """
 
 from __future__ import annotations

@@ -597,9 +597,11 @@ Used for: the native inference-only Faster R-CNN family in
 
 NOTE - code vs. weights: the upstream source code is BSD-3-Clause. The four
 official COCO checkpoint files do not carry an explicit checkpoint-specific
-permissive license, and torchvision's README warns that pretrained-model terms
-may differ based on training data. LibreYOLO does not bundle or rehost those
-files. The local converter only wraps user-supplied tensors in metadata.
+license, and torchvision's README warns that pretrained-model terms may differ
+based on training data. LibreYOLO's separate weight mirrors apply
+BSD-3-Clause on an explicitly disclosed implied basis, ship the verbatim
+license with every checkpoint, and repeat the caveat. The source distribution
+does not bundle the checkpoint files; conversion only adds metadata.
 
 --------------------------------------------------------------------
 NAFNet (Megvii Research)

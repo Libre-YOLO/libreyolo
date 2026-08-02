@@ -5,9 +5,14 @@ parameter names, so conversion does not alter tensor data. The official COCO
 head retains 91 outputs (background plus the sparse COCO category-id space),
 while checkpoint metadata advertises LibreYOLO's contiguous COCO-80 interface.
 
-Upstream: https://github.com/pytorch/vision/tree/v0.26.0
+Code upstream: https://github.com/pytorch/vision/tree/v0.26.0
 Commit: 336d36e8db990a905498c73933e35231876e28bc
-License: BSD-3-Clause
+Code license: BSD-3-Clause
+
+The publisher does not attach a separate license file to each checkpoint.
+LibreYOLO's redistribution basis and the upstream pretrained-model caveat are
+recorded in ``docs/provenance/faster_rcnn.md``; this converter makes no broader
+license claim.
 
 Usage:
     python weights/convert_faster_rcnn_weights.py upstream.pth \

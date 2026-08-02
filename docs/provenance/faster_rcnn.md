@@ -33,15 +33,22 @@ box AP of 22.8 / 32.8 / 37.0 / 46.7 for `n` / `s` / `m` / `l` respectively.
 
 ### Weight-license status
 
-The torchvision source is unambiguously BSD-3-Clause. Its README separately
-states that pretrained models may have their own licenses or terms derived
-from the training data and places the permission check on the user. No
-checkpoint-specific permissive license was found for these four COCO files.
-LibreYOLO therefore does **not** rehost them or claim they are BSD-licensed.
-The converter is available for users who have separately established their
-right to use a local checkpoint. A permissive checkpoint license must be
-established before adding LibreYOLO Hugging Face mirrors or public nightly
-catalog rows.
+The torchvision source is BSD-3-Clause. The publisher does not attach a
+separate license file to these four checkpoint objects, so the redistribution
+basis is **BSD-3-Clause implied by the releasing project**, not an explicit
+checkpoint-specific grant. Torchvision's README separately warns that
+pretrained models may have their own terms derived from their training data
+and leaves use-case permission to the user. The COCO annotations are CC BY 4.0;
+the source images retain their individual Flickr terms.
+
+The project maintainer approved rehosting on that disclosed implied-license
+basis. Every LibreYOLO weight repository therefore carries the verbatim
+torchvision BSD-3-Clause license, an attribution notice, and the caveat above;
+the cards must never describe the checkpoint license as publisher-confirmed.
+`weights/upload_faster_rcnn_hf.py` builds and validates the exact five-file
+repositories before publication. Public e2e catalog rows are intentionally
+deferred until those repositories are published so the nightly suite never
+depends on an unavailable download route.
 
 ## Ported surface
 

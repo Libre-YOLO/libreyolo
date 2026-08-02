@@ -283,8 +283,11 @@ Faster R-CNN / TorchVision (BSD-3-Clause)
     Upstream state-dict names are retained for strict local conversion. The
     port adds LibreYOLO metadata, contiguous COCO-80 mapping, validation, and
     fixed-batch ONNX integration; it excludes training-only matching,
-    sampling, and losses. Official COCO checkpoints are not bundled or
-    rehosted because their standalone redistribution terms are not explicit.
+    sampling, and losses. Official COCO checkpoints are not bundled in the
+    source distribution. Separate weight mirrors disclose that their
+    BSD-3-Clause redistribution basis is implied by the releasing project,
+    not an explicit checkpoint-specific grant, and repeat torchvision's
+    pretrained-model terms caveat.
 
 LW-DETR (Apache License 2.0)
     Path:    libreyolo/models/lwdetr/, libreyolo/postprocess/lwdetr.py,
