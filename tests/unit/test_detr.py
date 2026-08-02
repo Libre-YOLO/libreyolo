@@ -53,6 +53,25 @@ def test_detr_official_signature_and_class_count():
     assert LibreDETR.detect_size(state) is None
 
 
+def test_detr_raw_checkpoint_requires_an_unambiguous_filename(tmp_path):
+    from libreyolo.models.autoconvert import autoconvert_upstream_checkpoint
+
+    state = _official_signature()
+    ambiguous = tmp_path / "renamed.pth"
+    torch.save({"model": state}, ambiguous)
+    assert autoconvert_upstream_checkpoint(str(ambiguous)) is None
+
+    official = tmp_path / "detr-r50-e632da11.pth"
+    torch.save({"model": state}, official)
+    converted_path = autoconvert_upstream_checkpoint(str(official))
+    assert converted_path is not None
+    converted = torch.load(converted_path, map_location="cpu", weights_only=True)
+    assert converted["model_family"] == "detr"
+    assert converted["size"] == "r50"
+    assert converted["task"] == "detect"
+    assert converted["nc"] == 80
+
+
 @pytest.mark.parametrize("size", ("r50", "r50dc5", "r101", "r101dc5"))
 def test_detr_native_model_builds_and_forwards(size):
     from libreyolo import LibreDETR
