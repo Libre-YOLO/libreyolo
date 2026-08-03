@@ -489,6 +489,7 @@ MODEL_CATALOG = [
     ("retinanet", "r50", "LibreRetinaNetr50.pt"),
     ("retinanet", "r50v2", "LibreRetinaNetr50v2.pt"),
     ("ssd", "300", "LibreSSD300.pt"),
+    ("mask_rcnn", "r50", "LibreMaskRCNNr50.pt"),
     ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
     ("deformable_detr", "r50ssdc5", "LibreDeformableDETRr50ssdc5.pt"),
     ("deformable_detr", "r50", "LibreDeformableDETRr50.pt"),
@@ -542,6 +543,7 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("faster_rcnn", "n", "LibreFasterRCNNn.pt"),
     ("retinanet", "r50", "LibreRetinaNetr50.pt"),
     ("ssd", "300", "LibreSSD300.pt"),
+    ("mask_rcnn", "r50", "LibreMaskRCNNr50.pt"),
     ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("rtdetr", "r18", "LibreRTDETRr18.pt"),
@@ -571,6 +573,7 @@ PICODET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "picodet"]
 FASTER_RCNN_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "faster_rcnn"]
 RETINANET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "retinanet"]
 SSD_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "ssd"]
+MASK_RCNN_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "mask_rcnn"]
 
 ALL_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG]
 ALL_MODELS_WITH_WEIGHTS = MODEL_CATALOG
@@ -579,14 +582,14 @@ NON_RFDETR_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f != "rfdetr"]
 # Quick test set (for CI — smallest auto-available models only)
 QUICK_TEST_MODELS = [("yolox", "n"), ("yolo9", "t"), ("rtdetr", "r18")]
 
-# Full legacy export test set. Faster R-CNN, RetinaNet, and SSD are ONNX-only
-# and have official-checkpoint runtime parity gates, so blocked formats must
-# not attempt to export them merely because their public weights are in the
-# catalog.
+# Full legacy export test set. Faster R-CNN, RetinaNet, SSD, and Mask R-CNN
+# are ONNX-only and have official-checkpoint runtime parity gates, so blocked
+# formats must not attempt to export them merely because their public weights
+# are in the catalog.
 FULL_TEST_MODELS = [
     (family, size)
     for family, size in NON_RFDETR_MODELS
-    if family not in {"faster_rcnn", "vit", "retinanet", "ssd"}
+    if family not in {"faster_rcnn", "vit", "retinanet", "ssd", "mask_rcnn"}
 ]
 
 # RF-DETR test set (separate due to dependency)
@@ -607,6 +610,7 @@ FAMILY_MARKERS = {
     "faster_rcnn": pytest.mark.faster_rcnn,
     "retinanet": pytest.mark.retinanet,
     "ssd": pytest.mark.ssd,
+    "mask_rcnn": pytest.mark.mask_rcnn,
     "deformable_detr": pytest.mark.deformable_detr,
     "dfine": pytest.mark.dfine,
     "deim": pytest.mark.deim,

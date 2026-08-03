@@ -77,6 +77,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `faster_rcnn` | `LibreFasterRCNN` | Upstream acronym and underscore retained in the family id; canonical filename drops punctuation; inference-only two-stage detector |
 | `retinanet` | `LibreRetinaNet` | Upstream CamelCase brand preserved; inference-only one-stage focal-loss detector |
 | `ssd`       | `LibreSSD`       | All-caps acronym; fixed-300 inference-only single-shot detector |
+| `mask_rcnn` | `LibreMaskRCNN` | Upstream acronym and underscore retained in the family id; canonical filename drops punctuation; inference-only two-stage detection and instance segmentation |
 | `deformable_detr` | `LibreDeformableDETR` | Upstream name rendered as `DeformableDETR`; the family id retains the separator |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
 | `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic + instance + panoptic segmentation transformer family |
@@ -180,6 +181,7 @@ ships:
 | `faster_rcnn` | `n`, `s`, `m`, `l` (MobileNetV3 320-FPN / MobileNetV3 FPN / ResNet-50 FPN v1 / ResNet-50 FPN v2; public input sizes 320 / 800 / 800 / 800) |
 | `retinanet` | `r50`, `r50v2` (ResNet-50 FPN v1 / ResNet-50 FPN v2; aspect-preserved short side 800, long side capped at 1333) |
 | `ssd`       | `300` (SSD300 VGG16; input is always fixed at 300 x 300) |
+| `mask_rcnn` | `r50` (ResNet-50 FPN v2 enhanced recipe; public input size 800) |
 | `deformable_detr` | `r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage` (single-scale, single-scale DC5, multi-scale base, iterative refinement, and refinement plus two-stage; all fixed at 800) |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
 | `eomt`      | `s`, `b`, `l` — semantic: ADE20K 150-class at 512 (l only); segment: COCO 80-class at 640 (l only, also 1280); panoptic: COCO 133-class at 640 (s/b/l) |
@@ -423,6 +425,7 @@ Detector-factory family support follows:
 | `faster_rcnn` | `("detect",)`                     | detect | detect-only; inference-only native RPN + RoI graph; official COCO heads map sparse 91-way ids to contiguous COCO-80 |
 | `retinanet` | `("detect",)`                       | detect | detect-only; inference-only native focal-loss head and P3-P7 anchor graph; official COCO heads map sparse 91-way ids to contiguous COCO-80 |
 | `ssd`       | `("detect",)`                     | detect | detect-only; inference-only fixed-300 VGG16 graph; official COCO head maps sparse 91-way ids to contiguous COCO-80 |
+| `mask_rcnn` | `("detect", "segment")`          | segment | shared official COCO checkpoint; segment is default and detect skips the mask branch; inference-only; sparse COCO-91 ids map to contiguous COCO-80 |
 | `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is gated experimental, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
@@ -502,6 +505,9 @@ LibreYOLONASl-pose.pt
 # dfine - detect + segment
 LibreDFINEn.pt            # detect (default)
 LibreDFINEn-seg.pt        # segment
+
+# mask_rcnn - segment default + detect from one shared checkpoint
+LibreMaskRCNNr50.pt       # segment (default); pass task="detect" for boxes only
 
 # rfdetr - detect + segment + pose + obb
 LibreRFDETRn.pt            # detect

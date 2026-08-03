@@ -45,6 +45,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | locateanything | detect |  |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |  |
 | lwdetr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| mask_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |
+| mask_rcnn | segment | ✓ |  |  |  |  |  |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |
 | moge2 | normal | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  |  |
@@ -197,6 +199,8 @@ A check mark applies only under any constraint listed here.
 - `lingbotvision` / `semantic` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `lingbotvision` / `semantic` / `openvino`: fixed family-native export canvas
 - `lingbotvision` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
+- `mask_rcnn` / `detect` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream aspect resize, class-wise NMS, RoIAlign, and mask paste are embedded
+- `mask_rcnn` / `segment` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream aspect resize, class-wise NMS, RoIAlign, and mask paste are embedded
 - `mobilenetv4` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `mobilenetv4` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `mobilenetv4` / `classify` / `openvino`: fixed family-native input resolution
@@ -541,6 +545,22 @@ A check mark applies only under any constraint listed here.
 - `lwdetr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `lwdetr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `lwdetr` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
+- `mask_rcnn` / `detect` / `torchscript`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `executorch`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `tensorrt`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `openvino`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `ncnn`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `tflite`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `coreml`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `coreai`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `torchscript`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `executorch`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `tensorrt`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `openvino`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `ncnn`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `tflite`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `coreml`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `coreai`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mobilenetv4` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `mobilesam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.

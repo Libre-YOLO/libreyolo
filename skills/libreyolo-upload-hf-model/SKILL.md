@@ -55,6 +55,7 @@ file = name + ".pt"
 | FasterRCNN | `LibreFasterRCNN` | `LibreFasterRCNNn.pt` (modernized torchvision Faster R-CNN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
 | RetinaNet | `LibreRetinaNet` | `LibreRetinaNetr50.pt` (torchvision RetinaNet; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
 | SSD | `LibreSSD` | `LibreSSD300.pt` (torchvision SSD300 VGG16; BSD-3-Clause implied for the checkpoint, Oxford VGG feature-weight lineage CC BY 4.0; inference-only) |
+| MaskRCNN | `LibreMaskRCNN` | `LibreMaskRCNNr50.pt` (torchvision Mask R-CNN v2; segment default plus detect; BSD-3-Clause implied for weights, with the pretrained-model caveat on the card; inference-only) |
 | Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
 | RTDETRv2 | `LibreRTDETRv2` | `LibreRTDETRv2r50.pt` |
@@ -177,6 +178,7 @@ LibreFasterRCNNn.pt, LibreFasterRCNNs.pt,
 LibreFasterRCNNm.pt, LibreFasterRCNNl.pt,
 
 LibreRetinaNetr50.pt, LibreRetinaNetr50v2.pt,
+LibreMaskRCNNr50.pt,
 
 LibreDeformableDETRr50ss.pt, LibreDeformableDETRr50ssdc5.pt,
 LibreDeformableDETRr50.pt, LibreDeformableDETRr50refine.pt,

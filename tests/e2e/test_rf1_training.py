@@ -113,6 +113,10 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "SSD ships inference-only: MultiBox matching, hard-negative mining, "
         "and training losses are outside the museum-port scope, and train() raises."
     ),
+    "mask_rcnn": (
+        "Mask R-CNN ships inference-only: sampled-RoI and mask training are "
+        "not implemented, and train() raises."
+    ),
     "deformable_detr": (
         "Deformable DETR ships inference-only: its Hungarian matcher, focal/L1/GIoU "
         "losses, auxiliary decoder losses, and backbone learning-rate recipe are "

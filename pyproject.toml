@@ -381,6 +381,7 @@ markers = [
     "faster_rcnn: tests covering the Faster R-CNN model family",
     "retinanet: tests covering the RetinaNet model family",
     "ssd: tests covering the SSD model family",
+    "mask_rcnn: tests covering the Mask R-CNN model family",
     "deformable_detr: tests covering the Deformable DETR model family",
     "dfine: tests covering the D-FINE model family",
     "deim: tests covering the DEIM model family",

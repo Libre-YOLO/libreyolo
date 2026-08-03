@@ -69,6 +69,9 @@ from .deformable_detr.model import LibreDeformableDETR  # noqa: E402
 # it registers eagerly and ahead of the lazy RF-DETR import; its plain-ViT
 # encoder keys (patch_embed.proj + CAE q_bias) are the discriminator.
 from .lwdetr.model import LibreLWDETR  # noqa: E402
+# Mask R-CNN shares the Faster R-CNN box graph, so its distinctive mask-head
+# discriminator must register first.
+from .mask_rcnn.model import LibreMaskRCNN  # noqa: E402
 from .faster_rcnn.model import LibreFasterRCNN  # noqa: E402
 from .retinanet.model import LibreRetinaNet  # noqa: E402
 from .ssd.model import LibreSSD  # noqa: E402  (VGG extras + paired MultiBox heads are unique)
@@ -740,6 +743,7 @@ __all__ = [
     "LibreDEIM",
     "LibreDETR",
     "LibreDEIMv2",
+    "LibreMaskRCNN",
     "LibreFasterRCNN",
     "LibreRetinaNet",
     "LibreSSD",

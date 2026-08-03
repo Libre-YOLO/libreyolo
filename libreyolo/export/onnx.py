@@ -232,6 +232,7 @@ def export_onnx(
     is_normal = task == "normal"
     is_edge = task == "edge"
     is_gaze = task == "gaze"
+    is_mask_rcnn = model_family == "mask_rcnn"
     is_faster_rcnn = model_family == "faster_rcnn"
     is_retinanet = model_family == "retinanet"
     is_ssd = model_family == "ssd"
@@ -240,6 +241,7 @@ def export_onnx(
     if (
         not is_seg
         and not known_detr_detection
+        and not is_mask_rcnn
         and not is_faster_rcnn
         and not is_retinanet
         and not is_ssd
@@ -260,8 +262,10 @@ def export_onnx(
             "detection-only in LibreYOLO."
         )
 
-    if is_faster_rcnn:
+    if is_mask_rcnn or is_faster_rcnn:
         output_names = ["boxes", "scores", "labels"]
+        if is_mask_rcnn and task == "segment":
+            output_names.append("masks")
         # Batch stays fixed at one, but the source spatial axes must remain
         # dynamic. GeneralizedRCNNTransform performs the upstream min/max
         # aspect resize in-graph; forcing a square canvas here would require
@@ -276,6 +280,12 @@ def export_onnx(
             if dynamic
             else None
         )
+        if dynamic_axes is not None and "masks" in output_names:
+            dynamic_axes["masks"] = {
+                0: "detections",
+                2: "mask_height",
+                3: "mask_width",
+            }
     elif is_retinanet:
         output_names = ["output"]
         dynamic_axes = (

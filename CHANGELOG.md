@@ -53,6 +53,12 @@ before 1.4.0 are documented in the
   class-aware NMS. The BSD-3-Clause source and implied checkpoint-license
   basis are disclosed alongside the Oxford VGG feature-weight CC BY 4.0
   lineage; `train()` raises
+- LibreMaskRCNN, an inference-only Mask R-CNN R50 FPN v2 port with instance
+  segmentation by default and detection from the same checkpoint. Native RPN,
+  box, raw mask-logit, and final-mask outputs are exact against pinned
+  torchvision v0.26.0. Batch-one ONNX for both tasks preserves dynamic source
+  H/W. BSD-3-Clause attribution and the pretrained-weight caveat ship with the
+  family, and `train()` raises
 - LibreDeformableDETR, an inference-only museum port of the original
   Apache-2.0 Deformable DETR in all five released ResNet-50 variants
   (`r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage`). The portable

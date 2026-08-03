@@ -322,6 +322,22 @@ SSD300 / TorchVision (BSD-3-Clause; VGG weight lineage CC BY 4.0)
     Oxford Visual Geometry Group feature weights released under CC BY 4.0.
     The family notice supplies the full BSD text, VGG attribution, license
     link, changes statement, and pretrained-model/data caveats.
+Mask R-CNN / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/mask_rcnn/
+    License: libreyolo/models/mask_rcnn/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    LibreMaskRCNN adds the pinned torchvision v0.26.0 Mask R-CNN RoIAlign mask
+    head and class-specific mask selection to LibreYOLO's native Faster R-CNN
+    graph (BSD-3-Clause, Copyright (c) Soumith Chintala 2016). The port keeps
+    upstream state-dict names and adds LibreYOLO task dispatch, contiguous
+    COCO-80 mapping, validation, mask postprocessing, and ONNX integration.
+    Training-only sampling and loss code is excluded. The official COCO
+    checkpoint is not bundled. Its separate weight mirror discloses that the
+    BSD-3-Clause redistribution basis is implied by the releasing project, not
+    an explicit checkpoint-specific grant, and repeats the pretrained-model
+    terms caveat.
 
 LW-DETR (Apache License 2.0)
     Path:    libreyolo/models/lwdetr/, libreyolo/postprocess/lwdetr.py,

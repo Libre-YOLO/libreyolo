@@ -699,6 +699,32 @@
     "available": true,
     "group": "g3"
   },
+  "mask_rcnn": {
+    "class": "libreyolo.models.mask_rcnn.model.LibreMaskRCNN",
+    "tasks": [
+      "detect",
+      "segment"
+    ],
+    "default_task": "segment",
+    "sizes": {
+      "r50": 800
+    },
+    "default_imgsz": {
+      "r50": 800
+    },
+    "task_sizes": {
+      "detect": {
+        "r50": 800
+      },
+      "segment": {
+        "r50": 800
+      }
+    },
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "mobilenetv4": {
     "class": "libreyolo.models.mobilenetv4.model.LibreMobileNetV4",
     "tasks": [

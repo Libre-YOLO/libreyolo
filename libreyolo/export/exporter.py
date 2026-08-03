@@ -864,6 +864,15 @@ class BaseExporter(ABC):
             nn_model = LWDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "mask_rcnn":
+            from ..models.mask_rcnn.nn import MaskRCNNExportWrapper
+
+            nn_model = MaskRCNNExportWrapper(
+                nn_model,
+                include_masks=task == "segment",
+            ).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "faster_rcnn":
             from ..models.faster_rcnn.nn import FasterRCNNExportWrapper
 
@@ -1265,7 +1274,7 @@ class BaseExporter(ABC):
         default_task = getattr(self.model, "DEFAULT_TASK", "detect")
         if not isinstance(default_task, str):
             default_task = "detect"
-        if self.model._get_model_name() == "rfdetr":
+        if self.model._get_model_name() in {"mask_rcnn", "rfdetr"}:
             return task, [task], task
         return task, list(supported_tasks), default_task
 
