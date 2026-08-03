@@ -52,10 +52,10 @@ def val_cmd(
         help="COCO evaluator cap (default: pycocotools AP@100)",
     ),
     faster_coco_eval: bool = typer.Option(
-        False,
-        "--faster-coco-eval",
+        True,
+        "--faster-coco-eval/--no-faster-coco-eval",
         help="Use the faster-coco-eval C++ backend for COCO metrics "
-        "(requires the faster-coco-eval package; falls back to pycocotools)",
+        "(default: on when installed; falls back to pycocotools)",
     ),
     half: bool = typer.Option(False, help="FP16 inference"),
     amp_dtype: str = typer.Option(
@@ -307,6 +307,8 @@ def val_cmd(
         "data": data,
         "split": split,
         "device": str(loaded_model.device),
+        # COCO eval backend provenance, e.g. "faster-coco-eval 1.7.2".
+        "eval_backend": getattr(loaded_model, "last_eval_backend", None),
         "metrics": {
             "mAP50": round(mAP50, 4),
             "mAP50_95": round(mAP50_95, 4),

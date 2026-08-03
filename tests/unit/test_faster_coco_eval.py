@@ -124,7 +124,7 @@ class TestFasterCocoEvalParity:
 
 
 class TestBackendResolution:
-    def test_off_by_default(self, monkeypatch):
+    def test_disabled_request_stays_disabled(self, monkeypatch):
         monkeypatch.delenv(FASTER_COCO_EVAL_ENV_VAR, raising=False)
         assert resolve_faster_coco_eval(False) is False
 
@@ -155,17 +155,17 @@ class TestBackendResolution:
 
 
 class TestConfigFlag:
-    def test_validation_config_default_off(self):
+    def test_validation_config_default_on(self):
         from libreyolo.validation import ValidationConfig
 
         cfg = ValidationConfig(data="dummy.yaml")
-        assert cfg.faster_coco_eval is False
-        assert cfg.update(faster_coco_eval=True).faster_coco_eval is True
+        assert cfg.faster_coco_eval is True
+        assert cfg.update(faster_coco_eval=False).faster_coco_eval is False
 
-    def test_train_config_default_off(self):
+    def test_train_config_default_on(self):
         from libreyolo.training.config import TrainConfig
 
-        assert TrainConfig().faster_coco_eval is False
+        assert TrainConfig().faster_coco_eval is True
 
 
 class TestBackendProvenance:

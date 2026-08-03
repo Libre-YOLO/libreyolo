@@ -330,10 +330,10 @@ def train_cmd(
         help="COCO evaluator cap (default: pycocotools AP@100)",
     ),
     faster_coco_eval: bool = typer.Option(
-        False,
-        "--faster-coco-eval",
+        True,
+        "--faster-coco-eval/--no-faster-coco-eval",
         help="Use the faster-coco-eval C++ backend for validation COCO metrics "
-        "(requires the faster-coco-eval package; falls back to pycocotools)",
+        "(default: on when installed; falls back to pycocotools)",
     ),
     save_plots: bool = typer.Option(
         False, help="Save final validation plots during training"
