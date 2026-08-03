@@ -45,6 +45,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | florence2 | detect |  |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |
+| hrnet | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |  |
 | l2cs | gaze | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
@@ -92,8 +93,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | swin | classify | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
-| vit | classify | ✓ | exp | exp | exp | exp | exp |  |  |  |
 | vgg | classify | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
+| vit | classify | ✓ | exp | exp | exp | exp | exp |  |  |  |
 | yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  | ✓ |
 | yolo3 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
@@ -225,6 +226,10 @@ A check mark applies only under any constraint listed here.
 - `fomo` / `point` / `openvino`: fixed square input
 - `fomo` / `point` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed 96x96 input; two-input raw parity, factory reload, metadata, and public predict parity
 - `fomo` / `point` / `coreai`: native 96 canvas; a deterministic model state trained from scratch for eight steps on synthetic tensors is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion and the existing heatmap contract, not point-localization accuracy
+- `hrnet` / `pose` / `onnx`: PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
+- `hrnet` / `pose` / `torchscript`: PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
+- `hrnet` / `pose` / `tensorrt`: TensorRT 10.16.1.11, CUDA 12.8, RTX 5070 Ti, FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
+- `hrnet` / `pose` / `openvino`: OpenVINO 2026.2.1 CPU FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
 - `l2cs` / `gaze` / `onnx`: head-only contract: each input image is one face crop
 - `l2cs` / `gaze` / `torchscript`: head-only contract: each input image is one face crop
 - `l2cs` / `gaze` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 448x448 face crop
@@ -340,11 +345,11 @@ A check mark applies only under any constraint listed here.
 - `teed` / `edge` / `tensorrt`: TensorRT 10.16 FP32, batch 1, fixed input shape
 - `teed` / `edge` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed input shape
 - `teed` / `edge` / `tflite`: LiteRT 2.1.2 CPU FP32, batch 1, fixed input shape
-- `vit` / `classify` / `onnx`: FP32, fixed 224x224 input
 - `vgg` / `classify` / `onnx`: FP32, batch 1, fixed 224x224 input
 - `vgg` / `classify` / `torchscript`: FP32, batch 1, fixed 224x224 input
 - `vgg` / `classify` / `tensorrt`: FP32, batch 1, fixed 224x224 input
 - `vgg` / `classify` / `openvino`: FP32, batch 1, fixed 224x224 input
+- `vit` / `classify` / `onnx`: FP32, fixed 224x224 input
 - `yolo1` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo1` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
@@ -570,6 +575,11 @@ A check mark applies only under any constraint listed here.
 - `grounding_dino` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `coreai`: Open-vocabulary runtime export is out of scope for v1.
+- `hrnet` / `pose` / `executorch`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `hrnet` / `pose` / `ncnn`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `hrnet` / `pose` / `tflite`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `hrnet` / `pose` / `coreml`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `hrnet` / `pose` / `coreai`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `internvl3` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
@@ -832,12 +842,12 @@ A check mark applies only under any constraint listed here.
 - `teed` / `edge` / `ncnn`: PNNX 20260526 leaves an unsupported Tensor.index channel-reversal node, so the generated NCNN network has no runnable input.
 - `teed` / `edge` / `coreml`: This edge runtime has no parity-valid artifact for the requested format.
 - `teed` / `edge` / `coreai`: This edge runtime has no parity-valid artifact for the requested format.
-- `vit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
-- `vit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `vit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `vgg` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `vgg` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `vgg` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
+- `vit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `vit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `vit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `yolo1` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_EINSUM custom operation that LiteRT 2.1.2 cannot prepare at the native 448x448 canvas.
 - `yolo1` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo2` / `detect` / `tflite`: LiteRT 2.1.2 cannot prepare the onnx2tf 2.6.7 artifact because a RESHAPE maps 4,225 input elements to one output element.

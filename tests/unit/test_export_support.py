@@ -619,6 +619,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("eomt", "semantic"),
         ("fcn", "semantic"),
         ("fomo", "point"),
+        ("hrnet", "pose"),
         ("lingbotvision", "semantic"),
         ("l2cs", "gaze"),
         ("midas", "depth"),
