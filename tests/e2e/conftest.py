@@ -537,6 +537,7 @@ FLAGSHIP_FAMILIES = {"yolo9", "rfdetr"}
 # it has no plain-HTTP route, so a skip-means-failure gate cannot provision it.
 # Gaze inference stays covered by the non-gated per-family L2CS suite.
 GENERAL_NIGHTLY_INFERENCE_MODELS = [
+    ("alexnet", "b", "LibreAlexNetb-cls.pt"),
     ("yolox", "n", "LibreYOLOXn.pt"),
     ("yolo9", "t", "LibreYOLO9t.pt"),
     ("yolo9_e2e", "t", "LibreYOLO9E2Et.pt"),
@@ -628,6 +629,7 @@ RFDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rfdetr"]
 RTDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 
 FAMILY_MARKERS = {
+    "alexnet": pytest.mark.alexnet,
     "yolox": pytest.mark.yolox,
     "yolo7": pytest.mark.yolo7,
     "yolo9": pytest.mark.yolo9,

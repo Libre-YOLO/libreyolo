@@ -121,6 +121,7 @@ from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_loa
 from .deit.model import LibreDeiT  # noqa: E402  (classify-only museum family; exact ViT geometry)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
 from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
+from .alexnet.model import LibreAlexNet  # noqa: E402  (classify-only; unique 11x11 stem + 3-layer classifier)
 
 # Native CLIP zero-shot classifier: pure-torch towers (no open_clip at runtime),
 # so it registers eagerly. can_load is uniquely keyed on logit_scale +
@@ -791,6 +792,7 @@ __all__ = [
     "LibreConvNeXt",
     "LibreEfficientNetV2",
     "LibreResNet",
+    "LibreAlexNet",
     "LibreCLIP",
     "LibreSigLIP2",
     "LibrePPOCR",

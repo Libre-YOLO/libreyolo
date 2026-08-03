@@ -140,7 +140,7 @@ selects the task. These families are extras on top of the core library.
 - **Semantic segmentation:** SegFormer, PIDNet, EoMT, DINOv2
 - **Panoptic segmentation:** EoMT
 - **Oriented boxes (OBB):** RF-DETR
-- **Classification:** ResNet, DeiT, ConvNeXt, MobileNetV4, EfficientNetV2, ViT, DINOv2, CLIP, SigLIP2
+- **Classification:** AlexNet, ResNet, DeiT, ConvNeXt, MobileNetV4, EfficientNetV2, ViT, DINOv2, CLIP, SigLIP2
 - **Point detection:** FOMO, LocateAnything
 - **Depth estimation:** Depth Anything 3, Depth Anything V2, ZipDepth
 - **Surface-normal estimation:** MoGe-2 (ViT-S/B/L)

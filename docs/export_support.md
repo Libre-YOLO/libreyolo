@@ -8,6 +8,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 
 | Family | Task | onnx | torchscript | executorch | tensorrt | openvino | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| alexnet | classify | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | birefnet | matte | exp | ✓ |  |  |  |  |  |  |  |
 | centernet | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | clip | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
@@ -115,6 +116,10 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 
 A check mark applies only under any constraint listed here.
 
+- `alexnet` / `classify` / `onnx`: FP32 at the native 224x224 input resolution; ONNX supports a dynamic batch axis
+- `alexnet` / `classify` / `torchscript`: FP32 at the native 224x224 input resolution
+- `alexnet` / `classify` / `tensorrt`: TensorRT 10.16 FP32 at the fixed native 224x224 resolution
+- `alexnet` / `classify` / `openvino`: OpenVINO 2026.2 CPU FP32 at the fixed native 224x224 resolution
 - `birefnet` / `matte` / `torchscript`: fixed 1024x1024 input
 - `centernet` / `detect` / `onnx`: FP32, fixed square input; ONNX Runtime CPU or TorchScript
 - `centernet` / `detect` / `torchscript`: FP32, fixed square input; ONNX Runtime CPU or TorchScript
@@ -369,6 +374,9 @@ A check mark applies only under any constraint listed here.
 
 ## Blocked combinations
 
+- `alexnet` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `alexnet` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `alexnet` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `birefnet` / `matte` / `executorch`: Strict capture succeeds at the fixed 1024x1024 canvas, but ExecuTorch 1.2 lowering has no out variant for torchvision::deform_conv2d.
 - `birefnet` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `birefnet` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.

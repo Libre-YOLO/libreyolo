@@ -122,6 +122,15 @@ project the weights were derived from. Per-family summary:
              pretrained-model terms may derive from training data and users
              must determine permission for their use case.
              Public mirror: https://huggingface.co/LibreYOLO/LibreFCOSr50
+    AlexNet  (LibreAlexNetb-cls)                       BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official ImageNet-1K checkpoint has no per-object license
+             file. Rehosting uses BSD-3-Clause implied by the releasing
+             project, not a publisher-confirmed checkpoint grant. The weight
+             repo ships the verbatim BSD text and states torchvision's warning
+             that pretrained-model terms may derive from training data.
+             Public mirror: https://huggingface.co/LibreYOLO/LibreAlexNetb-cls
 
     Deformable DETR                                     Apache-2.0
              (LibreDeformableDETR{r50ss,r50ssdc5,r50,

@@ -392,6 +392,20 @@ FCOS / TorchVision (BSD-3-Clause)
     redistribution is implied by the releasing project, not an explicit
     checkpoint-specific grant, and repeats torchvision's pretrained-model
     terms caveat.
+AlexNet / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/alexnet/, libreyolo/postprocess/alexnet.py
+    License: libreyolo/models/alexnet/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreAlexNet graph is derived from torchvision v0.26.0's
+    AlexNet implementation (BSD-3-Clause, Copyright (c) Soumith Chintala
+    2016). It retains the upstream features/avgpool/classifier state-dict
+    layout for strict conversion and bit-exact logits. The official
+    ImageNet-1K checkpoint is not bundled in the source distribution. Its
+    separate weight mirror discloses that BSD-3-Clause is an implied
+    redistribution basis rather than a checkpoint-specific publisher grant,
+    and repeats torchvision's pretrained-model terms caveat.
 
 LW-DETR (Apache License 2.0)
     Path:    libreyolo/models/lwdetr/, libreyolo/postprocess/lwdetr.py,

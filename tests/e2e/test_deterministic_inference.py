@@ -1,8 +1,9 @@
 """Nightly native inference checks for every public model family.
 
 This is the broad tier: one smallest pretrained case per family, native model
-load, two inference passes, and stable task-native outputs. Keep exports and
-training out of this file; those belong to flagship or backend-specific suites.
+load, two inference passes, and stable task-appropriate outputs. Keep exports
+and training out of this file; those belong to flagship or backend-specific
+suites.
 """
 
 import pytest
@@ -117,15 +118,18 @@ def _assert_batched_detection_output_matches_sequential(family, sequential, batc
 def _assert_classification_output_is_stable(family, first, second):
     assert first.probs is not None, f"{family} did not return probabilities"
     assert second.probs is not None, f"{family} did not return probabilities"
+    assert first.boxes is None and second.boxes is None
     assert first.orig_shape == second.orig_shape
     assert first.names, f"{family} result has no class names"
 
     first_probs = _tensor(first.probs.data)
     second_probs = _tensor(second.probs.data)
+    assert first_probs.ndim == 1
+    assert first_probs.numel() == len(first.names)
     assert torch.isfinite(first_probs).all(), f"{family} produced non-finite probabilities"
-    assert torch.isclose(first_probs.sum(), torch.tensor(1.0), atol=1e-5)
-    torch.testing.assert_close(first_probs, second_probs, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(first_probs.sum(), torch.tensor(1.0), atol=1e-5, rtol=0)
     assert first.probs.top1 == second.probs.top1
+    torch.testing.assert_close(first_probs, second_probs, rtol=1e-5, atol=1e-6)
 
 
 def _assert_batched_classification_output_matches_sequential(

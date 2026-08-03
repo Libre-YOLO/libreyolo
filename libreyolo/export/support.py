@@ -643,6 +643,57 @@ _add(
 )
 _add(
     "validated",
+    ("alexnet",),
+    ("classify",),
+    ("onnx",),
+    reason=(
+        "Tests cover raw logits plus ONNX Runtime artifact reload, public "
+        "probabilities, metadata, and top-1 parity."
+    ),
+    since="1.7",
+    constraint=(
+        "FP32 at the native 224x224 input resolution; ONNX supports a dynamic "
+        "batch axis"
+    ),
+)
+_add(
+    "validated",
+    ("alexnet",),
+    ("classify",),
+    ("torchscript",),
+    reason=(
+        "Tests cover TorchScript artifact reload, public probabilities, "
+        "metadata, and top-1 parity."
+    ),
+    since="1.7",
+    constraint="FP32 at the native 224x224 input resolution",
+)
+_add(
+    "validated",
+    ("alexnet",),
+    ("classify",),
+    ("openvino",),
+    reason=(
+        "Official-checkpoint and deterministic-fixture runtime tests preserve "
+        "probability cosine agreement and ordered top-k predictions."
+    ),
+    since="1.7",
+    constraint="OpenVINO 2026.2 CPU FP32 at the fixed native 224x224 resolution",
+)
+_add(
+    "validated",
+    ("alexnet",),
+    ("classify",),
+    ("tensorrt",),
+    reason=(
+        "Official-checkpoint and deterministic-fixture runtime tests preserve "
+        "probability cosine agreement and ordered top-k predictions."
+    ),
+    since="1.7",
+    constraint="TensorRT 10.16 FP32 at the fixed native 224x224 resolution",
+)
+_add(
+    "validated",
     ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
     ("classify",),
     ("openvino",),
