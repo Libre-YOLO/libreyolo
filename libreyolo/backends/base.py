@@ -618,6 +618,15 @@ class BaseBackend(ABC):
                 interpolation="bilinear",
                 square_resize=True,
             )
+        elif self.model_family == "vit":
+            from ..models.vit.utils import VIT_MEAN, VIT_STD
+
+            transform_kwargs.update(
+                mean=VIT_MEAN,
+                std=VIT_STD,
+                crop_pct=0.9,
+                interpolation="bicubic",
+            )
         transform = build_classify_transforms(
             h,
             augment=False,

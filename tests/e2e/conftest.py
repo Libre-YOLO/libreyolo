@@ -509,6 +509,10 @@ MODEL_CATALOG = [
     ("picodet", "s", "LibrePICODETs.pt"),
     ("picodet", "m", "LibrePICODETm.pt"),
     ("picodet", "l", "LibrePICODETl.pt"),
+    ("vit", "ti", "LibreViTti-cls.pt"),
+    ("vit", "s", "LibreViTs-cls.pt"),
+    ("vit", "b", "LibreViTb-cls.pt"),
+    ("vit", "l", "LibreViTl-cls.pt"),
 ]
 
 FLAGSHIP_FAMILIES = {"yolo9", "rfdetr"}
@@ -540,6 +544,7 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("rtdetrv4", "s", "weights/LibreRTDETRv4s.pt"),
     ("picodet", "s", "LibrePICODETs.pt"),
     ("rtmdet", "t", "LibreRTMDett.pt"),
+    ("vit", "ti", "LibreViTti-cls.pt"),
 ]
 
 # Derived lists (no manual maintenance)
@@ -573,7 +578,7 @@ QUICK_TEST_MODELS = [("yolox", "n"), ("yolo9", "t"), ("rtdetr", "r18")]
 FULL_TEST_MODELS = [
     (family, size)
     for family, size in NON_RFDETR_MODELS
-    if family != "faster_rcnn"
+    if family not in {"faster_rcnn", "vit"}
 ]
 
 # RF-DETR test set (separate due to dependency)
@@ -604,6 +609,7 @@ FAMILY_MARKERS = {
     "rtmdet": pytest.mark.rtmdet,
     "l2cs": pytest.mark.l2cs,
     "fomo": pytest.mark.fomo,
+    "vit": pytest.mark.vit,
 }
 
 

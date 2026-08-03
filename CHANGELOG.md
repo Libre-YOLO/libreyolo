@@ -21,6 +21,10 @@ before 1.4.0 are documented in the
   the evaluator falls back to pycocotools with a warning if the package
   is missing. Install via `pip install libreyolo[fast-eval]`.
 
+- LibreViT, an inference-only classic Vision Transformer classifier in
+  patch-16 tiny/small/base/large sizes at 224px. Native pretrained logits are
+  bit-exact against the pinned Apache-2.0 timm AugReg checkpoints for all four
+  sizes, with top-1/top-5 validation and ONNX Runtime prediction parity
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr

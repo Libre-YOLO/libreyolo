@@ -91,6 +91,11 @@ DETR_RF1_FAMILIES = {"dfine", "deim", "deimv2", "rtdetr"}
 # convergence has not been validated against the RF1 mAP floor. Every RF1
 # training test skips them — keep the two tests consistent via this map.
 _EXPERIMENTAL_TRAINING_SKIP = {
+    "vit": (
+        "ViT ships inference-only: the AugReg fine-tuning recipe is outside "
+        "this museum port, and train() raises. Pretrained and export parity "
+        "are verified separately."
+    ),
     "detr": (
         "Original DETR ships inference-only: its 500-epoch Hungarian-matching "
         "training recipe is not implemented, and train() raises. Inference "

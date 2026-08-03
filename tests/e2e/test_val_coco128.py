@@ -31,6 +31,11 @@ MIN_MAP = 0.18  # Uniform threshold for all models
 )
 def test_val_coco128(family, size, weights):
     """Validate a pretrained model on coco128 and check mAP >= 0.18."""
+    if family == "vit":
+        pytest.skip(
+            "ViT is a classifier; ImageNet-style top-1/top-5 validation uses "
+            "ClassifyValidator rather than the COCO detection mAP contract."
+        )
     weights = require_test_weights(weights)
     model = LibreYOLO(weights, size=size)
 

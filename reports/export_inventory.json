@@ -1359,6 +1359,30 @@
     "available": true,
     "group": "g3"
   },
+  "vit": {
+    "class": "libreyolo.models.vit.model.LibreViT",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "ti": 224,
+      "s": 224,
+      "b": 224,
+      "l": 224
+    },
+    "default_imgsz": {
+      "ti": 224,
+      "s": 224,
+      "b": 224,
+      "l": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "yolo1": {
     "class": "libreyolo.models.yolo1.model.LibreYOLO1",
     "tasks": [

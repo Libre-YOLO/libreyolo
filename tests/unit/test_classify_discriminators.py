@@ -79,6 +79,7 @@ def test_classify_filenames_require_cls_suffix():
         LibreEfficientNetV2,
         LibreMobileNetV4,
         LibreResNet,
+        LibreViT,
     )
 
     for cls, size in [
@@ -86,6 +87,7 @@ def test_classify_filenames_require_cls_suffix():
         (LibreConvNeXt, "t"),
         (LibreEfficientNetV2, "b0"),
         (LibreMobileNetV4, "s"),
+        (LibreViT, "ti"),
     ]:
         stem = f"{cls.FILENAME_PREFIX}{size}"
         assert cls.detect_size_from_filename(f"{stem}-cls.pt") == size, (

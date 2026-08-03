@@ -1,0 +1,32 @@
+LibreViT - third-party attribution
+==================================
+
+The native Vision Transformer architecture in ``nn.py`` is derived from:
+
+    Source:  https://github.com/huggingface/pytorch-image-models
+    File:    timm/models/vision_transformer.py and supporting timm/layers modules
+    Version: v1.0.28
+    Commit:  8ef73809f622e0031bd7f4940265734aef8b9978
+    Author:  Ross Wightman and the timm contributors
+    License: Apache License 2.0
+
+LibreYOLO retains only the classic fixed-224 patch-16 classifier graph used by
+the shipped AugReg ImageNet-1k checkpoints. Dynamic image sizes, alternate
+pooling, register tokens, patch dropout, layer scale, stochastic depth, and
+other later extensions are omitted. Module and parameter names remain aligned
+with timm so all learned tensors load unchanged and exact inference parity can
+be tested.
+
+The architecture and AugReg checkpoint lineage originate from:
+
+    Source:  https://github.com/google-research/vision_transformer
+    Commit:  64801f1b3b367b3611cc27a3d45cc22870a36fb3
+    Authors: Alexey Dosovitskiy et al., Google Research
+    License: Apache License 2.0
+
+The released checkpoints are the Apache-2.0 timm conversions of Google's
+AugReg ImageNet-21k pretraining followed by ImageNet-1k fine-tuning. Each
+published LibreYOLO weight repository carries the upstream Apache-2.0 license
+and its own attribution notice.
+
+Apache License 2.0: https://www.apache.org/licenses/LICENSE-2.0
