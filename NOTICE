@@ -420,6 +420,25 @@ AlexNet / TorchVision (BSD-3-Clause)
     separate weight mirror discloses that BSD-3-Clause is an implied
     redistribution basis rather than a checkpoint-specific publisher grant,
     and repeats torchvision's pretrained-model terms caveat.
+DeepLabv3 / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/deeplabv3/,
+             libreyolo/postprocess/deeplabv3.py,
+             weights/convert_deeplabv3_weights.py
+    License: libreyolo/models/deeplabv3/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreDeepLabv3 inference graph is derived from torchvision
+    v0.26.0's DeepLabv3 orchestration, ASPP head, and ResNet/MobileNetV3
+    backbone builders (BSD-3-Clause, Copyright (c) Soumith Chintala 2016).
+    Upstream runtime state-dict names are retained for strict conversion. The
+    port adds LibreYOLO metadata, semantic results, validation, and fixed-520
+    export/backend integration; it excludes the training-only auxiliary FCN
+    classifier and training recipe. Official COCO checkpoints are not bundled
+    in the source distribution. Separate weight mirrors disclose that their
+    BSD-3-Clause redistribution basis is implied by the releasing project,
+    not an explicit checkpoint-specific grant, and repeat torchvision's
+    pretrained-model terms caveat.
 
 LW-DETR (Apache License 2.0)
     Path:    libreyolo/models/lwdetr/, libreyolo/postprocess/lwdetr.py,

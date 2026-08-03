@@ -104,6 +104,13 @@ before 1.4.0 are documented in the
   parity, OpenVINO is experimental due to low-confidence NMS ordering drift,
   and the published `LibreFCOSr50.pt` mirror carries the explicit
   pretrained-weight license caveat
+- LibreDeepLabv3, an inference-only semantic port of torchvision's three
+  released COCO-with-VOC-label variants (`r50`, `r101`, `mv3`). Native
+  21-class logits are bit-exact against pytorch/vision v0.26.0 before
+  postprocessing; fixed-520 ONNX, TorchScript, OpenVINO, and TensorRT exports
+  reload through the unified backend. Conversion removes only the upstream
+  auxiliary FCN head, the BSD-3-Clause provenance and checkpoint-license
+  caveat ship with the family, and `train()` raises
 - LibreDeformableDETR, an inference-only museum port of the original
   Apache-2.0 Deformable DETR in all five released ResNet-50 variants
   (`r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage`). The portable

@@ -48,11 +48,11 @@ Libre<FAMILY><size>[-<task>].pt
 ## Family prefixes
 
 The model families registered into the model factory (the VLM tier is a
-separate category, covered in the note below). Most are detectors; `fcn`,
-`pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
-instance, and panoptic segmentation; the `alexnet` / `deit` / `mobilenetv4` /
-`convnext` / `efficientnetv2` / `resnet` / `swin` / `vgg` / `vit` families are
-classify-only:
+separate category, covered in the note below). Most are detectors; `deeplabv3`,
+`fcn`, `pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt`
+supports semantic, instance, and panoptic segmentation; the `alexnet` / `deit` /
+`mobilenetv4` / `convnext` / `efficientnetv2` / `resnet` / `swin` / `vgg` /
+`vit` families are classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
 |---|---|---|
@@ -83,6 +83,7 @@ classify-only:
 | `fcn`       | `LibreFCN`      | All-caps acronym; inference-only semantic family. This is torchvision's dilated-ResNet adaptation, not the original VGG FCN-8s graph |
 | `centernet` | `LibreCenterNet` | Upstream CamelCase brand preserved; inference-only center-point detector |
 | `fcos`      | `LibreFCOS`     | All-caps acronym; inference-only anchor-free detector |
+| `deeplabv3` | `LibreDeepLabv3` | Upstream brand casing preserved; inference-only semantic family whose canonical filenames require `-sem` |
 | `deformable_detr` | `LibreDeformableDETR` | Upstream name rendered as `DeformableDETR`; the family id retains the separator |
 | `dinodetr`  | `LibreDINODETR`  | Upstream DINO detector rendered as `DINO-DETR`; the explicit `detr` suffix avoids collision with DINOv2 and Grounding DINO |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
@@ -195,6 +196,7 @@ ships:
 | `fcn`       | `r50`, `r101` (dilated ResNet-50 / ResNet-101; both use 520-pixel square inputs) |
 | `centernet` | `resdcn18`, `dla34` (ResNet-18 with deformable upsampling / DLA-34 with deformable aggregation; both fixed at 512) |
 | `fcos`      | `r50` (ResNet-50 FPN; short side 800, long side at most 1333, then stride-32 padding) |
+| `deeplabv3` | `r50`, `r101`, `mv3` (dilated ResNet-50 / ResNet-101 / MobileNetV3-Large; all use fixed 520x520 stretch deployment) |
 | `deformable_detr` | `r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage` (single-scale, single-scale DC5, multi-scale base, iterative refinement, and refinement plus two-stage; all fixed at 800) |
 | `dinodetr`  | `r50`, `r50s5`, `swinl` (ResNet-50 four-scale, ResNet-50 five-scale, and Swin-L five-scale; all fixed at 800) |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
@@ -447,6 +449,7 @@ Detector-factory family support follows:
 | `fcn`       | `("semantic",)`                   | semantic | inference-only torchvision ResNet FCN, not the original VGG FCN-8s; 21 COCO-trained VOC-style labels; primary logits drive predict/val and the auxiliary head is retained for checkpoint fidelity |
 | `centernet` | `("detect",)`                      | detect | detect-only; inference-only fixed-512 affine pipeline; top-100 center decoding without NMS |
 | `fcos`      | `("detect",)`                     | detect | detect-only; inference-only native dense graph; official 91-column COCO head maps sparse ids to contiguous COCO-80 |
+| `deeplabv3` | `("semantic",)`                    | semantic | background plus 20 VOC-named classes, trained on the matching COCO subset; fixed 520; inference + `val`; `train()` raises |
 | `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is gated experimental, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
@@ -570,6 +573,11 @@ LibreEoMTl-panoptic.pt     # EoMT-L, COCO 133-class panoptic (80 things + 53 stu
 LibrePIDNets-sem.pt        # PIDNet-S, Cityscapes 19-class semantic
 LibrePIDNetm-sem.pt        # PIDNet-M, Cityscapes 19-class semantic
 LibrePIDNetl-sem.pt        # PIDNet-L, Cityscapes 19-class semantic
+
+# deeplabv3 - COCO-trained semantic segmentation with VOC label names
+LibreDeepLabv3r50-sem.pt   # dilated ResNet-50, fixed 520
+LibreDeepLabv3r101-sem.pt  # dilated ResNet-101, fixed 520
+LibreDeepLabv3mv3-sem.pt   # dilated MobileNetV3-Large, fixed 520
 
 # segformer — MiT-b0..b5 ADE20K semantic segmentation; weights are
 # NON-COMMERCIAL (see the note above)

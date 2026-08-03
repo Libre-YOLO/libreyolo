@@ -241,14 +241,16 @@ V2.3 contract:
   VGG, and Swin classifiers), that has a public auto-download route (LibreYOLO
   HF, or Deci's CDN for YOLO-NAS), plus batched/sequential parity and selected
   open-vocabulary smoke cases. FCN adds one task-specific real-checkpoint
-  semantic predict, mIoU, and UI-render smoke; currently 44 tests.
+  semantic predict, mIoU, and UI-render smoke, and DeepLabv3 adds a
+  task-appropriate semantic stability case; currently 45 tests.
 - `flagship_nightly`: heavier YOLO9/RF-DETR native validation, video, tracking,
   CLI, and one RF1 training/reload size per flagship family; currently 48 tests
   with `not export_backend`. The full RF1 size matrix remains available under
   `-m rf1` for manual or future full-matrix runs.
-- Detector families cover detection and classifier families cover normalized
-  probability plus top-1 stability. L2CS gaze is non-redistributable (no public
-  download route), so it runs as a non-gated per-family suite
+- Detector families cover detection, classifier families cover normalized
+  probability plus top-1 stability, and DeepLabv3 covers dense semantic masks.
+  L2CS gaze is non-redistributable (no public download route), so it runs as a
+  non-gated per-family suite
   (`tests/e2e/test_l2cs_gaze.py`) that skips when the weight is not staged
   locally, rather than gating the nightly.
 - Export backends are outside default nightly.

@@ -574,6 +574,17 @@ FCN_SEMANTIC_NIGHTLY_MODELS = [
     ("fcn", "r50", "LibreFCNr50.pt"),
 ]
 
+# Semantic families do not belong in MODEL_CATALOG: that catalog feeds the
+# COCO detection mAP gate. Keep task-appropriate public checkpoints separate.
+DEEPLABV3_SEMANTIC_MODELS = [
+    ("deeplabv3", "r50", "LibreDeepLabv3r50-sem.pt"),
+    ("deeplabv3", "r101", "LibreDeepLabv3r101-sem.pt"),
+    ("deeplabv3", "mv3", "LibreDeepLabv3mv3-sem.pt"),
+]
+GENERAL_NIGHTLY_SEMANTIC_MODELS = [
+    ("deeplabv3", "mv3", "LibreDeepLabv3mv3-sem.pt"),
+]
+
 # Derived lists (no manual maintenance)
 YOLOX_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "yolox"]
 YOLO9_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "yolo9"]
@@ -640,6 +651,7 @@ FAMILY_MARKERS = {
     "rfdetr": pytest.mark.rfdetr,
     "detr": pytest.mark.detr,
     "deit": pytest.mark.deit,
+    "deeplabv3": pytest.mark.deeplabv3,
     "lwdetr": pytest.mark.lwdetr,
     "faster_rcnn": pytest.mark.faster_rcnn,
     "retinanet": pytest.mark.retinanet,
@@ -733,6 +745,15 @@ GENERAL_NIGHTLY_INFERENCE_PARAMS = model_cases(
 )
 FCN_SEMANTIC_NIGHTLY_PARAMS = model_cases(
     FCN_SEMANTIC_NIGHTLY_MODELS,
+    with_weights=True,
+    marks_resolver=general_nightly_marks,
+)
+DEEPLABV3_SEMANTIC_PARAMS = model_cases(
+    DEEPLABV3_SEMANTIC_MODELS,
+    with_weights=True,
+)
+GENERAL_NIGHTLY_SEMANTIC_PARAMS = model_cases(
+    GENERAL_NIGHTLY_SEMANTIC_MODELS,
     with_weights=True,
     marks_resolver=general_nightly_marks,
 )

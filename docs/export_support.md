@@ -14,6 +14,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | clip | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | clip | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
+| deeplabv3 | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
 | deformable_detr | detect | ✓ | exp | exp | exp | exp |  |  |  |  |
 | deim | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
@@ -141,6 +142,10 @@ A check mark applies only under any constraint listed here.
 - `convnext` / `classify` / `openvino`: fixed family-native input resolution
 - `convnext` / `classify` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; two-input raw parity, factory reload, metadata, and public predict parity
 - `convnext` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `deeplabv3` / `semantic` / `onnx`: FP32, batch 1, fixed 520x520 input
+- `deeplabv3` / `semantic` / `torchscript`: FP32, batch 1, fixed 520x520 input
+- `deeplabv3` / `semantic` / `tensorrt`: TensorRT 10.16 FP32, RTX 5070 Ti, batch 1, fixed 520x520 input
+- `deeplabv3` / `semantic` / `openvino`: OpenVINO 2026.2 FP32 IR, CPU default inference precision, batch 1, fixed 520x520 input
 - `deformable_detr` / `detect` / `onnx`: FP32, fixed square input, ONNX opset 17
 - `deim` / `detect` / `onnx`: DETR query rows are aligned as an unordered set for parity
 - `deim` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
@@ -406,6 +411,11 @@ A check mark applies only under any constraint listed here.
 - `clip` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `clip` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
 - `convnext` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `deeplabv3` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `deeplabv3` / `semantic` / `ncnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `deeplabv3` / `semantic` / `tflite`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `deeplabv3` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `deeplabv3` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `deformable_detr` / `detect` / `ncnn`: NCNN export is not supported for Deformable DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deformable_detr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deformable_detr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.

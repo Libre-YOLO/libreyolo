@@ -3119,6 +3119,49 @@ _add(
     ),
 )
 
+_add(
+    "validated",
+    ("deeplabv3",),
+    ("semantic",),
+    ("onnx", "torchscript"),
+    reason=(
+        "All three official checkpoints preserve 100% raw argmax and public-"
+        "mask agreement. TorchScript logits are bit-exact; ONNX Runtime FP32 "
+        "maximum absolute logit error is at most 3.07e-05."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed 520x520 input",
+)
+_add(
+    "validated",
+    ("deeplabv3",),
+    ("semantic",),
+    ("openvino",),
+    reason=(
+        "All three official checkpoints export, reload, and preserve at least "
+        "99.987% public-mask agreement through the default CPU runtime."
+    ),
+    since="1.5",
+    constraint=(
+        "OpenVINO 2026.2 FP32 IR, CPU default inference precision, batch 1, "
+        "fixed 520x520 input"
+    ),
+)
+_add(
+    "validated",
+    ("deeplabv3",),
+    ("semantic",),
+    ("tensorrt",),
+    reason=(
+        "All three official checkpoints build and reload with at least "
+        "99.985% public-mask agreement on the validated GPU."
+    ),
+    since="1.5",
+    constraint=(
+        "TensorRT 10.16 FP32, RTX 5070 Ti, batch 1, fixed 520x520 input"
+    ),
+)
+
 
 _TASK_BLOCKS = {
     "ocr": (
