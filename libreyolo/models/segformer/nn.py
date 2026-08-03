@@ -132,9 +132,23 @@ class EfficientSelfAttention(nn.Module):
         key_states = self.k_proj(kv_hidden_states).view(kv_hidden_shape).transpose(1, 2)
         value_states = self.v_proj(kv_hidden_states).view(kv_hidden_shape).transpose(1, 2)
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_output = torch.matmul(attn_weights, value_states)
+        if torch.onnx.is_in_onnx_export():
+            # LibreYOLO defaults to ONNX opset 13, which has no symbolic for
+            # fused SDPA. Lower the same equation to primitive ops while
+            # tracing; eager inference keeps the fused kernels below.
+            attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
+            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_output = torch.matmul(attn_weights, value_states)
+        else:
+            attn_output = F.scaled_dot_product_attention(
+                query_states,
+                key_states,
+                value_states,
+                attn_mask=None,
+                dropout_p=0.0,
+                is_causal=False,
+                scale=self.scaling,
+            )
         attn_output = attn_output.transpose(1, 2).contiguous()
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
