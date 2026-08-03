@@ -90,14 +90,9 @@ class LibreYOLOX(BaseModel):
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
-        # Official YOLOX sets BatchNorm eps=1e-3, momentum=0.03 on EVERY size
-        # (Exp.get_model() in yolox_base.py), not just nano. eps is load-bearing
-        # at inference: gating it to "n" left t/s/m/l/x on torch's default 1e-5,
-        # costing ~1-1.5 mAP that grows with depth.
-        for m in self.model.modules():
-            if isinstance(m, nn.BatchNorm2d):
-                m.eps = 1e-3
-                m.momentum = 0.03
+        # BatchNorm eps=1e-3 / momentum=0.03 (official YOLOX) is applied by
+        # LibreYOLOXModel.__init__ itself so it survives class-count rebuilds
+        # during training; no wrapper-level fixup is needed here.
 
     # =========================================================================
     # Model lifecycle

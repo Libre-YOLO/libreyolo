@@ -182,6 +182,10 @@ class TrainConfig:
     # Optional COCO evaluator cap. None preserves pycocotools' historical
     # maxDets=[1, 10, 100] behavior independently of the prediction cap.
     eval_max_det: Optional[int] = None
+    # Use the faster-coco-eval C++ backend for in-training COCO validation
+    # metrics (bbox/segm). Off by default; falls back to pycocotools with a
+    # warning if the faster-coco-eval package is not installed.
+    faster_coco_eval: bool = False
     save_plots: bool = False
 
     # System

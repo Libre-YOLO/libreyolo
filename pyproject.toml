@@ -72,6 +72,10 @@ lora = [
 plots = [
     "matplotlib>=3.7.0",
 ]
+fast-eval = [
+    # Opt-in C++ COCO eval backend (faster_coco_eval=True / --faster-coco-eval).
+    "faster-coco-eval>=1.7.0",
+]
 vlm = [
     # VLM-as-detector families load through transformers.
     # huggingface_hub (used for snapshot download) ships with transformers.
