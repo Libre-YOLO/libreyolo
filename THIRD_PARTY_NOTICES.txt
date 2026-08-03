@@ -544,9 +544,10 @@ Used for: the standalone inference-only LibreDeformableDETR family
           The autograd bridge in
           libreyolo/kernels/attention/ms_deform_attn.py follows the upstream
           MSDeformAttnFunction interface; the compiled CUDA kernel itself is
-          NOT vendored. It is fetched at runtime, opt-in only
-          (LIBREYOLO_HUB_KERNELS=1), from the Apache-2.0 Hub repository
-          kernels-community/deformable-detr via the `kernels` package.
+          NOT vendored. It is fetched at runtime from the Apache-2.0 Hub
+          repository kernels-community/deformable-detr, only when the
+          optional `kernels` package (the libreyolo[hub-kernels] extra) is
+          installed; LIBREYOLO_HUB_KERNELS=0 disables it.
 
 --------------------------------------------------------------------
 Swin Transformer (Microsoft)

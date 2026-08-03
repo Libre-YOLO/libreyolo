@@ -52,9 +52,11 @@ def test_env_force_reference(monkeypatch):
     assert kernels.resolve("fake_quant_fp8") is reference
 
 
-def test_active_lists_attention_slot():
+def test_active_lists_attention_slot(monkeypatch):
     # The attention provider needs no triton, so the slot registers on any
-    # platform; without the opt-in env it must resolve to nothing.
+    # platform; with hub kernels pinned off it must resolve to nothing.
+    monkeypatch.setenv("LIBREYOLO_HUB_KERNELS", "0")
+    kernels.clear_cache()
     assert kernels.active().get("ms_deform_attn") == "unavailable"
 
 

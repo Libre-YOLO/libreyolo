@@ -104,8 +104,8 @@ sam = [
 ]
 hub-kernels = [
     # Optional runtime loader for compiled Hub kernels (e.g. the
-    # ms_deform_attn slot). Off by default; enabled with
-    # LIBREYOLO_HUB_KERNELS=1. See docs/kernels.md.
+    # ms_deform_attn slot). Installing this extra is the opt-in; disable
+    # with LIBREYOLO_HUB_KERNELS=0. See docs/kernels.md.
     "kernels>=0.6.0",
 ]
 openvocab = [

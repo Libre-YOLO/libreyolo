@@ -36,12 +36,16 @@ current selection.
   non-None and keep their portable path as the fallback; exported graphs
   (ONNX, TensorRT, torch.export) always use the portable path.
 
-## Hub kernels (opt-in)
+## Hub kernels
 
 Compiled kernels published on the Hugging Face Hub load at runtime through
-the optional `kernels` package (`pip install libreyolo[hub-kernels]`) and are
-**off by default**. Set `LIBREYOLO_HUB_KERNELS=1` to enable them. Nothing is
-vendored; artifacts are fetched and cached by the `kernels` package.
+the optional `kernels` package. Installing the extra is the opt-in:
+`pip install libreyolo[hub-kernels]` enables them, and without the package
+nothing changes (no network access, portable paths everywhere). Set
+`LIBREYOLO_HUB_KERNELS=0` to disable them without uninstalling. Nothing is
+vendored; artifacts are fetched and cached by the `kernels` package, and a
+kernel that fails to load or run disables itself for the process and falls
+back to the portable path with one warning.
 
 Current hub-backed slot:
 
@@ -50,11 +54,25 @@ Current hub-backed slot:
   forward/backward from Deformable DETR. Wired into the RF-DETR,
   LibreDeformableDETR, and LibreDINO-DETR attention cores; eligible inputs
   are CUDA fp32 in eager mode. Training is accelerated too (the compiled
-  backward registers through an autograd bridge).
+  backward registers through an autograd bridge). Active whenever the
+  `kernels` package is installed, unless `LIBREYOLO_HUB_KERNELS=0`.
 
 Out-of-tree compiled kernels can also ship as a `libreyolo_kernels` package,
 which self-registers on import (e.g. a future CUTLASS NVFP4 GEMM for the
 documented `nvfp4_gemm` slot).
+
+## Hardware behavior
+
+Accelerated implementations engage only where their predicate passes; every
+op always has a portable path, so no platform needs configuration:
+
+- CPU-only and Apple Silicon (MPS): all CUDA/Triton predicates fail;
+  reference implementations run as plain torch ops.
+- NVIDIA CUDA: Triton kernels and eligible hub/GEMM kernels engage.
+- AMD ROCm: torch reports CUDA and ROCm wheels ship Triton's AMD backend,
+  so Triton kernels can engage; parity is currently only exercised on
+  NVIDIA in CI. Hub kernels resolve per-variant; a missing variant simply
+  falls back.
 
 ## Adding an implementation
 

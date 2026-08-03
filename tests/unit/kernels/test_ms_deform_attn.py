@@ -30,7 +30,9 @@ LEN_IN = sum(h * w for h, w in SHAPES)
 def _clean_registry_env(monkeypatch):
     monkeypatch.delenv("LIBREYOLO_KERNELS", raising=False)
     monkeypatch.delenv("LIBREYOLO_QUANT_KERNELS", raising=False)
-    monkeypatch.delenv("LIBREYOLO_HUB_KERNELS", raising=False)
+    # Hub kernels are on by default when the `kernels` package is installed;
+    # pin them off so these tests behave the same on any machine.
+    monkeypatch.setenv("LIBREYOLO_HUB_KERNELS", "0")
     kernels.clear_cache()
     yield
     kernels.unregister("ms_deform_attn", "mock")
@@ -53,10 +55,20 @@ def _classic_inputs():
     return value, spatial_shapes, sampling_locations, attention_weights
 
 
-def test_slot_resolves_to_none_by_default():
+def test_slot_resolves_to_none_when_disabled():
     assert kernels.resolve("ms_deform_attn") is None
     value, shapes, locations, weights = _classic_inputs()
     assert maybe_ms_deform_attn(value, shapes, locations, weights) is None
+
+
+def test_hub_default_on_and_env_opt_out(monkeypatch):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.delenv("LIBREYOLO_HUB_KERNELS", raising=False)
+    assert module._hub_enabled()
+    for value in ("0", "false", "off", "no"):
+        monkeypatch.setenv("LIBREYOLO_HUB_KERNELS", value)
+        assert not module._hub_enabled()
 
 
 def test_hub_impl_rejects_cpu_inputs():

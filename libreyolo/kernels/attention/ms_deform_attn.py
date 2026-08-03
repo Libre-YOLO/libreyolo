@@ -16,9 +16,10 @@ only consults this slot through :func:`maybe_ms_deform_attn`.
 The in-tree provider loads the compiled CUDA kernel published at
 ``kernels-community/deformable-detr`` on the Hugging Face Hub (Apache-2.0)
 via the optional ``kernels`` package. Nothing is vendored: the artifact is
-fetched at runtime, and only when the user opts in with
-``LIBREYOLO_HUB_KERNELS=1``. The autograd bridge below follows the
-``MSDeformAttnFunction`` interface of Deformable-DETR
+fetched at runtime. Installing the ``libreyolo[hub-kernels]`` extra is the
+opt-in; once the ``kernels`` package is present the provider is on by
+default and ``LIBREYOLO_HUB_KERNELS=0`` disables it. The autograd bridge
+below follows the ``MSDeformAttnFunction`` interface of Deformable-DETR
 (https://github.com/fundamentalvision/Deformable-DETR, Apache-2.0,
 Copyright (c) 2020 SenseTime).
 """
@@ -44,11 +45,18 @@ _hub_failed = False
 
 
 def _hub_enabled() -> bool:
-    return os.environ.get("LIBREYOLO_HUB_KERNELS", "").strip().lower() in (
-        "1",
-        "true",
-        "on",
-        "yes",
+    """Hub kernels are on by default; installing the extra is the opt-in.
+
+    The runtime fetch only ever happens when the optional ``kernels``
+    package is installed (see :func:`_eligible`), so users who never
+    installed ``libreyolo[hub-kernels]`` are unaffected.
+    ``LIBREYOLO_HUB_KERNELS=0`` is the opt-out.
+    """
+    return os.environ.get("LIBREYOLO_HUB_KERNELS", "").strip().lower() not in (
+        "0",
+        "false",
+        "off",
+        "no",
     )
 
 

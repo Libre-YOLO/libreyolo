@@ -18,8 +18,9 @@ Architecture (vLLM-shaped, scaled down to a library that rents its runtime):
 - Compiled kernels ship out-of-tree in the optional ``libreyolo-kernels``
   package. If installed, it is imported here and self-registers via
   :func:`register`; the core package never grows a build dependency.
-- Hugging Face Hub kernels (the ``kernels`` package) are opt-in via
-  ``LIBREYOLO_HUB_KERNELS=1``; absence of the package or the env var is the
+- Hugging Face Hub kernels load through the optional ``kernels`` package
+  (the ``libreyolo[hub-kernels]`` extra); installing it is the opt-in, and
+  ``LIBREYOLO_HUB_KERNELS=0`` disables it. Absence of the package is the
   normal fallback case.
 - Selection is per-op: implementations are tried newest-first and the first
   one whose predicate passes wins, falling back to the reference. The
