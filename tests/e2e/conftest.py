@@ -558,6 +558,13 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("vit", "ti", "LibreViTti-cls.pt"),
 ]
 
+# Non-detect families use task-specific nightly assertions instead of the
+# detection-only stability matrix above. Keep their public model cases here so
+# provisioning, family marks, and nightly enrollment remain centralized.
+FCN_SEMANTIC_NIGHTLY_MODELS = [
+    ("fcn", "r50", "LibreFCNr50.pt"),
+]
+
 # Derived lists (no manual maintenance)
 YOLOX_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "yolox"]
 YOLO9_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "yolo9"]
@@ -616,6 +623,7 @@ FAMILY_MARKERS = {
     "retinanet": pytest.mark.retinanet,
     "ssd": pytest.mark.ssd,
     "mask_rcnn": pytest.mark.mask_rcnn,
+    "fcn": pytest.mark.fcn,
     "deformable_detr": pytest.mark.deformable_detr,
     "dinodetr": pytest.mark.dinodetr,
     "dfine": pytest.mark.dfine,
@@ -694,6 +702,11 @@ ALL_MODEL_WEIGHT_PARAMS = model_cases(
 )
 GENERAL_NIGHTLY_INFERENCE_PARAMS = model_cases(
     GENERAL_NIGHTLY_INFERENCE_MODELS,
+    with_weights=True,
+    marks_resolver=general_nightly_marks,
+)
+FCN_SEMANTIC_NIGHTLY_PARAMS = model_cases(
+    FCN_SEMANTIC_NIGHTLY_MODELS,
     with_weights=True,
     marks_resolver=general_nightly_marks,
 )

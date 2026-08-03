@@ -58,6 +58,7 @@ MODEL_GROUPS: dict[str, str] = {
     "vit": "g3",
     "retinanet": "g3",
     "ssd": "g3",
+    "fcn": "g3",
     "eomt": "g3",
     "pidnet": "g3",
     "depth_anything": "g3",

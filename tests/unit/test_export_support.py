@@ -217,6 +217,16 @@ def test_yolonas_detect_tflite_is_validated():
     assert get_support("yolonas", "detect", "tflite").tier == "validated"
 
 
+def test_fcn_semantic_export_support_matches_trained_checkpoint_evidence():
+    for format in ("onnx", "torchscript", "openvino", "tensorrt"):
+        entry = get_support("fcn", "semantic", format)
+        assert entry.tier == "validated"
+        assert "parity" in entry.reason
+        assert "divisible by 8" in entry.constraint
+    for format in ("executorch", "ncnn", "tflite", "coreml", "coreai"):
+        assert get_support("fcn", "semantic", format).tier == "blocked"
+
+
 def test_round7_swinir_fixed_canvas_exports_are_validated():
     for format in ("onnx", "torchscript", "openvino", "tflite"):
         entry = get_support("swinir", "restore", format)
@@ -587,6 +597,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("ec", "segment"),
         ("efficientnetv2", "classify"),
         ("eomt", "semantic"),
+        ("fcn", "semantic"),
         ("fomo", "point"),
         ("lingbotvision", "semantic"),
         ("l2cs", "gaze"),

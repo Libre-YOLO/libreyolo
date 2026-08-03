@@ -188,6 +188,7 @@ Files: `.github/workflows/e2e-nightly-release.yml`,
 `tools/ci/modal_nightly.py`,
 `tests/e2e/nightly_contract.py`, `tests/e2e/conftest.py`,
 `tests/e2e/test_deterministic_inference.py`,
+`tests/e2e/test_fcn_semantic.py`,
 `tests/e2e/test_rf1_training.py`, `Makefile`.
 
 Execution: scheduled nightly targets latest `dev` only; manual workflows can
@@ -237,8 +238,9 @@ V2.3 contract:
 - `general_nightly`: one smallest native inference case for every public model
   family, including inference-only museum families, that has a public
   auto-download route (LibreYOLO HF, or Deci's CDN for YOLO-NAS), plus
-  batched/sequential parity and selected open-vocabulary smoke cases; currently
-  38 tests.
+  batched/sequential parity and selected open-vocabulary smoke cases. FCN adds
+  one task-specific real-checkpoint semantic predict, mIoU, and UI-render
+  smoke; currently 38 tests.
 - `flagship_nightly`: heavier YOLO9/RF-DETR native validation, video, tracking,
   CLI, and one RF1 training/reload size per flagship family; currently 48 tests
   with `not export_backend`. The full RF1 size matrix remains available under

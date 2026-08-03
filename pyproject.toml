@@ -382,6 +382,7 @@ markers = [
     "retinanet: tests covering the RetinaNet model family",
     "ssd: tests covering the SSD model family",
     "mask_rcnn: tests covering the Mask R-CNN model family",
+    "fcn: tests covering the FCN semantic-segmentation family",
     "deformable_detr: tests covering the Deformable DETR model family",
     "dinodetr: tests covering the DINO-DETR model family",
     "dfine: tests covering the D-FINE model family",

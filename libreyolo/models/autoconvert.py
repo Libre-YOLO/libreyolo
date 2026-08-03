@@ -482,6 +482,8 @@ def _wrap_claim(
         )
     nc = detected_nc or 80
     names = _checkpoint_names(loaded, nc)
+    if names is None:
+        names = cls.default_checkpoint_names(nc)
     extra_metadata: dict[str, Any] = {}
     if task == "restore":
         # Restore checkpoints use a single schema placeholder, not a semantic

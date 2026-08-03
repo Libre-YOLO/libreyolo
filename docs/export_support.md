@@ -34,6 +34,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | eomt | segment |  |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |  |
 | faster_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |
+| fcn | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
 | feynobg | matte | exp | ✓ | exp |  |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
@@ -185,6 +186,10 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `semantic` / `tensorrt`: FP32 with a fixed family-native export canvas
 - `eomt` / `semantic` / `openvino`: fixed family-native export canvas
 - `faster_rcnn` / `detect` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream aspect resize and final class-wise NMS are embedded in the graph
+- `fcn` / `semantic` / `onnx`: FP32, batch 1, fixed square input divisible by 8
+- `fcn` / `semantic` / `torchscript`: FP32, batch 1, fixed square input divisible by 8
+- `fcn` / `semantic` / `tensorrt`: TensorRT 10.16 FP32, batch 1, fixed square input divisible by 8
+- `fcn` / `semantic` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed square input divisible by 8
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
 - `fomo` / `point` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape
 - `fomo` / `point` / `tensorrt`: FP32 with a fixed 96x96 input
@@ -469,6 +474,11 @@ A check mark applies only under any constraint listed here.
 - `faster_rcnn` / `detect` / `tflite`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `coreml`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `coreai`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
+- `fcn` / `semantic` / `executorch`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
+- `fcn` / `semantic` / `ncnn`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
+- `fcn` / `semantic` / `tflite`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
+- `fcn` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
+- `fcn` / `semantic` / `coreai`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
 - `feynobg` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `feynobg` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `feynobg` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
