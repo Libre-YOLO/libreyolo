@@ -833,6 +833,13 @@ class BaseModel(ABC):
         tensors wherever keys were absent. Shape mismatches raise regardless of
         strictness, but name mismatches do not, so this logs them. A healthy
         load stays silent.
+
+        Families with custom ``_load_weights`` overrides must either route
+        their final ``load_state_dict`` through this helper (YOLO-NAS) or
+        police the returned missing/unexpected keys themselves with
+        family-specific rules (D-FINE/DEIM/EC tolerate regenerated anchor
+        buffers but raise on other unexpected keys; DINOv2/RF-DETR/PIDNet
+        validate the key sets against the expected architecture).
         """
         result = self.model.load_state_dict(
             state_dict, strict=self._strict_loading()
