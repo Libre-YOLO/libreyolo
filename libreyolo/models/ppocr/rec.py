@@ -82,9 +82,18 @@ class Attention(nn.Module):
             .reshape(b, n, 3, self.num_heads, self.head_dim)
             .permute(2, 0, 3, 1, 4)
         )
-        q, k, v = qkv[0] * self.scale, qkv[1], qkv[2]
-        attn = q.matmul(k.transpose(-2, -1)).softmax(dim=-1)
-        x = attn.matmul(v).transpose(1, 2).reshape(b, n, self.dim)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        if torch.onnx.is_in_onnx_export():
+            # LibreYOLO defaults to ONNX opset 13, which has no symbolic for
+            # fused SDPA: keep the exact primitive-op equation while tracing.
+            attn = (q * self.scale).matmul(k.transpose(-2, -1)).softmax(dim=-1)
+            x = attn.matmul(v)
+        else:
+            x = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False,
+                scale=self.scale,
+            )
+        x = x.transpose(1, 2).reshape(b, n, self.dim)
         return self.proj(x)
 
 
