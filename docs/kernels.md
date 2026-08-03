@@ -14,9 +14,11 @@ dependency is never an error, only a fallback.
 - `kernels/quant/execute/`: finalized-only real-precision paths. No backward,
   real hardware: the `fp8_gemm` tensor-core GEMM (`torch._scaled_mm`), its
   fused Triton prologue/epilogue, and the packed-weight unpack kernels.
-- `kernels/attention/`: attention ops shared across model families. Currently
-  the `ms_deform_attn` slot (multi-scale deformable attention) consumed by
-  the Deformable-DETR-lineage families.
+- `kernels/attention/`: attention ops shared across model families. The
+  `ms_deform_attn` slot (multi-scale deformable attention) consumed by the
+  Deformable-DETR-lineage families, plus `sdpa.py`, which is policy rather
+  than a kernel: it records when a family may hand its attention to torch's
+  fused `scaled_dot_product_attention` and provides the opt-in switch.
 - The reference implementations stay in `libreyolo/quant/fake_quant.py` and
   `libreyolo/quant/packing.py`: `quant/` defines what the numbers mean,
   `kernels/` makes them fast. `packing.py` never has variants because it is
@@ -51,15 +53,59 @@ Current hub-backed slot:
 
 - `ms_deform_attn` <- [`kernels-community/deformable-detr`](https://huggingface.co/kernels-community/deformable-detr)
   (Apache-2.0): the compiled CUDA multi-scale deformable attention
-  forward/backward from Deformable DETR. Wired into the RF-DETR,
-  LibreDeformableDETR, and LibreDINO-DETR attention cores; eligible inputs
-  are CUDA fp32 in eager mode. Training is accelerated too (the compiled
-  backward registers through an autograd bridge). Active whenever the
-  `kernels` package is installed, unless `LIBREYOLO_HUB_KERNELS=0`.
+  forward/backward from Deformable DETR. Eligible inputs are CUDA fp32 in
+  eager mode. Training is accelerated too (the compiled backward registers
+  through an autograd bridge). Active whenever the `kernels` package is
+  installed, unless `LIBREYOLO_HUB_KERNELS=0`.
+
+  Wired into every Deformable-DETR-lineage family: RF-DETR,
+  LibreDeformableDETR, LibreDINO-DETR, LW-DETR, Grounding DINO, RT-DETR,
+  RT-DETRv2, D-FINE (and RT-DETRv4), DEIM (and DEIMv2), EC, and OV-DEIM.
+  Families whose core carries a different layout adapt to the slot's before
+  calling it; a shape that cannot be expressed in the slot's layout falls
+  through to the portable path instead. Two cases do that today: a
+  `num_points_list` with a different point count per level, and the
+  `method='discrete'` integer-index sampling, which is a different equation.
+  The EC pose variant keeps its own contract and is not wired.
 
 Out-of-tree compiled kernels can also ship as a `libreyolo_kernels` package,
 which self-registers on import (e.g. a future CUTLASS NVFP4 GEMM for the
 documented `nvfp4_gemm` slot).
+
+## Fused attention (SDPA)
+
+Model families written as `q @ k.T -> softmax -> @ v` can hand their attention
+to `torch.nn.functional.scaled_dot_product_attention`, which dispatches to the
+flash / memory-efficient / cuDNN kernels instead of materialising the score
+matrix. This needs no optional dependency: it is stock torch.
+
+Two rules decide when a family uses it.
+
+**ONNX export never does.** LibreYOLO defaults to opset 13, which has no
+symbolic for fused SDPA, so every swapped call site keeps the primitive-op
+equation under `torch.onnx.is_in_onnx_export()`. Exported graphs are unchanged.
+
+**A byte-exact parity bar keeps manual math by default.** Several ports are
+pinned to `max_abs_diff == 0` against a reference that itself runs manual
+attention (the Swin and OWLv2 harnesses explicitly switch the reference's fused
+path *off* to get there). Fused kernels accumulate in a different order, so
+those families keep manual attention and expose a `fused_attn` flag:
+
+```python
+from libreyolo.kernels.attention import set_fused_attention
+
+set_fused_attention(model)  # returns how many attention modules switched
+```
+
+That trades byte-exact agreement with the family's upstream reference for the
+fused kernels. On an RTX 5070 Ti under fp16 autocast, Swin window attention
+(512 windows x 49 tokens x 384) goes from 1.278 ms to 0.721 ms (1.77x) and
+OWLv2 vision attention (3600 tokens x 1024) from 6.483 ms to 1.735 ms (3.74x).
+
+| Route | Families |
+| --- | --- |
+| SDPA by default (bar is a tolerance) | SegFormer, Depth Anything (and MoGe-2), BERT, Grounding DINO, SwinIR, PP-OCR |
+| Opt-in via `set_fused_attention` (bar is byte-exact) | Swin, LibreDINO-DETR's Swin backbone, BiRefNet (and FeyNoBG), OWLv2, LW-DETR, SigLIP 2, ZipDepth, MobileSAM |
 
 ## Hardware behavior
 

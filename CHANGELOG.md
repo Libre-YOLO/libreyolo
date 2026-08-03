@@ -17,13 +17,28 @@ before 1.4.0 are documented in the
   and `libreyolo.quant.kernels` remains a working alias. See
   `docs/kernels.md`.
 - Optional accelerated multi-scale deformable attention (`ms_deform_attn`
-  slot): with `pip install libreyolo[hub-kernels]`, RF-DETR,
-  LibreDeformableDETR, and LibreDINO-DETR run the compiled Apache-2.0 CUDA
-  kernel from `kernels-community/deformable-detr` (forward and backward)
-  instead of the portable `grid_sample` path. Installing the extra is the
+  slot): with `pip install libreyolo[hub-kernels]`, every
+  Deformable-DETR-lineage family runs the compiled Apache-2.0 CUDA kernel
+  from `kernels-community/deformable-detr` (forward and backward) instead of
+  the portable `grid_sample` path: RF-DETR, LibreDeformableDETR,
+  LibreDINO-DETR, LW-DETR, Grounding DINO, RT-DETR, RT-DETRv2, D-FINE,
+  RT-DETRv4, DEIM, DEIMv2, EC and OV-DEIM. Installing the extra is the
   opt-in; `LIBREYOLO_HUB_KERNELS=0` disables it. Eager CUDA fp32 only;
   exports always keep the portable path; load or runtime failures fall back
-  with one warning.
+  with one warning. Shapes the slot cannot express (a per-level sampling
+  point count, or `method='discrete'`) also fall back.
+
+- Fused scaled-dot-product attention across the transformer families, using
+  stock torch (no optional dependency). SegFormer, Depth Anything (and
+  MoGe-2), BERT, Grounding DINO, SwinIR and PP-OCR use it by default; ONNX
+  export still traces the primitive-op equation, so exported graphs are
+  unchanged. Families pinned to a byte-exact parity bar (Swin,
+  LibreDINO-DETR's Swin backbone, BiRefNet, FeyNoBG, OWLv2, LW-DETR,
+  SigLIP 2, ZipDepth, MobileSAM) keep manual attention by default and opt in
+  with `libreyolo.kernels.attention.set_fused_attention(model)`, which trades
+  byte-exact agreement with upstream for the fused kernels. Measured on an
+  RTX 5070 Ti under fp16 autocast: 1.77x on Swin window attention, 3.74x on
+  OWLv2 vision attention. See `docs/kernels.md`.
 
 - `val_loss=True` extended from the `g0` flagships to **every trainable
   family** (`g0`, `g1` and `g2`), across four tasks rather than detection
