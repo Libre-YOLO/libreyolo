@@ -9,6 +9,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | Family | Task | onnx | torchscript | executorch | tensorrt | openvino | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | birefnet | matte | exp | ✓ |  |  |  |  |  |  |  |
+| centernet | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | clip | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | clip | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
@@ -106,6 +107,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 A check mark applies only under any constraint listed here.
 
 - `birefnet` / `matte` / `torchscript`: fixed 1024x1024 input
+- `centernet` / `detect` / `onnx`: FP32, fixed square input; ONNX Runtime CPU or TorchScript
+- `centernet` / `detect` / `torchscript`: FP32, fixed square input; ONNX Runtime CPU or TorchScript
 - `clip` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `clip` / `classify` / `torchscript`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
 - `clip` / `classify` / `executorch`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
@@ -348,6 +351,10 @@ A check mark applies only under any constraint listed here.
 - `birefnet` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `birefnet` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `birefnet` / `matte` / `coreai`: The decoder needs torchvision deform_conv2d, which the Core AI converter cannot lower ('unable to handle call function op: deform_conv2d.default'). The same operator already blocks the NCNN path. An encoder-only contract is the realistic route, matching the seam the CUDA graph work used.
+- `centernet` / `detect` / `ncnn`: NCNN cannot lower CenterNet's portable deformable sampling plus baked top-k decode contract. Use ONNX or TorchScript.
+- `centernet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `centernet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `centernet` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `clip` / `classify` / `ncnn`: No parity-valid frozen-class artifact is available for this runtime.
 - `clip` / `classify` / `tflite`: onnx2tf 2.6.7 emits a LiteRT graph whose TRANSPOSE receives a rank-5 permutation for a rank-4 tensor.
 - `clip` / `classify` / `coreml`: No parity-valid frozen-class artifact is available for this runtime.

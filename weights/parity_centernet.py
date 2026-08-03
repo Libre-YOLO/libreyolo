@@ -74,9 +74,7 @@ class _ReferenceDCN(nn.Module):
             padding=(padding, padding),
             bias=True,
         )
-        bound = 1.0 / math.sqrt(
-            in_channels * self.kernel_size[0] * self.kernel_size[1]
-        )
+        bound = 1.0 / math.sqrt(in_channels * self.kernel_size[0] * self.kernel_size[1])
         nn.init.uniform_(self.weight, -bound, bound)
         nn.init.zeros_(self.bias)
         nn.init.zeros_(self.conv_offset_mask.weight)
@@ -205,9 +203,9 @@ def run() -> dict[str, dict[str, float]]:
             row[0:2] = upstream_transform_point(row[0:2], inverse)
             row[2:4] = upstream_transform_point(row[2:4], inverse)
         reference_classes = {
-            class_id + 1: reference_array[
-                reference_array[:, 5] == class_id, :5
-            ].astype(np.float32)
+            class_id + 1: reference_array[reference_array[:, 5] == class_id, :5].astype(
+                np.float32
+            )
             for class_id in range(80)
         }
         reference_rows = []

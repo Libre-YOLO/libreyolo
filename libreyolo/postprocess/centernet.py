@@ -60,9 +60,7 @@ def decode_centernet(
     heatmap = heatmap * peaks.eq(heatmap).to(heatmap.dtype)
     scores, indices, classes, ys, xs = _topk(heatmap, topk)
 
-    regression = _transpose_and_gather(regression, indices).view(
-        heatmap.size(0), -1, 2
-    )
+    regression = _transpose_and_gather(regression, indices).view(heatmap.size(0), -1, 2)
     xs = xs.view(heatmap.size(0), -1, 1) + regression[:, :, 0:1]
     ys = ys.view(heatmap.size(0), -1, 1) + regression[:, :, 1:2]
     width_height = _transpose_and_gather(width_height, indices).view(
@@ -87,9 +85,7 @@ def _decoded_rows(
 ) -> tuple[torch.Tensor, tuple[int, int] | None]:
     if isinstance(outputs, dict):
         return (
-            decode_centernet(
-                outputs["hm"], outputs["wh"], outputs["reg"], topk=topk
-            ),
+            decode_centernet(outputs["hm"], outputs["wh"], outputs["reg"], topk=topk),
             (int(outputs["hm"].shape[-2]), int(outputs["hm"].shape[-1])),
         )
     if isinstance(outputs, (tuple, list)) and len(outputs) == 3:

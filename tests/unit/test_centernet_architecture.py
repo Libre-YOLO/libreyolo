@@ -15,9 +15,7 @@ from libreyolo.models.centernet.nn import DCN, build_centernet
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize(
-    ("size", "entries"), (("resdcn18", 177), ("dla34", 400))
-)
+@pytest.mark.parametrize(("size", "entries"), (("resdcn18", 177), ("dla34", 400)))
 def test_official_parameter_layout_is_preserved(size, entries):
     model = build_centernet(size)
     assert len(model.state_dict()) == entries

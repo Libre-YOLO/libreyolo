@@ -86,9 +86,10 @@ def test_export_context_uses_a_portable_copy_and_restores_live_model():
     model = LibreCenterNet(None, size="resdcn18", nb_classes=3, device="cpu")
     live_dcns = [module for module in model.model.modules() if isinstance(module, DCN)]
     assert live_dcns and not any(module.portable for module in live_dcns)
-    with OnnxExporter(model)._model_context(
-        "cpu", False, False, 1, (64, 64)
-    ) as (wrapped, dummy):
+    with OnnxExporter(model)._model_context("cpu", False, False, 1, (64, 64)) as (
+        wrapped,
+        dummy,
+    ):
         wrapped_dcns = [
             module for module in wrapped.modules() if isinstance(module, DCN)
         ]

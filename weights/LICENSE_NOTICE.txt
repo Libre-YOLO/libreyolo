@@ -55,6 +55,21 @@ project the weights were derived from. Per-family summary:
              must determine permission for their use case.
              Public mirrors: https://huggingface.co/LibreYOLO/LibreFasterRCNN{n,s,m,l}
 
+    CenterNet (LibreCenterNet{resdcn18,dla34})          MIT (implied)
+             upstream code and official COCO checkpoints:
+               xingyizhou/CenterNet at commit
+               4c50fd3a46bdf63dbf2082c5cbb3458d39579e6c (MIT)
+             Official checkpoint objects carry no standalone license file.
+             Rehosting uses MIT implied by the releasing project and the
+             maintainer-approved port brief, not a publisher-confirmed
+             checkpoint-specific grant. Every mirror ships the verbatim
+             CenterNet MIT license and repeats this caveat.
+             resdcn18 source SHA-256:
+               f9e413f91cdb235adbcb41c5c4052b8f7ff53999374048949789c29d6df18eaa
+             dla34 source SHA-256:
+               43bf4cc2efe00e02c1ae8484035b062a35543872d276c7dcfeb4db3e64203e4f
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreCenterNet{resdcn18,dla34}
+
     Deformable DETR                                     Apache-2.0
              (LibreDeformableDETR{r50ss,r50ssdc5,r50,
               r50refine,r50twostage})

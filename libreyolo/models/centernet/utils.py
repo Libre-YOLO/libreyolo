@@ -46,9 +46,7 @@ def get_affine_transform(
     source_direction = _direction(
         np.array([0.0, -0.5 * source_width], dtype=np.float32), 0.0
     )
-    destination_direction = np.array(
-        [0.0, -0.5 * destination_width], dtype=np.float32
-    )
+    destination_direction = np.array([0.0, -0.5 * destination_width], dtype=np.float32)
 
     source = np.zeros((3, 2), dtype=np.float32)
     destination = np.zeros((3, 2), dtype=np.float32)
@@ -85,9 +83,7 @@ def preprocess_bgr(
         (input_size, input_size),
         flags=cv2.INTER_LINEAR,
     )
-    normalized = ((warped / 255.0 - CENTERNET_MEAN) / CENTERNET_STD).astype(
-        np.float32
-    )
+    normalized = ((warped / 255.0 - CENTERNET_MEAN) / CENTERNET_STD).astype(np.float32)
     chw = np.ascontiguousarray(normalized.transpose(2, 0, 1))
     return chw, input_size / scale
 

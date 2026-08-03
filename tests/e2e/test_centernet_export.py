@@ -83,9 +83,7 @@ def test_official_checkpoint_exported_predict_parity(
     assert backend.imgsz == 512
     actual_raw = backend._run_inference(input_tensor.numpy())
     assert len(actual_raw) == 1
-    np.testing.assert_allclose(
-        actual_raw[0], expected_raw, rtol=2e-5, atol=1e-3
-    )
+    np.testing.assert_allclose(actual_raw[0], expected_raw, rtol=2e-5, atol=1e-3)
 
     native = model.predict(sample_image, conf=0.25, max_det=100).boxes.data.numpy()
     exported = backend.predict(sample_image, conf=0.25, max_det=100).boxes.data.numpy()

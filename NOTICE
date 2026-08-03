@@ -287,6 +287,26 @@ DETR (Apache License 2.0)
     Copyright headers are retained in the ported architecture; family-level
     details live in libreyolo/models/detr/NOTICE.
 
+CenterNet (MIT and BSD-3-Clause)
+    Path:    libreyolo/models/centernet/,
+             libreyolo/postprocess/centernet.py,
+             weights/convert_centernet_weights.py
+    License: libreyolo/models/centernet/NOTICE
+    Source:  https://github.com/xingyizhou/CenterNet
+             commit 4c50fd3a46bdf63dbf2082c5cbb3458d39579e6c
+             Copyright (c) 2019 Xingyi Zhou
+
+    LibreCenterNet ports the official fixed-512 ResDCN-18 and DLA-34
+    detection graphs, affine preprocessing, and top-100 no-NMS decoder. The
+    CenterNet source is MIT; its DLA, DCNv2, CornerNet, and Microsoft pose
+    lineages are permissively licensed and reproduced in the family NOTICE.
+    LibreYOLO does not bundle or compile the legacy DCNv2 extension. Native
+    inference calls torchvision's BSD-3-Clause deform_conv2d operator, while
+    export uses LibreYOLO's portable equivalent. Official COCO checkpoints are
+    not bundled in the source distribution. Their separate mirrors disclose
+    that MIT is implied by the releasing project, not a checkpoint-specific
+    publisher statement.
+
 Faster R-CNN / TorchVision (BSD-3-Clause)
     Path:    libreyolo/models/faster_rcnn/,
              libreyolo/postprocess/faster_rcnn.py

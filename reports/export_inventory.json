@@ -19,6 +19,26 @@
     "available": true,
     "group": "g3"
   },
+  "centernet": {
+    "class": "libreyolo.models.centernet.model.LibreCenterNet",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "resdcn18": 512,
+      "dla34": 512
+    },
+    "default_imgsz": {
+      "resdcn18": 512,
+      "dla34": 512
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "clip": {
     "class": "libreyolo.models.clip.model.LibreCLIP",
     "tasks": [

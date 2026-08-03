@@ -43,9 +43,7 @@ def test_official_filename_and_prefixed_state_recognition():
         LibreCenterNet.detect_size_from_filename("ctdet_coco_resdcn18.pth")
         == "resdcn18"
     )
-    assert (
-        LibreCenterNet.detect_size_from_filename("ctdet_coco_dla_2x.pth") == "dla34"
-    )
+    assert LibreCenterNet.detect_size_from_filename("ctdet_coco_dla_2x.pth") == "dla34"
 
 
 def test_rgb_and_bgr_preprocessing_are_the_same_pinned_color_contract():

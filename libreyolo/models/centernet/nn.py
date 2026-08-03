@@ -83,9 +83,7 @@ def _portable_deform_conv2d(
         padding_mode="zeros",
         align_corners=True,
     )
-    sampled = sampled.reshape(
-        batch, channels, kernel_points, out_height, out_width
-    )
+    sampled = sampled.reshape(batch, channels, kernel_points, out_height, out_width)
     sampled = sampled * mask.unsqueeze(1)
     sampled = sampled.reshape(batch, channels * kernel_points, out_height, out_width)
     return F.conv2d(sampled, weight.reshape(weight.shape[0], -1, 1, 1), bias)
@@ -352,12 +350,8 @@ class Tree(nn.Module):
             self.tree1 = DLABasicBlock(
                 in_channels, out_channels, stride, dilation=dilation
             )
-            self.tree2 = DLABasicBlock(
-                out_channels, out_channels, 1, dilation=dilation
-            )
-            self.root = Root(
-                root_dim, out_channels, root_kernel_size, root_residual
-            )
+            self.tree2 = DLABasicBlock(out_channels, out_channels, 1, dilation=dilation)
+            self.root = Root(root_dim, out_channels, root_kernel_size, root_residual)
         else:
             self.tree1 = Tree(
                 levels - 1,
@@ -426,15 +420,9 @@ class DLA(nn.Module):
             channels[0], channels[1], levels[1], stride=2
         )
         self.level2 = Tree(levels[2], channels[1], channels[2], 2)
-        self.level3 = Tree(
-            levels[3], channels[2], channels[3], 2, level_root=True
-        )
-        self.level4 = Tree(
-            levels[4], channels[3], channels[4], 2, level_root=True
-        )
-        self.level5 = Tree(
-            levels[5], channels[4], channels[5], 2, level_root=True
-        )
+        self.level3 = Tree(levels[3], channels[2], channels[3], 2, level_root=True)
+        self.level4 = Tree(levels[4], channels[3], channels[4], 2, level_root=True)
+        self.level5 = Tree(levels[5], channels[4], channels[5], 2, level_root=True)
         # The official detector checkpoint retains this unused ImageNet head.
         self.fc = nn.Conv2d(channels[-1], 1000, 1, bias=True)
 
@@ -507,9 +495,7 @@ class IDAUp(nn.Module):
             setattr(self, f"up_{index}", upsample)
             setattr(self, f"node_{index}", node)
 
-    def forward(
-        self, layers: List[torch.Tensor], start: int, end: int
-    ) -> None:
+    def forward(self, layers: List[torch.Tensor], start: int, end: int) -> None:
         for index in range(start + 1, end):
             relative = index - start
             project = getattr(self, f"proj_{relative}")
@@ -569,9 +555,7 @@ class CenterNetDLA(nn.Module):
         self.base = DLA()
         channels = self.base.channels
         scales = [2**index for index in range(len(channels[self.first_level :]))]
-        self.dla_up = DLAUp(
-            self.first_level, channels[self.first_level :], scales
-        )
+        self.dla_up = DLAUp(self.first_level, channels[self.first_level :], scales)
         self.ida_up = IDAUp(
             channels[self.first_level],
             channels[self.first_level : self.last_level],

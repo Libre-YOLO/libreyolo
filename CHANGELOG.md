@@ -9,6 +9,11 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreCenterNet, an inference-only museum port of the official CenterNet
+  `resdcn18` and `dla34` COCO detectors. Native preprocessing, raw heads, and
+  top-100 no-NMS decoding match the pinned MIT source; legacy DCNv2 is replaced
+  by torchvision deformable convolution. Fixed-512 ONNX and TorchScript exports
+  use a portable deformable-convolution graph and return decoded detections
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr
