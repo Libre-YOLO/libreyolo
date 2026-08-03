@@ -54,6 +54,11 @@ class WindowAttention(nn.Module):
         # timm scales q pre-matmul; transformers scales the q@k product. Same math,
         # different fp rounding — must match the source model to stay bit-exact.
         self.tf_order = tf_order
+        # Opt-in fused SDPA. Default off: tests/unit/test_swin_parity.py pins
+        # max_abs_diff == 0.0 against timm with its own fused_attn switched off,
+        # and fused kernels accumulate in a different order. Flip with
+        # libreyolo.kernels.attention.set_fused_attention(model).
+        self.fused_attn = False
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads)
         )
@@ -75,6 +80,21 @@ class WindowAttention(nn.Module):
         b_, n, c = x.shape
         qkv = self.qkv(x).reshape(b_, n, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
+        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+            # SDPA takes one additive float mask, so the relative position bias
+            # and the shifted-window mask are summed into it. The window mask is
+            # (num_win, n, n) and the batch is laid out as (batch, num_win)
+            # flattened, so repeat tiles it per window.
+            attn_mask = self._rel_pos_bias()
+            if mask is not None:
+                attn_mask = attn_mask + mask.unsqueeze(1).repeat(
+                    b_ // mask.shape[0], 1, 1, 1
+                )
+            x = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=0.0, is_causal=False,
+                scale=self.scale,
+            )
+            return self.proj(x.transpose(1, 2).reshape(b_, n, -1))
         if self.tf_order:
             attn = (q @ k.transpose(-2, -1)) * self.scale
         else:
