@@ -79,7 +79,10 @@ plots = [
     "matplotlib>=3.7.0",
 ]
 fast-eval = [
-    # Opt-in C++ COCO eval backend (faster_coco_eval=True / --faster-coco-eval).
+    # C++ COCO eval backend. Preferred by default (faster_coco_eval=True) and
+    # transparently skipped when absent, so this stays an extra rather than a
+    # hard dependency: it ships compiled wheels, and a source build on a
+    # platform without one must not be able to break a plain `pip install`.
     "faster-coco-eval>=1.7.0",
 ]
 vlm = [
