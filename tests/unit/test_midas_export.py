@@ -30,6 +30,17 @@ _VARIANTS = {
     "l": ("dpt_large_384.pt", 384),
 }
 
+_EXPORT_FORMATS = [
+    pytest.param("torchscript", id="torchscript"),
+    pytest.param("onnx", id="onnx"),
+    pytest.param("openvino", marks=pytest.mark.openvino, id="openvino"),
+    pytest.param(
+        "tensorrt",
+        marks=(pytest.mark.tensorrt, pytest.mark.trt),
+        id="tensorrt",
+    ),
+]
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -72,14 +83,29 @@ def _parity_metrics(
     return psnr, margin, errors
 
 
-def test_trained_midas_s_and_l_torchscript_and_onnx(tmp_path: Path):
+@pytest.mark.parametrize("format", _EXPORT_FORMATS)
+def test_trained_midas_s_and_l_export_parity(tmp_path: Path, format: str):
     pytest.importorskip("timm")
-    pytest.importorskip("onnx")
-    pytest.importorskip("onnxruntime")
+    if format == "onnx":
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
+    elif format == "openvino":
+        pytest.importorskip("openvino")
+    elif format == "tensorrt":
+        pytest.importorskip("tensorrt")
+        if not torch.cuda.is_available():
+            pytest.skip("TensorRT parity requires CUDA")
     from libreyolo import LibreYOLO
     from libreyolo.models.midas.model import LibreMiDaS
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    runtime_device = "cuda" if format == "tensorrt" else "cpu"
+    suffix = {
+        "torchscript": ".torchscript",
+        "onnx": ".onnx",
+        "openvino": "_openvino",
+        "tensorrt": ".engine",
+    }[format]
     for size, (filename, input_size) in _VARIANTS.items():
         checkpoint_path = Path(CHECKPOINT_DIR) / filename
         assert checkpoint_path.is_file()
@@ -94,31 +120,35 @@ def test_trained_midas_s_and_l_torchscript_and_onnx(tmp_path: Path):
             model.predict(image, imgsz=input_size).depth_map.data.numpy()
             for image in images
         ]
-        for format in ("torchscript", "onnx"):
-            artifact = model.export(
-                format=format,
-                output_path=str(tmp_path / f"midas_{size}.{format}"),
-                imgsz=input_size,
-                dynamic=False,
-                simplify=False,
-            )
-            backend = LibreYOLO(artifact, device=device)
-            actual = [backend.predict(image).depth_map.data.numpy() for image in images]
-            psnr, margin, errors = _parity_metrics(reference, actual)
-            print(
-                f"MiDaS {size} {format}: PSNR={psnr:.3f} dB, "
-                f"signal/error={margin:.1f}, MSE={errors}"
-            )
-            assert psnr > 40.0
-            assert margin > 20.0
-            assert backend.family == "midas"
-            assert backend.size == size
-            assert backend.task == "depth"
-            assert backend.names == {0: "depth"}
-            del backend
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        export_kwargs = {
+            "format": format,
+            "output_path": str(tmp_path / f"midas_{size}{suffix}"),
+            "imgsz": input_size,
+            "batch": 1,
+            "dynamic": False,
+            "half": False,
+            "simplify": False,
+        }
+        if format == "tensorrt":
+            export_kwargs["workspace"] = 1.0
+        artifact = model.export(**export_kwargs)
+        backend = LibreYOLO(artifact, device=runtime_device)
+        actual = [backend.predict(image).depth_map.data.numpy() for image in images]
+        psnr, margin, errors = _parity_metrics(reference, actual)
+        print(
+            f"MiDaS {size} {format}: PSNR={psnr:.3f} dB, "
+            f"signal/error={margin:.1f}, MSE={errors}"
+        )
+        assert psnr > 40.0
+        assert margin > 20.0
+        assert backend.family == "midas"
+        assert backend.size == size
+        assert backend.task == "depth"
+        assert backend.names == {0: "depth"}
+        del backend
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         del model, reference
         gc.collect()

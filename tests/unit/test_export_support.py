@@ -455,7 +455,7 @@ def test_round24_promotes_six_embedding_and_depth_cells():
 
 
 def test_midas_trained_export_cells_are_validated():
-    for format in ("onnx", "torchscript"):
+    for format in ("onnx", "torchscript", "tensorrt", "openvino"):
         entry = get_support("midas", "depth", format)
         assert entry.tier == "validated"
         assert "parity" in entry.reason
@@ -586,6 +586,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("fomo", "point"),
         ("lingbotvision", "semantic"),
         ("l2cs", "gaze"),
+        ("midas", "depth"),
         ("mobilenetv4", "classify"),
         ("moge2", "normal"),
         ("nafnet", "restore"),

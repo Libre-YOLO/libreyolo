@@ -67,5 +67,14 @@ size=l output_shape=(1, 384, 384) max_abs_diff=0 tensor_equal=True
 Trained-checkpoint fixed-canvas export tests reload each artifact through the
 public factory and compare two input-sensitive images. TorchScript reached at
 least 82.49 dB PSNR (`l` was bit-exact); ONNX Runtime reached at least 70.58
-dB. Every measured native signal was over three million times the conversion
-error, above the required 20x guard.
+dB. OpenVINO 2026.2.1 reached 46.15 dB (`s`) and 75.06 dB (`l`), while
+TensorRT 10.16.1.11 FP32 reached 53.59 dB (`s`) and 59.65 dB (`l`) on an RTX
+5070 Ti. The smallest signal/error margin across these artifacts was 10,935x,
+above the required 20x guard.
+
+Small OpenVINO and TensorRT used the public end-to-end exporter. To honor a
+Windows 80% commit-charge safety ceiling while other model jobs were active,
+the Large OpenVINO and TensorRT checks reused the fully emitted opset-17 ONNX
+intermediate in fresh processes, then called the same LibreYOLO second-stage
+converters used by the public exporter. Both artifacts were factory-reloaded
+and compared against native trained-checkpoint outputs.

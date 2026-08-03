@@ -45,7 +45,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | locateanything | detect |  |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |  |
 | lwdetr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
-| midas | depth | ✓ | ✓ | exp | exp | exp | exp |  |  |  |
+| midas | depth | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |
 | moge2 | normal | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  |  |
@@ -195,8 +195,10 @@ A check mark applies only under any constraint listed here.
 - `lingbotvision` / `semantic` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `lingbotvision` / `semantic` / `openvino`: fixed family-native export canvas
 - `lingbotvision` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
-- `midas` / `depth` / `onnx`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract
-- `midas` / `depth` / `torchscript`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract
+- `midas` / `depth` / `onnx`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
+- `midas` / `depth` / `torchscript`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
+- `midas` / `depth` / `tensorrt`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
+- `midas` / `depth` / `openvino`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
 - `mobilenetv4` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `mobilenetv4` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `mobilenetv4` / `classify` / `openvino`: fixed family-native input resolution

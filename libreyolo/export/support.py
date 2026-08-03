@@ -2203,15 +2203,17 @@ _add(
     "validated",
     ("midas",),
     ("depth",),
-    ("onnx", "torchscript"),
+    ("onnx", "torchscript", "tensorrt", "openvino"),
     reason=(
         "The official Small and DPT-Large checkpoints cover opset-17 "
-        "conversion, artifact reload, two-image public depth-map parity above "
-        "40 dB PSNR, and a signal/error margin above 20x for both runtimes."
+        "conversion, artifact reload, and two-image public depth-map parity "
+        "above 46 dB PSNR with a signal/error margin above 10,000x across all "
+        "four runtimes."
     ),
     constraint=(
         "FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend "
-        "inference follows the ADR 0006 stretch-resize contract"
+        "inference follows the ADR 0006 stretch-resize contract; TensorRT "
+        "10.16 engines target the build GPU and OpenVINO evidence uses 2026.2"
     ),
 )
 _add(
