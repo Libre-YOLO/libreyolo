@@ -69,6 +69,13 @@ before 1.4.0 are documented in the
 
 ### Fixed
 
+- Non-strict checkpoint loads (families with `_strict_loading() == False`,
+  e.g. YOLOX) now log a warning with the counts and first names of missing
+  and unexpected state-dict keys instead of silently discarding them. Shape
+  mismatches always raised, but name mismatches let a partially matching
+  checkpoint "load" and predict with fresh-initialized tensors for the
+  dropped keys with no trace. Healthy loads stay silent; full key lists are
+  available at DEBUG level
 - YOLOX BatchNorm eps=1e-3 / momentum=0.03 (official YOLOX values) is now
   applied by `LibreYOLOXModel` at construction instead of as a post-hoc fixup
   in the `LibreYOLOX` wrapper, so it survives the class-count rebuild
