@@ -8,12 +8,14 @@ import torch
 from PIL import Image
 from torch import nn
 
+from libreyolo.models.base.model import BaseModel
 from libreyolo.models.hrnet.detector import (
     LibreYOLOPersonDetector,
     PersonBox,
     resolve_person_detector,
 )
 from libreyolo.models.hrnet.inference import HRNetPoseInferenceRunner
+from libreyolo.models.hrnet.model import LibreHRNet
 from libreyolo.utils.results import Boxes, Results
 
 pytestmark = pytest.mark.unit
@@ -37,6 +39,9 @@ class FixedHeatmapHead(nn.Module):
 
 
 class FakeHRNet:
+    task = "pose"
+    validator_class = None
+
     def __init__(self):
         self.model = FixedHeatmapHead().eval()
         self.device = torch.device("cpu")
@@ -204,3 +209,41 @@ def test_inference_rejects_conflicting_or_detection_shaped_options():
 def test_non_detection_model_cannot_be_person_detector():
     with pytest.raises(ValueError, match="detection model"):
         resolve_person_detector(FakePoseModel())
+
+
+def test_hrnet_validation_routes_pose_dataset_fields(monkeypatch):
+    import libreyolo.validation as validation
+
+    captured = {}
+
+    class DummyPoseValidator:
+        def __init__(self, model, config):
+            captured["model"] = model
+            captured["config"] = config
+
+        def __call__(self):
+            return {"metrics/mAP50-95": 0.5}
+
+    monkeypatch.setattr(validation, "PoseValidator", DummyPoseValidator)
+    model = FakeHRNet()
+    metrics = BaseModel.val(
+        model,
+        batch=1,
+        imgsz=(256, 192),
+        workers=1,
+        device="cpu",
+        keypoints_json="person_keypoints_val2017.json",
+        images_dir="val2017",
+    )
+
+    assert metrics == {"metrics/mAP50-95": 0.5}
+    assert captured["model"] is model
+    assert captured["config"].imgsz == (256, 192)
+    assert captured["config"].num_workers == 1
+    assert captured["config"].keypoints_json == "person_keypoints_val2017.json"
+    assert captured["config"].images_dir == "val2017"
+
+
+def test_hrnet_training_is_explicitly_unsupported():
+    with pytest.raises(NotImplementedError, match="inference-only"):
+        LibreHRNet.train(None)

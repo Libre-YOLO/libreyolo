@@ -55,6 +55,25 @@ def _assert_detection_output_is_stable(family, first, second):
     torch.testing.assert_close(first_cls, second_cls, rtol=0, atol=0)
 
 
+def _assert_pose_output_is_stable(family, first, second):
+    _assert_detection_output_is_stable(family, first, second)
+    assert first.keypoints is not None, f"{family} did not return keypoints"
+    assert second.keypoints is not None, f"{family} did not return keypoints"
+    assert len(first.keypoints) == len(first.boxes)
+    assert len(second.keypoints) == len(second.boxes)
+
+    first_keypoints = _tensor(first.keypoints.data)
+    second_keypoints = _tensor(second.keypoints.data)
+    assert first_keypoints.shape[1:] == (17, 3)
+    assert torch.isfinite(first_keypoints).all(), (
+        f"{family} produced non-finite keypoints"
+    )
+    assert torch.isfinite(second_keypoints).all(), (
+        f"{family} produced non-finite keypoints"
+    )
+    torch.testing.assert_close(first_keypoints, second_keypoints, rtol=1e-4, atol=1e-4)
+
+
 def _assert_batched_detection_output_matches_sequential(family, sequential, batched):
     assert sequential.boxes is not None, f"{family} did not return detection boxes"
     assert batched.boxes is not None, f"{family} did not return detection boxes"
@@ -93,6 +112,27 @@ def _assert_batched_detection_output_matches_sequential(family, sequential, batc
     torch.testing.assert_close(sequential_boxes, batched_boxes, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(sequential_conf, batched_conf, rtol=1e-2, atol=5e-3)
     torch.testing.assert_close(sequential_cls, batched_cls, rtol=0, atol=0)
+
+
+def _assert_batched_pose_output_matches_sequential(family, sequential, batched):
+    _assert_batched_detection_output_matches_sequential(family, sequential, batched)
+    assert sequential.keypoints is not None, f"{family} did not return keypoints"
+    assert batched.keypoints is not None, f"{family} did not return keypoints"
+    assert len(sequential.keypoints) == len(sequential.boxes)
+    assert len(batched.keypoints) == len(batched.boxes)
+
+    sequential_keypoints = _tensor(sequential.keypoints.data)
+    batched_keypoints = _tensor(batched.keypoints.data)
+    assert sequential_keypoints.shape[1:] == (17, 3)
+    assert torch.isfinite(sequential_keypoints).all(), (
+        f"{family} produced non-finite sequential keypoints"
+    )
+    assert torch.isfinite(batched_keypoints).all(), (
+        f"{family} produced non-finite batched keypoints"
+    )
+    torch.testing.assert_close(
+        sequential_keypoints, batched_keypoints, rtol=1e-3, atol=1e-3
+    )
 
 
 def _run_l2cs(weights, size):
@@ -136,7 +176,10 @@ def test_native_inference_is_stable(family, size, weights, sample_image):
     try:
         first = model(sample_image, conf=0.25)
         second = model(sample_image, conf=0.25)
-        _assert_detection_output_is_stable(family, first, second)
+        if family == "hrnet":
+            _assert_pose_output_is_stable(family, first, second)
+        else:
+            _assert_detection_output_is_stable(family, first, second)
     finally:
         del model
         cuda_cleanup()
@@ -179,9 +222,14 @@ def test_batched_list_predict_matches_sequential(family, size, weights, sample_i
             # (the rotated view may legitimately drop to zero for some
             # families; the count check above still covers it).
             if len(r_seq) > 0:
-                _assert_batched_detection_output_matches_sequential(
-                    family, r_seq, r_bat
-                )
+                if family == "hrnet":
+                    _assert_batched_pose_output_matches_sequential(
+                        family, r_seq, r_bat
+                    )
+                else:
+                    _assert_batched_detection_output_matches_sequential(
+                        family, r_seq, r_bat
+                    )
             else:
                 assert len(r_bat) == 0, (
                     f"{family} batched detection count diverged: 0 -> {len(r_bat)}"

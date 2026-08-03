@@ -1,6 +1,7 @@
 """HRNet heatmap decoding and flip-test restoration.
 
-Adapted from ``lib/core/inference.py`` and ``lib/utils/transforms.py`` in
+Adapted from ``lib/core/inference.py``, ``lib/utils/transforms.py``, and
+``lib/nms/nms.py`` in
 ``leoxiaobin/deep-high-resolution-net.pytorch`` at commit
 ``6f69e4676ad8d43d0d61b64b1b9726f0c369e7b1`` (MIT License).
 

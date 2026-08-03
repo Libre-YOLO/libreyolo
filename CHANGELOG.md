@@ -9,6 +9,13 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreHRNet W32 and W48, inference-only top-down COCO-17 pose models with
+  fixed 256x192 and 384x288 person-crop canvases. Native heatmaps, affine crop
+  geometry, flip testing, and decoding are exact against the pinned MIT
+  upstream. Full-image inference composes a configurable person detector and
+  also accepts explicit boxes or ready-made crops. Official weights and
+  fixed-crop ONNX, TorchScript, TensorRT, and OpenVINO exports are validated;
+  `train()` raises
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr

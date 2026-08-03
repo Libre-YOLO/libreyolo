@@ -48,7 +48,8 @@ Libre<FAMILY><size>[-<task>].pt
 ## Family prefixes
 
 The model families registered into the model factory (the VLM tier is a
-separate category, covered in the note below). Most are detectors; `pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
+separate category, covered in the note below). Most are detectors; `hrnet` is
+pose-only; `pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
 instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 `efficientnetv2` / `resnet` families are classify-only:
 
@@ -64,6 +65,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `yolo9_e2e` | `LibreYOLO9E2E` | All-caps acronym + version + variant |
 | `yolo9_p2`  | `LibreYOLO9P2`  | All-caps acronym + version + variant (stride-4 small-object) |
 | `yolonas`   | `LibreYOLONAS`  | All-caps acronym (hyphen dropped from `YOLO-NAS`) |
+| `hrnet`     | `LibreHRNet`    | All-caps acronym (`HRNet`, High-Resolution Net); inference-only top-down pose |
 | `dfine`     | `LibreDFINE`    | All-caps acronym (hyphen dropped from `D-FINE`) |
 | `deim`      | `LibreDEIM`     | All-caps acronym |
 | `deimv2`    | `LibreDEIMv2`   | All-caps acronym + lowercase version |
@@ -164,6 +166,7 @@ ships:
 | `yolo9_e2e` | `t`, `s`, `m`, `c` (inherited from yolo9) |
 | `yolo9_p2`  | `t`, `s` |
 | `yolonas`   | `s`, `m`, `l` |
+| `hrnet`     | `w32`, `w48` (parallel-stream width; fixed person-crop canvases 256x192 and 384x288) |
 | `dfine`     | `n`, `s`, `m`, `l`, `x` |
 | `deim`      | `n`, `s`, `m`, `l`, `x` |
 | `deimv2`    | per-cfg (see `SIZE_CONFIGS`) |
@@ -270,6 +273,15 @@ names above appear in filenames.
 single image coordinate per detection, exposed as `(x, y, class, confidence)`.
 This keeps box detection under `detect` while allowing centroid-style models to
 use point-specific result and validation contracts.
+
+`pose` is the task for per-instance keypoint estimation. Models expose
+`Results.keypoints` with shape `(N, K, 3)` in original-image coordinates; the
+last dimension is `(x, y, confidence)`, and rows align exactly with
+`Results.boxes`. Top-down families such as HRNet first obtain person regions,
+then run a pose head on one fixed crop per person. Their end-to-end validation
+score therefore depends on the selected person detector as well as the pose
+head. Canonical pose filenames retain the `-pose` suffix even when pose is the
+family's only task.
 
 `semantic` is the task for dense semantic segmentation: one class label per
 pixel with no instance separation. `segment` remains the task for
@@ -424,6 +436,7 @@ Detector-factory family support follows:
 | `segformer` | `("semantic",)`                     | semantic | SegFormer MiT-b0..b5 encoder + all-MLP decode head; ADE20K 150-class at 512 (b5 at 640). Pretrained weights are NON-COMMERCIAL (NVIDIA Source Code License, research/evaluation only); also trainable from scratch via `model.train(...)` for unrestricted use |
 | `lingbotvision` | `("semantic",)`                 | semantic | LingBot-Vision self-supervised ViT (Apache-2.0, arXiv:2607.05247) + 1x1 dense head (the report's linear probe); s/b/l/g at 512; ADE20K 150-class hosted weights for s/b/l; head-only training by default (`freeze_backbone=False` for full fine-tune) |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
+| `hrnet`     | `("pose",)`                          | pose   | inference-only top-down COCO-17 pose; `w32` uses 256x192 crops, `w48` uses 384x288; configurable person detector |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |
@@ -475,6 +488,13 @@ LibreRTDETRr50.pt
 LibreRFDETRn.pt
 LibrePICODETs.pt
 LibreECs.pt
+```
+
+### Pose only
+
+```text
+LibreHRNetw32-pose.pt      # W32, fixed 256x192 person crop
+LibreHRNetw48-pose.pt      # W48, fixed 384x288 person crop
 ```
 
 ### Multi-task families

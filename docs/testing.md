@@ -234,11 +234,11 @@ make test_e2e E2E_TIMEOUT=1800
 
 V2.2 contract:
 
-- `general_nightly`: one smallest native inference case for every public
-  detector family, including inference-only museum families, that has a public
+- `general_nightly`: one smallest native inference case for every public model
+  family, including inference-only museum families, that has a public
   auto-download route (LibreYOLO HF, or Deci's CDN for YOLO-NAS), plus
   batched/sequential parity and selected open-vocabulary smoke cases; currently
-  36 tests.
+  38 tests.
 - `flagship_nightly`: heavier YOLO9/RF-DETR native validation, video, tracking,
   CLI, and one RF1 training/reload size per flagship family; currently 48 tests
   with `not export_backend`. The full RF1 size matrix remains available under
@@ -247,6 +247,9 @@ V2.2 contract:
   download route), so it runs as a non-gated per-family suite
   (`tests/e2e/test_l2cs_gaze.py`) that skips when the weight is not staged
   locally, rather than gating the nightly.
+- HRNet pose uses its smallest public W32 checkpoint in the general nightly.
+  The case verifies row-aligned person boxes and COCO-17 keypoints through the
+  default YOLO9 person-detector composition, including list-batch parity.
 - Export backends are outside default nightly.
 - Nightly-selected skips are failures.
 

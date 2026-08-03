@@ -59,6 +59,7 @@ file = name + ".pt"
 | RTDETRv4 | `LibreRTDETRv4` | `LibreRTDETRv4s.pt` |
 | RTMDet | `LibreRTMDet` | `LibreRTMDets.pt` |
 | YOLONAS | `LibreYOLONAS` | `LibreYOLONASs.pt` |
+| HRNet | `LibreHRNet` | `LibreHRNetw32-pose.pt`, `LibreHRNetw48-pose.pt` |
 | MobileNetV4 | `LibreMobileNetV4` | `LibreMobileNetV4s-cls.pt` |
 | ConvNeXt | `LibreConvNeXt` | `LibreConvNeXtt-cls.pt` |
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
@@ -128,6 +129,8 @@ LibreYOLO9P2t-visdrone.pt, LibreYOLO9P2s-visdrone.pt,
 LibreYOLONASs.pt, LibreYOLONASm.pt, LibreYOLONASl.pt,
 LibreYOLONASn-pose.pt, LibreYOLONASs-pose.pt,
 LibreYOLONASm-pose.pt, LibreYOLONASl-pose.pt,
+
+LibreHRNetw32-pose.pt, LibreHRNetw48-pose.pt,
 
 LibreDFINEn.pt, LibreDFINEs.pt, LibreDFINEm.pt, LibreDFINEl.pt,
 LibreDFINEx.pt,
