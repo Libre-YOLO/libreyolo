@@ -63,6 +63,7 @@ MODEL_GROUPS: dict[str, str] = {
     "centernet": "g3",
     "alexnet": "g3",
     "deeplabv3": "g3",
+    "efficientdet": "g3",
     "eomt": "g3",
     "pidnet": "g3",
     "depth_anything": "g3",

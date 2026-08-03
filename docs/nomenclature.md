@@ -85,6 +85,7 @@ the `alexnet` / `deit` / `mobilenetv4` / `convnext` / `efficientnetv2` /
 | `centernet` | `LibreCenterNet` | Upstream CamelCase brand preserved; inference-only center-point detector |
 | `fcos`      | `LibreFCOS`     | All-caps acronym; inference-only anchor-free detector |
 | `deeplabv3` | `LibreDeepLabv3` | Upstream brand casing preserved; inference-only semantic family whose canonical filenames require `-sem` |
+| `efficientdet` | `LibreEfficientDet` | Upstream CamelCase brand preserved; inference-only BiFPN detector |
 | `deformable_detr` | `LibreDeformableDETR` | Upstream name rendered as `DeformableDETR`; the family id retains the separator |
 | `dinodetr`  | `LibreDINODETR`  | Upstream DINO detector rendered as `DINO-DETR`; the explicit `detr` suffix avoids collision with DINOv2 and Grounding DINO |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
@@ -200,6 +201,7 @@ ships:
 | `centernet` | `resdcn18`, `dla34` (ResNet-18 with deformable upsampling / DLA-34 with deformable aggregation; both fixed at 512) |
 | `fcos`      | `r50` (ResNet-50 FPN; short side 800, long side at most 1333, then stride-32 padding) |
 | `deeplabv3` | `r50`, `r101`, `mv3` (dilated ResNet-50 / ResNet-101 / MobileNetV3-Large; all use fixed 520x520 stretch deployment) |
+| `efficientdet` | `d0`, `d1`, `d2`, `d3`, `d4` (compound-scaled EfficientNet + BiFPN tiers at fixed 512 / 640 / 768 / 896 / 1024 square inputs) |
 | `deformable_detr` | `r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage` (single-scale, single-scale DC5, multi-scale base, iterative refinement, and refinement plus two-stage; all fixed at 800) |
 | `dinodetr`  | `r50`, `r50s5`, `swinl` (ResNet-50 four-scale, ResNet-50 five-scale, and Swin-L five-scale; all fixed at 800) |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
@@ -463,6 +465,7 @@ Detector-factory family support follows:
 | `centernet` | `("detect",)`                      | detect | detect-only; inference-only fixed-512 affine pipeline; top-100 center decoding without NMS |
 | `fcos`      | `("detect",)`                     | detect | detect-only; inference-only native dense graph; official 91-column COCO head maps sparse ids to contiguous COCO-80 |
 | `deeplabv3` | `("semantic",)`                    | semantic | background plus 20 VOC-named classes, trained on the matching COCO subset; fixed 520; inference + `val`; `train()` raises |
+| `efficientdet` | `("detect",)`                    | detect | EfficientDet D0-D4; inference-only; fixed native resolution per size; ONNX, TorchScript, OpenVINO, and TensorRT export parity validated |
 | `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is gated experimental, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
@@ -533,6 +536,7 @@ LibreRFDETRn.pt
 LibreRetinaNetr50.pt
 LibreRetinaNetr50v2.pt
 LibreSSD300.pt
+LibreEfficientDetd0.pt
 LibrePICODETs.pt
 LibreECs.pt
 ```

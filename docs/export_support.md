@@ -33,6 +33,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |
 | edgetam | segment |  |  |  |  |  |  |  |  |  |
+| efficientdet | detect | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | efficientnetv2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | eomt | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |  |
@@ -198,6 +199,10 @@ A check mark applies only under any constraint listed here.
 - `ec` / `segment` / `torchscript`: fixed 640x640 input
 - `ec` / `segment` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1; fixed input shape large enough for the top-300 query selection
 - `ec` / `segment` / `openvino`: fixed 640x640 input
+- `efficientdet` / `detect` / `onnx`: FP32, batch 1, fixed per-variant square input
+- `efficientdet` / `detect` / `torchscript`: FP32, batch 1, fixed per-variant square input
+- `efficientdet` / `detect` / `tensorrt`: TensorRT 10.16, FP32, batch 1, fixed per-variant square input; TensorRT's ITopK limit uses 3840 candidates instead of the native 5000-candidate budget
+- `efficientdet` / `detect` / `openvino`: OpenVINO 2026.2, FP32, batch 1, fixed per-variant square input on CPU
 - `efficientnetv2` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `efficientnetv2` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `efficientnetv2` / `classify` / `openvino`: fixed family-native input resolution
@@ -493,6 +498,9 @@ A check mark applies only under any constraint listed here.
 - `edgetam` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
+- `efficientdet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `efficientdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `efficientdet` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `efficientnetv2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `eomt` / `semantic` / `executorch`: Strict torch.export capture fails on a data-dependent symbolic expression in the mask path before XNNPACK lowering.
 - `eomt` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.

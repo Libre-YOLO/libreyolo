@@ -60,6 +60,7 @@ file = name + ".pt"
 | CenterNet | `LibreCenterNet` | `LibreCenterNetresdcn18.pt`, `LibreCenterNetdla34.pt` (official CenterNet COCO detectors; MIT implied for weights; inference-only) |
 | FCOS | `LibreFCOS` | `LibreFCOSr50.pt` (torchvision FCOS ResNet-50 FPN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
 | DeepLabv3 | `LibreDeepLabv3` | `LibreDeepLabv3r50-sem.pt` (torchvision semantic family; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
+| EfficientDet | `LibreEfficientDet` | `LibreEfficientDetd0.pt` (D0-D4; Apache-2.0 project release weights with no separate asset license; inference-only) |
 | Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
 | DINO-DETR | `LibreDINODETR` | `LibreDINODETRr50.pt` (IDEA DINO detector; Apache-2.0 implied for weights; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
@@ -196,6 +197,9 @@ LibreCenterNetresdcn18.pt, LibreCenterNetdla34.pt,
 LibreFCOSr50.pt,
 LibreDeepLabv3r50-sem.pt, LibreDeepLabv3r101-sem.pt,
 LibreDeepLabv3mv3-sem.pt,
+LibreEfficientDetd0.pt, LibreEfficientDetd1.pt,
+LibreEfficientDetd2.pt, LibreEfficientDetd3.pt,
+LibreEfficientDetd4.pt,
 
 LibreDeformableDETRr50ss.pt, LibreDeformableDETRr50ssdc5.pt,
 LibreDeformableDETRr50.pt, LibreDeformableDETRr50refine.pt,

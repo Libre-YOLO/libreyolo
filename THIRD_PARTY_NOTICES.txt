@@ -1133,6 +1133,28 @@ pretrained on ImageNet-22k and fine-tuned on ImageNet-1k. See
 libreyolo/models/swin/NOTICE for exact source revisions.
 
 --------------------------------------------------------------------
+EfficientDet (rwightman/efficientdet-pytorch; Google Research)
+--------------------------------------------------------------------
+Source: https://github.com/rwightman/efficientdet-pytorch
+Commit: c6dff775a36cea0bf9b76c58e59f936411c5ce01
+Version: effdet 0.4.1
+Backbone source: https://github.com/huggingface/pytorch-image-models
+Backbone version/commit: v1.0.28 / 8ef73809f622e0031bd7f4940265734aef8b9978
+Original source: https://github.com/google/automl/tree/master/efficientdet
+License: Apache License 2.0
+Copyright (c) 2020 Ross Wightman; Copyright 2020 Google Research.
+Used for: the EfficientDet D0-D4 inference family
+          (libreyolo/models/efficientdet/), centralized anchor decode and NMS
+          (libreyolo/postprocess/efficientdet.py), evaluation preprocessing,
+          strict checkpoint converter, and one-output export wrapper. Official
+          D0-D4 COCO weights are metadata-wrapped without changing learned
+          tensors. The release assets have no separate weight license; their
+          redistribution basis is Apache-2.0 implied by the releasing project.
+          No source from the LGPL-licensed
+          zylo117/Yet-Another-EfficientDet-Pytorch project was consulted or
+          used.
+
+--------------------------------------------------------------------
 Apache License 2.0 (full text)
 --------------------------------------------------------------------
 The full text of the Apache License, Version 2.0 is bundled with this

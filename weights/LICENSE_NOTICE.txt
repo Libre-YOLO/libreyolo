@@ -154,6 +154,16 @@ project the weights were derived from. Per-family summary:
              must determine permission for their use case. COCO annotations
              are CC BY 4.0; source images retain individual Flickr terms.
              Public mirrors: https://huggingface.co/LibreYOLO/LibreDeepLabv3{r50,r101,mv3}-sem
+    EfficientDet (LibreEfficientDet{d0,d1,d2,d3,d4})  Apache-2.0 (implied)
+             upstream: rwightman/efficientdet-pytorch 0.4.1 at commit
+               c6dff775a36cea0bf9b76c58e59f936411c5ce01
+             Official D0-D4 COCO checkpoints come from the upstream v0.1
+             GitHub release and retain every learned tensor unchanged. The
+             release assets carry no separate weight-license object, so
+             rehosting uses Apache-2.0 implied by the releasing project rather
+             than a publisher-confirmed checkpoint-specific grant. Every
+             weight repository ships the verbatim Apache-2.0 text and a NOTICE
+             stating this caveat.
 
     Deformable DETR                                     Apache-2.0
              (LibreDeformableDETR{r50ss,r50ssdc5,r50,

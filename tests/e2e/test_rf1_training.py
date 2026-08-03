@@ -96,6 +96,10 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "this museum port, and train() raises. Pretrained and export parity "
         "are verified separately."
     ),
+    "efficientdet": (
+        "EfficientDet ships inference-only: its focal-loss, anchor matching, "
+        "and compound-scale training recipe are outside this port, and train() raises."
+    ),
     "detr": (
         "Original DETR ships inference-only: its 500-epoch Hungarian-matching "
         "training recipe is not implemented, and train() raises. Inference "

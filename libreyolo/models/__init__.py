@@ -81,6 +81,7 @@ from .faster_rcnn.model import LibreFasterRCNN  # noqa: E402
 from .retinanet.model import LibreRetinaNet  # noqa: E402
 from .ssd.model import LibreSSD  # noqa: E402  (VGG extras + paired MultiBox heads are unique)
 from .centernet.model import LibreCenterNet  # noqa: E402
+from .efficientdet.model import LibreEfficientDet  # noqa: E402  (BiFPN keys are unique; inference-only)
 from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
@@ -763,6 +764,7 @@ __all__ = [
     "LibreRetinaNet",
     "LibreSSD",
     "LibreCenterNet",
+    "LibreEfficientDet",
     "LibreDeformableDETR",
     "LibreDINODETR",
     "LibreEC",

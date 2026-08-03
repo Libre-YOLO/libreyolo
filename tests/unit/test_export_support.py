@@ -614,6 +614,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("dinov2", "semantic"),
         ("ec", "detect"),
         ("ec", "segment"),
+        ("efficientdet", "detect"),
         ("efficientnetv2", "classify"),
         ("eomt", "semantic"),
         ("fcn", "semantic"),
