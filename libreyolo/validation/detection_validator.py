@@ -399,6 +399,7 @@ class DetectionValidator(BaseValidator):
                 iou_type="bbox",
                 label_to_category_id=self._coco_label_to_category_id,
                 max_det=self._coco_max_det(),
+                faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
             )
             if self.config.verbose:
                 logger.info(
@@ -467,7 +468,10 @@ class DetectionValidator(BaseValidator):
             )
             self._gt_coco_api = coco_api
         self.coco_evaluator = COCOEvaluator(
-            coco_api, iou_type="bbox", max_det=self._coco_max_det()
+            coco_api,
+            iou_type="bbox",
+            max_det=self._coco_max_det(),
+            faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
         )
 
         if self.config.verbose:
@@ -1134,6 +1138,7 @@ class SegmentationValidator(DetectionValidator):
             iou_type="segm",
             label_to_category_id=self._coco_label_to_category_id,
             max_det=self._coco_max_det(),
+            faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
         )
 
     def _update_metrics(

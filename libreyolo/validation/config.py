@@ -40,6 +40,9 @@ class ValidationConfig:
         num_workers: Number of dataloader workers.
         half: Whether to use FP16 inference.
         amp_dtype: Mixed-precision dtype used when half is enabled.
+        faster_coco_eval: Use the faster-coco-eval C++ backend for COCO
+            metrics (bbox/segm). Requires the faster-coco-eval package;
+            falls back to pycocotools with a warning if unavailable.
     """
 
     # Data
@@ -104,6 +107,9 @@ class ValidationConfig:
     half: bool = False
     amp_dtype: str = field(default="float16", kw_only=True)
     allow_download_scripts: bool = False
+
+    # COCO eval backend (off by default; opt-in C++ evaluator)
+    faster_coco_eval: bool = False
 
     # TTA
     augment: bool = False

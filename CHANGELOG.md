@@ -9,6 +9,18 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- Opt-in `faster_coco_eval` flag (off by default) on `ValidationConfig`,
+  `TrainConfig`, `model.val()` / `model.train()` kwargs, and the CLI
+  (`--faster-coco-eval` on `libreyolo val` / `libreyolo train`). Routes
+  bbox/segm COCO metrics through the faster-coco-eval C++ backend
+  (10-50x faster on detection-dense datasets; validated bit-identical to
+  pycocotools within float64 summation order across the 100 RF100-VL
+  datasets). The `LIBREYOLO_FASTER_COCO_EVAL` env var overrides the flag
+  in either direction, the backend actually used (name + version) is
+  logged and exposed as `COCOEvaluator.last_backend` for provenance, and
+  the evaluator falls back to pycocotools with a warning if the package
+  is missing. Install via `pip install libreyolo[fast-eval]`.
+
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr
