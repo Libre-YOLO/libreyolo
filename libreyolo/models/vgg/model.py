@@ -40,12 +40,15 @@ class LibreVGG(BaseModel):
     def can_load(cls, weights_dict: dict) -> bool:
         stem = weights_dict.get("features.0.weight")
         first_fc = weights_dict.get("classifier.0.weight")
+        final_fc = weights_dict.get("classifier.6.weight")
         return (
             isinstance(stem, torch.Tensor)
             and tuple(stem.shape) == (64, 3, 3, 3)
             and isinstance(first_fc, torch.Tensor)
             and tuple(first_fc.shape) == (4096, 512 * 7 * 7)
-            and "classifier.6.weight" in weights_dict
+            and isinstance(final_fc, torch.Tensor)
+            and final_fc.ndim == 2
+            and final_fc.shape[1] == 4096
             and cls.detect_size(weights_dict) is not None
         )
 
@@ -73,8 +76,7 @@ class LibreVGG(BaseModel):
             return None
         conv_count = cls._conv_count(weights_dict)
         has_batch_norm = any(
-            re.match(r"^features\.\d+\.running_var$", key)
-            for key in weights_dict
+            re.match(r"^features\.\d+\.running_var$", key) for key in weights_dict
         )
         return {
             (13, False): "16",
@@ -167,7 +169,7 @@ class LibreVGG(BaseModel):
     def train(self, *args, **kwargs):
         del args, kwargs
         raise NotImplementedError(
-            "LibreVGG is shipped as an inference-only museum family. "
+            "LibreVGG is shipped as an inference-only classification family. "
             "Classification fine-tuning is not implemented for this family yet."
         )
 

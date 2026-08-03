@@ -24,7 +24,7 @@ def test_registered_as_inference_only_classify_family():
     assert model.crop_pct == 0.875
     assert model.interpolation == "bilinear"
     assert model.TRAIN_CONFIG is None
-    with pytest.raises(NotImplementedError, match="inference-only museum"):
+    with pytest.raises(NotImplementedError, match="inference-only"):
         model.train(data="unused")
 
 
@@ -55,6 +55,9 @@ def test_detect_size_classes_and_forward(size):
     assert LibreVGG.can_load(state_dict)
     assert LibreVGG.detect_size(state_dict) == size
     assert LibreVGG.detect_nb_classes(state_dict) == 10
+    malformed = state_dict.copy()
+    malformed["classifier.6.weight"] = torch.empty(10, 512, device="meta")
+    assert LibreVGG.can_load(malformed) is False
     with torch.inference_mode():
         output = model(torch.zeros(1, 3, 224, 224))
     assert output.shape == (1, 10)
