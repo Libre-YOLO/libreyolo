@@ -206,6 +206,11 @@ class Attention(nn.Module):
         self.k_proj = nn.Linear(embedding_dim, self.internal_dim)
         self.v_proj = nn.Linear(embedding_dim, self.internal_dim)
         self.out_proj = nn.Linear(self.internal_dim, embedding_dim)
+        # Opt-in fused SDPA. Default off: tests/unit/test_mobilesam_parity.py
+        # pins max_abs_diff == 0 against upstream MobileSAM and fused kernels
+        # accumulate in a different order. Flip with
+        # libreyolo.kernels.attention.set_fused_attention(model).
+        self.fused_attn = False
 
     def _separate_heads(self, x: Tensor, num_heads: int) -> Tensor:
         b, n, c = x.shape
@@ -230,12 +235,16 @@ class Attention(nn.Module):
 
         # Attention
         _, _, _, c_per_head = q.shape
-        attn = q @ k.permute(0, 1, 3, 2)  # B x N_heads x N_tokens x N_tokens
-        attn = attn / math.sqrt(c_per_head)
-        attn = torch.softmax(attn, dim=-1)
-
-        # Get output
-        out = attn @ v
+        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+            out = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False,
+                scale=1.0 / math.sqrt(c_per_head),
+            )
+        else:
+            attn = q @ k.permute(0, 1, 3, 2)  # B x N_heads x N_tokens x N_tokens
+            attn = attn / math.sqrt(c_per_head)
+            attn = torch.softmax(attn, dim=-1)
+            out = attn @ v
         out = self._recombine_heads(out)
         out = self.out_proj(out)
 

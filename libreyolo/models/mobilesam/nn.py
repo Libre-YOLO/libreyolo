@@ -280,6 +280,11 @@ class Attention(torch.nn.Module):
         self.norm = nn.LayerNorm(dim)
         self.qkv = nn.Linear(dim, h)
         self.proj = nn.Linear(self.dh, dim)
+        # Opt-in fused SDPA. Default off: tests/unit/test_mobilesam_parity.py
+        # pins max_abs_diff == 0 against upstream MobileSAM and fused kernels
+        # accumulate in a different order. Flip with
+        # libreyolo.kernels.attention.set_fused_attention(model).
+        self.fused_attn = False
 
         points = list(itertools.product(range(resolution[0]), range(resolution[1])))
         N = len(points)
@@ -326,13 +331,23 @@ class Attention(torch.nn.Module):
         k = k.permute(0, 2, 1, 3)
         v = v.permute(0, 2, 1, 3)
 
-        attn = (q @ k.transpose(-2, -1)) * self.scale + (
+        bias = (
             self.attention_biases[:, self.attention_bias_idxs]
             if self.training
             else self.ab
         )
-        attn = attn.softmax(dim=-1)
-        x = (attn @ v).transpose(1, 2).reshape(B, N, self.dh)
+        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+            # The learned attention bias is already an additive (heads, N, N)
+            # term and broadcasts over the batch.
+            x = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=bias, dropout_p=0.0, is_causal=False,
+                scale=self.scale,
+            )
+        else:
+            attn = (q @ k.transpose(-2, -1)) * self.scale + bias
+            attn = attn.softmax(dim=-1)
+            x = attn @ v
+        x = x.transpose(1, 2).reshape(B, N, self.dh)
         x = self.proj(x)
         return x
 
