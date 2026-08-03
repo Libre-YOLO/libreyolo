@@ -15,6 +15,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ...kernels.attention.ms_deform_attn import (
+    maybe_ms_deform_attn_v2,
+    ms_deform_attn_available,
+    spatial_shapes_tensor,
+)
 from ..dfine.box_ops import box_xyxy_to_cxcywh
 
 
@@ -93,6 +98,30 @@ def deformable_attention_core_func_v2(
     method: str = "default",
     value_shape: str = "default",
 ):
+    """Multi-scale deformable attention aggregator (grid_sample variant).
+
+    The loop below is the default and the export path. When the optional
+    accelerated ``ms_deform_attn`` slot resolves and the flat point layout
+    reshapes onto the slot's ``(n_levels, n_points)`` one, it takes over
+    (see ``libreyolo/kernels/attention/ms_deform_attn.py``);
+    ``method='discrete'`` never does, its integer-index sampling is a
+    different equation.
+    """
+    if method == "default" and ms_deform_attn_available():
+        if value_shape == "default":
+            # Per-level (bs, n_head, c, H*W) -> the slot's (bs, Len_in, n_head, c).
+            flat_value = torch.cat(list(value), dim=-1).permute(0, 3, 1, 2)
+        else:
+            flat_value = value
+        accelerated = maybe_ms_deform_attn_v2(
+            flat_value,
+            spatial_shapes_tensor(value_spatial_shapes, flat_value.device),
+            sampling_locations,
+            attention_weights,
+            num_points_list,
+        )
+        if accelerated is not None:
+            return accelerated
     if value_shape == "default":
         bs, n_head, c, _ = value[0].shape
     elif value_shape == "reshape":
