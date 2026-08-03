@@ -284,7 +284,7 @@ class COCOEvaluator:
         self.last_backend = (
             f"pycocotools {getattr(pycocotools, '__version__', '?')}"
         )
-        logger.debug("COCO eval backend: %s", self.last_backend)
+        logger.info("COCO eval backend: %s", self.last_backend)
         coco_dt = self.coco_gt.loadRes(self.results)
         return COCOeval(self.coco_gt, coco_dt, self.iou_type)
 

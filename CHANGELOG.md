@@ -163,8 +163,29 @@ before 1.4.0 are documented in the
 - Native fp8 execution tier: finalized fp8 QuantLinear runs on the fp8 tensor cores via torch._scaled_mm (Ada/Hopper/Blackwell); optional Triton kernels fuse activation conversion and the per-channel scale/bias epilogue, while validation-selected FeyNobg Swin stage-0 Linears use manifest-recorded tensorwise weight scales for a fully fused cuBLASLt epilogue. Finalized fp8 QuantConv2d convolves in fp16 on cached dequantized weights, and fp16-remainder checkpoints get float32 I/O root hooks. On LibreFeyNobg/RTX 5070 Ti, fp8 is 123.1 vs 129.3 ms for batch-1 graphed predict and 515.4 vs 535.3 ms at batch 4, with a 275 vs 531 MB file.
 - CUDA graph capture for the birefnet and feynobg families via encoder-only capture (the deformable decoder replays wrong under capture and stays eager; graphed output is bit-identical to eager); GraphRunner warms up on the capture stream so lazily-allocated cuBLASLt/cuDNN workspaces stop invalidating capture, and quant modules cache the calibration flag as a host bool (the per-forward .item() sync also invalidated capture)
 
+### Changed
+
+- The faster-coco-eval COCO metrics backend is now the default
+  (`faster_coco_eval=True` on `ValidationConfig` / `TrainConfig`; CLI gains
+  `--no-faster-coco-eval` to opt out, and `LIBREYOLO_FASTER_COCO_EVAL=0`
+  still forces pycocotools). Decision based on measured parity across all
+  100 RF100-VL test splits: 1381/1400 metric values bit-identical to
+  pycocotools, max deviation 2.22e-16, headline deltas exactly 0, with
+  15.6x faster evaluation overall (56x on detection-dense datasets).
+  pycocotools remains the automatic fallback when faster-coco-eval is not
+  installed. For provenance, the backend actually used is now always
+  logged at INFO, surfaced as `model.last_eval_backend` after `val()`,
+  and included as `eval_backend` in the CLI JSON payload
+
 ### Fixed
 
+- Non-strict checkpoint loads (families with `_strict_loading() == False`,
+  e.g. YOLOX) now log a warning with the counts and first names of missing
+  and unexpected state-dict keys instead of silently discarding them. Shape
+  mismatches always raised, but name mismatches let a partially matching
+  checkpoint "load" and predict with fresh-initialized tensors for the
+  dropped keys with no trace. Healthy loads stay silent; full key lists are
+  available at DEBUG level
 - YOLOX BatchNorm eps=1e-3 / momentum=0.03 (official YOLOX values) is now
   applied by `LibreYOLOXModel` at construction instead of as a post-hoc fixup
   in the `LibreYOLOX` wrapper, so it survives the class-count rebuild

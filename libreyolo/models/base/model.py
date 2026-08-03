@@ -250,7 +250,7 @@ class BaseModel(ABC):
             self.model_path = None
             state_dict = self._prepare_state_dict(self._strip_ddp_prefix(model_path))
             self._validate_loaded_state_dict_for_task(state_dict, model_path)
-            self.model.load_state_dict(state_dict, strict=self._strict_loading())
+            self._load_state_dict_logged(state_dict, source="state dict")
         else:
             self.model_path = model_path
 
@@ -822,12 +822,49 @@ class BaseModel(ABC):
                 apply_quant_structure(self, quant_manifest)
 
             self._prepare_model_for_state_dict(state_dict)
-            self.model.load_state_dict(state_dict, strict=self._strict_loading())
+            self._load_state_dict_logged(state_dict, source=str(model_path))
             self.model.to(self.device).eval()
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load model weights from {model_path}: {e}"
             ) from e
+
+    def _load_state_dict_logged(self, state_dict: dict, source: str) -> None:
+        """Load with the family's strictness, making silent key drops visible.
+
+        Families that load with strict=False (e.g. YOLOX) previously discarded
+        missing/unexpected keys without a trace: a partially matching
+        checkpoint would "load" and then quietly predict with fresh-initialized
+        tensors wherever keys were absent. Shape mismatches raise regardless of
+        strictness, but name mismatches do not, so this logs them. A healthy
+        load stays silent.
+
+        Families with custom ``_load_weights`` overrides must either route
+        their final ``load_state_dict`` through this helper (YOLO-NAS) or
+        police the returned missing/unexpected keys themselves with
+        family-specific rules (D-FINE/DEIM/EC tolerate regenerated anchor
+        buffers but raise on other unexpected keys; DINOv2/RF-DETR/PIDNet
+        validate the key sets against the expected architecture).
+        """
+        result = self.model.load_state_dict(
+            state_dict, strict=self._strict_loading()
+        )
+        missing = list(getattr(result, "missing_keys", []) or [])
+        unexpected = list(getattr(result, "unexpected_keys", []) or [])
+        if missing or unexpected:
+            logger.warning(
+                "Non-strict load from %s: %d missing key(s) (model keeps "
+                "initialized weights for these) and %d unexpected key(s) "
+                "(ignored). First missing: %s. First unexpected: %s. "
+                "This usually indicates a size/task/architecture mismatch.",
+                source,
+                len(missing),
+                len(unexpected),
+                missing[:5],
+                unexpected[:5],
+            )
+            logger.debug("All missing keys: %s", missing)
+            logger.debug("All unexpected keys: %s", unexpected)
 
     def _allow_checkpoint_task_mismatch(self, checkpoint_task: str) -> bool:
         """Return whether a family permits loading a checkpoint from another task."""
@@ -1733,7 +1770,10 @@ class BaseModel(ABC):
             plots: Alias for save_plots.
             verbose: Print detailed metrics.
             faster_coco_eval: (kwarg) Use the faster-coco-eval C++ backend
-                for COCO metrics; falls back to pycocotools if unavailable.
+                for COCO metrics. Default True; falls back to pycocotools
+                if the package is unavailable. Pass False (or set
+                LIBREYOLO_FASTER_COCO_EVAL=0) to force pycocotools. The
+                backend used is surfaced as ``model.last_eval_backend``.
 
         Returns:
             Dictionary with metrics/precision, metrics/recall,
@@ -1875,4 +1915,9 @@ class BaseModel(ABC):
         else:
             validator_cls = DetectionValidator
         validator = validator_cls(model=self, config=config)
-        return validator()
+        metrics = validator()
+        # Provenance: which COCO eval backend produced these metrics
+        # (e.g. "faster-coco-eval 1.7.2" / "pycocotools 2.0.10"; None for
+        # validators that don't run COCO evaluation).
+        self.last_eval_backend = getattr(validator, "eval_backend", None)
+        return metrics
