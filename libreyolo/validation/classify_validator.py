@@ -7,7 +7,7 @@ reusing the :class:`BaseValidator` template (setup -> iterate -> finalize).
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import torch
 from torch.utils.data import DataLoader
@@ -20,14 +20,30 @@ from ..data.classify_dataset import (
 )
 from ..utils.general import COCO_CLASSES
 from .base import BaseValidator
+from .loss import ValidationLossMixin
+
+if TYPE_CHECKING:
+    from .config import ValidationConfig
+    from .loss import ValidationLossAdapter
 
 logger = logging.getLogger(__name__)
 
 
-class ClassifyValidator(BaseValidator):
+class ClassifyValidator(ValidationLossMixin, BaseValidator):
     """Top-1/top-5 accuracy validator for the classification task."""
 
     task = "classify"
+
+    def __init__(
+        self,
+        model,
+        config: Optional["ValidationConfig"] = None,
+        *,
+        loss_adapter: Optional["ValidationLossAdapter"] = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, config, **kwargs)
+        self._init_validation_loss(loss_adapter)
 
     def _model_class_names(self) -> list[str] | None:
         names = getattr(self.model, "names", None)
@@ -117,6 +133,7 @@ class ClassifyValidator(BaseValidator):
         self._top1_correct = 0
         self._top5_correct = 0
         self._total = 0
+        self._reset_validation_loss()
 
     def _preprocess_batch(self, batch: Any) -> tuple:
         images, targets, img_info, img_ids = batch
@@ -133,6 +150,10 @@ class ClassifyValidator(BaseValidator):
     def _update_metrics(
         self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None
     ) -> None:
+        # Accumulate before the .cpu() below so the adapter sees the logits on
+        # the device the criterion expects.
+        self._accumulate_validation_loss(preds, targets, image_size=None)
+
         logits = preds
         if isinstance(logits, dict):
             logits = logits.get("logits", logits.get("predictions"))
@@ -158,6 +179,7 @@ class ClassifyValidator(BaseValidator):
             "metrics/accuracy_top1": top1,
             "metrics/accuracy_top5": top5,
             "fitness": top1,
+            **self._validation_loss_metrics(),
         }
 
     def _print_results(self, metrics: Dict[str, float]) -> None:

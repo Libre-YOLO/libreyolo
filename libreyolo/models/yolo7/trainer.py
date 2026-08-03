@@ -37,6 +37,25 @@ class YOLOv7Trainer(YOLOXTrainer):
     def get_model_family(self) -> str:
         return "yolo7"
 
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        # Not YOLOX's scoped-head path: this net returns the raw head maps
+        # from forward either way, so the validator's predictions are already
+        # what the criterion takes.
+        from .loss import YOLOv7Loss
+        from .validation_loss import YOLOv7ValidationLoss
+
+        net = getattr(model, "model", model)
+        return YOLOv7ValidationLoss(
+            YOLOv7Loss(
+                net.num_classes,
+                net.anchors,
+                net.strides,
+                distributed_normalize=False,
+            ),
+            num_classes=net.num_classes,
+            device=self.device,
+        )
+
     def get_model_tag(self) -> str:
         return f"LibreYOLO7-{self.config.size}"
 

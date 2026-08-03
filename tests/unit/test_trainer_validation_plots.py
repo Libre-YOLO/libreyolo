@@ -106,10 +106,15 @@ def test_trainer_validation_routes_point_task(monkeypatch):
 def test_trainer_passes_opt_in_loss_adapter_to_detection_validator(monkeypatch):
     import torch
 
+    from libreyolo.validation.loss import ValidationLossMixin
+
     observed = {}
     adapter = object()
 
-    class _DummyDetectionValidator:
+    # Subclasses the mixin like the real validator does: the trainer decides
+    # whether to build an adapter by checking for it, because OBB and point
+    # validators take no loss_adapter.
+    class _DummyDetectionValidator(ValidationLossMixin):
         def __init__(self, model, config, *, loss_adapter=None):
             observed["model"] = model
             observed["config"] = config

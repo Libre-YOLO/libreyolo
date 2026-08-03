@@ -9,7 +9,7 @@ model input resolution; ignore pixels (255 by default) are excluded.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
@@ -23,14 +23,30 @@ from ..data.semantic_dataset import (
     valid_content_hw,
 )
 from .base import BaseValidator
+from .loss import ValidationLossMixin
+
+if TYPE_CHECKING:
+    from .config import ValidationConfig
+    from .loss import ValidationLossAdapter
 
 logger = logging.getLogger(__name__)
 
 
-class SemanticValidator(BaseValidator):
+class SemanticValidator(ValidationLossMixin, BaseValidator):
     """mIoU / pixel-accuracy validator for the semantic task."""
 
     task = "semantic"
+
+    def __init__(
+        self,
+        model,
+        config: Optional["ValidationConfig"] = None,
+        *,
+        loss_adapter: Optional["ValidationLossAdapter"] = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, config, **kwargs)
+        self._init_validation_loss(loss_adapter)
 
     def _setup_dataloader(self) -> DataLoader:
         if not self.config.data:
@@ -79,6 +95,7 @@ class SemanticValidator(BaseValidator):
     def _init_metrics(self) -> None:
         nc = getattr(self, "_num_classes", 0)
         self._confusion = torch.zeros((nc, nc), dtype=torch.int64)
+        self._reset_validation_loss()
 
     def _preprocess_batch(self, batch: Any) -> tuple:
         images, targets, img_info, img_ids = batch
@@ -114,6 +131,9 @@ class SemanticValidator(BaseValidator):
         targets = batch[1]
         target_hw = tuple(targets.shape[-2:])
         logits = self._extract_logits(preds, target_hw)
+        # Fed the logits already upsampled to the mask resolution, which
+        # is exactly what the families' own forward scores in training.
+        self._accumulate_validation_loss(logits, targets, image_size=None)
         return logits.argmax(dim=1)
 
     def _flip_content(
@@ -259,6 +279,7 @@ class SemanticValidator(BaseValidator):
             "metrics/mIoU": miou,
             "metrics/pixel_accuracy": accuracy,
             "fitness": miou,
+            **self._validation_loss_metrics(),
         }
 
     def _print_results(self, metrics: Dict[str, float]) -> None:

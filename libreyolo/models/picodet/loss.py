@@ -412,12 +412,14 @@ class PICODETLoss(nn.Module):
         bbox_loss_weight: float = 2.0,
         dfl_loss_weight: float = 0.25,
         sim_ota_iou_weight: float = 6.0,
+        distributed_normalize: bool = True,
     ) -> None:
         super().__init__()
         self.num_classes = num_classes
         self.reg_max = reg_max
         self.strides = tuple(strides)
         self.bbox_loss_weight = bbox_loss_weight
+        self.distributed_normalize = distributed_normalize
 
         self.vfl = VarifocalLoss(loss_weight=cls_loss_weight)
         self.dfl = DistributionFocalLoss(loss_weight=dfl_loss_weight)
@@ -535,10 +537,15 @@ class PICODETLoss(nn.Module):
         # (DDP-reduced) positive count, mirroring upstream PP-PicoDet's
         # nranks averaging (issue #484). Identical to ``max(num_pos_total, 1)``
         # outside DDP. Collectives run before the no-positive early return so
-        # every rank reaches them.
-        avg_factor = all_reduce_avg_scalar(
-            num_pos_total, device=bbox_flat.device
-        )
+        # every rank reaches them. Rank-0-only validation selects the local
+        # path because it cannot enter a collective while the other ranks wait
+        # at the validation barrier.
+        if self.distributed_normalize:
+            avg_factor = all_reduce_avg_scalar(
+                num_pos_total, device=bbox_flat.device
+            )
+        else:
+            avg_factor = float(max(num_pos_total, 1))
         loss_cls = self.vfl(
             cls_flat.reshape(-1, self.num_classes),
             cls_targets.reshape(-1, self.num_classes),
@@ -553,7 +560,12 @@ class PICODETLoss(nn.Module):
             if pos_records
             else bbox_flat.new_zeros(0)
         )
-        weight_sum = all_reduce_avg_scalar(all_weights.sum(), min_value=1e-6)
+        if self.distributed_normalize:
+            weight_sum = all_reduce_avg_scalar(all_weights.sum(), min_value=1e-6)
+        else:
+            weight_sum = float(
+                all_weights.sum().detach().float().clamp_min(1e-6).item()
+            )
 
         if not pos_records:
             zero = bbox_flat.new_zeros(())

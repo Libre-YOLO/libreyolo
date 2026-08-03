@@ -40,6 +40,25 @@ class NAFNetTrainer(BaseTrainer):
     def create_transforms(self):
         return None, None
 
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+        task = getattr(getattr(self, "wrapper_model", None), "task", "restore")
+        if task != "restore":
+            raise ValueError(
+                "val_loss=True currently supports nafnet restoration only; "
+                "other tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        # TLC local pooling is re-attached only after the last epoch (see
+        # train()), so per-epoch validation runs the same global-pool model
+        # training does and the two losses are directly comparable.
+        del model
+        from .validation_loss import NAFNetValidationLoss
+
+        return NAFNetValidationLoss(device=self.device)
+
     def on_setup(self) -> None:
         # TLC (NAFNetLocal) local pooling is an inference-time technique with a
         # window fixed by a warm-up forward. Upstream trains the plain

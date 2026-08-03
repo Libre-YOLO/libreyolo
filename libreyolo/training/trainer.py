@@ -295,6 +295,30 @@ class BaseTrainer(ABC):
         """Build the family adapter used by rank-0 training validation."""
         raise NotImplementedError
 
+    def _validation_loss_kwargs(self, eval_pytorch_model: nn.Module) -> Dict[str, Any]:
+        """Build the validator's ``loss_adapter`` kwarg when ``val_loss`` is on.
+
+        No task check here: ``validate_validation_loss_config`` runs for every
+        family at setup, so a run that reaches this point has already been
+        cleared by its own family's gate. A failure to construct the adapter
+        costs the run its validation loss, never its accuracy metrics.
+        """
+        if not getattr(self.config, "val_loss", False):
+            return {}
+        try:
+            return {
+                "loss_adapter": self.build_validation_loss_adapter(eval_pytorch_model)
+            }
+        except Exception as exc:
+            logger.warning(
+                "Validation loss could not be initialized; %s metrics will "
+                "continue without it: %s",
+                getattr(getattr(self, "wrapper_model", None), "task", "detect"),
+                exc,
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+            return {}
+
     def get_freeze_groups(self) -> List[FreezeGroup]:
         """Return integer-addressable freeze groups for this family."""
         return default_freeze_groups(self.model)
@@ -2593,6 +2617,7 @@ class BaseTrainer(ABC):
                 SegmentationValidator,
                 ValidationConfig,
             )
+            from libreyolo.validation.loss import ValidationLossMixin
 
             logger.info(f"Running validation for epoch {epoch + 1}")
 
@@ -2669,22 +2694,17 @@ class BaseTrainer(ABC):
                 # and neither is baked into the reused state.
                 validator = getattr(self, "_epoch_validator", None)
                 if validator is None or type(validator) is not validator_cls:
-                    validator_kwargs = {}
-                    if task == "detect" and getattr(self.config, "val_loss", False):
-                        # The adapter is built once with the cached validator:
-                        # the EMA/eval module object is stable across epochs,
-                        # and _init_metrics() re-arms the adapter every run.
-                        try:
-                            validator_kwargs["loss_adapter"] = (
-                                self.build_validation_loss_adapter(eval_pytorch_model)
-                            )
-                        except Exception as exc:
-                            logger.warning(
-                                "Validation loss could not be initialized; detection "
-                                "metrics will continue without it: %s",
-                                exc,
-                                exc_info=logger.isEnabledFor(logging.DEBUG),
-                            )
+                    # The adapter is built once with the cached validator: the
+                    # EMA/eval module object is stable across epochs, and
+                    # _init_metrics() re-arms the adapter every run. OBB and
+                    # point validators do not take a loss_adapter, so the
+                    # mixin check keeps a family that opts in for a task this
+                    # branch cannot serve from breaking its own validation.
+                    validator_kwargs = (
+                        self._validation_loss_kwargs(eval_pytorch_model)
+                        if issubclass(validator_cls, ValidationLossMixin)
+                        else {}
+                    )
                     validator = validator_cls(
                         model=self.wrapper_model,
                         config=val_config,
@@ -2766,7 +2786,12 @@ class BaseTrainer(ABC):
             original_model = self.wrapper_model.model
             self.wrapper_model.model = eval_pytorch_model
             try:
-                validator = ClassifyValidator(model=self.wrapper_model, config=val_config)
+                validator = ClassifyValidator(
+                    model=self.wrapper_model,
+                    config=val_config,
+                    **self._validation_loss_kwargs(eval_pytorch_model),
+                )
+
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model
@@ -2819,7 +2844,11 @@ class BaseTrainer(ABC):
             original_model = self.wrapper_model.model
             self.wrapper_model.model = eval_pytorch_model
             try:
-                validator = SemanticValidator(model=self.wrapper_model, config=val_config)
+                validator = SemanticValidator(
+                    model=self.wrapper_model,
+                    config=val_config,
+                    **self._validation_loss_kwargs(eval_pytorch_model),
+                )
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model
@@ -2927,7 +2956,11 @@ class BaseTrainer(ABC):
             original_model = self.wrapper_model.model
             self.wrapper_model.model = eval_pytorch_model
             try:
-                validator = RestoreValidator(model=self.wrapper_model, config=val_config)
+                validator = RestoreValidator(
+                    model=self.wrapper_model,
+                    config=val_config,
+                    **self._validation_loss_kwargs(eval_pytorch_model),
+                )
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model
