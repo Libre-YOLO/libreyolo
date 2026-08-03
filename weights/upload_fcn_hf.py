@@ -14,6 +14,12 @@ Examples::
     python weights/upload_fcn_hf.py --size r50 \
         --pt weights/LibreFCNr50.pt --out ./LibreFCNr50 \
         --confirm-implied-license
+
+If a previous attempt created the repository but did not finish::
+
+    python weights/upload_fcn_hf.py --size r50 \
+        --pt weights/LibreFCNr50.pt --out ./LibreFCNr50-retry \
+        --confirm-implied-license --resume-partial
 """
 
 from __future__ import annotations
@@ -323,23 +329,66 @@ def build_repo_dir(size: str, pt_path: Path, out_dir: Path) -> Path:
     return out_dir
 
 
-def _upload(size: str, repo_dir: Path) -> str:
+def _upload(
+    size: str,
+    repo_dir: Path,
+    *,
+    resume_partial: bool = False,
+) -> str:
     from huggingface_hub import HfApi
+    from huggingface_hub.errors import HfHubHTTPError
 
     repo_name = _canonical_name(size)
     repo_id = f"LibreYOLO/{repo_name}"
     api = HfApi()
-    if api.repo_exists(repo_id=repo_id, repo_type="model"):
-        raise FileExistsError(
-            f"Refusing to overwrite existing Hugging Face repository: {repo_id}"
+    expected = {
+        ".gitattributes",
+        "README.md",
+        "LICENSE",
+        "NOTICE",
+        f"{repo_name}.pt",
+    }
+    local = {path.name for path in repo_dir.iterdir()}
+    if local != expected:
+        raise RuntimeError(
+            f"Five-file contract mismatch before upload: expected "
+            f"{sorted(expected)}, got {sorted(local)}"
         )
-    api.create_repo(repo_id=repo_id, repo_type="model", exist_ok=False)
-    api.upload_folder(
-        folder_path=str(repo_dir),
-        repo_id=repo_id,
-        repo_type="model",
-        commit_message=f"Initial upload: {repo_name} (FCN, BSD-3-Clause implied)",
-    )
+
+    exists = api.repo_exists(repo_id=repo_id, repo_type="model")
+    remote_files: set[str] = set()
+    if exists:
+        if not resume_partial:
+            raise FileExistsError(
+                f"Refusing to overwrite existing Hugging Face repository: {repo_id}. "
+                "Pass --resume-partial only for an interrupted publication."
+            )
+        try:
+            remote_files = set(api.list_repo_files(repo_id=repo_id, repo_type="model"))
+        except HfHubHTTPError as exc:
+            # A newly created repository has no revision until its first file
+            # commit and may therefore return 404 from list_repo_files.
+            if exc.response is None or exc.response.status_code != 404:
+                raise
+        unexpected = remote_files - expected
+        if unexpected:
+            raise FileExistsError(
+                f"Refusing to resume {repo_id}: unexpected remote files "
+                f"{sorted(unexpected)}"
+            )
+    else:
+        api.create_repo(repo_id=repo_id, repo_type="model", exist_ok=False)
+
+    if remote_files != expected:
+        action = "Resume" if exists else "Initial"
+        api.upload_folder(
+            folder_path=str(repo_dir),
+            repo_id=repo_id,
+            repo_type="model",
+            commit_message=(
+                f"{action} upload: {repo_name} (FCN, BSD-3-Clause implied)"
+            ),
+        )
     api.add_collection_item(
         collection_slug=_COLLECTION,
         item_id=repo_id,
@@ -364,6 +413,14 @@ def main() -> int:
         action="store_true",
         help="Confirm the maintainer-approved implied BSD redistribution basis.",
     )
+    parser.add_argument(
+        "--resume-partial",
+        action="store_true",
+        help=(
+            "Resume an interrupted publication only when the existing remote "
+            "contains no files outside the five-file contract."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.dry_run and not args.confirm_implied_license:
@@ -375,7 +432,9 @@ def main() -> int:
         print("Dry run complete; no external state changed.")
         return 0
 
-    print(f"Uploaded: {_upload(args.size, repo_dir)}")
+    print(
+        f"Uploaded: {_upload(args.size, repo_dir, resume_partial=args.resume_partial)}"
+    )
     return 0
 
 
