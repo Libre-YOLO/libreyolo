@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -149,16 +151,70 @@ def test_callable_detector_and_empty_box_bypass():
 
 def test_image_list_runs_each_crop_sequentially():
     wrapper = FakeHRNet()
-    results = HRNetPoseInferenceRunner(wrapper)(
-        [_image(80, 120), _image(120, 80)],
-        cropped=True,
-        batch=2,
-    )
+    with pytest.warns(RuntimeWarning, match="run sequentially"):
+        results = HRNetPoseInferenceRunner(wrapper)(
+            [_image(80, 120), _image(120, 80)],
+            cropped=True,
+            batch=2,
+        )
 
     assert len(results) == 2
     assert wrapper.model.calls == 2
     assert [result.orig_shape for result in results] == [(120, 80), (80, 120)]
     assert all(result.keypoints.data.shape == (1, 17, 3) for result in results)
+
+
+def test_image_list_save_uses_unique_names(tmp_path):
+    results = HRNetPoseInferenceRunner(FakeHRNet())(
+        [_image(), _image()],
+        cropped=True,
+        save=True,
+        output_path=str(tmp_path),
+    )
+
+    assert [Path(result.saved_path).name for result in results] == [
+        "image0.jpg",
+        "image1.jpg",
+    ]
+    assert all(Path(result.saved_path).is_file() for result in results)
+
+
+def test_image_list_save_rejects_single_output_file(tmp_path):
+    with pytest.raises(ValueError, match="requires an output directory"):
+        HRNetPoseInferenceRunner(FakeHRNet())(
+            [_image(), _image()],
+            cropped=True,
+            save=True,
+            output_path=str(tmp_path / "pose.jpg"),
+        )
+
+
+def test_mixed_image_list_save_avoids_path_stem_collisions(tmp_path):
+    source = tmp_path / "image0.jpg"
+    _image().save(source)
+    output = tmp_path / "output"
+
+    results = HRNetPoseInferenceRunner(FakeHRNet())(
+        [_image(), source],
+        cropped=True,
+        save=True,
+        output_path=str(output),
+    )
+
+    assert [Path(result.saved_path).name for result in results] == [
+        "image0.jpg",
+        "image0_2.jpg",
+    ]
+    assert all(Path(result.saved_path).is_file() for result in results)
+
+
+def test_unknown_prediction_option_is_rejected():
+    with pytest.raises(TypeError, match="misspelled_option"):
+        HRNetPoseInferenceRunner(FakeHRNet())(
+            _image(),
+            cropped=True,
+            misspelled_option=True,
+        )
 
 
 def test_default_detector_is_resolved_once_and_cached(monkeypatch):

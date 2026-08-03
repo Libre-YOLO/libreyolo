@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator, Sequence
 
@@ -11,8 +12,9 @@ import torch
 from PIL import Image
 
 from ...postprocess.hrnet import flip_back_tensor, postprocess_hrnet
-from ...utils.general import log_saved_result, resolve_save_path
+from ...utils.general import get_safe_stem, log_saved_result, resolve_save_path
 from ...utils.image_loader import ImageInput, ImageLoader
+from ...utils.predict_args import normalize_predict_kwargs
 from ...utils.results import Boxes, Keypoints, Results
 from ...utils.video import collect_video_results, is_video_file, run_video_inference
 from .detector import (
@@ -58,12 +60,32 @@ class HRNetPoseInferenceRunner:
         stream: bool = False,
         vid_stride: int = 1,
         show: bool = False,
+        batch: int = 1,
+        overlap_ratio: float = 0.2,
         output_file_format: str | None = None,
         device: str | None = None,
         augment: bool = False,
         tiling: bool = False,
         **_unused: object,
     ) -> Results | list[Results] | Generator[Results, None, None]:
+        normalize_predict_kwargs(_unused)
+        if isinstance(batch, bool) or not isinstance(batch, (int, np.integer)):
+            raise TypeError(f"batch must be a positive integer, got {batch!r}")
+        batch = int(batch)
+        if batch < 1:
+            raise ValueError(f"batch must be a positive integer, got {batch}")
+        if float(overlap_ratio) != 0.2:
+            raise ValueError(
+                "overlap_ratio only applies to tiled inference, which HRNet "
+                "does not support. Keep overlap_ratio=0.2 or omit it."
+            )
+        if batch > 1:
+            warnings.warn(
+                "HRNet's detector and variable person-crop fan-out do not support "
+                "stacked prediction. Multi-image sources will run sequentially.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         if augment:
             raise ValueError(
                 "Use flip_test=True for HRNet's supported horizontal-flip test; "
@@ -91,7 +113,9 @@ class HRNetPoseInferenceRunner:
             raise ValueError(f"oks_threshold must be in [0, 1], got {oks_threshold}")
         if int(max_det) < 0:
             raise ValueError(f"max_det must be non-negative, got {max_det}")
-        if imgsz is not None and size_hw(imgsz) != size_hw(self.model._get_input_size()):
+        if imgsz is not None and size_hw(imgsz) != size_hw(
+            self.model._get_input_size()
+        ):
             raise ValueError(
                 f"HRNet {self.model.size} has fixed crop size "
                 f"{self.model._get_input_size()}, got imgsz={imgsz!r}"
@@ -152,25 +176,50 @@ class HRNetPoseInferenceRunner:
                     "person_boxes apply to one image only; use a person_detector "
                     "for multi-image inference."
                 )
-            return [
-                self._predict_single(
-                    image_path,
-                    detector=detector,
-                    person_boxes=None,
-                    cropped=cropped,
-                    conf=float(conf),
-                    max_det=int(max_det),
-                    keypoint_threshold=float(keypoint_threshold),
-                    oks_threshold=float(oks_threshold),
-                    flip_test=flip_test,
-                    include_person=include_person,
-                    save=save,
-                    output_path=output_path,
-                    color_format=color_format,
-                    output_file_format=output_file_format,
+            if (
+                save
+                and output_path is not None
+                and Path(output_path).suffix
+                and len(image_sources) > 1
+            ):
+                raise ValueError(
+                    "Multi-image HRNet save requires an output directory, not "
+                    f"one output file: {output_path}"
                 )
-                for image_path in image_sources
-            ]
+            results = []
+            used_save_stems: set[str] = set()
+            for index, image_source in enumerate(image_sources):
+                candidate_stem = (
+                    get_safe_stem(image_source)
+                    if isinstance(image_source, (str, Path))
+                    else f"image{index}"
+                )
+                save_stem = candidate_stem
+                suffix = 2
+                while save_stem.casefold() in used_save_stems:
+                    save_stem = f"{candidate_stem}_{suffix}"
+                    suffix += 1
+                used_save_stems.add(save_stem.casefold())
+                results.append(
+                    self._predict_single(
+                        image_source,
+                        detector=detector,
+                        person_boxes=None,
+                        cropped=cropped,
+                        conf=float(conf),
+                        max_det=int(max_det),
+                        keypoint_threshold=float(keypoint_threshold),
+                        oks_threshold=float(oks_threshold),
+                        flip_test=flip_test,
+                        include_person=include_person,
+                        save=save,
+                        output_path=output_path,
+                        color_format=color_format,
+                        output_file_format=output_file_format,
+                        save_stem=save_stem,
+                    )
+                )
+            return results
 
         return self._predict_single(
             source,
@@ -187,6 +236,7 @@ class HRNetPoseInferenceRunner:
             output_path=output_path,
             color_format=color_format,
             output_file_format=output_file_format,
+            save_stem=None,
         )
 
     def _resolve_runtime_detector(
@@ -240,6 +290,7 @@ class HRNetPoseInferenceRunner:
         output_path: str | None,
         color_format: str,
         output_file_format: str | None,
+        save_stem: str | None,
     ) -> Results:
         image_path = image if isinstance(image, (str, Path)) else None
         pil_image = ImageLoader.load(image, color_format=color_format)
@@ -269,7 +320,7 @@ class HRNetPoseInferenceRunner:
             extension = output_file_format or "jpg"
             save_path = resolve_save_path(
                 output_path,
-                image_path,
+                save_stem if save_stem is not None else image_path,
                 ext=extension,
                 default_dir="runs/pose",
             )

@@ -249,7 +249,8 @@ V2.2 contract:
   locally, rather than gating the nightly.
 - HRNet pose uses its smallest public W32 checkpoint in the general nightly.
   The case verifies row-aligned person boxes and COCO-17 keypoints through the
-  default YOLO9 person-detector composition, including list-batch parity.
+  default YOLO9 person-detector composition, including list-source parity and
+  its explicit sequential fallback for `batch > 1`.
 - Export backends are outside default nightly.
 - Nightly-selected skips are failures.
 
