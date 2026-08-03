@@ -26,6 +26,7 @@ Copyright (c) 2020 SenseTime).
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import logging
 import os
@@ -209,6 +210,48 @@ def hub_ms_deform_attn(
         return None
 
 
+def ms_deform_attn_available() -> bool:
+    """Whether the slot could run here, checked before adapting layouts.
+
+    Families whose native layout differs from the slot's ask this first so
+    the adaptation work (and any ``tolist()`` that would bake constants into
+    a trace) never happens on the portable path. Tracing and export always
+    report unavailable: exported graphs must not capture a runtime-fetched
+    kernel.
+    """
+    if (
+        torch.jit.is_tracing()
+        or torch.compiler.is_compiling()
+        or torch.onnx.is_in_onnx_export()
+    ):
+        return False
+    return resolve("ms_deform_attn") is not None
+
+
+@functools.lru_cache(maxsize=32)
+def _cached_shapes(pairs: tuple, device: torch.device) -> torch.Tensor:
+    return torch.tensor(pairs, dtype=torch.int64, device=device)
+
+
+def spatial_shapes_tensor(value_spatial_shapes, device) -> torch.Tensor:
+    """Normalize per-level ``(H, W)`` pairs to the int64 tensor the slot wants.
+
+    Several families carry their spatial shapes as Python pairs; the compiled
+    kernel reads them from device memory. The small results are cached so the
+    host-to-device copy happens once per shape set rather than per call. Only
+    valid under :func:`ms_deform_attn_available`, which rules out tracing.
+    """
+    if isinstance(value_spatial_shapes, torch.Tensor):
+        if (
+            value_spatial_shapes.dtype == torch.int64
+            and value_spatial_shapes.device == device
+        ):
+            return value_spatial_shapes
+        value_spatial_shapes = value_spatial_shapes.tolist()
+    pairs = tuple((int(height), int(width)) for height, width in value_spatial_shapes)
+    return _cached_shapes(pairs, device)
+
+
 def maybe_ms_deform_attn(
     value: torch.Tensor,
     spatial_shapes,
@@ -221,11 +264,7 @@ def maybe_ms_deform_attn(
     and export always take the portable path: exported graphs must not
     capture a runtime-fetched kernel.
     """
-    if (
-        torch.jit.is_tracing()
-        or torch.compiler.is_compiling()
-        or torch.onnx.is_in_onnx_export()
-    ):
+    if not ms_deform_attn_available():
         return None
     impl = resolve("ms_deform_attn")
     if impl is None:
@@ -233,7 +272,46 @@ def maybe_ms_deform_attn(
     return impl(value, spatial_shapes, sampling_locations, attention_weights)
 
 
+def maybe_ms_deform_attn_v2(
+    value: torch.Tensor,
+    spatial_shapes,
+    sampling_locations: torch.Tensor,
+    attention_weights: torch.Tensor,
+    num_points_list,
+) -> Optional[torch.Tensor]:
+    """Slot adapter for the RT-DETRv2-style flat-points layout.
+
+    v2 cores carry ``sum(num_points_list)`` sampling points flattened across
+    levels and support a different point count per level, while the slot's
+    layout is ``(n_levels, n_points)``. Only a uniform count reshapes onto
+    it, so a ragged ``num_points_list`` returns None and the caller keeps its
+    portable path. ``value`` must already be in the slot's
+    ``(bs, Len_in, n_heads, c)`` layout.
+    """
+    if not ms_deform_attn_available():
+        return None
+    levels = len(num_points_list)
+    if levels == 0 or len(spatial_shapes) != levels:
+        return None
+    points = int(num_points_list[0])
+    if any(int(count) != points for count in num_points_list):
+        return None
+    return maybe_ms_deform_attn(
+        value,
+        spatial_shapes,
+        sampling_locations.unflatten(3, (levels, points)),
+        attention_weights.unflatten(3, (levels, points)),
+    )
+
+
 register("ms_deform_attn", hub_ms_deform_attn, name="hub", predicate=_eligible)
 
 
-__all__ = ["hub_ms_deform_attn", "level_start_index", "maybe_ms_deform_attn"]
+__all__ = [
+    "hub_ms_deform_attn",
+    "level_start_index",
+    "maybe_ms_deform_attn",
+    "maybe_ms_deform_attn_v2",
+    "ms_deform_attn_available",
+    "spatial_shapes_tensor",
+]
