@@ -67,6 +67,10 @@ def test_detect_size_classes_and_plain_variant_gate(size):
     high_resolution["pos_embed"] = torch.zeros(1, 577, dim)
     assert LibreDeiT.can_load(high_resolution) is False
 
+    deeper = dict(state)
+    deeper["blocks.12.norm1.weight"] = torch.zeros(dim)
+    assert LibreDeiT.can_load(deeper) is False
+
 
 def test_neighboring_families_reject_deit_bidirectionally():
     timm = pytest.importorskip("timm")

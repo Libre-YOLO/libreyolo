@@ -49,6 +49,8 @@ class LibreDeiT(BaseModel):
         )
         if not all(key in weights_dict for key in required):
             return None
+        if any(key.startswith("blocks.12.") for key in weights_dict):
+            return None
         try:
             patch = weights_dict["patch_embed.proj.weight"]
             cls_token = weights_dict["cls_token"]

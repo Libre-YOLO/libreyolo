@@ -242,6 +242,7 @@ libreyolo = [
     "config/**/*.yaml",
     "training/*.yaml",
     "data/*.json",
+    "data/*.txt",
     "models/clip/*.gz",
     "models/clip/data/*.json",
     "models/siglip2/*.model",

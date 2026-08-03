@@ -72,8 +72,8 @@ resize to `floor(224 / 0.9) = 248`, followed by RGB conversion and ImageNet
 normalization with mean `(0.485, 0.456, 0.406)` and standard deviation
 `(0.229, 0.224, 0.225)`.
 
-The pinned timm results table reports the following 50,000-image ImageNet-1k
-validation metrics with that contract:
+The pinned timm `results/results-imagenet.csv` table reports the following
+50,000-image ImageNet-1k validation metrics with that contract:
 
 | Size | Top-1 | Top-5 |
 |---|---:|---:|
@@ -81,13 +81,19 @@ validation metrics with that contract:
 | `s` | 79.856 | 95.056 |
 | `b` | 81.980 | 95.740 |
 
-The gated ImageNet validation set is not distributed with LibreYOLO and was
-not present in the porting environment, so those full-dataset figures were not
-claimed as a local rerun. Instead, every released checkpoint was compared
-directly with the pinned timm graph on the same input and produced
-`max_abs_diff == 0.0`. The unchanged learned tensors and exact logits establish
-that the native graph does not change the source model's accuracy under the
-same evaluation transform.
+The released tiny checkpoint was also rerun locally through the public
+`model.val()` path on all 50,000 validation images from the gated
+`ILSVRC/imagenet-1k` dataset at revision
+`49e2ee26f3810fb5a7536bbf732a7b07389a47b5`. It produced 36,083 top-1 and
+45,555 top-5 correct predictions: **72.166 top-1** and **91.110 top-5**. Those
+results differ from the pinned table by 0.024 and 0.010 percentage points,
+respectively, within the 0.05-point acceptance tolerance. The dataset is not
+distributed with LibreYOLO.
+
+Every released checkpoint was also compared directly with the pinned timm
+graph on the same input and produced `max_abs_diff == 0.0`. The unchanged
+learned tensors and exact logits establish that the native graph does not
+change the source model's accuracy under the same evaluation transform.
 
 The bundled synset index also lets `model.val()` consume the conventional
 `train/<wnid>/` and `val/<wnid>/` layout, including proper absolute head
@@ -96,6 +102,9 @@ to expose human-readable names.
 
 ## Measured evidence
 
+- Tiny checkpoint full ImageNet-1k validation through `model.val()`:
+  50,000 images, 36,083 top-1 correct (**72.166%**) and 45,555 top-5 correct
+  (**91.110%**), versus the pinned **72.190% / 91.100%** reference.
 - Strict state-dictionary loading and exact eager logits for all three pinned
   checkpoints: `max_abs_diff == 0.0`.
 - Public prediction smoke on the bundled sample image, including readable
