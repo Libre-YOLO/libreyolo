@@ -16,7 +16,9 @@ class YOLO9ValidationLoss:
     """Evaluate YOLO9's training loss from eval-mode raw head outputs."""
 
     def __init__(self, model: nn.Module, *, max_labels: int) -> None:
-        if type(model) is not LibreYOLO9Model or type(model.head) is not DDetect:
+        # yolo9_p2 is the same dense head with a fourth stride, so it shares
+        # this adapter; the strides below come from the head either way.
+        if not isinstance(model, LibreYOLO9Model) or type(model.head) is not DDetect:
             raise TypeError(
                 "YOLO9 validation loss supports the standard detect model only"
             )

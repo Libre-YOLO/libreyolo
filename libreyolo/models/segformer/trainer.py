@@ -19,11 +19,12 @@ from ...training.config import SegformerConfig, TrainConfig
 from ...training.distributed import is_main_process, unwrap_model
 from ...training.scheduler import FlatCosineScheduler, LinearLRScheduler
 from ...training.trainer import BaseTrainer
+from ..base.semantic_validation_loss import SemanticValidationLossMixin
 
 logger = logging.getLogger(__name__)
 
 
-class SegformerTrainer(BaseTrainer):
+class SegformerTrainer(SemanticValidationLossMixin, BaseTrainer):
     """Trainer for the LibreSegformer semantic-segmentation family."""
 
     best_metric_key: str = "metrics/mIoU"

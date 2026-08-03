@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from ..base.semantic_validation_loss import SemanticValidationLossMixin
 from ..rfdetr.trainer import RFDETRTrainer
 
 
-class DINOv2Trainer(RFDETRTrainer):
+class DINOv2Trainer(SemanticValidationLossMixin, RFDETRTrainer):
     """Trainer for the LibreDINOv2 semantic-segmentation family.
 
     Inherits all training logic from RFDETRTrainer (which handles the

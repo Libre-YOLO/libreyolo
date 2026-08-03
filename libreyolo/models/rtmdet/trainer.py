@@ -98,9 +98,42 @@ class RTMDetTrainer(BaseTrainer):
         return {"cls": _scalar("loss_cls"), "bbox": _scalar("loss_bbox")}
 
     def on_setup(self) -> None:
+        self._loss_fn = self.build_criterion()
+
+    def build_criterion(self, *, distributed_normalize: bool = True) -> RTMDetLoss:
+        """Build the training criterion.
+
+        Validation loss builds a second one with ``distributed_normalize``
+        off, so both stay defined in exactly one place.
+        """
         nc = getattr(self.model.head, "num_classes", 80)
         strides = tuple(getattr(self.model.head, "strides", (8, 16, 32)))
-        self._loss_fn = RTMDetLoss(num_classes=nc, strides=strides).to(self.device)
+        return RTMDetLoss(
+            num_classes=nc,
+            strides=strides,
+            distributed_normalize=distributed_normalize,
+        ).to(self.device)
+
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            raise ValueError(
+                "val_loss=True currently supports rtmdet detection only; "
+                "other tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        del model  # The validator's raw head output is what the criterion takes.
+        from ..base.dense_head_validation_loss import DenseHeadValidationLoss
+
+        return DenseHeadValidationLoss(
+            self.build_criterion(distributed_normalize=False),
+            num_classes=getattr(self.model.head, "num_classes", 80),
+            device=self.device,
+            family="rtmdet",
+        )
 
     def on_forward(
         self,

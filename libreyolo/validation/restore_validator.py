@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
@@ -21,6 +21,11 @@ from ..data.restore_dataset import (
     restore_collate_fn,
 )
 from .base import BaseValidator
+from .loss import ValidationLossMixin
+
+if TYPE_CHECKING:
+    from .config import ValidationConfig
+    from .loss import ValidationLossAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +95,21 @@ def ssim_rgb(pred: torch.Tensor, target: torch.Tensor, data_range: float = 1.0) 
     return float(ssim_map.mean().clamp(0.0, 1.0).item())
 
 
-class RestoreValidator(BaseValidator):
+class RestoreValidator(ValidationLossMixin, BaseValidator):
     """PSNR / SSIM validator for the restore task."""
 
     task = "restore"
+
+    def __init__(
+        self,
+        model,
+        config: Optional["ValidationConfig"] = None,
+        *,
+        loss_adapter: Optional["ValidationLossAdapter"] = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, config, **kwargs)
+        self._init_validation_loss(loss_adapter)
 
     def _setup_dataloader(self) -> DataLoader:
         if not self.config.data:
@@ -125,6 +141,7 @@ class RestoreValidator(BaseValidator):
     def _init_metrics(self) -> None:
         self._psnr_values: list[float] = []
         self._ssim_values: list[float] = []
+        self._reset_validation_loss()
 
     def _preprocess_batch(self, batch: Any) -> tuple:
         images, targets, img_info, img_ids = batch
@@ -147,6 +164,10 @@ class RestoreValidator(BaseValidator):
             )
         target_hw = tuple(batch[1].shape[-2:])
         output = output[:, :, : target_hw[0], : target_hw[1]]
+        # Before the clamp on purpose: training's charbonnier sees the raw
+        # cropped output, so clamping first would report a different number
+        # than the train/loss it is meant to be compared against.
+        self._accumulate_validation_loss(output, batch[1], image_size=None)
         return output.clamp(0.0, 1.0)
 
     def _update_metrics(
@@ -187,6 +208,7 @@ class RestoreValidator(BaseValidator):
             "metrics/PSNR": psnr,
             "metrics/SSIM": ssim,
             "fitness": psnr,
+            **self._validation_loss_metrics(),
         }
 
     def _print_results(self, metrics: Dict[str, float]) -> None:

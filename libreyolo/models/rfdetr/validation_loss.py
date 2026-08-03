@@ -8,6 +8,7 @@ from typing import Any
 import torch
 from torch import nn
 
+from ..base.validation_loss import padded_targets_to_detr
 from .nn import LibreRFDETRModel
 
 
@@ -101,50 +102,13 @@ class RFDETRValidationLoss:
         device: torch.device,
     ) -> list[dict[str, torch.Tensor]]:
         """Convert padded validation ``xyxy,class`` pixels to DETR targets."""
-        if targets.ndim != 3 or targets.shape[-1] < 5:
-            raise ValueError(
-                "RF-DETR validation targets must have shape [batch, labels, >=5]"
-            )
-
-        source = targets[..., :5].to(
+        return padded_targets_to_detr(
+            targets,
+            image_size=image_size,
+            num_classes=num_classes,
             device=device,
-            dtype=torch.float32,
-            non_blocking=device.type == "cuda",
+            family="RF-DETR",
         )
-        height, width = image_size
-        scale = torch.tensor(
-            [width, height, width, height],
-            dtype=torch.float32,
-            device=device,
-        )
-        target_list = []
-        for image_targets in source:
-            valid = (image_targets[:, 2] > image_targets[:, 0]) & (
-                image_targets[:, 3] > image_targets[:, 1]
-            )
-            rows = image_targets[valid]
-            labels = rows[:, 4]
-            invalid_labels = (
-                (labels < 0) | (labels >= num_classes) | (labels != labels.round())
-            )
-            if invalid_labels.any():
-                bad_label = float(labels[invalid_labels][0].item())
-                raise ValueError(
-                    f"RF-DETR validation target class {bad_label:g} is outside "
-                    f"[0, {num_classes - 1}]"
-                )
-
-            xyxy = (rows[:, :4] / scale).clamp(0.0, 1.0)
-            boxes = torch.empty_like(xyxy)
-            boxes[:, :2] = (xyxy[:, :2] + xyxy[:, 2:]) * 0.5
-            boxes[:, 2:] = xyxy[:, 2:] - xyxy[:, :2]
-            target_list.append(
-                {
-                    "labels": labels.long(),
-                    "boxes": boxes,
-                }
-            )
-        return target_list
 
 
 __all__ = ["RFDETRValidationLoss"]

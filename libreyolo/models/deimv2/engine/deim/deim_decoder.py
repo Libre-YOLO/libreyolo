@@ -146,6 +146,10 @@ class TransformerDecoder(nn.Module):
         self.num_layers = num_layers
         self.layer_scale = layer_scale
         self.num_head = num_head
+        # Set by ``emit_loss_outputs`` while training-time validation computes
+        # the criterion: eval otherwise scores only the ``eval_idx`` layer,
+        # which is not enough for the auxiliary-decoder loss terms.
+        self.emit_loss_outputs = False
         self.eval_idx = eval_idx if eval_idx >= 0 else num_layers + eval_idx
         self.up, self.reg_scale, self.reg_max = up, reg_scale, reg_max
         self.layers = nn.ModuleList(
@@ -255,7 +259,8 @@ class TransformerDecoder(nn.Module):
                 ref_points_initial, integral(pred_corners, project), reg_scale
             )
 
-            if self.training or i == self.eval_idx:
+            score_every_layer = self.training or self.emit_loss_outputs
+            if score_every_layer or i == self.eval_idx:
                 scores = score_head[i](output)
                 # Lqe does not affect the performance here.
                 scores = self.lqe_layers[i](scores, pred_corners)
@@ -264,7 +269,7 @@ class TransformerDecoder(nn.Module):
                 dec_out_pred_corners.append(pred_corners)
                 dec_out_refs.append(ref_points_initial)
 
-                if not self.training:
+                if not score_every_layer:
                     break
 
             pred_corners_undetach = pred_corners
@@ -442,6 +447,9 @@ class DEIMTransformer(nn.Module):
             ]
         )
 
+        # See ``TransformerDecoder.emit_loss_outputs``: eval assembles a
+        # two-key inference dict, and the criterion needs the training keys.
+        self.emit_loss_outputs = False
         # init encoder output anchors and valid_mask
         self._anchor_cache = OrderedDict()
         if self.eval_spatial_size:
@@ -676,7 +684,7 @@ class DEIMTransformer(nn.Module):
         )
 
         enc_topk_bboxes_list, enc_topk_logits_list = [], []
-        if self.training:
+        if self.training or self.emit_loss_outputs:
             enc_topk_bboxes = F.sigmoid(enc_topk_bbox_unact)
             enc_topk_bboxes_list.append(enc_topk_bboxes)
             enc_topk_logits_list.append(enc_topk_logits)
@@ -725,7 +733,7 @@ class DEIMTransformer(nn.Module):
                 dim=1,
                 index=topk_ind.unsqueeze(-1).repeat(1, 1, outputs_logits.shape[-1]),
             )
-            if self.training
+            if (self.training or self.emit_loss_outputs)
             else None
         )
 
@@ -811,7 +819,11 @@ class DEIMTransformer(nn.Module):
                 out_refs, dn_meta["dn_num_split"], dim=2
             )
 
-        if self.training:
+        # ``emit_loss_outputs`` reproduces the training-shaped dict during
+        # validation. ``out_logits[-1]`` is the same layer either way because
+        # loss outputs are only allowed when ``eval_idx`` is the last layer.
+        loss_shaped = self.training or self.emit_loss_outputs
+        if loss_shaped:
             out = {
                 "pred_logits": out_logits[-1],
                 "pred_boxes": out_bboxes[-1],
@@ -823,7 +835,7 @@ class DEIMTransformer(nn.Module):
         else:
             out = {"pred_logits": out_logits[-1], "pred_boxes": out_bboxes[-1]}
 
-        if self.training and self.aux_loss:
+        if loss_shaped and self.aux_loss:
             out["aux_outputs"] = self._set_aux_loss2(
                 out_logits[:-1],
                 out_bboxes[:-1],

@@ -58,8 +58,10 @@ class YOLOv7Loss:
 
     def __init__(self, num_classes: int,
                  anchors: Sequence[Sequence[float]],
-                 strides: Sequence[int]):
+                 strides: Sequence[int],
+                 distributed_normalize: bool = True):
         self.num_classes = int(num_classes)
+        self.distributed_normalize = distributed_normalize
         self.anchors = [
             torch.tensor(list(zip(a[0::2], a[1::2])), dtype=torch.float32)
             for a in anchors
@@ -224,8 +226,13 @@ class YOLOv7Loss:
         # Global (DDP-reduced) positive count: dividing by the global count
         # keeps DDP's gradient averaging equivalent to single-GPU training on
         # the same global batch (issue #484). Identical to the previous
-        # ``max(num_fg, 1)`` outside DDP.
-        num_fg = all_reduce_avg_scalar(num_fg, device=bbox_preds.device)
+        # ``max(num_fg, 1)`` outside DDP. Rank-0-only validation loss selects
+        # the local path because it cannot enter a collective while the other
+        # ranks wait at the validation barrier.
+        if self.distributed_normalize:
+            num_fg = all_reduce_avg_scalar(num_fg, device=bbox_preds.device)
+        else:
+            num_fg = float(max(num_fg, 1.0))
         loss_iou = self.iou_loss(
             bbox_preds.view(-1, 4)[fg_masks], reg_targets
         ).sum() / num_fg

@@ -9,6 +9,28 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- `val_loss=True` extended from the `g0` flagships to **every trainable
+  family** (`g0`, `g1` and `g2`), across four tasks rather than detection
+  alone:
+  - detect: `yolo9_p2`, `yolo9_e2e`, `yolonas`, `rtdetr`, `rtdetrv2`,
+    `rtdetrv4`, `dfine`, `deim`, `deimv2`, `ec`, `rtmdet`, `picodet`,
+    `yolox`, `yolo7`
+  - classify: `resnet`, `convnext`, `mobilenetv4`, `efficientnetv2`
+  - semantic: `segformer`, `lingbotvision`, `dinov2`
+  - restore: `nafnet`
+
+  Components stay weighted so they sum to the reported total. The validator
+  reuses the output it already produced for the accuracy metric; where a
+  family's eval output is genuinely insufficient (the DETR-line decoders,
+  YOLO9-E2E, YOLOX) a scoped flag assembles the extra tensors from the same
+  convolution/head outputs, leaving predictions and mAP unchanged. Denoising
+  terms are never included because validation forwards without ground truth.
+  `val_loss` moved from `YOLO9Config`/`RFDETRConfig` to `TrainConfig`, so a
+  family that has not implemented it raises a clear error instead of ignoring
+  the flag. FOMO already computed a validation loss unconditionally and now
+  also publishes it under the shared `metrics/loss` keys, so `libreyolo
+  monitor` overlays it like every other family (`metrics/val_loss` is kept)
+
 - LibreHRNet W32 and W48, inference-only top-down COCO-17 pose models with
   fixed 256x192 and 384x288 person-crop canvases. Native heatmaps, affine crop
   geometry, flip testing, and decoding are exact against the pinned MIT

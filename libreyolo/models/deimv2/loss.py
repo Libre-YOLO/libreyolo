@@ -16,11 +16,7 @@ import copy
 
 import torch
 
-from ..deim.loss import (
-    DEIMCriterion,
-    _get_world_size,
-    _is_dist_available_and_initialized,
-)
+from ..deim.loss import DEIMCriterion
 
 
 class DEIMv2Criterion(DEIMCriterion):
@@ -56,25 +52,9 @@ class DEIMv2Criterion(DEIMCriterion):
             indices_aux_list.append(indices_enc)
         indices_go = self._get_go_indices(indices, indices_aux_list)
 
-        num_boxes_go = sum(len(x[0]) for x in indices_go)
-        num_boxes_go = torch.as_tensor(
-            [num_boxes_go],
-            dtype=torch.float,
-            device=next(iter(outputs.values())).device,
-        )
-        if _is_dist_available_and_initialized():
-            torch.distributed.all_reduce(num_boxes_go)
-        num_boxes_go = torch.clamp(num_boxes_go / _get_world_size(), min=1).item()
-
-        num_boxes = sum(len(t["labels"]) for t in targets)
-        num_boxes = torch.as_tensor(
-            [num_boxes],
-            dtype=torch.float,
-            device=next(iter(outputs.values())).device,
-        )
-        if _is_dist_available_and_initialized():
-            torch.distributed.all_reduce(num_boxes)
-        num_boxes = torch.clamp(num_boxes / _get_world_size(), min=1).item()
+        device = next(iter(outputs.values())).device
+        num_boxes_go = self._normalizer(sum(len(x[0]) for x in indices_go), device)
+        num_boxes = self._normalizer(sum(len(t["labels"]) for t in targets), device)
 
         losses = {}
         for loss in self.losses:

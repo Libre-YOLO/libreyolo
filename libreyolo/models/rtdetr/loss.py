@@ -149,12 +149,16 @@ class SetCriterion(nn.Module):
         gamma=2.0,
         eos_coef=1e-4,
         num_classes=80,
+        distributed_normalize=True,
     ):
         super().__init__()
         self.num_classes = num_classes
         self.matcher = matcher
         self.weight_dict = weight_dict
         self.losses = losses
+        # Rank-0-only validation turns this off: it cannot enter a collective
+        # while the other ranks wait at the validation barrier.
+        self.distributed_normalize = distributed_normalize
 
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = eos_coef
@@ -162,6 +166,12 @@ class SetCriterion(nn.Module):
 
         self.alpha = alpha
         self.gamma = gamma
+
+    def _normalizer(self, count, *, device) -> float:
+        """Box-count divisor: DDP-averaged for training, local for validation."""
+        if self.distributed_normalize:
+            return all_reduce_avg_scalar(count, device=device)
+        return float(max(float(count), 1.0))
 
     def loss_labels_vfl(self, outputs, targets, indices, num_boxes, log=True):
         """Varifocal Loss — IoU-aware classification."""
@@ -320,7 +330,7 @@ class SetCriterion(nn.Module):
         # summed WITHOUT dividing, which was only correct in combination with
         # the (removed) x world_size loss scaling; keeping it would under-scale
         # RT-DETR's multi-GPU gradients by 1/world_size (issue #484).
-        num_boxes = all_reduce_avg_scalar(
+        num_boxes = self._normalizer(
             sum(len(t["labels"]) for t in targets),
             device=next(iter(outputs.values())).device,
         )
@@ -429,12 +439,13 @@ class SetCriterion(nn.Module):
 # =============================================================================
 
 
-def RTDETRLoss(num_classes=80, use_vfl=True):
+def RTDETRLoss(num_classes=80, use_vfl=True, distributed_normalize=True):
     """Create an RTDETRLoss (SetCriterion) with standard RT-DETR settings.
 
     Args:
         num_classes: Number of object classes.
         use_vfl: If True, use Varifocal Loss; otherwise use Focal Loss.
+        distributed_normalize: False for rank-local (validation) normalization.
 
     Returns:
         SetCriterion instance.
@@ -464,4 +475,5 @@ def RTDETRLoss(num_classes=80, use_vfl=True):
         alpha=0.75,
         gamma=2.0,
         num_classes=num_classes,
+        distributed_normalize=distributed_normalize,
     )

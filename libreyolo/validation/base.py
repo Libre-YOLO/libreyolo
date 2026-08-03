@@ -66,31 +66,44 @@ class BaseValidator(ABC):
 
         self._setup(**kwargs)
         requested = getattr(self.config, "cuda_graph", False)
-        if normalize_cuda_graph_mode(requested) is None:
-            self._run_validation()
-        else:
-            # Same contract as predict(..., cuda_graph=...): unsupported
-            # families fail loudly up front. Uncapturable situations (CPU
-            # device, capture failure) run the whole pass eagerly.
-            self.model._require_cuda_graph_support()
-            if self._capture_val_graph():
-                runner = self.model._get_graph_runner()
-                previous = runner.capture_on_miss
-                # Replay-only inside the loop. The loader's pin-memory threads
-                # call cudaHostAlloc while batches are in flight, and any
-                # synchronous CUDA allocation invalidates a capture in
-                # progress, so capture happens only at the controlled point in
-                # _capture_val_graph. A shape miss inside the loop (the final
-                # partial batch) runs eager.
-                runner.capture_on_miss = False
-                try:
-                    with self.model.cuda_graph_scope(requested):
-                        self._run_validation()
-                finally:
-                    runner.capture_on_miss = previous
-            else:
+        # The loss scope wraps graph capture too, so a captured graph carries
+        # whatever extra outputs the family criterion needs.
+        with self._validation_loss_scope():
+            if normalize_cuda_graph_mode(requested) is None:
                 self._run_validation()
+            else:
+                # Same contract as predict(..., cuda_graph=...): unsupported
+                # families fail loudly up front. Uncapturable situations (CPU
+                # device, capture failure) run the whole pass eagerly.
+                self.model._require_cuda_graph_support()
+                if self._capture_val_graph():
+                    runner = self.model._get_graph_runner()
+                    previous = runner.capture_on_miss
+                    # Replay-only inside the loop. The loader's pin-memory
+                    # threads call cudaHostAlloc while batches are in flight,
+                    # and any synchronous CUDA allocation invalidates a capture
+                    # in progress, so capture happens only at the controlled
+                    # point in _capture_val_graph. A shape miss inside the loop
+                    # (the final partial batch) runs eager.
+                    runner.capture_on_miss = False
+                    try:
+                        with self.model.cuda_graph_scope(requested):
+                            self._run_validation()
+                    finally:
+                        runner.capture_on_miss = previous
+                else:
+                    self._run_validation()
         return self._finalize()
+
+    def _validation_loss_scope(self):
+        """Enter the active loss adapter's forward scope, if it has one.
+
+        Families whose eval forward already carries everything the criterion
+        needs (YOLO9, RF-DETR) do not define one, so this is a no-op for them.
+        """
+        adapter = getattr(self, "_active_loss_adapter", None)
+        scope = getattr(adapter, "forward_scope", None)
+        return nullcontext() if scope is None else scope()
 
     def _setup_device(self) -> torch.device:
         if self.config.device == "auto":

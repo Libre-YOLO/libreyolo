@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from ..postprocess.slicing import slice_batch_outputs
 from .base import BaseValidator
 from .config import ValidationConfig
+from .loss import ValidationLossMixin
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def val_collate_fn(batch):
     return imgs, targets, img_infos, img_ids
 
 
-class DetectionValidator(BaseValidator):
+class DetectionValidator(ValidationLossMixin, BaseValidator):
     """
     Validator for object detection models.
 
@@ -57,12 +58,6 @@ class DetectionValidator(BaseValidator):
     ) -> None:
         super().__init__(model, config, **kwargs)
 
-        if loss_adapter is not None and self.config.augment:
-            raise ValueError(
-                "Validation loss cannot be combined with augmented validation. "
-                "The training validator uses augment=False."
-            )
-
         self.coco_evaluator = None
         self.class_names: Optional[List[str]] = None
         self.iou_thresholds = torch.tensor(self.config.iou_thresholds)
@@ -72,10 +67,7 @@ class DetectionValidator(BaseValidator):
         self._coco_label_to_category_id: Optional[Dict[int, int]] = None
         self._yolo_coco_img_files: Optional[List[Path]] = None
         self._yolo_coco_label_files: Optional[List[Path]] = None
-        self.loss_adapter = loss_adapter
-        self._active_loss_adapter = loss_adapter
-        self._validation_loss_totals: Dict[str, float] = {}
-        self._validation_loss_batches = 0
+        self._init_validation_loss(loss_adapter)
         # Parsed ground truth, cached across runs of this instance. The GT is
         # immutable for the validator's lifetime; only the evaluator built on
         # top of it accumulates state and must stay per-run.
@@ -364,9 +356,7 @@ class DetectionValidator(BaseValidator):
         from libreyolo.data.yolo_coco_api import YOLOCocoAPI
         from libreyolo.validation import COCOEvaluator
 
-        self._active_loss_adapter = getattr(self, "loss_adapter", None)
-        self._validation_loss_totals = {}
-        self._validation_loss_batches = 0
+        self._reset_validation_loss()
 
         if self.config.verbose:
             logger.info("Initializing COCO evaluator...")
@@ -488,79 +478,11 @@ class DetectionValidator(BaseValidator):
         targets: torch.Tensor,
     ) -> None:
         """Accumulate an opt-in family loss from this batch's raw predictions."""
-        adapter = getattr(self, "_active_loss_adapter", None)
-        if adapter is None:
-            return
-
-        try:
-            with self._autocast_context():
-                values = adapter(
-                    predictions,
-                    targets,
-                    image_size=(int(images.shape[-2]), int(images.shape[-1])),
-                )
-            scalars = self._validation_loss_scalars(values)
-        except Exception as exc:
-            # Validation loss is auxiliary to the established COCO metrics. A
-            # family adapter failure must not discard mAP or best-checkpoint
-            # selection for the epoch, and partial loss averages are unsafe to
-            # publish.
-            self._active_loss_adapter = None
-            self._validation_loss_totals = {}
-            self._validation_loss_batches = 0
-            if (
-                isinstance(exc, torch.cuda.OutOfMemoryError)
-                and torch.cuda.is_available()
-            ):
-                torch.cuda.empty_cache()
-            logger.warning(
-                "Validation loss failed and was disabled for this validation "
-                "pass; detection metrics will continue: %s",
-                exc,
-                exc_info=logger.isEnabledFor(logging.DEBUG),
-            )
-            return
-
-        for name, value in scalars.items():
-            self._validation_loss_totals[name] = (
-                self._validation_loss_totals.get(name, 0.0) + value
-            )
-        self._validation_loss_batches += 1
-
-    @staticmethod
-    def _validation_loss_scalars(
-        values: Mapping[str, torch.Tensor | float],
-    ) -> Dict[str, float]:
-        if not isinstance(values, Mapping):
-            raise TypeError("Validation loss adapter must return a mapping")
-        if "loss" not in values:
-            raise ValueError("Validation loss adapter must return a 'loss' value")
-
-        scalars: Dict[str, float] = {}
-        for name, value in values.items():
-            if not isinstance(name, str) or not name:
-                raise ValueError(
-                    "Validation loss metric names must be non-empty strings"
-                )
-            if isinstance(value, torch.Tensor):
-                if value.numel() != 1:
-                    raise ValueError(
-                        f"Validation loss metric {name!r} must be scalar, "
-                        f"got shape {tuple(value.shape)}"
-                    )
-                scalars[name] = float(value.detach().float().item())
-            else:
-                scalars[name] = float(value)
-        return scalars
-
-    def _validation_loss_metrics(self) -> Dict[str, float]:
-        batches = int(getattr(self, "_validation_loss_batches", 0))
-        if batches == 0:
-            return {}
-        return {
-            f"metrics/{name}": value / batches
-            for name, value in getattr(self, "_validation_loss_totals", {}).items()
-        }
+        self._accumulate_validation_loss(
+            predictions,
+            targets,
+            image_size=(int(images.shape[-2]), int(images.shape[-1])),
+        )
 
     def _preprocess_batch(
         self, batch: Tuple
