@@ -56,6 +56,13 @@ OPTIONAL_MODELS = (
 )
 
 
+def _jsonable_imgsz(value: int | tuple[int, int] | list[int]) -> int | list[int]:
+    """Return image-size metadata that survives a JSON round trip unchanged."""
+    if isinstance(value, (tuple, list)):
+        return [int(dimension) for dimension in value]
+    return int(value)
+
+
 def _export_override(cls, base_cls) -> str:
     """Classify a family's ``export``: ``none``, ``custom``, or ``blocked``.
 
@@ -121,8 +128,13 @@ def collect_model_inventory() -> dict[str, dict]:
         if not family:
             continue
         extra, available = optional.get(family, (None, True))
-        task_sizes = {task: dict(sizes) for task, sizes in cls.TASK_INPUT_SIZES.items()}
-        all_sizes = dict(cls.INPUT_SIZES)
+        task_sizes = {
+            task: {size: _jsonable_imgsz(imgsz) for size, imgsz in sizes.items()}
+            for task, sizes in cls.TASK_INPUT_SIZES.items()
+        }
+        all_sizes = {
+            size: _jsonable_imgsz(imgsz) for size, imgsz in cls.INPUT_SIZES.items()
+        }
         for sizes in task_sizes.values():
             all_sizes.update(sizes)
         inventory[family] = {
@@ -130,7 +142,10 @@ def collect_model_inventory() -> dict[str, dict]:
             "tasks": list(cls.SUPPORTED_TASKS),
             "default_task": cls.DEFAULT_TASK,
             "sizes": all_sizes,
-            "default_imgsz": dict(cls.INPUT_SIZES),
+            "default_imgsz": {
+                size: _jsonable_imgsz(imgsz)
+                for size, imgsz in cls.INPUT_SIZES.items()
+            },
             "task_sizes": task_sizes,
             "export_override": _export_override(cls, BaseModel),
             "optional_extra": extra,

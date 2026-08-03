@@ -1,0 +1,43 @@
+LibreDINO-DETR includes code ported from DINO:
+
+Source: https://github.com/IDEA-Research/DINO
+Commit: d84a491d41898b3befd8294d1cf2614661fc0953
+License: Apache License 2.0.
+Copyright (c) 2022 IDEA. All Rights Reserved.
+
+The pinned DINO implementation carries notices for work derived from
+Conditional DETR, DETR, and Deformable DETR:
+
+Conditional DETR
+Source: https://github.com/Atten4Vis/ConditionalDETR
+License: Apache License 2.0.
+Copyright (c) 2021 Microsoft. All Rights Reserved.
+
+DETR
+Source: https://github.com/facebookresearch/detr
+License: Apache License 2.0.
+Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+
+Deformable DETR
+Source: https://github.com/fundamentalvision/Deformable-DETR
+License: Apache License 2.0.
+Copyright (c) 2020 SenseTime. All Rights Reserved.
+
+DINO also identifies DAB-DETR and DN-DETR as architectural predecessors;
+their source repositories are released under Apache License 2.0:
+
+Sources: https://github.com/IDEA-Research/DAB-DETR
+         https://github.com/IDEA-Research/DN-DETR
+
+The Swin-L backbone is ported through DINO's modified Swin Transformer
+implementation:
+
+Source: https://github.com/microsoft/Swin-Transformer
+License: MIT.
+Copyright (c) 2021 Microsoft.
+
+LibreYOLO ports only the three released inference architectures. Training-only
+denoising, matching, criteria, losses, data pipelines, and the compiled CUDA
+multi-scale deformable-attention extension are not included. The ResNet tensor
+container and pure-PyTorch deformable-attention core reuse LibreYOLO's existing
+Deformable DETR port, which has its own NOTICE.

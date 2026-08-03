@@ -116,6 +116,7 @@ def wrap_libreyolo_checkpoint(
     imgsz: int | None = None,
     supported_tasks: tuple[str, ...] | list[str] | None = None,
     default_task: str | None = None,
+    **extra_metadata: Any,
 ) -> dict[str, Any]:
     """Build the standard metadata-wrapped LibreYOLO checkpoint format.
 
@@ -138,6 +139,7 @@ def wrap_libreyolo_checkpoint(
         nc=nc,
         names=names,
         imgsz=imgsz,
+        **extra_metadata,
     )
 
 

@@ -1,0 +1,57 @@
+LibreAlexNet -- third-party attribution
+========================================
+
+Source: https://github.com/pytorch/vision
+Commit: 336d36e8db990a905498c73933e35231876e28bc (torchvision v0.26.0)
+License: BSD-3-Clause
+Copyright (c) Soumith Chintala 2016
+
+The native AlexNet graph in nn.py is derived from torchvision's AlexNet
+implementation. It retains the upstream features/avgpool/classifier state-dict
+layout so the official ImageNet-1K checkpoint loads strictly and produces
+identical evaluation logits. LibreYOLO adds its own model factory, checkpoint
+metadata, preprocessing, validation, postprocessing, and export integration.
+
+This is torchvision's single-tower "one weird trick" variant, not the
+two-GPU 2012 graph. It uses 64 conv1 filters, no local response normalization,
+and no grouped convolutions.
+
+The official ImageNet-1K checkpoint is not distributed in the LibreYOLO source
+tree. Its separate LibreYOLO Hugging Face mirror uses BSD-3-Clause on an
+explicitly disclosed implied basis: the checkpoint is released by the
+BSD-licensed project but has no per-object license file. Torchvision warns that
+pretrained-model terms may derive from training data and that users remain
+responsible for determining permission for their use case. The mirror ships
+this BSD text and repeats that caveat; the weight license must not be described
+as an explicit checkpoint-specific grant.
+
+BSD 3-Clause License
+
+Copyright (c) Soumith Chintala 2016,
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its contributors
+  may be used to endorse or promote products derived from this software without
+  specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

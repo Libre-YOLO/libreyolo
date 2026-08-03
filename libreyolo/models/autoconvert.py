@@ -482,12 +482,19 @@ def _wrap_claim(
         )
     nc = detected_nc or 80
     names = _checkpoint_names(loaded, nc)
+    if names is None:
+        names = cls.default_checkpoint_names(nc)
     extra_metadata: dict[str, Any] = {}
     if task == "restore":
         # Restore checkpoints use a single schema placeholder, not a semantic
         # class label. Foreign restoration releases normally carry no names.
         nc = 1
         names = {0: "image"}
+    if task == "depth":
+        # Dense depth checkpoints use a schema-only class slot. Foreign depth
+        # releases normally carry no names, so never fabricate ``class_0``.
+        nc = 1
+        names = {0: "depth"}
     if task == "pose":
         num_keypoints = None
         detect_keypoints = getattr(cls, "detect_num_keypoints", None)

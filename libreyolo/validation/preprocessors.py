@@ -169,6 +169,49 @@ class YOLOXValPreprocessor(BaseValPreprocessor):
         return padded_img, padded_targets
 
 
+class EfficientDetValPreprocessor(BaseValPreprocessor):
+    """EfficientDet eval resize-pad, RGB, and ImageNet normalization."""
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        return True
+
+    @property
+    def uses_letterbox(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.efficientdet.utils import preprocess_numpy
+
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError(
+                "EfficientDet validation requires a square input, "
+                f"got ({target_h}, {target_w})"
+            )
+        rgb = np.ascontiguousarray(img[:, :, ::-1])
+        chw, ratio = preprocess_numpy(rgb, input_size=target_h)
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, :4] *= ratio
+            padded_targets[:count] = scaled[:count]
+        return np.ascontiguousarray(chw, dtype=np.float32), padded_targets
+
+
 class RFDETRValPreprocessor(BaseValPreprocessor):
     """RF-DETR preprocessor: simple resize, RGB, ImageNet mean/std normalization."""
 
@@ -294,6 +337,153 @@ class FasterRCNNValPreprocessor(BaseValPreprocessor):
         return rgb_chw, padded_targets
 
 
+class RetinaNetValPreprocessor(BaseValPreprocessor):
+    """Upstream min/max aspect resize, ImageNet normalization, and P3-P7 pad."""
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        return True
+
+    @property
+    def uses_letterbox(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def letterbox_scale(
+        self, orig_h: int, orig_w: int, imgsz: int
+    ) -> Tuple[float, float, float]:
+        from ..models.retinanet.utils import resize_scale
+
+        return resize_scale((orig_w, orig_h), int(imgsz)), 0.0, 0.0
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.retinanet.utils import preprocess_numpy
+
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError("RetinaNet validation requires a scalar min-side size")
+        rgb = np.ascontiguousarray(img[:, :, ::-1])
+        processed, ratio = preprocess_numpy(rgb, int(target_h))
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, :4] *= ratio
+            padded_targets[:count] = scaled[:count]
+        return processed, padded_targets
+
+
+class SSDValPreprocessor(BaseValPreprocessor):
+    """SSD300 fixed-square RGB resize and source normalization."""
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        # The family helper applies torchvision SSD's 0-255-space mean
+        # subtraction, so DetectionValidator must leave the tensor untouched.
+        return True
+
+    @property
+    def uses_letterbox(self) -> bool:
+        return False
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        # Avoid a dataset letterbox followed by SSD's direct square stretch.
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.ssd.utils import preprocess_numpy
+
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        if (target_h, target_w) != (300, 300):
+            raise ValueError("SSD300 validation requires a 300 x 300 canvas")
+
+        rgb = img[:, :, ::-1].copy()
+        resized_img, _ = preprocess_numpy(rgb, input_size=300)
+        resized_img = np.ascontiguousarray(resized_img, dtype=np.float32)
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, [0, 2]] *= target_w / orig_w
+            scaled[:count, [1, 3]] *= target_h / orig_h
+            padded_targets[:count] = scaled[:count]
+        return resized_img, padded_targets
+
+
+class FCOSValPreprocessor(BaseValPreprocessor):
+    """Torchvision FCOS aspect resize, ImageNet normalization, and stride pad."""
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        return True
+
+    @property
+    def uses_letterbox(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def letterbox_scale(
+        self, orig_h: int, orig_w: int, imgsz: int
+    ) -> Tuple[float, float, float]:
+        from ..models.fcos.utils import resize_dimensions
+
+        if isinstance(imgsz, (tuple, list)):
+            if len(imgsz) != 2 or int(imgsz[0]) != int(imgsz[1]):
+                raise ValueError(f"FCOS requires a scalar/square imgsz, got {imgsz}")
+            imgsz = int(imgsz[0])
+        _, _, scale = resize_dimensions(orig_h, orig_w, int(imgsz))
+        return scale, 0.0, 0.0
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.fcos.utils import preprocess_numpy
+
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError(
+                f"FCOS validation requires a scalar/square imgsz, got {input_size}"
+            )
+
+        rgb = np.ascontiguousarray(img[:, :, ::-1])
+        image_chw, scale = preprocess_numpy(rgb, input_size=target_h)
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, :4] *= scale
+            padded_targets[:count] = scaled[:count]
+        return image_chw, padded_targets
+
+
 class DeformableDETRValPreprocessor(RFDETRValPreprocessor):
     """Deformable DETR fixed-square ImageNet-normalized preprocessor.
 
@@ -308,6 +498,46 @@ class DeformableDETRValPreprocessor(RFDETRValPreprocessor):
         from ..models.deformable_detr.utils import preprocess_numpy
 
         return preprocess_numpy
+
+
+class CenterNetValPreprocessor(BaseValPreprocessor):
+    """Official CenterNet BGR affine warp and dataset-metric target copy."""
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.centernet.utils import preprocess_bgr
+
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError("CenterNet validation requires a square input canvas")
+        processed, _ = preprocess_bgr(img, input_size=target_h)
+
+        # CenterNet's pixels use a centered uniform affine transform. The
+        # shared validation parser intentionally sees this independent
+        # stretch-scaled metric copy so its non-letterbox inverse recovers the
+        # original boxes exactly; the labels are not model inputs.
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, [0, 2]] *= target_w / orig_w
+            scaled[:count, [1, 3]] *= target_h / orig_h
+            padded_targets[:count] = scaled[:count]
+        return processed, padded_targets
 
 
 class YOLO9ValPreprocessor(BaseValPreprocessor):

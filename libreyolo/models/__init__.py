@@ -65,11 +65,23 @@ from .detr.model import LibreDETR  # noqa: E402
 # discriminators intentionally accept broad transformer key patterns.
 from .deformable_detr.model import LibreDeformableDETR  # noqa: E402
 
+# DINO-DETR has a strict 900-query + denoising-label signature. Register it
+# beside its Deformable DETR ancestor and before broader descendant checks.
+from .dinodetr.model import LibreDINODETR  # noqa: E402
+
 # LW-DETR is RF-DETR's ancestor and shares its decoder/projector key names, so
 # it registers eagerly and ahead of the lazy RF-DETR import; its plain-ViT
 # encoder keys (patch_embed.proj + CAE q_bias) are the discriminator.
 from .lwdetr.model import LibreLWDETR  # noqa: E402
+# Mask R-CNN shares the Faster R-CNN box graph, so its distinctive mask-head
+# discriminator must register first.
+from .mask_rcnn.model import LibreMaskRCNN  # noqa: E402
+from .fcos.model import LibreFCOS  # noqa: E402  (unique centerness + P6/P7 fingerprint)
 from .faster_rcnn.model import LibreFasterRCNN  # noqa: E402
+from .retinanet.model import LibreRetinaNet  # noqa: E402
+from .ssd.model import LibreSSD  # noqa: E402  (VGG extras + paired MultiBox heads are unique)
+from .centernet.model import LibreCenterNet  # noqa: E402
+from .efficientdet.model import LibreEfficientDet  # noqa: E402  (BiFPN keys are unique; inference-only)
 from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
@@ -82,8 +94,10 @@ from .yolo4.model import LibreYOLO4  # noqa: E402
 from .yolo2.model import LibreYOLO2  # noqa: E402
 from .yolo1.model import LibreYOLO1  # noqa: E402  (VOC museum; can_load keyed on unique yolo1. FC head)
 from .yolo7.model import LibreYOLO7  # noqa: E402  (can_load keyed on unique implicit_a.implicit)
+from .hrnet.model import LibreHRNet  # noqa: E402,F401  (top-down pose; unique stage-fusion fingerprint)
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
 from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
+from .midas.model import LibreMiDaS  # noqa: E402,F401  (depth-only MiDaS museum family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnythingV2,
 )
@@ -99,14 +113,21 @@ from .birefnet.model import LibreBiRefNet  # noqa: E402,F401  (matte-only; can_l
 from .feynobg.model import LibreFeyNobg  # noqa: E402,F401  (matte-only; BiRefNet keys + 24-block stage-3 marker, disjoint from birefnet)
 from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
 from .swinir.model import LibreSwinIR  # noqa: E402,F401  (restore/super-resolution; RSTB keys are unique)
+from .fcn.model import LibreFCN  # noqa: E402,F401  (semantic-only; FCN head + embedded ResNet fingerprint)
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
+from .deeplabv3.model import LibreDeepLabv3  # noqa: E402,F401  (semantic-only; ASPP branch/project keys are unique)
 from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
 from .segformer.model import LibreSegformer  # noqa: E402,F401  (semantic-only; can_load uses decode_head/encoder.stages keys, unique to this family)
 from .lingbotvision.model import LibreLingBotVision  # noqa: E402,F401  (semantic-only; can_load keyed on backbone.rope_embed.periods + storage_tokens + predict head)
+from .vit.model import LibreViT  # noqa: E402  (classify-only; top-level classic-ViT signature)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
+from .deit.model import LibreDeiT  # noqa: E402  (classify-only museum family; exact ViT geometry)
+from .swin.model import LibreSwin  # noqa: E402  (classify-only; V1 window-bias signature rejects SwinV2/backbone-only checkpoints)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
+from .vgg.model import LibreVGG  # noqa: E402  (classify-only; exact 3x3 stem + FC shape signature)
 from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
+from .alexnet.model import LibreAlexNet  # noqa: E402  (classify-only; unique 11x11 stem + 3-layer classifier)
 
 # Native CLIP zero-shot classifier: pure-torch towers (no open_clip at runtime),
 # so it registers eagerly. can_load is uniquely keyed on logit_scale +
@@ -737,8 +758,15 @@ __all__ = [
     "LibreDEIM",
     "LibreDETR",
     "LibreDEIMv2",
+    "LibreMaskRCNN",
+    "LibreFCOS",
     "LibreFasterRCNN",
+    "LibreRetinaNet",
+    "LibreSSD",
+    "LibreCenterNet",
+    "LibreEfficientDet",
     "LibreDeformableDETR",
+    "LibreDINODETR",
     "LibreEC",
     "LibrePICODET",
     "LibreRTMDet",
@@ -747,10 +775,12 @@ __all__ = [
     "LibreYOLO2",
     "LibreYOLO1",
     "LibreYOLO7",
+    "LibreHRNet",
     "LibreRTDETR",
     "LibreRTDETRv2",
     "LibreRTDETRv4",
     "LibreFOMO",
+    "LibreMiDaS",
     "LibreDepthAnythingV2",
     "LibreMoGe2",
     "LibreTEED",
@@ -761,14 +791,20 @@ __all__ = [
     "LibreFeyNobg",
     "LibreRealESRGAN",
     "LibreSwinIR",
+    "LibreFCN",
     "LibreEoMT",
+    "LibreDeepLabv3",
     "LibrePIDNet",
     "LibreSegformer",
     "LibreLingBotVision",
+    "LibreViT",
     "LibreMobileNetV4",
     "LibreConvNeXt",
+    "LibreSwin",
     "LibreEfficientNetV2",
+    "LibreVGG",
     "LibreResNet",
+    "LibreAlexNet",
     "LibreCLIP",
     "LibreSigLIP2",
     "LibrePPOCR",

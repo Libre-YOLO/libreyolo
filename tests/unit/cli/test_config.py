@@ -56,7 +56,9 @@ class TestResolveModelName:
                 "LibreDepthAnythingV2s-depth.pt",
             ),
             ("fomo-s", "fomo-s-point", "LibreFOMOs-point.pt"),
+            ("midas-s", "midas-s-depth", "LibreMiDaSs-depth.pt"),
             ("siglip2-b16", "siglip2-b16-cls", "LibreSigLIP2b16-cls.pt"),
+            ("vit-ti", "vit-ti-cls", "LibreViTti-cls.pt"),
             ("zipdepth-b", "zipdepth-b-depth", "LibreZipDepthb-depth.pt"),
         ],
     )

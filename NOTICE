@@ -89,6 +89,22 @@ ConvNeXt / timm (MIT code + Apache-2.0 weights)
     load unchanged and inference is bit-identical. ConvNeXt-V2's small
     checkpoints are CC-BY-NC and are intentionally NOT used.
 
+DeiT / timm (Apache License 2.0)
+    Path:    libreyolo/models/deit/, libreyolo/data/imagenet1k_synsets.txt
+    License: libreyolo/models/deit/NOTICE  (Apache-2.0)
+    Source:  https://github.com/facebookresearch/deit
+             commit 7e160fe43f0252d17191b71cbb5826254114ea5b
+             https://github.com/huggingface/pytorch-image-models
+             commit e98c05a5a15e81188ec62dd5380b8f5c3251075a
+
+    The plain DeiT patch-16 tiny, small, and base classifiers are a native
+    inference port derived from the Apache-2.0 timm Vision Transformer graph
+    and the Apache-2.0 facebookresearch/deit variant contract. Module naming
+    mirrors timm so its Apache-2.0 ImageNet-1k tensors load unchanged and
+    produce bit-identical eager logits. The bundled ImageNet WNID index is an
+    unmodified timm data file from the pinned commit above. Distillation-token,
+    DeiT III, and 384-pixel variants are not included.
+
 EfficientNetV2 / timm (Apache License 2.0)
     Path:    libreyolo/models/efficientnetv2/
     License: libreyolo/models/efficientnetv2/NOTICE  (Apache-2.0)
@@ -111,6 +127,20 @@ ResNet / timm (Apache License 2.0)
     timm's `resnet*.a1_in1k` (Ross Wightman), Apache-2.0, ImageNet-1k. Module
     naming mirrors timm/torchvision so weights load unchanged and inference is
     bit-identical.
+
+Swin Transformer V1 / timm (Apache-2.0 code + MIT weights)
+    Path:    libreyolo/models/swin/
+    License: libreyolo/models/swin/NOTICE
+    Source:  https://github.com/huggingface/pytorch-image-models
+             https://github.com/microsoft/Swin-Transformer
+             https://github.com/SwinTransformer/storage
+
+    The shared Swin V1 tower is a native implementation derived from timm
+    v1.0.28 (Apache-2.0). The standalone classifier integration is original
+    LibreYOLO work and preserves timm parameter names for strict, bit-exact
+    loading. The four released patch-4/window-7 Microsoft checkpoints are MIT;
+    conversion retains learned tensors and adds only LibreYOLO metadata and
+    canonical ImageNet-1k class names.
 
 OMDet-Turbo / Transformers (Apache License 2.0)
     Path:    libreyolo/models/openvocab/omdet_turbo.py
@@ -287,6 +317,26 @@ DETR (Apache License 2.0)
     Copyright headers are retained in the ported architecture; family-level
     details live in libreyolo/models/detr/NOTICE.
 
+CenterNet (MIT and BSD-3-Clause)
+    Path:    libreyolo/models/centernet/,
+             libreyolo/postprocess/centernet.py,
+             weights/convert_centernet_weights.py
+    License: libreyolo/models/centernet/NOTICE
+    Source:  https://github.com/xingyizhou/CenterNet
+             commit 4c50fd3a46bdf63dbf2082c5cbb3458d39579e6c
+             Copyright (c) 2019 Xingyi Zhou
+
+    LibreCenterNet ports the official fixed-512 ResDCN-18 and DLA-34
+    detection graphs, affine preprocessing, and top-100 no-NMS decoder. The
+    CenterNet source is MIT; its DLA, DCNv2, CornerNet, and Microsoft pose
+    lineages are permissively licensed and reproduced in the family NOTICE.
+    LibreYOLO does not bundle or compile the legacy DCNv2 extension. Native
+    inference calls torchvision's BSD-3-Clause deform_conv2d operator, while
+    export uses LibreYOLO's portable equivalent. Official COCO checkpoints are
+    not bundled in the source distribution. Their separate mirrors disclose
+    that MIT is implied by the releasing project, not a checkpoint-specific
+    publisher statement.
+
 Faster R-CNN / TorchVision (BSD-3-Clause)
     Path:    libreyolo/models/faster_rcnn/,
              libreyolo/postprocess/faster_rcnn.py
@@ -302,6 +352,90 @@ Faster R-CNN / TorchVision (BSD-3-Clause)
     fixed-batch ONNX integration; it excludes training-only matching,
     sampling, and losses. Official COCO checkpoints are not bundled in the
     source distribution. Separate weight mirrors disclose that their
+    BSD-3-Clause redistribution basis is implied by the releasing project,
+    not an explicit checkpoint-specific grant, and repeat torchvision's
+    pretrained-model terms caveat.
+
+SSD300 / TorchVision (BSD-3-Clause; VGG weight lineage CC BY 4.0)
+    Path:    libreyolo/models/ssd/, libreyolo/postprocess/ssd.py,
+             weights/convert_ssd_weights.py
+    License: libreyolo/models/ssd/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreSSD300 inference graph is derived from torchvision
+    v0.26.0's SSD300, VGG feature extractor, default-box generator, box coder,
+    transform, and postprocessing utilities (BSD-3-Clause, Copyright (c)
+    Soumith Chintala 2016). The official COCO checkpoint is mirrored
+    separately under BSD-3-Clause on an explicitly disclosed implied basis;
+    it has no per-object license file. Its VGG-16 initialization traces to
+    Oxford Visual Geometry Group feature weights released under CC BY 4.0.
+    The family notice supplies the full BSD text, VGG attribution, license
+    link, changes statement, and pretrained-model/data caveats.
+Mask R-CNN / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/mask_rcnn/
+    License: libreyolo/models/mask_rcnn/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    LibreMaskRCNN adds the pinned torchvision v0.26.0 Mask R-CNN RoIAlign mask
+    head and class-specific mask selection to LibreYOLO's native Faster R-CNN
+    graph (BSD-3-Clause, Copyright (c) Soumith Chintala 2016). The port keeps
+    upstream state-dict names and adds LibreYOLO task dispatch, contiguous
+    COCO-80 mapping, validation, mask postprocessing, and ONNX integration.
+    Training-only sampling and loss code is excluded. The official COCO
+    checkpoint is not bundled. Its separate weight mirror discloses that the
+    BSD-3-Clause redistribution basis is implied by the releasing project, not
+    an explicit checkpoint-specific grant, and repeats the pretrained-model
+    terms caveat.
+
+FCOS / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/fcos/, libreyolo/postprocess/fcos.py
+    License: libreyolo/models/fcos/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreFCOS inference graph is derived from torchvision v0.26.0's
+    FCOS detector, dense heads, anchor generator, transform, box coder, and
+    postprocessing (BSD-3-Clause, Copyright (c) Soumith Chintala 2016).
+    Upstream state-dict names are retained so the 319 official entries load
+    strictly. LibreYOLO adds metadata, validation, contiguous COCO-80 mapping,
+    and dynamic-spatial export integration; training assignment and losses are
+    excluded. The official checkpoint is not bundled in the source
+    distribution. Its separate weight mirror discloses that BSD-3-Clause
+    redistribution is implied by the releasing project, not an explicit
+    checkpoint-specific grant, and repeats torchvision's pretrained-model
+    terms caveat.
+AlexNet / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/alexnet/, libreyolo/postprocess/alexnet.py
+    License: libreyolo/models/alexnet/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreAlexNet graph is derived from torchvision v0.26.0's
+    AlexNet implementation (BSD-3-Clause, Copyright (c) Soumith Chintala
+    2016). It retains the upstream features/avgpool/classifier state-dict
+    layout for strict conversion and bit-exact logits. The official
+    ImageNet-1K checkpoint is not bundled in the source distribution. Its
+    separate weight mirror discloses that BSD-3-Clause is an implied
+    redistribution basis rather than a checkpoint-specific publisher grant,
+    and repeats torchvision's pretrained-model terms caveat.
+DeepLabv3 / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/deeplabv3/,
+             libreyolo/postprocess/deeplabv3.py,
+             weights/convert_deeplabv3_weights.py
+    License: libreyolo/models/deeplabv3/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreDeepLabv3 inference graph is derived from torchvision
+    v0.26.0's DeepLabv3 orchestration, ASPP head, and ResNet/MobileNetV3
+    backbone builders (BSD-3-Clause, Copyright (c) Soumith Chintala 2016).
+    Upstream runtime state-dict names are retained for strict conversion. The
+    port adds LibreYOLO metadata, semantic results, validation, and fixed-520
+    export/backend integration; it excludes the training-only auxiliary FCN
+    classifier and training recipe. Official COCO checkpoints are not bundled
+    in the source distribution. Separate weight mirrors disclose that their
     BSD-3-Clause redistribution basis is implied by the releasing project,
     not an explicit checkpoint-specific grant, and repeat torchvision's
     pretrained-model terms caveat.

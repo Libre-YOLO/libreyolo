@@ -53,16 +53,31 @@ file = name + ".pt"
 | DETR | `LibreDETR` | `LibreDETRr50.pt` (original DETR; Apache-2.0 code + weights; inference-only) |
 | LWDETR | `LibreLWDETR` | `LibreLWDETRt.pt` (LW-DETR, RF-DETR's ancestor; Apache-2.0 code + weights; inference-only) |
 | FasterRCNN | `LibreFasterRCNN` | `LibreFasterRCNNn.pt` (modernized torchvision Faster R-CNN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
+| RetinaNet | `LibreRetinaNet` | `LibreRetinaNetr50.pt` (torchvision RetinaNet; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
+| SSD | `LibreSSD` | `LibreSSD300.pt` (torchvision SSD300 VGG16; BSD-3-Clause implied for the checkpoint, Oxford VGG feature-weight lineage CC BY 4.0; inference-only) |
+| MaskRCNN | `LibreMaskRCNN` | `LibreMaskRCNNr50.pt` (torchvision Mask R-CNN v2; segment default plus detect; BSD-3-Clause implied for weights, with the pretrained-model caveat on the card; inference-only) |
+| FCN | `LibreFCN` | `LibreFCNr50.pt` (torchvision's ResNet FCN, not the original VGG FCN-8s; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; semantic inference-only) |
+| CenterNet | `LibreCenterNet` | `LibreCenterNetresdcn18.pt`, `LibreCenterNetdla34.pt` (official CenterNet COCO detectors; MIT implied for weights; inference-only) |
+| FCOS | `LibreFCOS` | `LibreFCOSr50.pt` (torchvision FCOS ResNet-50 FPN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
+| DeepLabv3 | `LibreDeepLabv3` | `LibreDeepLabv3r50-sem.pt` (torchvision semantic family; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
+| EfficientDet | `LibreEfficientDet` | `LibreEfficientDetd0.pt` (D0-D4; Apache-2.0 project release weights with no separate asset license; inference-only) |
 | Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
+| DINO-DETR | `LibreDINODETR` | `LibreDINODETRr50.pt` (IDEA DINO detector; Apache-2.0 implied for weights; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
 | RTDETRv2 | `LibreRTDETRv2` | `LibreRTDETRv2r50.pt` |
 | RTDETRv4 | `LibreRTDETRv4` | `LibreRTDETRv4s.pt` |
 | RTMDet | `LibreRTMDet` | `LibreRTMDets.pt` |
 | YOLONAS | `LibreYOLONAS` | `LibreYOLONASs.pt` |
+| HRNet | `LibreHRNet` | `LibreHRNetw32-pose.pt`, `LibreHRNetw48-pose.pt` |
 | MobileNetV4 | `LibreMobileNetV4` | `LibreMobileNetV4s-cls.pt` |
 | ConvNeXt | `LibreConvNeXt` | `LibreConvNeXtt-cls.pt` |
+| DeiT | `LibreDeiT` | `LibreDeiTt-cls.pt` (plain 224px classifier; Apache-2.0; inference-only) |
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
+| ViT | `LibreViT` | `LibreViTti-cls.pt` (classic patch-16 AugReg classifier; Apache-2.0 code + weights; inference-only) |
+| AlexNet | `LibreAlexNet` | `LibreAlexNetb-cls.pt` (torchvision museum classifier; BSD-3-Clause implied for the checkpoint) |
+| VGG | `LibreVGG` | `LibreVGG16-cls.pt` |
+| Swin | `LibreSwin` | `LibreSwint-cls.pt` (Swin V1; MIT weights; inference-only) |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 | SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
@@ -129,6 +144,8 @@ LibreYOLONASs.pt, LibreYOLONASm.pt, LibreYOLONASl.pt,
 LibreYOLONASn-pose.pt, LibreYOLONASs-pose.pt,
 LibreYOLONASm-pose.pt, LibreYOLONASl-pose.pt,
 
+LibreHRNetw32-pose.pt, LibreHRNetw48-pose.pt,
+
 LibreDFINEn.pt, LibreDFINEs.pt, LibreDFINEm.pt, LibreDFINEl.pt,
 LibreDFINEx.pt,
 LibreDFINEn-seg.pt, LibreDFINEs-seg.pt, LibreDFINEm-seg.pt,
@@ -173,9 +190,23 @@ LibreLWDETRl.pt, LibreLWDETRx.pt,
 LibreFasterRCNNn.pt, LibreFasterRCNNs.pt,
 LibreFasterRCNNm.pt, LibreFasterRCNNl.pt,
 
+LibreRetinaNetr50.pt, LibreRetinaNetr50v2.pt,
+LibreMaskRCNNr50.pt,
+LibreFCNr50.pt, LibreFCNr101.pt,
+LibreCenterNetresdcn18.pt, LibreCenterNetdla34.pt,
+LibreFCOSr50.pt,
+LibreDeepLabv3r50-sem.pt, LibreDeepLabv3r101-sem.pt,
+LibreDeepLabv3mv3-sem.pt,
+LibreEfficientDetd0.pt, LibreEfficientDetd1.pt,
+LibreEfficientDetd2.pt, LibreEfficientDetd3.pt,
+LibreEfficientDetd4.pt,
+
 LibreDeformableDETRr50ss.pt, LibreDeformableDETRr50ssdc5.pt,
 LibreDeformableDETRr50.pt, LibreDeformableDETRr50refine.pt,
 LibreDeformableDETRr50twostage.pt,
+
+LibreDINODETRr50.pt, LibreDINODETRr50s5.pt,
+LibreDINODETRswinl.pt,
 
 LibreECs.pt, LibreECm.pt, LibreECl.pt, LibreECx.pt,
 LibreECs-pose.pt, LibreECm-pose.pt, LibreECl-pose.pt,
@@ -187,11 +218,21 @@ LibreMobileNetV4l-cls.pt,
 
 LibreConvNeXtt-cls.pt, LibreConvNeXts-cls.pt, LibreConvNeXtb-cls.pt,
 
+LibreDeiTt-cls.pt, LibreDeiTs-cls.pt, LibreDeiTb-cls.pt,
+
 LibreEfficientNetV2b0-cls.pt, LibreEfficientNetV2b1-cls.pt,
 LibreEfficientNetV2b2-cls.pt, LibreEfficientNetV2b3-cls.pt,
 
 LibreResNet18-cls.pt, LibreResNet34-cls.pt,
 LibreResNet50-cls.pt, LibreResNet101-cls.pt,
+
+LibreViTti-cls.pt, LibreViTs-cls.pt,
+LibreViTb-cls.pt, LibreViTl-cls.pt,
+LibreAlexNetb-cls.pt,
+LibreVGG16-cls.pt, LibreVGG19-cls.pt,
+LibreVGG16bn-cls.pt, LibreVGG19bn-cls.pt,
+LibreSwint-cls.pt, LibreSwins-cls.pt,
+LibreSwinb-cls.pt, LibreSwinl-cls.pt,
 
 LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 
@@ -259,11 +300,16 @@ through derivative works. Their cards use `license: other` +
 `license_name: nvidia-source-code-license-segformer` + `license_link`, lead with
 a non-commercial banner, and the loader prints the restriction before every
 auto-download. Never tag them `apache-2.0` because the *code* is Apache.
-Faster R-CNN's four torchvision checkpoints have no per-object license file;
-the maintainer approved BSD-3-Clause rehosting on the releasing-project
-**implied** basis. Every card and NOTICE must say that the grant is implied,
-must reproduce torchvision's pretrained-model caveat, and must not call the
-checkpoint license publisher-confirmed.
+Faster R-CNN's four torchvision checkpoints and FCOS's torchvision checkpoint
+have no per-object license file; the maintainer approved BSD-3-Clause rehosting
+on the releasing-project **implied** basis. Every card and NOTICE must say that
+the grant is implied, must reproduce torchvision's pretrained-model caveat,
+and must not call the checkpoint license publisher-confirmed.
+SSD300 follows the same implied BSD-3-Clause checkpoint rule. Its card and
+NOTICE must additionally attribute Karen Simonyan and Andrew Zisserman's
+Oxford VGG-16 feature-weight lineage under CC BY 4.0, link the Oxford source
+and CC license, and state the torchvision training plus LibreYOLO metadata
+changes. Do not describe CC BY 4.0 as the license for torchvision's SSD code.
 A name being *valid* does not make it *hostable*; run the gate.
 
 The `-visdrone` suffix is a `WEIGHT_VARIANTS` dataset variant (grammar in
@@ -280,8 +326,13 @@ appears in the upstream model's "Quantizations" sidebar on Hugging Face.
 
 Classification (`-cls`) repos use `pipeline_tag: image-classification`,
 `datasets: imagenet-1k`, and **omit the Benchmarks section** (Vision Analysis
-tracks detection only). The architecture is a native timm-derived port; weights
-are Apache-2.0 ImageNet-1k and load bit-identically (`max_abs_diff == 0`).
+tracks detection only). Record each classifier's actual upstream and license;
+do not assume they are all timm-derived or Apache-2.0. AlexNet is the
+torchvision BSD-3-Clause graph, and its checkpoint uses the explicitly
+disclosed implied-BSD basis plus the torchvision/ImageNet terms caveat.
+Torchvision VGG likewise uses BSD-3-Clause implied by the releasing project
+and must carry the upstream pretrained-model caveat. Native classifier parity
+remains a `max_abs_diff == 0` gate.
 
 LibreCLIP is the zero-shot, open-vocabulary classifier (CLIP). Its HF cards use
 `pipeline_tag: zero-shot-image-classification`, **must document the LAION-2B
@@ -356,7 +407,7 @@ https://www.visionanalysis.org/model/<va-slug>
 
 1. Map the family id: `yolo9` → `yolov9`. Every other family id is used as-is
    (`yolox`, `rfdetr`, `rtdetr`, `rtdetrv2`, `rtdetrv4`, `dfine`, `deim`,
-   `deimv2`, `picodet`, `yolonas`, `ec`).
+   `deimv2`, `picodet`, `yolonas`, `ec`, `fcos`).
 2. Map the size — YOLOX only: `n` → `nano`, `t` → `tiny`. All other sizes are
    used as-is (including `r50`-style RT-DETR codes and DEIMv2's
    `atto`/`femto`/`pico`).
@@ -376,10 +427,10 @@ Rules:
 
 - **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
   section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
-- **No slug exists** for `detr`, `lwdetr`, `deformable_detr`, `yolo9_e2e`,
-  `yolo9_p2`, `l2cs`, RTMDet, the VLM / SAM / open-vocab tiers, or the
-  Darknet-lineage families (`yolo1`, `yolo2`, `yolo3`, `yolo4`) and `yolo7` —
-  omit the Benchmarks section and tell the user.
+- **No slug exists** for `detr`, `lwdetr`, `deformable_detr`, `dinodetr`,
+  `yolo9_e2e`, `yolo9_p2`, `l2cs`, RTMDet, the VLM / SAM / open-vocab tiers,
+  or the Darknet-lineage families (`yolo1`, `yolo2`, `yolo3`, `yolo4`) and
+  `yolo7` — omit the Benchmarks section and tell the user.
   Semantic / depth / restore / point repos also omit it (detection only).
 - **The page may lag the upload.** Model pages are generated from
   `website/src/data/metadata/models.json` in
@@ -416,6 +467,8 @@ After the repo is uploaded, add it to a collection:
 | Repo type | Collection |
 |---|---|
 | Detection weights | `LibreYOLO/libreyolo-models-698875bf2b5f695708415169` |
+| Classification weights | `LibreYOLO/libreyolo-classification-6a4164414d64a10aa8576885` |
+| Pose weights | `LibreYOLO/libreyolo-models-698875bf2b5f695708415169` |
 | RF-DETR segmentation | `LibreYOLO/rf-detr-instance-segmentation-69bde2744d6c285366a69603` |
 | New seg family (e.g. YOLOX-seg) | **Ask the user** — create a new collection or extend existing |
 | New detection family with no siblings yet | Add to `LibreYOLO Models` |

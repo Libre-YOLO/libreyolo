@@ -142,6 +142,7 @@ def _pose_keypoint_shape_metadata(model) -> dict:
 _FIXED_SQUARE_EXPORT_FAMILIES = {
     "clip",
     "deformable_detr",
+    "dinodetr",
     "detr",
     "dfine",
     "deim",
@@ -154,8 +155,10 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "rtdetrv4",
     "rfdetr",
     "siglip2",
+    "ssd",
 }
 _RECTANGULAR_EXPORT_FAMILIES = {
+    "hrnet",
     "yolo9",
     "yolo9_e2e",
     "yolo9_p2",
@@ -202,6 +205,8 @@ class _SemanticExportWrapper(torch.nn.Module):
                 return output["logits"]
             if "predictions" in output:
                 return output["predictions"]
+            if "out" in output:
+                return output["out"]
         if isinstance(output, (list, tuple)):
             return output[-1]
         return output
@@ -637,7 +642,15 @@ class BaseExporter(ABC):
         native_imgsz = self.model._get_input_size()
         model_name = self.model._get_model_name()
         if imgsz is None:
-            imgsz = (native_imgsz, native_imgsz)
+            if isinstance(native_imgsz, (tuple, list)):
+                if len(native_imgsz) != 2:
+                    raise ValueError(
+                        "Native input size must be an int or (height, width), "
+                        f"got {native_imgsz!r}."
+                    )
+                imgsz = (int(native_imgsz[0]), int(native_imgsz[1]))
+            else:
+                imgsz = (int(native_imgsz), int(native_imgsz))
         elif isinstance(imgsz, tuple):
             if len(imgsz) != 2:
                 raise ValueError(f"imgsz tuple must be (height, width), got {imgsz}")
@@ -646,6 +659,22 @@ class BaseExporter(ABC):
             imgsz = (int(imgsz), int(imgsz))
         if imgsz[0] <= 0 or imgsz[1] <= 0:
             raise ValueError(f"imgsz values must be positive, got {imgsz}.")
+        if model_name in ("deit", "vgg") and imgsz != (native_imgsz, native_imgsz):
+            raise ValueError(
+                f"{model_name} export imgsz must match its fixed native resolution "
+                f"{native_imgsz}x{native_imgsz}, got {imgsz}."
+            )
+        if model_name == "hrnet":
+            native_h, native_w = (
+                (int(native_imgsz[0]), int(native_imgsz[1]))
+                if isinstance(native_imgsz, (tuple, list))
+                else (int(native_imgsz), int(native_imgsz))
+            )
+            if imgsz != (native_h, native_w):
+                raise ValueError(
+                    "HRNet pose exports use the checkpoint's fixed person-crop "
+                    f"canvas {(native_h, native_w)}, got {imgsz}."
+                )
         imgsz_divisor = int(getattr(self.model, "IMGSZ_DIVISOR", 1) or 1)
         if imgsz[0] % imgsz_divisor or imgsz[1] % imgsz_divisor:
             raise ValueError(
@@ -703,7 +732,7 @@ class BaseExporter(ABC):
         ):
             raise NotImplementedError(
                 "Rectangular imgsz export is currently supported for "
-                "YOLO9-family exports only."
+                "YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports only."
             )
         if (
             _is_rectangular_imgsz(imgsz)
@@ -863,16 +892,80 @@ class BaseExporter(ABC):
             nn_model = LWDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "mask_rcnn":
+            from ..models.mask_rcnn.nn import MaskRCNNExportWrapper
+
+            nn_model = MaskRCNNExportWrapper(
+                nn_model,
+                include_masks=task == "segment",
+            ).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "faster_rcnn":
             from ..models.faster_rcnn.nn import FasterRCNNExportWrapper
 
             nn_model = FasterRCNNExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "retinanet":
+            from ..models.retinanet.nn import RetinaNetExportWrapper
+
+            nn_model = RetinaNetExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "ssd":
+            from ..models.ssd.nn import SSDExportWrapper
+
+            nn_model = SSDExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "fcos":
+            from ..models.fcos.nn import FCOSExportWrapper
+
+            nn_model = FCOSExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "efficientdet":
+            from ..models.efficientdet.nn import EfficientDetExportWrapper
+
+            if imgsz[0] != imgsz[1] or imgsz[0] != self.model.input_size:
+                raise ValueError(
+                    f"EfficientDet {self.model.size} exports require imgsz="
+                    f"{self.model.input_size}; got {imgsz}."
+                )
+            nn_model = EfficientDetExportWrapper(
+                nn_model,
+                input_size=imgsz[0],
+                # TensorRT's ITopK layer rejects K > 3840. Keep the exact
+                # upstream 5000-point budget on every other runtime and use
+                # its maximum only for the TensorRT graph.
+                max_candidates=3840 if self.format_name == "tensorrt" else 5000,
+                sparse_coco=(
+                    getattr(self.model, "nb_classes", None) == 80
+                    and getattr(self.model, "_arch_num_classes", None) == 90
+                ),
+            ).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "deformable_detr":
             from ..models.deformable_detr.nn import DeformableDETRExportWrapper
 
             nn_model = DeformableDETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "dinodetr":
+            from ..models.dinodetr.nn import DINODETRExportWrapper
+
+            nn_model = DINODETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "centernet":
+            from ..models.centernet.nn import CenterNetExportWrapper
+
+            # The portable grid-sample DCN flag is export-only. Keep the live
+            # eager model on torchvision's exact native operator.
+            nn_model = copy.deepcopy(nn_model)
+            nn_model = CenterNetExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
         elif family == "rtmdet":
@@ -1115,8 +1208,12 @@ class BaseExporter(ABC):
                 meta_h = meta_w = int(imgsz)
         else:
             native = self.model._get_input_size()
-            metadata_imgsz = int(native)
-            meta_h = meta_w = int(native)
+            if isinstance(native, (tuple, list)):
+                meta_h, meta_w = int(native[0]), int(native[1])
+                metadata_imgsz = max(meta_h, meta_w)
+            else:
+                metadata_imgsz = int(native)
+                meta_h = meta_w = int(native)
         # TODO(schema-v1.1): keep legacy model_size/nb_classes aliases for one
         # transition window, then prefer the canonical size/nc keys only.
         meta = {
@@ -1153,6 +1250,8 @@ class BaseExporter(ABC):
                 meta["interpolation"] = str(interpolation)
         if task == "pose":
             meta.update(_pose_keypoint_shape_metadata(self.model))
+            if self.model._get_model_name() == "hrnet":
+                meta["pose_input"] = "person_crop"
         if task == "gaze":
             meta.update(
                 {
@@ -1184,8 +1283,13 @@ class BaseExporter(ABC):
                 meta_h = meta_w = str(int(imgsz))
         else:
             native = self.model._get_input_size()
-            metadata_imgsz = str(native)
-            meta_h = meta_w = str(native)
+            if isinstance(native, (tuple, list)):
+                native_h, native_w = int(native[0]), int(native[1])
+                metadata_imgsz = str(max(native_h, native_w))
+                meta_h, meta_w = str(native_h), str(native_w)
+            else:
+                metadata_imgsz = str(int(native))
+                meta_h = meta_w = str(int(native))
         # TODO(schema-v1.1): keep legacy model_size/nb_classes aliases for one
         # transition window, then prefer the canonical size/nc keys only.
         meta = {
@@ -1231,6 +1335,8 @@ class BaseExporter(ABC):
                 meta["num_keypoints_per_class"] = json.dumps(
                     pose_meta["num_keypoints_per_class"]
                 )
+            if self.model._get_model_name() == "hrnet":
+                meta["pose_input"] = "person_crop"
         if task == "gaze":
             meta.update(
                 {
@@ -1252,7 +1358,7 @@ class BaseExporter(ABC):
         default_task = getattr(self.model, "DEFAULT_TASK", "detect")
         if not isinstance(default_task, str):
             default_task = "detect"
-        if self.model._get_model_name() == "rfdetr":
+        if self.model._get_model_name() in {"mask_rcnn", "rfdetr"}:
             return task, [task], task
         return task, list(supported_tasks), default_task
 

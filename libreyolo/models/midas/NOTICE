@@ -1,0 +1,20 @@
+MiDaS
+=====
+
+The model architecture in this directory is adapted from isl-org/MiDaS at
+commit 454597711a62eabcbf7d1e89f3fb9f569051ac9b.
+
+Copyright (c) 2019 Intel ISL (Intel Intelligent Systems Lab)
+Licensed under the MIT License. See the repository-wide
+THIRD_PARTY_NOTICES.txt for the complete license text and source URL.
+
+MiDaS builds its ViT-L/16 and EfficientNet-Lite3 encoders with timm. timm is
+Copyright Ross Wightman and contributors and licensed under Apache-2.0. No timm
+source code is vendored in this directory; it is an optional runtime dependency.
+
+The two supported official checkpoints are downloaded directly from
+isl-org/MiDaS GitHub release assets and verified against SHA-256 pins before
+safe loading. LibreYOLO does not redistribute them while the commercial-use
+clearance of the mixed MiDaS training datasets remains unresolved under
+docs/adr/0006-depth-task-contract.md. Exact URLs and hashes are recorded in
+docs/provenance/midas.md.
