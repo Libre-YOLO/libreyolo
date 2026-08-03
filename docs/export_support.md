@@ -15,6 +15,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | deformable_detr | detect | ✓ | exp | exp | exp | exp |  |  |  |  |
 | deim | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
+| deit | classify | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | depth_anything | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | depth_anything3 | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | detr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
@@ -133,6 +134,10 @@ A check mark applies only under any constraint listed here.
 - `deim` / `detect` / `onnx`: DETR query rows are aligned as an unordered set for parity
 - `deim` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `deimv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `deit` / `classify` / `onnx`: CPU FP32, fixed 224x224 input; ONNX uses opset 17
+- `deit` / `classify` / `torchscript`: CPU FP32 with fixed 224x224 input
+- `deit` / `classify` / `tensorrt`: TensorRT 10.16 FP16 on RTX 5070 Ti, fixed 224x224 batch-1 input, 0.25 GiB tactic workspace
+- `deit` / `classify` / `openvino`: OpenVINO 2026.2 CPU FP32 with fixed 224x224 input
 - `depth_anything` / `depth` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; Depth Anything uses the Apache-2.0 Small checkpoint
 - `depth_anything` / `depth` / `tensorrt`: FP32 with a fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `openvino`: fixed input resolution divisible by 14
@@ -385,6 +390,9 @@ A check mark applies only under any constraint listed here.
 - `deimv2` / `detect` / `ncnn`: NCNN export is not supported for DEIMv2: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deimv2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deimv2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `deit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `deit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `deit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `depth_anything` / `depth` / `ncnn`: PNNX 20260526 reports unsupported batch-index reshapes in the DINOv2 transformer graph; the produced NCNN artifact fails numeric parity.
 - `depth_anything` / `depth` / `tflite`: onnx2tf 2.6.7 converts the DINOv2 depth graph, but LiteRT 2.1.2 cannot broadcast [1,3,3,32] and [1,72,72,32] in a generated ADD.
 - `depth_anything` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.

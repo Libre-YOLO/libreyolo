@@ -22,7 +22,7 @@ enrolled.
 | `g1` | Core trainable detectors. Features follow `g0` in the same release wave, GPU-smoked per family. |
 | `g2` | Supporting trainables. Kept green in CI; features land opportunistically or on request. |
 | `g3` | Inference-only specialists. Predict/val/export surface only; training features do not apply. |
-| `g4` | Museum (`yolo1`-`yolo4`). Frozen exhibits; bug fixes only. |
+| `g4` | Museum (`deit`, `yolo1`-`yolo4`). Frozen exhibits; bug fixes only. |
 | `s`  | Sibling tiers (SAM, open-vocab, VLM, zero-shot). Separate product surfaces, excluded from group rollouts. |
 
 Groups classify **families, not tasks**: "add validation loss to `g1`" means
@@ -50,7 +50,7 @@ Libre<FAMILY><size>[-<task>].pt
 The model families registered into the model factory (the VLM tier is a
 separate category, covered in the note below). Most are detectors; `fcn`,
 `pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
-instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
+instance, and panoptic segmentation; the `deit` / `mobilenetv4` / `convnext` /
 `efficientnetv2` / `resnet` / `vit` families are classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
@@ -93,6 +93,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `fomo`      | `LibreFOMO`     | All-caps acronym (Faster Objects, More Objects) |
 | `mobilenetv4` | `LibreMobileNetV4` | CamelCase preserved (MobileNet is not an acronym) — first classify-only family |
 | `convnext`  | `LibreConvNeXt`  | CamelCase preserved (upstream brand casing `ConvNeXt`) — classify-only family |
+| `deit`      | `LibreDeiT`      | Upstream mixed-case acronym preserved (`DeiT`) — plain 224px classify-only museum family |
 | `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
 | `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
 | `vit`       | `LibreViT`       | All-caps acronym (`ViT` classic Vision Transformer) — inference-only classifier |
@@ -199,6 +200,7 @@ ships:
 | `fomo`      | `s`, `m`, `l` |
 | `mobilenetv4` | `s`, `m`, `l` (conv-Small/Medium/Large) |
 | `convnext`  | `t`, `s`, `b` (V1 Tiny/Small/Base) |
+| `deit`      | `t`, `s`, `b` (plain DeiT Tiny/Small/Base, patch 16 at fixed 224; no distilled or 384px variants) |
 | `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
 | `vit`       | `ti`, `s`, `b`, `l` (classic patch-16 Tiny/Small/Base/Large; all at 224) |
@@ -458,6 +460,7 @@ Detector-factory family support follows:
 | `swinir`    | `("restore",)`                     | restore | SwinIR transformer super-resolution; sizes `s`/`m`/`l`, all 4x; native predict at original resolution with window padding; optional tiled inference; inference + PSNR/SSIM `val` only (no training); fixed-resolution ONNX |
 | `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
+| `deit`      | `("classify",)`                | classify | Plain DeiT patch-16 classifier; t/s/b at fixed 224; predict + top-1/top-5 `val`; inference-only museum family |
 | `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `resnet`    | `("classify",)`             | classify | vanilla ResNet image classifier (v1.5); 18/34/50/101 at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `vit`       | `("classify",)`             | classify | classic patch-16 Vision Transformer; ti/s/b/l at 224 with AugReg ImageNet-1k weights; predict + top-1/top-5 `val` + ONNX; inference-only |
@@ -700,6 +703,10 @@ LibreConvNeXtt-cls.pt      # ConvNeXt-V1-Tiny        (224, ImageNet-1k)
 LibreConvNeXts-cls.pt      # ConvNeXt-V1-Small       (224, ImageNet-1k)
 LibreConvNeXtb-cls.pt      # ConvNeXt-V1-Base        (224, ImageNet-1k)
 
+LibreDeiTt-cls.pt          # Plain DeiT-Tiny patch16 (224, ImageNet-1k)
+LibreDeiTs-cls.pt          # Plain DeiT-Small patch16 (224, ImageNet-1k)
+LibreDeiTb-cls.pt          # Plain DeiT-Base patch16 (224, ImageNet-1k)
+
 LibreEfficientNetV2b0-cls.pt   # EfficientNetV2-base-b0 (224, ImageNet-1k)
 LibreEfficientNetV2b1-cls.pt   # EfficientNetV2-base-b1 (240, ImageNet-1k)
 LibreEfficientNetV2b2-cls.pt   # EfficientNetV2-base-b2 (260, ImageNet-1k)
@@ -720,18 +727,20 @@ Unlike `gaze`/`point` (which carry their suffix despite being single-task),
 `classify` keeps its `-cls` suffix to match the ecosystem-wide convention. The
 `mobilenetv4` family is a native port of MobileNetV4 (the speed tier); the
 `convnext` family is a native port of ConvNeXt V1; the `efficientnetv2` family
-is a native port of EfficientNetV2-base (the accuracy tier); and `vit` is the
-inference-only classic patch-16 Vision Transformer family. All are derived
-from timm (Apache-2.0); weights are Apache-2.0 ImageNet-1k and load
+is a native port of EfficientNetV2-base (the accuracy tier); `deit` is an
+inference-only museum port of the plain DeiT patch-16 classifiers; and `vit`
+is the inference-only classic patch-16 Vision Transformer family. All are
+derived from timm (Apache-2.0); weights are Apache-2.0 ImageNet-1k and load
 bit-identically (see each family's `NOTICE`, e.g.
 `libreyolo/models/efficientnetv2/NOTICE`, `libreyolo/models/convnext/NOTICE`).
 Only ConvNeXt **V1** ships — ConvNeXt-V2's small checkpoints are CC-BY-NC and
 are excluded; EfficientNetV2 ships only the ImageNet-1k checkpoints, as the
-`.in21k`/JFT variants carry extra-data terms.
+`.in21k`/JFT variants carry extra-data terms. DeiT ships only the plain 224px
+models; distilled-token and 384px variants require separate public contracts.
 
 **Eval resolution is a deliberate choice.** The classify families evaluate at a
-real-time-friendly default (224 for MobileNetV4 s/m, ConvNeXt, ResNet, ViT; 256 for
-MobileNetV4-l; 224/240/260/300 for EfficientNetV2 b0–b3) rather than timm's
+real-time-friendly default (224 for DeiT, MobileNetV4 s/m, ConvNeXt, ResNet,
+ViT; 256 for MobileNetV4-l; 224/240/260/300 for EfficientNetV2 b0–b3) rather than timm's
 larger *test* resolutions (e.g. 256/288/320), which trade ~1.6–2× compute for a
 few tenths of a percent top-1. This does **not** affect parity — given the same
 input tensor the logits are bit-identical to timm — only the headline ImageNet

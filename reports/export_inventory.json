@@ -148,6 +148,28 @@
     "available": true,
     "group": "g1"
   },
+  "deit": {
+    "class": "libreyolo.models.deit.model.LibreDeiT",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "t": 224,
+      "s": 224,
+      "b": 224
+    },
+    "default_imgsz": {
+      "t": 224,
+      "s": 224,
+      "b": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g4"
+  },
   "depth_anything": {
     "class": "libreyolo.models.depth_anything.model.LibreDepthAnythingV2",
     "tasks": [

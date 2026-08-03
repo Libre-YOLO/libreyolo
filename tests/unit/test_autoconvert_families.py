@@ -184,6 +184,17 @@ def _yolo9_e2e_t():
     }
 
 
+def _deit_t():
+    """Minimal plain DeiT-T state dict satisfying its exact shape signature."""
+    return {
+        "patch_embed.proj.weight": torch.zeros(192, 3, 16, 16),
+        "cls_token": torch.zeros(1, 1, 192),
+        "pos_embed": torch.zeros(1, 197, 192),
+        "blocks.11.mlp.fc2.weight": torch.zeros(192, 768),
+        "head.weight": torch.zeros(1000, 192),
+    }
+
+
 def _synthetic_numbered_yolo9():
     """Minimal upstream-shaped (numbered) YOLO9 detection dict, config t."""
     return {
@@ -238,6 +249,7 @@ CASES = [
     ("ssd", _ssd_300, _identity, "ssd300_vgg16_coco-b556d3b4.pth", "ssd", "LibreSSD", "300", "detect", 80),
     ("mask-rcnn", _mask_rcnn_r50, _identity, "maskrcnn_resnet50_fpn_v2_coco-73cbd019.pth", "mask_rcnn", "LibreMaskRCNN", "r50", "segment", 80),
     ("yolo9-e2e", _yolo9_e2e_t, _wrap_model, "gelan_e2e_t.pt", "yolo9_e2e", "LibreYOLO9E2E", "t", "detect", 80),
+    ("deit", _deit_t, _wrap_model, "deit_tiny_patch16_224.pth", "deit", "LibreDeiT", "t", "classify", 1000),
 ]
 
 
@@ -255,7 +267,9 @@ def test_family_autoconverts(tmp_path, build_sd, wrapper, filename, family, pref
 
     assert out is not None, f"{family} upstream checkpoint was not recognized"
     out_path = Path(out)
-    suffix = {"pose": "-pose", "segment": "-seg"}.get(task, "")
+    suffix = {"pose": "-pose", "segment": "-seg", "classify": "-cls"}.get(
+        task, ""
+    )
     assert out_path.name == f"{src.stem}-{prefix}{size}{suffix}.pt"
     assert out_path.parent == tmp_path
 

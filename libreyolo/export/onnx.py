@@ -46,7 +46,10 @@ def _uses_dfine_style_export_wrapper(model_family) -> bool:
 
 def _requires_onnx_opset17(model_family) -> bool:
     """Whether the family needs opset 17 for ONNX auto-opset selection."""
-    return model_family in _DETR_TUPLE_OUTPUT_FAMILIES or model_family == "moge2"
+    return model_family in _DETR_TUPLE_OUTPUT_FAMILIES or model_family in {
+        "deit",
+        "moge2",
+    }
 
 
 def _set_metadata(model_proto, metadata: dict) -> None:

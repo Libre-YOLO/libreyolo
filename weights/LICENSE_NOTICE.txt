@@ -148,6 +148,13 @@ project the weights were derived from. Per-family summary:
              upstream: timm fb_in1k; arch facebookresearch/ConvNeXt (MIT)
              (ConvNeXt-V2 fcmae weights are CC-BY-NC and are NOT used)
 
+    DeiT     (LibreDeiT{t,s,b}-cls)                    Apache-2.0
+             upstream weights: timm *.fb_in1k at the immutable revisions and
+             SHA-256 digests recorded in docs/provenance/deit.md
+             architecture: facebookresearch/deit and timm (Apache-2.0)
+             Only plain patch-16 224px checkpoints are mirrored; distilled,
+             DeiT III, and 384px variants are NOT used.
+
     EfficientNetV2 (LibreEfficientNetV2{b0,b1,b2,b3}-cls)  Apache-2.0
              upstream: timm (.in1k); arch google/automl
 

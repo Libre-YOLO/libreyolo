@@ -66,6 +66,7 @@ file = name + ".pt"
 | YOLONAS | `LibreYOLONAS` | `LibreYOLONASs.pt` |
 | MobileNetV4 | `LibreMobileNetV4` | `LibreMobileNetV4s-cls.pt` |
 | ConvNeXt | `LibreConvNeXt` | `LibreConvNeXtt-cls.pt` |
+| DeiT | `LibreDeiT` | `LibreDeiTt-cls.pt` (plain 224px classifier; Apache-2.0; inference-only) |
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
 | ViT | `LibreViT` | `LibreViTti-cls.pt` (classic patch-16 AugReg classifier; Apache-2.0 code + weights; inference-only) |
@@ -199,6 +200,8 @@ LibreMobileNetV4s-cls.pt, LibreMobileNetV4m-cls.pt,
 LibreMobileNetV4l-cls.pt,
 
 LibreConvNeXtt-cls.pt, LibreConvNeXts-cls.pt, LibreConvNeXtb-cls.pt,
+
+LibreDeiTt-cls.pt, LibreDeiTs-cls.pt, LibreDeiTb-cls.pt,
 
 LibreEfficientNetV2b0-cls.pt, LibreEfficientNetV2b1-cls.pt,
 LibreEfficientNetV2b2-cls.pt, LibreEfficientNetV2b3-cls.pt,

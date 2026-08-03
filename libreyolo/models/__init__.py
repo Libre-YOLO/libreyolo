@@ -116,6 +116,7 @@ from .lingbotvision.model import LibreLingBotVision  # noqa: E402,F401  (semanti
 from .vit.model import LibreViT  # noqa: E402  (classify-only; top-level classic-ViT signature)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
+from .deit.model import LibreDeiT  # noqa: E402  (classify-only museum family; exact ViT geometry)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
 from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
 

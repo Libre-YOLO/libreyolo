@@ -89,6 +89,22 @@ ConvNeXt / timm (MIT code + Apache-2.0 weights)
     load unchanged and inference is bit-identical. ConvNeXt-V2's small
     checkpoints are CC-BY-NC and are intentionally NOT used.
 
+DeiT / timm (Apache License 2.0)
+    Path:    libreyolo/models/deit/, libreyolo/data/imagenet1k_synsets.txt
+    License: libreyolo/models/deit/NOTICE  (Apache-2.0)
+    Source:  https://github.com/facebookresearch/deit
+             commit 7e160fe43f0252d17191b71cbb5826254114ea5b
+             https://github.com/huggingface/pytorch-image-models
+             commit e98c05a5a15e81188ec62dd5380b8f5c3251075a
+
+    The plain DeiT patch-16 tiny, small, and base classifiers are a native
+    inference port derived from the Apache-2.0 timm Vision Transformer graph
+    and the Apache-2.0 facebookresearch/deit variant contract. Module naming
+    mirrors timm so its Apache-2.0 ImageNet-1k tensors load unchanged and
+    produce bit-identical eager logits. The bundled ImageNet WNID index is an
+    unmodified timm data file from the pinned commit above. Distillation-token,
+    DeiT III, and 384-pixel variants are not included.
+
 EfficientNetV2 / timm (Apache License 2.0)
     Path:    libreyolo/models/efficientnetv2/
     License: libreyolo/models/efficientnetv2/NOTICE  (Apache-2.0)

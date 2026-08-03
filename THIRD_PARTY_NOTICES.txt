@@ -906,18 +906,35 @@ Used for: the LibrePPOCR text detection + recognition family
           tiers.
 
 --------------------------------------------------------------------
+DeiT (Facebook Research)
+--------------------------------------------------------------------
+Source: https://github.com/facebookresearch/deit
+Commit: 7e160fe43f0252d17191b71cbb5826254114ea5b
+License: Apache License 2.0
+Copyright (c) Facebook, Inc. and its affiliates.
+Used for: the plain DeiT architecture and released tiny/small/base patch-16
+          224-pixel variant contract in libreyolo/models/deit/. The native
+          inference code derives from the separately attributed Apache-2.0
+          timm implementation below. Distilled, DeiT III, and 384-pixel
+          variants are not included.
+
+--------------------------------------------------------------------
 timm / PyTorch Image Models (Hugging Face)
 --------------------------------------------------------------------
 Source: https://github.com/huggingface/pytorch-image-models
 License: Apache License 2.0
 Copyright (c) Ross Wightman and the timm contributors.
 Used for: the native image-classification model families ported from
-          timm architectures — libreyolo/models/{mobilenetv4,convnext,
+          timm architectures — libreyolo/models/{mobilenetv4,convnext,deit,
           efficientnetv2,resnet,vit}/ — and the shared Swin backbone at
           libreyolo/models/swin/. Module/attribute names mirror timm so
           its Apache-2.0 ImageNet-1k pretrained weights load unchanged and
-          inference is bit-identical. Architecture lineage: ConvNeXt also
-          derives from facebookresearch/ConvNeXt (MIT); EfficientNetV2 from
+          inference is bit-identical. The unmodified Apache-2.0 timm
+          data/_info/imagenet_synsets.txt index is included as
+          libreyolo/data/imagenet1k_synsets.txt so standard WNID ImageFolder
+          datasets map to those classifier indices. Architecture lineage:
+          ConvNeXt also derives from facebookresearch/ConvNeXt (MIT); DeiT
+          from facebookresearch/deit (Apache-2.0); EfficientNetV2 from
           google/automl (Apache-2.0); ResNet from He et al. 2015. Weights
           (timm *.in1k / *.fb_in1k / *.augreg*_in21k_ft_in1k / a1_in1k,
           Apache-2.0) are mirrored on
