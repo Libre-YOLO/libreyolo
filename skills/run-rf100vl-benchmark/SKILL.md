@@ -44,12 +44,25 @@ knowledge those two do not cover.
 | Seed | 0 | LibreYOLO policy |
 | Recipes | one pinned JSON per family in the harness (`va_bench/recipes/rf100vl/`), sha recorded in every run, same recipe for all 100 datasets | LibreYOLO policy |
 | Execution (YOLO) | `cuda_graph: true` and `cache: "disk"` in the recipe protocol when the installed LibreYOLO supports them (bit-identical; covered by recipe hash) | measured 2026-08 |
+| COCO evaluator | faster-coco-eval (Apache-2.0), now the LibreYOLO default; record the backend in artifacts | measured 2026-08 |
 
 Never report toolkit-native trapezoidal mAP; it inflates up to 2.7 AP on
 RF100-VL versus pycocotools (paper, App B). LibreYOLO validation is
 pycocotools-based already; the 500 cap is the opt-in `eval_max_det` kwarg
 (`model.val(data=..., split="test", eval_max_det=500)`). Defaults for normal
 users are unchanged (AP at maxDets 100) and test-locked.
+
+**Scoring can cost more than training, and it scales with box density, not
+image count.** RF100-VL's `gwhd2021` has 43.6 boxes/image against a median of
+4.9; at conf 0.001 and maxDets 500, stock pycocotools spent **496 s/epoch
+scoring against 112 s training** — 4.4×, and 6.9 of that dataset's 9.6 h.
+faster-coco-eval removes it: verified across all 100 test splits at
+max_det=500, **1381/1400 metric values bit-identical, max deviation 2.22e-16
+(one float64 ULP), headline mean AP delta exactly 0**, wall 131.4 s → 8.4 s
+(15.6× overall, 56× on gwhd2021). The dense outliers to expect are
+`gwhd2021`, `recode-waste`, `uavdet-small`. Keep stock pycocotools as the
+reference implementation for audit; do not silently swap backends without
+recording which one ran.
 
 Validation frequency is protocol-mandated every epoch (gdino
 `val_interval=1`; rt-detr / d-fine / lw-detr call `evaluate()` unconditionally,
@@ -76,11 +89,23 @@ va-bench rf100vl-campaign --model yolov9t --data-dir ./rf100-vl \
   --weights-root ./rf100vl-weights --gpus 0,1,2,3,4,5,6,7 --jobs-per-gpu 3
 ```
 
-`--jobs-per-gpu` is the single biggest throughput lever. It is set by VRAM
-per lane and CPU headroom, not by GPU compute. Measured (yolov9t ≈ 6.2
-GB/lane, yolov9s ≈ 10.8 GB/lane before val-graph static buffers; re-measure
-after stack changes). CUDA graphs improve packing because they remove host
-launch contention between lanes sharing a GPU.
+`--jobs-per-gpu` is the biggest throughput lever, **but throughput is not the
+makespan**. Size it against the LONGEST dataset, not just VRAM. Measured
+2026-08: going 8 → 16 lanes on one box made every lane 1.74× slower (uniform
+across all 16 datasets, so it is contention, not any one model) and therefore
+*lengthened* the serial long pole, finishing later overall. When one dataset
+sets the makespan, packing deeper is strictly harmful. Pack when total work
+dominates; do not pack when a single dataset does.
+
+Pin `OMP_NUM_THREADS` (and `MKL_/OPENBLAS_`) whenever you pack. Left unset,
+torch takes 64 intra-op + 128 inter-op threads *per process*: 16 lanes gave
+~124 threads per dataloader worker, 11,890 threads on 128 cores, and **67.6%
+system time with 6% idle** — two thirds of the CPU spent on scheduling, not
+work. Pinning to 2 took system time to 7.4%.
+
+CUDA graphs improve packing because they remove host launch contention between
+lanes sharing a GPU. They also *add* persistent static buffers, so measure
+VRAM with graphs in the configuration you will actually run.
 
 Supporting verbs: `rf100vl-preflight`, `rf100vl-dash` (pass `--data-dir` or
 queued datasets show no image counts and the ETA is size-blind),
@@ -138,7 +163,8 @@ Account setup, 2FA, launch, exec, pull, destroy: follow
   `cache: "disk"`.** The offer filter "machine has ≥ 300 GB free" and the
   `--disk` you rent are different; disk bills on allocated GB. One campaign
   needs roughly 70 GB (image + pip + 49 GB dataset + weights); disk-cache
-  `.npy` sidecars add ~105 GB across 100 datasets.
+  `.npy` sidecars add **~108 GB at 416px and ~159 GB at 640px** (see the disk
+  projection above — 640px does not fit 250 GB without purging as you go).
 - Workload is **CPU / host-bound**, priced GPU-centric. Measured
   [pre-cache]: 46 ms GPU vs 507 ms CPU per step; 8 cores/lane still ~94%
   CPU-saturated. `pick_box.py`'s old `MIN_CORES_PER_LANE = 3.0` was far too
@@ -160,14 +186,46 @@ Account setup, 2FA, launch, exec, pull, destroy: follow
 - Local-first: one dataset, then rf20vl pilot, then rent. When the stack
   changes (new LibreYOLO commit, recipe, packing, image), shake out on ONE
   cheap GPU first (~$1).
+- **Select on `$/GPU-hour`, not `$/hour`.** Measured 2026-08: 8× RTX 5060 Ti
+  (16 GB, 128 cores) at $0.79/hr is **$0.099/GPU-h**; an 8× 5090 box is
+  $0.467/GPU-h for perhaps 2.5–3× the throughput. On a host-bound workload the
+  cheap many-core box usually wins. Check VRAM separately (see sizing above) —
+  16 GB is the constraint that actually rules boxes out.
+
+### Running several boxes at once
+
+Each box is fully independent: the harness has no cross-box coordination, so
+"multi-node" is really N single-node campaigns plus your attention. That makes
+the failure modes operational, not algorithmic.
+
+- **One chain script per box** (wait → campaign → upload → stop), launched
+  detached with `setsid nohup ... < /dev/null &`. Put a **gate at the top** that
+  asserts the stack invariant you care about and aborts before spending a
+  night — e.g. build the model and assert BN eps, or assert the eval backend.
+- **One monitor per box**, and make its filter cover failure, not just
+  progress: a monitor that only greps the happy path is silent through a
+  crashloop, which looks identical to "still running".
+- Crash recovery is genuinely good and does not need you: dataset+epoch level
+  resume, atomic status files, per-dataset timeouts, OOM → grad-accum fallback.
+  ~300 dataset-runs completed with 0 failures unattended.
+- **Silent wrongness is what needs you**, and it scales badly with box count.
+  Every serious problem in the 2026-08 campaigns was silent: wrong BN eps,
+  uploads skipping checkpoints, disk projections, a bad ETA. Before fanning
+  out, make sure each of those has a loud check; otherwise N boxes produce N
+  results you must hand-verify anyway.
 
 ### What healthy looks like (do not "fix" this)
 
 - Launch/host-bound: [pre-cache] healthy meant GPUs at **9–35% util and
   ~170 W of 575 W** with everything fine. Low GPU numbers are the signature
-  of this workload, not a fault. (Graphed train+val + image cache should
-  raise this — re-baseline in the shakedown.) The runbook once claimed
-  60–100% util as healthy; that reading burned an expensive detour.
+  of this workload, not a fault. The runbook once claimed 60–100% util as
+  healthy; that reading burned an expensive detour.
+- **Re-baselined 2026-08 with disk cache + faster eval**: dataload fell to
+  **0.2 ms of a 350 ms step**, so the pre-cache "507 ms CPU per step" figure
+  no longer describes the loop. Util now runs ~39% mean exclusive and 74–94%
+  when packed. Both bands are healthy; read util next to power, and treat a
+  *change* against your own shakedown as the signal rather than any absolute
+  number.
 - `nvidia-smi` util is time-with-a-kernel-resident on the CARD, not die
   occupancy per job. With 3 lanes sharing a GPU the row describes the card.
 - Datasets are heterogeneous: **92 to 8,791** train images, **0.31 to 12+
@@ -177,6 +235,46 @@ Account setup, 2FA, launch, exec, pull, destroy: follow
   the ratio **widens** (epoch 1 fills the cache). **Every ETA in the first
   hour is garbage** — do not make money decisions off it. A "16.4 h" ETA
   was once an artifact of averaging epoch 1 into a two-epoch mean.
+
+### Sizing a box: measure VRAM, never predict it
+
+Do not derive VRAM from parameter count or GFLOPs. Measured 2026-08 at 640px,
+batch 16: **yolox-s (8.97M) = 6.2 GB/lane, yolov9s (~9M) = 10.8 GB/lane** —
+same size, 1.7× apart. Activation memory, cuDNN workspace autotuning,
+allocator behaviour and CUDA-graph static buffers all dominate, and none of
+them follow parameter count.
+
+Measure instead. It costs about a minute per model:
+
+```bash
+libreyolo profile run <data.yaml> --weights <W> --size <s> \
+  --imgsz 640 --batch 16 --steps 20 --device 0   # prints "peak VRAM"
+```
+
+Run the probe matrix on the target GPU before committing a campaign, and take
+~20% headroom. The registry's `params_millions`/`gflops` fields are `0.0` for
+most non-flagship specs, so they cannot stand in for this.
+
+Being wrong is survivable but not free: the harness falls back to grad-accum
+(keeping effective batch 16) and **restarts that dataset from epoch 0**, so a
+bad guess costs throughput and wasted epochs, not correctness.
+
+### Disk: project it, do not eyeball it
+
+Two campaigns nearly died on this. Post-resize cache measured
+**~953 KB/image at 640px** and **~660 KB at 416px**, so:
+
+    cache_GB ≈ total_images × bytes_per_image
+    RF100-VL (163,151 images): ~159 GB at 640, ~108 GB at 416
+
+That is far above the "~105 GB of sidecars" this skill used to quote. Add the
+dataset (~49 GB) and checkpoints (measured 108 MB each for a ~9M-param model,
+so ~30-56 GB across 100 datasets) and 640px does **not** fit a 250 GB disk.
+
+Fix: purge each dataset's cache when it completes. The cache is reused across
+that dataset's 100 epochs and is dead weight afterwards, so purging on
+`state == done` bounds it to the active working set (~54 GB) instead of the
+full ~159 GB. Never delete anything but `*.r<W>x<H>.npy`.
 
 ### When something looks slow: profile, do not theorize
 
@@ -216,6 +314,17 @@ op. Total self-CUDA ≪ total self-CPU ⇒ launch-bound (CUDA graphs).
   free. Decide stop-vs-destroy from disk $/day, re-stage cost (~35 min,
   nearly free bandwidth), and whether banked checkpoints are usable
   (recipe change ⇒ they are not).
+- **Stopped is not restartable on demand.** 2026-08 a restart returned
+  `resources_unavailable, state change queued` and `intended_status` reverted
+  to `stopped`; the GPUs came back only hours later. Treat a stop as
+  "possibly forever". **Sync every box-local file you cannot regenerate BEFORE
+  stopping** — recipes, chain scripts, any hand-written config. `sync-artifacts`
+  does not upload the recipe, and a run whose `recipe_sha256` points at a file
+  that exists nowhere is not reproducible.
+- Instance ops need a live 2FA session (~7 days) and `ssh<N>.vast.ai` DNS can
+  fail transiently. Keep the dashboard tunnel up: an established tunnel
+  survives a DNS outage and is the only health channel left when ssh will not
+  resolve.
 - Destroy ends spend. Always pull/sync first.
 
 ## Decisions to take per campaign
@@ -241,9 +350,34 @@ JSON. Predictions are on by default for publishable runs.
   Pass `--eval-dir` so predictions are collected. Stock-pycocotools rescore
   of a saved dump reproduced harness AP to four decimals with no harness
   code imported.
+- **`sync-artifacts` is silent about what it does not upload.** It ships the
+  paths it knows (`eval/`, `stats/`, `submissions/`, and `runs/*/weights` when
+  the weights root has the `.runs` layout) and ignores everything else, while
+  printing a cheerful `uploaded N, skipped 0`. It does **not** ship the recipe
+  JSON, nor arbitrary files placed in the weights root, nor checkpoints from a
+  flat `<root>/<dataset>/<file>` layout. **Verify after every publish by
+  listing the repo** (`HfApi().list_repo_files`), not by reading the uploader's
+  log — and note the tree API paginates at 1000 entries, so a raw count there
+  silently truncates.
 - Leaderboard submission: `vision-analysis` via `submit-benchmark-results`
   (see `benchmark-on-visionanalysis`).
 - Never hand-edit result JSONs. Regenerate them.
+
+### Always check: does selection agree with the test score?
+
+The cheapest possible guard, and the one whose absence cost the most. Compare
+each run's `valid_mAP50_95` (from `stats.json`) against the published test AP.
+For a healthy run they track within noise; a large one-sided gap means the two
+paths disagree about the model, not that the model generalises badly.
+
+2026-08: yolox-nano reported valid 0.5663 and test 0.1620 on `ball` while
+yolox-tiny agreed to 0.002 on the same datasets. The cause was BatchNorm eps
+(models trained at 1e-5, evaluated at 1e-3, ruinous for the depthwise nano
+only), fixed in libreyolo #700. A whole 100-dataset campaign published a
+headline **0.3601 that should have been 0.4853** and nothing flagged it.
+
+The corollary: a **16-point gap between adjacent sizes of one family is not a
+result, it is a bug report.** Adjacent sizes land ~3 points apart.
 
 ## Traps
 
