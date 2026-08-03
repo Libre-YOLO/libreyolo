@@ -57,6 +57,7 @@ file = name + ".pt"
 | SSD | `LibreSSD` | `LibreSSD300.pt` (torchvision SSD300 VGG16; BSD-3-Clause implied for the checkpoint, Oxford VGG feature-weight lineage CC BY 4.0; inference-only) |
 | MaskRCNN | `LibreMaskRCNN` | `LibreMaskRCNNr50.pt` (torchvision Mask R-CNN v2; segment default plus detect; BSD-3-Clause implied for weights, with the pretrained-model caveat on the card; inference-only) |
 | Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
+| DINO-DETR | `LibreDINODETR` | `LibreDINODETRr50.pt` (IDEA DINO detector; Apache-2.0 implied for weights; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
 | RTDETRv2 | `LibreRTDETRv2` | `LibreRTDETRv2r50.pt` |
 | RTDETRv4 | `LibreRTDETRv4` | `LibreRTDETRv4s.pt` |
@@ -183,6 +184,9 @@ LibreMaskRCNNr50.pt,
 LibreDeformableDETRr50ss.pt, LibreDeformableDETRr50ssdc5.pt,
 LibreDeformableDETRr50.pt, LibreDeformableDETRr50refine.pt,
 LibreDeformableDETRr50twostage.pt,
+
+LibreDINODETRr50.pt, LibreDINODETRr50s5.pt,
+LibreDINODETRswinl.pt,
 
 LibreECs.pt, LibreECm.pt, LibreECl.pt, LibreECx.pt,
 LibreECs-pose.pt, LibreECm-pose.pt, LibreECl-pose.pt,
@@ -391,10 +395,10 @@ Rules:
 
 - **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
   section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
-- **No slug exists** for `detr`, `lwdetr`, `deformable_detr`, `yolo9_e2e`,
-  `yolo9_p2`, `l2cs`, RTMDet, the VLM / SAM / open-vocab tiers, or the
-  Darknet-lineage families (`yolo1`, `yolo2`, `yolo3`, `yolo4`) and `yolo7` —
-  omit the Benchmarks section and tell the user.
+- **No slug exists** for `detr`, `lwdetr`, `deformable_detr`, `dinodetr`,
+  `yolo9_e2e`, `yolo9_p2`, `l2cs`, RTMDet, the VLM / SAM / open-vocab tiers,
+  or the Darknet-lineage families (`yolo1`, `yolo2`, `yolo3`, `yolo4`) and
+  `yolo7` — omit the Benchmarks section and tell the user.
   Semantic / depth / restore / point repos also omit it (detection only).
 - **The page may lag the upload.** Model pages are generated from
   `website/src/data/metadata/models.json` in

@@ -457,6 +457,33 @@ Used for: (1) the standalone LibreLWDETR family — plain-ViT
           see docs/provenance/lwdetr.md.
 
 --------------------------------------------------------------------
+IDEA-Research DINO
+--------------------------------------------------------------------
+Source: https://github.com/IDEA-Research/DINO
+Commit: d84a491d41898b3befd8294d1cf2614661fc0953
+License: Apache License 2.0
+Copyright (c) 2022 IDEA. All Rights Reserved.
+Used for: the inference-only LibreDINO-DETR family
+          (libreyolo/models/dinodetr/ and
+          libreyolo/postprocess/dinodetr.py). The three official checkpoints
+          are converted from the authors' Google Drive releases and rehosted
+          at LibreYOLO/LibreDINODETR{r50,r50s5,swinl}; see
+          docs/provenance/dinodetr.md. The releasing repository declares
+          Apache-2.0, but the checkpoint files carry no standalone license
+          file or metadata; every mirror ships that repository license and a
+          notice explaining the redistribution basis.
+
+--------------------------------------------------------------------
+DAB-DETR and DN-DETR (IDEA-Research)
+--------------------------------------------------------------------
+Sources: https://github.com/IDEA-Research/DAB-DETR
+         https://github.com/IDEA-Research/DN-DETR
+License: Apache License 2.0
+Used for: architectural predecessors identified by the pinned DINO source;
+          the LibreDINO-DETR port is made from DINO itself rather than from
+          separate copies of these repositories.
+
+--------------------------------------------------------------------
 Conditional DETR (Atten4Vis / Microsoft)
 --------------------------------------------------------------------
 Source: https://github.com/Atten4Vis/ConditionalDETR
@@ -465,7 +492,8 @@ Copyright (c) 2021 Microsoft. All Rights Reserved.
 Used for: position-encoding, transformer, matcher, and loss
           building blocks reused by RF-DETR via LW-DETR
           (libreyolo/models/rfdetr/{backbone,transformer,matcher,
-          loss,lwdetr,box_ops}.py).
+          loss,lwdetr,box_ops}.py), plus inherited transformer and backbone
+          portions of LibreDINO-DETR (libreyolo/models/dinodetr/).
 
 --------------------------------------------------------------------
 DETR (facebookresearch / Meta)
@@ -481,7 +509,9 @@ Used for: the standalone original DETR architecture and inference utilities
           (libreyolo/models/rfdetr/{backbone,transformer,matcher,
           loss,lwdetr,tensors,box_ops}.py), and the NestedTensor,
           position-encoding, and ResNet-backbone portions of the standalone
-          Deformable DETR port (libreyolo/models/deformable_detr/common.py).
+          Deformable DETR port (libreyolo/models/deformable_detr/common.py),
+          with inherited backbone and transformer portions in
+          libreyolo/models/dinodetr/.
 
 --------------------------------------------------------------------
 PyTorch torch.nn.Transformer
@@ -506,10 +536,20 @@ Used for: the standalone inference-only LibreDeformableDETR family
           libreyolo/postprocess/deformable_detr.py), plus multi-scale
           deformable attention reused by RF-DETR
           (libreyolo/models/rfdetr/transformer.py: MSDeformAttn,
-          ms_deform_attn_core_pytorch). The five standalone checkpoints are
+          ms_deform_attn_core_pytorch) and LibreDINO-DETR
+          (libreyolo/models/dinodetr/). The five standalone checkpoints are
           converted from the Apache-2.0 SenseTime Hugging Face mirrors and
           rehosted at LibreYOLO/LibreDeformableDETR{r50ss,r50ssdc5,r50,
           r50refine,r50twostage}; see docs/provenance/deformable_detr.md.
+
+--------------------------------------------------------------------
+Swin Transformer (Microsoft)
+--------------------------------------------------------------------
+Source: https://github.com/microsoft/Swin-Transformer
+License: MIT
+Copyright (c) 2021 Microsoft.
+Used for: the Swin-L backbone ported through DINO for
+          LibreDINODETRswinl (libreyolo/models/dinodetr/swin.py).
 
 --------------------------------------------------------------------
 ViTDet (facebookresearch detectron2)

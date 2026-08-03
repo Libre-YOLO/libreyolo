@@ -142,6 +142,7 @@ def _pose_keypoint_shape_metadata(model) -> dict:
 _FIXED_SQUARE_EXPORT_FAMILIES = {
     "clip",
     "deformable_detr",
+    "dinodetr",
     "detr",
     "dfine",
     "deim",
@@ -895,6 +896,12 @@ class BaseExporter(ABC):
             from ..models.deformable_detr.nn import DeformableDETRExportWrapper
 
             nn_model = DeformableDETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "dinodetr":
+            from ..models.dinodetr.nn import DINODETRExportWrapper
+
+            nn_model = DINODETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
         elif family == "rtmdet":

@@ -65,6 +65,10 @@ from .detr.model import LibreDETR  # noqa: E402
 # discriminators intentionally accept broad transformer key patterns.
 from .deformable_detr.model import LibreDeformableDETR  # noqa: E402
 
+# DINO-DETR has a strict 900-query + denoising-label signature. Register it
+# beside its Deformable DETR ancestor and before broader descendant checks.
+from .dinodetr.model import LibreDINODETR  # noqa: E402
+
 # LW-DETR is RF-DETR's ancestor and shares its decoder/projector key names, so
 # it registers eagerly and ahead of the lazy RF-DETR import; its plain-ViT
 # encoder keys (patch_embed.proj + CAE q_bias) are the discriminator.
@@ -748,6 +752,7 @@ __all__ = [
     "LibreRetinaNet",
     "LibreSSD",
     "LibreDeformableDETR",
+    "LibreDINODETR",
     "LibreEC",
     "LibrePICODET",
     "LibreRTMDet",

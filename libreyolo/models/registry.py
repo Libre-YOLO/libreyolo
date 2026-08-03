@@ -53,6 +53,7 @@ MODEL_GROUPS: dict[str, str] = {
     "detr": "g3",
     "deformable_detr": "g3",
     "mask_rcnn": "g3",
+    "dinodetr": "g3",
     "faster_rcnn": "g3",
     "vit": "g3",
     "retinanet": "g3",

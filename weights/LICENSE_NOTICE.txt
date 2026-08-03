@@ -97,6 +97,22 @@ project the weights were derived from. Per-family summary:
              Converted without changing learned tensors; the 91-column COCO
              head is retained and mapped to contiguous COCO-80 at runtime.
 
+    DINO-DETR (LibreDINODETR{r50,r50s5,swinl})          Apache-2.0 (implied)
+             upstream code and weight release: IDEA-Research/DINO at commit
+               d84a491d41898b3befd8294d1cf2614661fc0953
+             Official files: checkpoint0011_4scale.pth,
+               checkpoint0011_5scale.pth, and
+               checkpoint0027_5scale_swin.pth from the authors' Google Drive.
+             The releasing repository declares Apache-2.0, but its checkpoint
+             files have no separate license file or metadata. Rehosting uses
+             Apache-2.0 implied by that repository declaration, not a
+             publisher-confirmed checkpoint grant. Every mirror ships the
+             verbatim repository license, an explanatory NOTICE, source and
+             converted SHA-256 hashes, and an exact provenance record. Learned
+             tensors are unchanged; conversion only adds checkpoint metadata.
+             See docs/provenance/dinodetr.md and convert with
+             weights/convert_dinodetr_weights.py.
+
     RT-DETR  (LibreRTDETR{r18,r34,r50,r50m,r101})      Apache-2.0
              upstream: lyuwenyu/RT-DETR
              (backbone: PaddlePaddle/PaddleClas ResNet_vd, Apache-2.0)

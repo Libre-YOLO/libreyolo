@@ -269,6 +269,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
     return model_family in {
         "deformable_detr",
         "detr",
+        "dinodetr",
         "dfine",
         "deim",
         "deimv2",
@@ -528,7 +529,7 @@ class BaseBackend(ABC):
                 input_size=effective_imgsz,
                 color_format=color_format,
             )
-        elif self.model_family == "deformable_detr":
+        elif self.model_family in {"deformable_detr", "dinodetr"}:
             tensor, img, size = self._preprocess_deformable_detr(
                 image, effective_imgsz, color_format
             )
@@ -1165,7 +1166,7 @@ class BaseBackend(ABC):
                 max_det=max_det,
             )
             return boxes, scores, cls, None
-        elif self.model_family == "deformable_detr":
+        elif self.model_family in {"deformable_detr", "dinodetr"}:
             boxes, scores, cls = self._parse_deformable_detr(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
@@ -3410,6 +3411,7 @@ class BaseBackend(ABC):
             "deim": DEIMValPreprocessor,
             "deformable_detr": DeformableDETRValPreprocessor,
             "detr": DETRValPreprocessor,
+            "dinodetr": DeformableDETRValPreprocessor,
             "dfine": DFINEValPreprocessor,
             "ec": ECValPreprocessor,
             "lwdetr": LWDETRValPreprocessor,

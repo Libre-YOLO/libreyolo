@@ -30,6 +30,12 @@ before 1.4.0 are documented in the
   have exact native head and detection parity against the pinned BSD-3-Clause
   source. Batch-one ONNX export supports dynamic aspect-preserved inputs with
   class-aware NMS in the unified backend; `train()` raises
+- LibreDINODETR, an inference-only museum port of IDEA's Apache-2.0 DINO
+  detector in the three released COCO variants (`r50`, `r50s5`, `swinl`).
+  Native outputs are bit-exact against the pinned standalone source for every
+  checkpoint, and fixed-canvas ONNX Runtime preserves raw and public prediction
+  parity. Contrastive-denoising training is not implemented and `train()`
+  raises `NotImplementedError`.
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr

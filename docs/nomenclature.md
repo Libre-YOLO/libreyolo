@@ -79,6 +79,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `ssd`       | `LibreSSD`       | All-caps acronym; fixed-300 inference-only single-shot detector |
 | `mask_rcnn` | `LibreMaskRCNN` | Upstream acronym and underscore retained in the family id; canonical filename drops punctuation; inference-only two-stage detection and instance segmentation |
 | `deformable_detr` | `LibreDeformableDETR` | Upstream name rendered as `DeformableDETR`; the family id retains the separator |
+| `dinodetr`  | `LibreDINODETR`  | Upstream DINO detector rendered as `DINO-DETR`; the explicit `detr` suffix avoids collision with DINOv2 and Grounding DINO |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
 | `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic + instance + panoptic segmentation transformer family |
 | `pidnet`    | `LibrePIDNet`   | All-caps acronym + `Net` brand casing - semantic-only real-time family |
@@ -183,6 +184,7 @@ ships:
 | `ssd`       | `300` (SSD300 VGG16; input is always fixed at 300 x 300) |
 | `mask_rcnn` | `r50` (ResNet-50 FPN v2 enhanced recipe; public input size 800) |
 | `deformable_detr` | `r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage` (single-scale, single-scale DC5, multi-scale base, iterative refinement, and refinement plus two-stage; all fixed at 800) |
+| `dinodetr`  | `r50`, `r50s5`, `swinl` (ResNet-50 four-scale, ResNet-50 five-scale, and Swin-L five-scale; all fixed at 800) |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
 | `eomt`      | `s`, `b`, `l` — semantic: ADE20K 150-class at 512 (l only); segment: COCO 80-class at 640 (l only, also 1280); panoptic: COCO 133-class at 640 (s/b/l) |
 | `pidnet`    | `s`, `m`, `l` (PIDNet Small/Medium/Large, Cityscapes checkpoints at 1024) |

@@ -21,6 +21,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | dexined | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | dfine | detect | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ |  | exp | ✓ |  |  |  |  |
+| dinodetr | detect | ✓ | exp | exp | exp | exp |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | dinov2 | classify | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | exp |
 | dinov2 | embed | ✓ | ✓ | exp | exp | exp |  | ✓ |  |  |
@@ -151,6 +152,7 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `detect` / `openvino`: fixed export canvas
 - `dfine` / `detect` / `coreai`: fixed export canvas; trained LibreDFINEn weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `dfine` / `segment` / `openvino`: fixed export canvas
+- `dinodetr` / `detect` / `onnx`: FP32, fixed square input, ONNX opset 17
 - `dinov2` / `semantic` / `onnx`: fixed 518x518 input
 - `dinov2` / `semantic` / `torchscript`: fixed 518x518 input
 - `dinov2` / `semantic` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 518x518 input shape
@@ -401,6 +403,10 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `segment` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
+- `dinodetr` / `detect` / `ncnn`: NCNN export is not supported for DINO-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
+- `dinodetr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `dinodetr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `dinodetr` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `dinov2` / `semantic` / `ncnn`: PNNX 20260526 cannot lower the DINOv2 attention graph's batch-axis broadcasts and leaves an unsupported pnnx.Expression node.
 - `dinov2` / `semantic` / `tflite`: onnx2tf 2.6.7 flatbuffer-direct lowering cannot lower the backbone's cubic Resize because its input C/H/W signature remains dynamic.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
