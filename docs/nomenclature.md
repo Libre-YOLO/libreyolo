@@ -48,8 +48,9 @@ Libre<FAMILY><size>[-<task>].pt
 ## Family prefixes
 
 The model families registered into the model factory (the VLM tier is a
-separate category, covered in the note below). Most are detectors; `pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
-instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
+separate category, covered in the note below). Most are detectors; `deeplabv3`,
+`pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports
+semantic, instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 `efficientnetv2` / `resnet` families are classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
@@ -75,6 +76,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
 | `lwdetr`    | `LibreLWDETR`   | All-caps acronym (hyphen dropped from `LW-DETR`) |
 | `faster_rcnn` | `LibreFasterRCNN` | Upstream acronym and underscore retained in the family id; canonical filename drops punctuation; inference-only two-stage detector |
+| `deeplabv3` | `LibreDeepLabv3` | Upstream brand casing preserved; inference-only semantic family whose canonical filenames require `-sem` |
 | `deformable_detr` | `LibreDeformableDETR` | Upstream name rendered as `DeformableDETR`; the family id retains the separator |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
 | `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic + instance + panoptic segmentation transformer family |
@@ -175,6 +177,7 @@ ships:
 | `rfdetr`    | `n`, `s`, `m`, `l` |
 | `lwdetr`    | `t`, `s`, `m`, `l`, `x` (upstream tiny / small / medium / large / xlarge; all at 640, which must stay a multiple of 64) |
 | `faster_rcnn` | `n`, `s`, `m`, `l` (MobileNetV3 320-FPN / MobileNetV3 FPN / ResNet-50 FPN v1 / ResNet-50 FPN v2; public input sizes 320 / 800 / 800 / 800) |
+| `deeplabv3` | `r50`, `r101`, `mv3` (dilated ResNet-50 / ResNet-101 / MobileNetV3-Large; all use fixed 520x520 stretch deployment) |
 | `deformable_detr` | `r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage` (single-scale, single-scale DC5, multi-scale base, iterative refinement, and refinement plus two-stage; all fixed at 800) |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
 | `eomt`      | `s`, `b`, `l` — semantic: ADE20K 150-class at 512 (l only); segment: COCO 80-class at 640 (l only, also 1280); panoptic: COCO 133-class at 640 (s/b/l) |
@@ -415,6 +418,7 @@ Detector-factory family support follows:
 | `rtdetrv4`  | `("detect",)` (default)             | detect | detect-only |
 | `lwdetr`    | `("detect",)`                       | detect | detect-only; inference-only (no trainer, `train()` raises) |
 | `faster_rcnn` | `("detect",)`                     | detect | detect-only; inference-only native RPN + RoI graph; official COCO heads map sparse 91-way ids to contiguous COCO-80 |
+| `deeplabv3` | `("semantic",)`                    | semantic | background plus 20 VOC-named classes, trained on the matching COCO subset; fixed 520; inference + `val`; `train()` raises |
 | `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is gated experimental, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
@@ -520,6 +524,11 @@ LibreEoMTl-panoptic.pt     # EoMT-L, COCO 133-class panoptic (80 things + 53 stu
 LibrePIDNets-sem.pt        # PIDNet-S, Cityscapes 19-class semantic
 LibrePIDNetm-sem.pt        # PIDNet-M, Cityscapes 19-class semantic
 LibrePIDNetl-sem.pt        # PIDNet-L, Cityscapes 19-class semantic
+
+# deeplabv3 - COCO-trained semantic segmentation with VOC label names
+LibreDeepLabv3r50-sem.pt   # dilated ResNet-50, fixed 520
+LibreDeepLabv3r101-sem.pt  # dilated ResNet-101, fixed 520
+LibreDeepLabv3mv3-sem.pt   # dilated MobileNetV3-Large, fixed 520
 
 # segformer — MiT-b0..b5 ADE20K semantic segmentation; weights are
 # NON-COMMERCIAL (see the note above)

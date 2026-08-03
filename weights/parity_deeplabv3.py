@@ -63,8 +63,7 @@ def run_parity(
 ) -> None:
     if not torchvision.__version__.split("+", 1)[0].startswith("0.26.0"):
         raise RuntimeError(
-            "Parity is pinned to torchvision 0.26.0; got "
-            f"{torchvision.__version__}."
+            f"Parity is pinned to torchvision 0.26.0; got {torchvision.__version__}."
         )
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA parity requested but no CUDA device is available")
@@ -95,8 +94,7 @@ def run_parity(
         actual_sha256 = _sha256(checkpoint_path)
         if actual_sha256 != expected_sha256:
             raise ValueError(
-                f"{filename}: expected SHA-256 {expected_sha256}, "
-                f"got {actual_sha256}"
+                f"{filename}: expected SHA-256 {expected_sha256}, got {actual_sha256}"
             )
         upstream_state = torch.load(
             checkpoint_path, map_location="cpu", weights_only=True

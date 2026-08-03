@@ -69,9 +69,9 @@ class TestDeepLabv3Metadata:
         filename = f"LibreDeepLabv3{size}-sem.pt"
         assert LibreDeepLabv3.detect_size_from_filename(filename) == size
         assert LibreDeepLabv3.detect_task_from_filename(filename) == "semantic"
-        assert LibreDeepLabv3.detect_size_from_filename(
-            f"LibreDeepLabv3{size}.pt"
-        ) is None
+        assert (
+            LibreDeepLabv3.detect_size_from_filename(f"LibreDeepLabv3{size}.pt") is None
+        )
 
     def test_download_url_uses_canonical_repository(self):
         from libreyolo.models.deeplabv3.model import LibreDeepLabv3
@@ -89,9 +89,7 @@ class TestDeepLabv3Metadata:
             assert support.tier == "validated"
             assert support.constraint
         for format_name in ("executorch", "ncnn", "tflite", "coreml", "coreai"):
-            assert get_support("deeplabv3", "semantic", format_name).tier == (
-                "blocked"
-            )
+            assert get_support("deeplabv3", "semantic", format_name).tier == ("blocked")
 
 
 class TestDeepLabv3Conversion:
@@ -181,9 +179,7 @@ class TestDeepLabv3Inference:
 
         image = np.full((6, 8, 3), (255, 128, 0), dtype=np.uint8)
         chw, ratio = preprocess_numpy(image, (10, 20))
-        expected = (
-            np.asarray((1.0, 128 / 255.0, 0.0)) - IMAGENET_MEAN
-        ) / IMAGENET_STD
+        expected = (np.asarray((1.0, 128 / 255.0, 0.0)) - IMAGENET_MEAN) / IMAGENET_STD
 
         assert chw.shape == (3, 10, 20)
         assert ratio == 1.0

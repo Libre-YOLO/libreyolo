@@ -47,9 +47,7 @@ def is_upstream_deeplabv3_state_dict(state_dict: dict) -> bool:
     unrelated semantic families during global runtime auto-conversion.
     """
     keys = {key for key, _value in _normalized_items(state_dict)}
-    has_backbone = (
-        "backbone.conv1.weight" in keys or "backbone.0.0.weight" in keys
-    )
+    has_backbone = "backbone.conv1.weight" in keys or "backbone.0.0.weight" in keys
     return (
         has_backbone
         and _RUNTIME_FINGERPRINT.issubset(keys)

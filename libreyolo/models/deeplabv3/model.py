@@ -90,10 +90,7 @@ class LibreDeepLabv3(BaseModel):
             "classifier.0.project.0.weight",
             "classifier.4.weight",
         }.issubset(keys)
-        has_backbone = (
-            "backbone.conv1.weight" in keys
-            or "backbone.0.0.weight" in keys
-        )
+        has_backbone = "backbone.conv1.weight" in keys or "backbone.0.0.weight" in keys
         return has_aspp and has_backbone
 
     @classmethod
@@ -111,8 +108,7 @@ class LibreDeepLabv3(BaseModel):
         indices = {
             int(key[len(prefix) :].split(".", 1)[0])
             for key in weights_dict
-            if key.startswith(prefix)
-            and key[len(prefix) :].split(".", 1)[0].isdigit()
+            if key.startswith(prefix) and key[len(prefix) :].split(".", 1)[0].isdigit()
         }
         depth = len(indices)
         return {6: "r50", 23: "r101"}.get(depth)
@@ -180,7 +176,9 @@ class LibreDeepLabv3(BaseModel):
         color_format: str = "auto",
         input_size: int | tuple[int, int] | None = None,
     ) -> tuple[torch.Tensor, Image.Image, tuple[int, int], float]:
-        effective_size = input_size if input_size is not None else self._get_input_size()
+        effective_size = (
+            input_size if input_size is not None else self._get_input_size()
+        )
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
         chw, ratio = preprocess_numpy(np.asarray(img.convert("RGB")), effective_size)

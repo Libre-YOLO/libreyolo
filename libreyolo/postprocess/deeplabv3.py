@@ -27,8 +27,7 @@ def semantic_logits(
         logits = logits.unsqueeze(0)
     if logits.ndim != 4:
         raise ValueError(
-            "DeepLabv3 output must have shape [B, C, H, W], "
-            f"got {tuple(logits.shape)}."
+            f"DeepLabv3 output must have shape [B, C, H, W], got {tuple(logits.shape)}."
         )
 
     orig_w, orig_h = original_size

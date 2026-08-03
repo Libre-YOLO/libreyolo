@@ -49,9 +49,7 @@ def _sha256(path: Path) -> str:
 
 @pytest.mark.parametrize("size", tuple(CHECKPOINTS))
 @pytest.mark.parametrize("format_name", FORMATS)
-def test_official_checkpoint_export_runtime_parity(
-    tmp_path, size, format_name
-):
+def test_official_checkpoint_export_runtime_parity(tmp_path, size, format_name):
     if format_name == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
