@@ -631,6 +631,28 @@ license with every checkpoint, and repeat the caveat. The source distribution
 does not bundle the checkpoint files; conversion only adds metadata.
 
 --------------------------------------------------------------------
+TorchVision AlexNet (PyTorch contributors)
+--------------------------------------------------------------------
+Source: https://github.com/pytorch/vision
+Commit: 336d36e8db990a905498c73933e35231876e28bc
+Version: torchvision 0.26.0
+License: BSD-3-Clause
+Copyright (c) Soumith Chintala 2016
+Used for: the native inference-only AlexNet classifier in
+          libreyolo/models/alexnet/nn.py. The implementation retains the
+          pinned source's features/avgpool/classifier graph and state-dict
+          names; LibreYOLO supplies its factory, preprocessing, validation,
+          postprocessing, checkpoint metadata, and export surfaces.
+
+NOTE - code vs. weights: the upstream source code is BSD-3-Clause. The
+official ImageNet-1K checkpoint does not carry an explicit checkpoint-specific
+license. LibreYOLO's separate weight mirror applies BSD-3-Clause on a clearly
+disclosed implied basis, includes the verbatim license, and repeats
+torchvision's warning that pretrained-model terms may derive from training
+data. The source distribution does not bundle the checkpoint; conversion only
+adds metadata.
+
+--------------------------------------------------------------------
 NAFNet (Megvii Research)
 --------------------------------------------------------------------
 Source: https://github.com/megvii-research/NAFNet

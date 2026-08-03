@@ -609,16 +609,28 @@ _add(
     "validated",
     ("alexnet",),
     ("classify",),
-    ("onnx", "torchscript"),
+    ("onnx",),
     reason=(
-        "ONNX tests cover raw logits; ONNX Runtime and TorchScript tests cover "
-        "artifact reload, public probabilities, metadata, and top-1 parity."
+        "Tests cover raw logits plus ONNX Runtime artifact reload, public "
+        "probabilities, metadata, and top-1 parity."
     ),
     since="1.7",
     constraint=(
         "FP32 at the native 224x224 input resolution; ONNX supports a dynamic "
         "batch axis"
     ),
+)
+_add(
+    "validated",
+    ("alexnet",),
+    ("classify",),
+    ("torchscript",),
+    reason=(
+        "Tests cover TorchScript artifact reload, public probabilities, "
+        "metadata, and top-1 parity."
+    ),
+    since="1.7",
+    constraint="FP32 at the native 224x224 input resolution",
 )
 _add(
     "validated",

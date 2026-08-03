@@ -1,4 +1,22 @@
 {
+  "alexnet": {
+    "class": "libreyolo.models.alexnet.model.LibreAlexNet",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "b": 224
+    },
+    "default_imgsz": {
+      "b": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "birefnet": {
     "class": "libreyolo.models.birefnet.model.LibreBiRefNet",
     "tasks": [

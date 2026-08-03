@@ -63,6 +63,7 @@ file = name + ".pt"
 | ConvNeXt | `LibreConvNeXt` | `LibreConvNeXtt-cls.pt` |
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
+| AlexNet | `LibreAlexNet` | `LibreAlexNetb-cls.pt` (torchvision museum classifier; BSD-3-Clause implied for the checkpoint) |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 | SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
@@ -193,6 +194,8 @@ LibreEfficientNetV2b2-cls.pt, LibreEfficientNetV2b3-cls.pt,
 LibreResNet18-cls.pt, LibreResNet34-cls.pt,
 LibreResNet50-cls.pt, LibreResNet101-cls.pt,
 
+LibreAlexNetb-cls.pt,
+
 LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 
 LibreSigLIP2b16-cls.pt, LibreSigLIP2so400m-cls.pt,
@@ -280,8 +283,11 @@ appears in the upstream model's "Quantizations" sidebar on Hugging Face.
 
 Classification (`-cls`) repos use `pipeline_tag: image-classification`,
 `datasets: imagenet-1k`, and **omit the Benchmarks section** (Vision Analysis
-tracks detection only). The architecture is a native timm-derived port; weights
-are Apache-2.0 ImageNet-1k and load bit-identically (`max_abs_diff == 0`).
+tracks detection only). Record each classifier's actual upstream and license;
+do not assume they are all timm-derived or Apache-2.0. AlexNet is the
+torchvision BSD-3-Clause graph, and its checkpoint uses the explicitly
+disclosed implied-BSD basis plus the torchvision/ImageNet terms caveat. Native
+classifier parity remains a `max_abs_diff == 0` gate.
 
 LibreCLIP is the zero-shot, open-vocabulary classifier (CLIP). Its HF cards use
 `pipeline_tag: zero-shot-image-classification`, **must document the LAION-2B
