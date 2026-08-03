@@ -45,7 +45,10 @@ nothing changes (no network access, portable paths everywhere). Set
 `LIBREYOLO_HUB_KERNELS=0` to disable them without uninstalling. Nothing is
 vendored; artifacts are fetched and cached by the `kernels` package, and a
 kernel that fails to load or run disables itself for the process and falls
-back to the portable path with one warning.
+back to the portable path with one warning. Every hub kernel is pinned to an
+audited commit revision in its provider module — a moved branch on the Hub
+can never change the binary that runs in-process. Bumping a pin requires a
+GPU parity run of the provider's `*_matches_portable_on_cuda` test.
 
 Current hub-backed slot:
 

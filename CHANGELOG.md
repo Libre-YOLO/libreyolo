@@ -23,7 +23,9 @@ before 1.4.0 are documented in the
   instead of the portable `grid_sample` path. Installing the extra is the
   opt-in; `LIBREYOLO_HUB_KERNELS=0` disables it. Eager CUDA fp32 only;
   exports always keep the portable path; load or runtime failures fall back
-  with one warning.
+  with one warning. The Hub artifact is pinned to an audited commit
+  revision, and a CUDA-only parity test
+  (`test_hub_matches_portable_on_cuda`) gates revision bumps.
 
 - `val_loss=True` extended from the `g0` flagships to **every trainable
   family** (`g0`, `g1` and `g2`), across four tasks rather than detection

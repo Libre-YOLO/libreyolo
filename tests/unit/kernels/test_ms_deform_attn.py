@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 import torch
 
@@ -13,6 +15,9 @@ from libreyolo.kernels.attention.ms_deform_attn import (
 )
 from libreyolo.models.deformable_detr.ms_deform_attn import (
     ms_deform_attn_core_pytorch as classic_core,
+)
+from libreyolo.models.rfdetr.transformer import (
+    MSDeformAttn as RFDETRMSDeformAttn,
 )
 from libreyolo.models.rfdetr.transformer import (
     ms_deform_attn_core_pytorch as rfdetr_core,
@@ -120,29 +125,8 @@ def test_classic_call_site_routes_through_slot(monkeypatch):
     ]
 
 
-def test_rfdetr_call_site_adapts_layout(monkeypatch):
-    recorded = []
-    _register_mock(monkeypatch, recorded)
-    value, shapes, locations, weights = _classic_inputs()
-    rfdetr_value = value.permute(0, 2, 3, 1).contiguous()
-    rfdetr_weights = weights.flatten(-2)
-    out = rfdetr_core(rfdetr_value, shapes, locations, rfdetr_weights)
-    assert torch.equal(
-        out, torch.full((BATCH, LEN_Q, HEADS * CHANNELS), 7.0)
-    )
-    # The adapter must hand the slot the classic layout.
-    assert recorded == [
-        (
-            (BATCH, LEN_IN, HEADS, CHANNELS),
-            (LEVELS, 2),
-            (BATCH, LEN_Q, HEADS, LEVELS, POINTS, 2),
-            (BATCH, LEN_Q, HEADS, LEVELS, POINTS),
-        )
-    ]
-
-
-def test_rfdetr_adapter_is_numerically_equivalent():
-    """The rfdetr layout adaptation must express the same attention problem."""
+def test_rfdetr_layout_is_numerically_equivalent():
+    """The rfdetr core's layout must express the same attention problem."""
     value, shapes, locations, weights = _classic_inputs()
     classic_out = classic_core(value, shapes, locations, weights)
     rfdetr_out = rfdetr_core(
@@ -154,15 +138,146 @@ def test_rfdetr_adapter_is_numerically_equivalent():
     torch.testing.assert_close(rfdetr_out, classic_out, rtol=1e-5, atol=1e-5)
 
 
-def test_export_hw_path_skips_slot(monkeypatch):
+D_MODEL = HEADS * CHANNELS
+
+
+def _rfdetr_attention_module():
+    torch.manual_seed(0)
+    return RFDETRMSDeformAttn(
+        d_model=D_MODEL, n_levels=LEVELS, n_heads=HEADS, n_points=POINTS
+    )
+
+
+def _rfdetr_attention_inputs():
+    generator = torch.Generator().manual_seed(1)
+    query = torch.randn(BATCH, LEN_Q, D_MODEL, generator=generator)
+    reference_points = torch.rand(BATCH, LEN_Q, LEVELS, 2, generator=generator)
+    input_flatten = torch.randn(BATCH, LEN_IN, D_MODEL, generator=generator)
+    spatial_shapes = torch.tensor(SHAPES, dtype=torch.int64)
+    return query, reference_points, input_flatten, spatial_shapes
+
+
+def test_rfdetr_attention_forward_routes_through_slot(monkeypatch):
+    """The real RF-DETR attention module must consult the slot in eager mode.
+
+    This is the regression test for the slot being wired at a call site the
+    model actually reaches: RF-DETR always threads ``input_spatial_shapes_hw``
+    through its decoder, so gating the slot on that argument being None
+    (an earlier revision of this PR) made the kernel unreachable.
+    """
     recorded = []
     _register_mock(monkeypatch, recorded)
-    value, shapes, locations, weights = _classic_inputs()
-    rfdetr_core(
-        value.permute(0, 2, 3, 1).contiguous(),
-        shapes,
-        locations,
-        weights.flatten(-2),
-        value_spatial_shapes_hw=SHAPES,
+    module = _rfdetr_attention_module()
+    query, reference_points, input_flatten, spatial_shapes = (
+        _rfdetr_attention_inputs()
+    )
+    out = module(
+        query,
+        reference_points,
+        input_flatten,
+        spatial_shapes,
+        level_start_index(spatial_shapes),
+        input_spatial_shapes_hw=SHAPES,
+    )
+    # The slot receives the classic Deformable-DETR layout...
+    assert recorded == [
+        (
+            (BATCH, LEN_IN, HEADS, CHANNELS),
+            (LEVELS, 2),
+            (BATCH, LEN_Q, HEADS, LEVELS, POINTS, 2),
+            (BATCH, LEN_Q, HEADS, LEVELS, POINTS),
+        )
+    ]
+    # ...and its output feeds output_proj: mock returns all-7s, so the
+    # module output equals output_proj of an all-7s tensor.
+    expected = module.output_proj(
+        torch.full((BATCH, LEN_Q, D_MODEL), 7.0)
+    )
+    torch.testing.assert_close(out, expected)
+
+
+def test_rfdetr_attention_export_mode_skips_slot(monkeypatch):
+    recorded = []
+    _register_mock(monkeypatch, recorded)
+    module = _rfdetr_attention_module()
+    module.export()
+    query, reference_points, input_flatten, spatial_shapes = (
+        _rfdetr_attention_inputs()
+    )
+    module(
+        query,
+        reference_points,
+        input_flatten,
+        spatial_shapes,
+        level_start_index(spatial_shapes),
+        input_spatial_shapes_hw=SHAPES,
     )
     assert recorded == []
+
+
+def test_rfdetr_attention_slot_matches_portable(monkeypatch):
+    """A slot impl wrapping the portable core must reproduce module output."""
+
+    def portable_impl(value, spatial_shapes, sampling_locations, attention_weights):
+        # Wrap the rfdetr portable core (slot-free) rather than classic_core,
+        # which consults the slot itself and would recurse into this impl.
+        return rfdetr_core(
+            value.permute(0, 2, 3, 1).contiguous(),
+            spatial_shapes,
+            sampling_locations,
+            attention_weights.flatten(-2),
+        )
+
+    module = _rfdetr_attention_module()
+    query, reference_points, input_flatten, spatial_shapes = (
+        _rfdetr_attention_inputs()
+    )
+    args = (
+        query,
+        reference_points,
+        input_flatten,
+        spatial_shapes,
+        level_start_index(spatial_shapes),
+    )
+    baseline = module(*args, input_spatial_shapes_hw=SHAPES)
+
+    kernels.register("ms_deform_attn", portable_impl, name="mock")
+    monkeypatch.setenv("LIBREYOLO_KERNELS", "mock")
+    kernels.clear_cache()
+    routed = module(*args, input_spatial_shapes_hw=SHAPES)
+    torch.testing.assert_close(routed, baseline, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or importlib.util.find_spec("kernels") is None,
+    reason="needs CUDA and the `kernels` package (libreyolo[hub-kernels])",
+)
+def test_hub_matches_portable_on_cuda():
+    """Forward/backward parity of the pinned Hub kernel vs the portable core.
+
+    This is the GPU smoke for the provider: run it on any CUDA box with the
+    ``hub-kernels`` extra installed before bumping ``_HUB_REVISION``.
+    """
+    value, shapes, locations, weights = _classic_inputs()
+    value = value.cuda().requires_grad_(True)
+    shapes = shapes.cuda()
+    locations = locations.cuda().requires_grad_(True)
+    weights = weights.cuda().requires_grad_(True)
+
+    hub_out = hub_ms_deform_attn(value, shapes, locations, weights)
+    if hub_out is None:
+        pytest.skip("hub kernel unavailable on this box (load failed)")
+    hub_out.sum().backward()
+    hub_grads = (value.grad.clone(), locations.grad.clone(), weights.grad.clone())
+
+    value.grad = locations.grad = weights.grad = None
+    # classic_core consults the slot itself; the autouse fixture pins
+    # LIBREYOLO_HUB_KERNELS=0 for this file, so it runs the portable path.
+    ref_out = classic_core(value, shapes, locations, weights)
+    ref_out.sum().backward()
+    ref_grads = (value.grad, locations.grad, weights.grad)
+
+    torch.testing.assert_close(hub_out, ref_out, rtol=1e-4, atol=1e-5)
+    for hub_grad, ref_grad in zip(hub_grads, ref_grads):
+        torch.testing.assert_close(hub_grad, ref_grad, rtol=1e-3, atol=1e-4)
