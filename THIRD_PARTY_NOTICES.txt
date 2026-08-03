@@ -541,6 +541,12 @@ Used for: the standalone inference-only LibreDeformableDETR family
           converted from the Apache-2.0 SenseTime Hugging Face mirrors and
           rehosted at LibreYOLO/LibreDeformableDETR{r50ss,r50ssdc5,r50,
           r50refine,r50twostage}; see docs/provenance/deformable_detr.md.
+          The autograd bridge in
+          libreyolo/kernels/attention/ms_deform_attn.py follows the upstream
+          MSDeformAttnFunction interface; the compiled CUDA kernel itself is
+          NOT vendored. It is fetched at runtime, opt-in only
+          (LIBREYOLO_HUB_KERNELS=1), from the Apache-2.0 Hub repository
+          kernels-community/deformable-detr via the `kernels` package.
 
 --------------------------------------------------------------------
 Swin Transformer (Microsoft)

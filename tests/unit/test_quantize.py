@@ -311,7 +311,10 @@ def test_kernel_registry_reference_forced_by_env(monkeypatch):
 
 
 def test_kernel_registry_active_allows_lazy_registration(monkeypatch):
-    from libreyolo.quant import kernels
+    # Patch the real registry module: the libreyolo.quant.kernels shim
+    # forwards attribute reads but is a distinct module object, so setattr
+    # on it would not reach the registry internals.
+    from libreyolo import kernels
 
     loaded = False
 

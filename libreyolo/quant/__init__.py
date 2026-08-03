@@ -31,6 +31,10 @@ from .modules import (
     QuantLinear,
 )
 
+# Back-compat alias: the kernel registry moved to libreyolo/kernels/, but
+# `libreyolo.quant.kernels.active()` stays a documented entry point.
+from . import kernels  # noqa: E402,F401
+
 __all__ = [
     "DEFAULT_CALIB_DATA",
     "QUANT_SCHEMA_VERSION",

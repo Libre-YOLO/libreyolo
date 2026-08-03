@@ -9,6 +9,21 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- Library-wide kernel registry at `libreyolo/kernels/` (lifted from
+  `libreyolo/quant/kernels/`), organized by purpose: `quant/simulate/`
+  (fake-quant Triton, any device, STE backward), `quant/execute/`
+  (finalized-only fp8 GEMM path and unpack kernels), and `attention/`.
+  `LIBREYOLO_KERNELS` replaces `LIBREYOLO_QUANT_KERNELS` (still honored),
+  and `libreyolo.quant.kernels` remains a working alias. See
+  `docs/kernels.md`.
+- Optional accelerated multi-scale deformable attention (`ms_deform_attn`
+  slot): with `pip install libreyolo[hub-kernels]` and
+  `LIBREYOLO_HUB_KERNELS=1`, RF-DETR, LibreDeformableDETR, and
+  LibreDINO-DETR run the compiled Apache-2.0 CUDA kernel from
+  `kernels-community/deformable-detr` (forward and backward) instead of the
+  portable `grid_sample` path. Off by default; eager CUDA fp32 only; exports
+  always keep the portable path.
+
 - `val_loss=True` extended from the `g0` flagships to **every trainable
   family** (`g0`, `g1` and `g2`), across four tasks rather than detection
   alone:

@@ -9,8 +9,8 @@ import torch
 import triton
 import triton.language as tl
 
+from libreyolo import kernels
 from libreyolo.quant import fake_quant as _reference
-from libreyolo.quant import kernels
 
 from .nvfp4_weight import _launch as _quantize_with_amax
 from .nvfp4_weight import autotune_cache as _quantize_autotune_cache

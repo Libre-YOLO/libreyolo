@@ -23,6 +23,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from torch.nn.init import constant_, xavier_uniform_
 
+from ...kernels.attention.ms_deform_attn import maybe_ms_deform_attn
 from .keypoints import KEYPOINT_PRED_DIM, ConditionalQueryInitializer
 from .tensors import _bilinear_grid_sample
 
@@ -154,7 +155,26 @@ def ms_deform_attn_core_pytorch(
     attention_weights: torch.Tensor,
     value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
 ) -> torch.Tensor:
-    """Pure-PyTorch fallback for the deformable-attention core."""
+    """Portable deformable-attention core (upstream-parity fallback).
+
+    When the optional accelerated ``ms_deform_attn`` kernel slot resolves it
+    takes over; export callers pass ``value_spatial_shapes_hw`` and always
+    keep the portable path below.
+    """
+    if value_spatial_shapes_hw is None:
+        weights = attention_weights
+        if weights.dim() == 4:
+            # The caller flattens (levels, points); the slot takes them split.
+            weights = weights.unflatten(-1, sampling_locations.shape[-3:-1])
+        accelerated = maybe_ms_deform_attn(
+            # (bs, heads, c, Len_in) -> the slot's (bs, Len_in, heads, c).
+            value.permute(0, 3, 1, 2),
+            value_spatial_shapes,
+            sampling_locations,
+            weights,
+        )
+        if accelerated is not None:
+            return accelerated
     batch_size, n_heads, head_dim, _ = value.shape
     _, len_query, n_heads, num_levels, num_points, _ = sampling_locations.shape
     # Use Python int pairs when available (required for torch.export compatibility,

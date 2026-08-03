@@ -15,6 +15,8 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from torch.nn.init import constant_, xavier_uniform_
 
+from ...kernels.attention.ms_deform_attn import maybe_ms_deform_attn
+
 
 def _is_power_of_2(value: int) -> bool:
     if not isinstance(value, int) or value < 0:
@@ -28,7 +30,17 @@ def ms_deform_attn_core_pytorch(
     sampling_locations: Tensor,
     attention_weights: Tensor,
 ) -> Tensor:
-    """Pure-PyTorch deformable attention core used on every device/backend."""
+    """Portable deformable attention core used on every device/backend.
+
+    When the optional accelerated ``ms_deform_attn`` kernel slot resolves
+    (see ``libreyolo/kernels/attention/ms_deform_attn.py``) it takes over;
+    the grid_sample path below stays the default and the export path.
+    """
+    accelerated = maybe_ms_deform_attn(
+        value, value_spatial_shapes, sampling_locations, attention_weights
+    )
+    if accelerated is not None:
+        return accelerated
     batch, _, heads, channels = value.shape
     _, queries, _, levels, points, _ = sampling_locations.shape
     split_sizes = [height * width for height, width in value_spatial_shapes]

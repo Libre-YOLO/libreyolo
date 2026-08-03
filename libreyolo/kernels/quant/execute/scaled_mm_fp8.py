@@ -30,7 +30,7 @@ from typing import Optional
 
 import torch
 
-from . import register
+from libreyolo.kernels import register
 
 _E4M3_MAX = 448.0
 
@@ -90,7 +90,7 @@ def make_aux(act_scale, w_scale, bias, device, *, tensorwise: bool = False):
 def _cast_static_fp8(x: torch.Tensor, inv: torch.Tensor) -> torch.Tensor:
     # The optional Triton implementation fuses multiply, saturation, and cast
     # into one memory pass. Stock torch remains the portable fallback.
-    from . import resolve
+    from libreyolo.kernels import resolve
 
     impl = resolve("fp8_cast_static")
     if impl is not None:
@@ -129,7 +129,7 @@ def fp8_linear_scaled_mm(
         x2 = x2.to(torch.float16)
 
     x8 = _cast_static_fp8(x2, inv)
-    from . import resolve
+    from libreyolo.kernels import resolve
 
     epilogue = resolve("fp8_perchannel_epilogue")
     try:

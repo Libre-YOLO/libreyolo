@@ -9,7 +9,7 @@ import torch
 import triton
 import triton.language as tl
 
-from libreyolo.quant import kernels
+from libreyolo import kernels
 from libreyolo.quant import packing as _reference
 
 

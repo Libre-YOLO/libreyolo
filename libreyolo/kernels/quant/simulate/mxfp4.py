@@ -10,8 +10,8 @@ import triton
 import triton.language as tl
 from triton.language.extra import libdevice
 
+from libreyolo import kernels
 from libreyolo.quant import fake_quant as _reference
-from libreyolo.quant import kernels
 
 
 _MXFP4_CONFIGS = (
