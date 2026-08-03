@@ -232,7 +232,7 @@ make test_nightly
 make test_e2e E2E_TIMEOUT=1800
 ```
 
-V2.2 contract:
+V2.3 contract:
 
 - `general_nightly`: one smallest native inference case for every public model
   family, including inference-only museum families, that has a public

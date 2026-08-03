@@ -59,6 +59,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | qwen3vl | detect |  |  |  |  |  |  |  |  |  |
 | realesrgan | restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | resnet | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
+| retinanet | detect | ✓ |  |  |  |  |  |  |  |  |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | exp | ✓ |
 | rfdetr | segment | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
@@ -235,6 +236,7 @@ A check mark applies only under any constraint listed here.
 - `resnet` / `classify` / `openvino`: fixed family-native input resolution
 - `resnet` / `classify` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; two-input raw parity, factory reload, metadata, and public predict parity
 - `resnet` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `retinanet` / `detect` / `onnx`: ONNX Runtime, FP32, opset 13, batch 1, dynamic preprocessed H/W; class-aware NMS runs in the LibreYOLO backend
 - `rfdetr` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `rfdetr` / `detect` / `coreai`: fixed export canvas; trained LibreRFDETRn weights are covered on macOS 27 against the graph the exporter itself prepares, using direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin. Conversion needed _rebake_rfdetr_pos_embed in export/coreai.py: the backbone bakes its position embedding for its configured 384 canvas, so exporting at any other size left an antialiased bicubic in the graph and the converter has no lowering for aten._upsample_bicubic2d_aa. The rebake re-runs the model's OWN baking path for the actual canvas, so the interpolation happens eagerly, outside the graph, computing exactly what it computed before. NOTE the reference. This family is verified against the exporter's prepared graph, not against ONNX, and the difference is not a detail: at a 640 canvas the rfdetr ONNX artifact disagrees with that same prepared graph by 9.3e-01. Core AI's rebake preserves the antialiased resize the eager model performs, whereas the ONNX path disables antialiasing (the model checks torch.onnx.is_in_onnx_export). Which artifact is right is an ONNX question and is not settled here, but ONNX cannot be used as the reference for this family at a non-native canvas.
 - `rfdetr` / `segment` / `onnx`: fixed task-native input resolution
@@ -610,6 +612,14 @@ A check mark applies only under any constraint listed here.
 - `qwen3vl` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `realesrgan` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `resnet` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `retinanet` / `detect` / `torchscript`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `executorch`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `tensorrt`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `openvino`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `ncnn`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `tflite`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `coreml`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `coreai`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
 - `rfdetr` / `detect` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `detect` / `tflite`: onnx2tf emits a flatbuffer at the native 384x384 canvas, but LiteRT cannot allocate it because STRIDED_SLICE receives an input above its supported 5-D rank.
 - `rfdetr` / `segment` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.

@@ -25,6 +25,11 @@ before 1.4.0 are documented in the
   patch-16 tiny/small/base/large sizes at 224px. Native pretrained logits are
   bit-exact against the pinned Apache-2.0 timm AugReg checkpoints for all four
   sizes, with top-1/top-5 validation and ONNX Runtime prediction parity
+- LibreRetinaNet, an inference-only torchvision RetinaNet port in ResNet-50
+  FPN v1 and v2 variants (`r50`, `r50v2`). Both official COCO checkpoints
+  have exact native head and detection parity against the pinned BSD-3-Clause
+  source. Batch-one ONNX export supports dynamic aspect-preserved inputs with
+  class-aware NMS in the unified backend; `train()` raises
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr

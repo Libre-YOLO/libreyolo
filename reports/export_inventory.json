@@ -991,6 +991,26 @@
     "available": true,
     "group": "g2"
   },
+  "retinanet": {
+    "class": "libreyolo.models.retinanet.model.LibreRetinaNet",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r50": 800,
+      "r50v2": 800
+    },
+    "default_imgsz": {
+      "r50": 800,
+      "r50v2": 800
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "rfdetr": {
     "class": "libreyolo.models.rfdetr.model.LibreRFDETR",
     "tasks": [
