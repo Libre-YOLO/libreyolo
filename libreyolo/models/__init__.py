@@ -119,6 +119,7 @@ from .vit.model import LibreViT  # noqa: E402  (classify-only; top-level classic
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .deit.model import LibreDeiT  # noqa: E402  (classify-only museum family; exact ViT geometry)
+from .swin.model import LibreSwin  # noqa: E402  (classify-only; V1 window-bias signature rejects SwinV2/backbone-only checkpoints)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
 from .vgg.model import LibreVGG  # noqa: E402  (classify-only; exact 3x3 stem + FC shape signature)
 from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
@@ -791,6 +792,7 @@ __all__ = [
     "LibreViT",
     "LibreMobileNetV4",
     "LibreConvNeXt",
+    "LibreSwin",
     "LibreEfficientNetV2",
     "LibreVGG",
     "LibreResNet",

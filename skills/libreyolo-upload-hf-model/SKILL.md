@@ -74,6 +74,7 @@ file = name + ".pt"
 | ViT | `LibreViT` | `LibreViTti-cls.pt` (classic patch-16 AugReg classifier; Apache-2.0 code + weights; inference-only) |
 | AlexNet | `LibreAlexNet` | `LibreAlexNetb-cls.pt` (torchvision museum classifier; BSD-3-Clause implied for the checkpoint) |
 | VGG | `LibreVGG` | `LibreVGG16-cls.pt` |
+| Swin | `LibreSwin` | `LibreSwint-cls.pt` (Swin V1; MIT weights; inference-only) |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 | SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
@@ -220,6 +221,8 @@ LibreViTb-cls.pt, LibreViTl-cls.pt,
 LibreAlexNetb-cls.pt,
 LibreVGG16-cls.pt, LibreVGG19-cls.pt,
 LibreVGG16bn-cls.pt, LibreVGG19bn-cls.pt,
+LibreSwint-cls.pt, LibreSwins-cls.pt,
+LibreSwinb-cls.pt, LibreSwinl-cls.pt,
 
 LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 

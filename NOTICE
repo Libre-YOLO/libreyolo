@@ -128,6 +128,20 @@ ResNet / timm (Apache License 2.0)
     naming mirrors timm/torchvision so weights load unchanged and inference is
     bit-identical.
 
+Swin Transformer V1 / timm (Apache-2.0 code + MIT weights)
+    Path:    libreyolo/models/swin/
+    License: libreyolo/models/swin/NOTICE
+    Source:  https://github.com/huggingface/pytorch-image-models
+             https://github.com/microsoft/Swin-Transformer
+             https://github.com/SwinTransformer/storage
+
+    The shared Swin V1 tower is a native implementation derived from timm
+    v1.0.28 (Apache-2.0). The standalone classifier integration is original
+    LibreYOLO work and preserves timm parameter names for strict, bit-exact
+    loading. The four released patch-4/window-7 Microsoft checkpoints are MIT;
+    conversion retains learned tensors and adds only LibreYOLO metadata and
+    canonical ImageNet-1k class names.
+
 OMDet-Turbo / Transformers (Apache License 2.0)
     Path:    libreyolo/models/openvocab/omdet_turbo.py
     License: licenses/Apache-2.0.txt

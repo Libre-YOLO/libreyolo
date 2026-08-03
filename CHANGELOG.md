@@ -64,6 +64,10 @@ before 1.4.0 are documented in the
   OpenVINO, and TensorRT backend parity is verified for VGG-16. The
   BSD-3-Clause code attribution and pretrained-weight caveat ship with the
   family, and `train()` raises `NotImplementedError`.
+- LibreSwin, an inference-only Swin Transformer V1 image-classification family
+  in Tiny, Small, Base, and Large sizes at 224px. All four released ImageNet-1k
+  variants are bit-exact against the pinned timm reference, and trained
+  prediction parity is verified for ONNX, TorchScript, OpenVINO, and TensorRT
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr

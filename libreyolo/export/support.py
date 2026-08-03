@@ -694,6 +694,19 @@ _add(
 )
 _add(
     "validated",
+    ("swin",),
+    ("classify",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The released Tiny ImageNet checkpoint is covered by artifact reload, "
+        "trained-logit probability parity, metadata, and public top-1 parity "
+        "in tests/e2e/test_swin_export.py."
+    ),
+    since="1.6",
+    constraint="Swin V1 at its fixed 224x224 native input resolution",
+)
+_add(
+    "validated",
     ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
     ("classify",),
     ("openvino",),
@@ -711,6 +724,19 @@ _add(
     ),
     since="1.5",
     constraint="OpenVINO 2026.2 CPU FP32 with fixed 224x224 input",
+)
+_add(
+    "validated",
+    ("swin",),
+    ("classify",),
+    ("openvino",),
+    reason=(
+        "The released Tiny ImageNet checkpoint is covered by FP32 OpenVINO IR "
+        "reload, trained probability cosine parity, metadata, and public "
+        "top-1 parity in tests/e2e/test_swin_export.py."
+    ),
+    since="1.6",
+    constraint="FP32 with a fixed 224x224 input resolution",
 )
 _add(
     "validated",
@@ -759,6 +785,19 @@ _add(
     ),
     since="1.5",
     constraint="FP32, batch 1, fixed 224x224 input",
+)
+_add(
+    "validated",
+    ("swin",),
+    ("classify",),
+    ("tensorrt",),
+    reason=(
+        "The released Tiny ImageNet checkpoint is covered by FP32 TensorRT "
+        "engine reload, trained probability cosine parity, metadata, and "
+        "public top-1 parity in tests/e2e/test_swin_export.py."
+    ),
+    since="1.6",
+    constraint="FP32, batch 1, and a fixed 224x224 input resolution",
 )
 _add(
     "validated",

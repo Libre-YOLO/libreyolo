@@ -51,7 +51,7 @@ The model families registered into the model factory (the VLM tier is a
 separate category, covered in the note below). Most are detectors; `fcn`,
 `pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
 instance, and panoptic segmentation; the `alexnet` / `deit` / `mobilenetv4` /
-`convnext` / `efficientnetv2` / `resnet` / `vgg` / `vit` families are
+`convnext` / `efficientnetv2` / `resnet` / `swin` / `vgg` / `vit` families are
 classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
@@ -102,6 +102,7 @@ classify-only:
 | `vit`       | `LibreViT`       | All-caps acronym (`ViT` classic Vision Transformer) — inference-only classifier |
 | `alexnet`   | `LibreAlexNet`   | CamelCase preserved (`AlexNet` brand casing) — inference-only museum classifier |
 | `vgg`       | `LibreVGG`       | All-caps acronym (`VGG`); classify-only, inference-only family |
+| `swin`      | `LibreSwin`      | Upstream brand casing preserved (`Swin Transformer V1`) — classify-only and inference-only |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot classify + image/text embed) — inference-only |
 | `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot classify + image/text embed); inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
@@ -213,6 +214,7 @@ ships:
 | `vit`       | `ti`, `s`, `b`, `l` (classic patch-16 Tiny/Small/Base/Large; all at 224) |
 | `alexnet`   | `b` (the single torchvision ImageNet-1K graph; fixed 224 input) |
 | `vgg`       | `16`, `19`, `16bn`, `19bn` (VGG depth plus optional batch normalization; all fixed 224) |
+| `swin`      | `t`, `s`, `b`, `l` (Swin V1 Tiny/Small/Base/Large; patch 4, window 7, all at 224) |
 | `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models). Weight variants select the degradation: `LibreNAFNetl-restore.pt` (GoPro deblur) and `LibreNAFNetl-restore-sidd.pt` (SIDD denoise, the model behind the `denoise` alias) |
 | `realesrgan` | `x4`, `x2`, `x4t` (size code encodes scale + tier: `x4` = RealESRGAN_x4plus RRDBNet 4x quality default, `x2` = RealESRGAN_x2plus RRDBNet 2x, `x4t` = realesr-general-x4v3 SRVGG compact 4x fast/video tier) |
 | `swinir`    | `s`, `m`, `l` (all 4x: lightweight SwinIR-S, real-world SwinIR-M, and real-world SwinIR-L) |
@@ -477,6 +479,7 @@ Detector-factory family support follows:
 | `vit`       | `("classify",)`             | classify | classic patch-16 Vision Transformer; ti/s/b/l at 224 with AugReg ImageNet-1k weights; predict + top-1/top-5 `val` + ONNX; inference-only |
 | `alexnet`   | `("classify",)`             | classify | torchvision AlexNet museum classifier; b at 224; predict + top-1/top-5 `val`; inference-only; ONNX, TorchScript, OpenVINO, and TensorRT |
 | `vgg`       | `("classify",)`             | classify | VGG-16/VGG-19 with optional batch normalization; all at 224; predict plus fixed-resolution ONNX, TorchScript, OpenVINO, and TensorRT; inference-only |
+| `swin`      | `("classify",)`             | classify | Swin Transformer V1 image classifier; t/s/b/l at 224; predict + top-1/top-5 `val` + ONNX/TorchScript/OpenVINO/TensorRT; inference-only |
 | `clip`      | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or whole-image/text embeddings in one space |
 | `siglip2`   | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or multilingual whole-image/text embeddings in one space |
 | `facerec`   | `("embed",)`                | embed | two-stage face-region embeddings; rows align with face boxes; inference-only |
@@ -741,6 +744,10 @@ LibreVGG16-cls.pt          # VGG-16     (224, ImageNet-1k)
 LibreVGG19-cls.pt          # VGG-19     (224, ImageNet-1k)
 LibreVGG16bn-cls.pt        # VGG-16-BN  (224, ImageNet-1k)
 LibreVGG19bn-cls.pt        # VGG-19-BN  (224, ImageNet-1k)
+LibreSwint-cls.pt          # Swin-V1-Tiny  (224, ImageNet-1k)
+LibreSwins-cls.pt          # Swin-V1-Small (224, ImageNet-1k)
+LibreSwinb-cls.pt          # Swin-V1-Base  (224, ImageNet-1k)
+LibreSwinl-cls.pt          # Swin-V1-Large (224, ImageNet-22k to ImageNet-1k)
 ```
 
 Unlike `gaze`/`point` (which carry their suffix despite being single-task),
@@ -749,10 +756,14 @@ Unlike `gaze`/`point` (which carry their suffix despite being single-task),
 `convnext` family is a native port of ConvNeXt V1; the `efficientnetv2` family
 is a native port of EfficientNetV2-base (the accuracy tier); `deit` is an
 inference-only museum port of the plain DeiT patch-16 classifiers; and `vit`
-is the inference-only classic patch-16 Vision Transformer family. All are
-derived from timm (Apache-2.0); weights are Apache-2.0 ImageNet-1k and load
-bit-identically (see each family's `NOTICE`, e.g.
-`libreyolo/models/efficientnetv2/NOTICE`, `libreyolo/models/convnext/NOTICE`).
+is the inference-only classic patch-16 Vision Transformer family. The
+inference-only `swin` family reuses LibreYOLO's shared Swin V1 tower and ships
+the official patch-4/window-7 Tiny, Small, Base, and Large classifiers. All
+are derived from timm (Apache-2.0) and load bit-identically. MobileNetV4,
+ConvNeXt, DeiT, EfficientNetV2, ResNet, and ViT use Apache-2.0 ImageNet-1k
+weights. Swin's released weights are MIT and its Large model was pretrained on
+ImageNet-22k before ImageNet-1k fine-tuning. See each family's `NOTICE`, e.g.
+`libreyolo/models/efficientnetv2/NOTICE`, `libreyolo/models/swin/NOTICE`.
 `alexnet` is instead an inference-only museum port of torchvision v0.26.0
 (BSD-3-Clause). Its official checkpoint mirror uses BSD-3-Clause on a disclosed
 implied basis because no checkpoint-specific grant is attached; see
@@ -771,7 +782,8 @@ pretrained-model data-provenance caveat.
 
 **Eval resolution is a deliberate choice.** The classify families evaluate at a
 real-time-friendly default (224 for AlexNet, DeiT, MobileNetV4 s/m, ConvNeXt,
-ResNet, ViT; 256 for MobileNetV4-l; 224/240/260/300 for EfficientNetV2 b0–b3) rather than timm's
+ResNet, Swin, ViT; 256 for MobileNetV4-l; 224/240/260/300 for EfficientNetV2
+b0–b3) rather than timm's
 larger *test* resolutions (e.g. 256/288/320), which trade ~1.6–2× compute for a
 few tenths of a percent top-1. This does **not** affect parity — given the same
 input tensor the logits are bit-identical to the family's pinned upstream

@@ -115,23 +115,6 @@ def _assert_batched_detection_output_matches_sequential(family, sequential, batc
     torch.testing.assert_close(sequential_cls, batched_cls, rtol=0, atol=0)
 
 
-def _assert_classification_output_is_stable(family, first, second):
-    assert first.probs is not None, f"{family} did not return probabilities"
-    assert second.probs is not None, f"{family} did not return probabilities"
-    assert first.boxes is None and second.boxes is None
-    assert first.orig_shape == second.orig_shape
-    assert first.names, f"{family} result has no class names"
-
-    first_probs = _tensor(first.probs.data)
-    second_probs = _tensor(second.probs.data)
-    assert first_probs.ndim == 1
-    assert first_probs.numel() == len(first.names)
-    assert torch.isfinite(first_probs).all(), f"{family} produced non-finite probabilities"
-    torch.testing.assert_close(first_probs.sum(), torch.tensor(1.0), atol=1e-5, rtol=0)
-    assert first.probs.top1 == second.probs.top1
-    torch.testing.assert_close(first_probs, second_probs, rtol=1e-5, atol=1e-6)
-
-
 def _assert_batched_classification_output_matches_sequential(
     family, sequential, batched
 ):
@@ -140,6 +123,7 @@ def _assert_batched_classification_output_matches_sequential(
     assert sequential.boxes is None and batched.boxes is None
     assert sequential.orig_shape == batched.orig_shape
     assert sequential.names, f"{family} result has no class names"
+    assert sequential.names == batched.names
 
     sequential_probs = _tensor(sequential.probs.data)
     batched_probs = _tensor(batched.probs.data)
