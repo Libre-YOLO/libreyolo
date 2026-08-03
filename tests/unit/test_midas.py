@@ -128,6 +128,26 @@ def test_resize_geometry_matches_official_rules(size: str, expected: tuple[int, 
 
 
 @pytest.mark.parametrize("size", ["s", "l"])
+@pytest.mark.parametrize("width,height", [(10_000, 1), (1, 10_000)])
+def test_resize_geometry_keeps_extreme_aspect_ratio_sides_nonzero(
+    size: str,
+    width: int,
+    height: int,
+):
+    new_width, new_height = _resize_shape(
+        width,
+        height,
+        LibreMiDaS.INPUT_SIZES[size],
+        size,
+    )
+    assert min(new_width, new_height) >= LibreMiDaS.depth_imgsz_divisor
+
+    image = np.zeros((height, width, 3), dtype=np.uint8)
+    chw, _ = preprocess_numpy(image, LibreMiDaS.INPUT_SIZES[size], size)
+    assert min(chw.shape[1:]) >= LibreMiDaS.depth_imgsz_divisor
+
+
+@pytest.mark.parametrize("size", ["s", "l"])
 def test_preprocess_is_rgb_float_and_multiple_of_32(size: str):
     image = np.random.default_rng(7).integers(
         0, 256, size=(321, 517, 3), dtype=np.uint8

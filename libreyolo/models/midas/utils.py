@@ -18,12 +18,16 @@ def _constrain_to_multiple(
     min_value: int = 0,
     max_value: int | None = None,
 ) -> int:
-    """Match MiDaS's nearest-multiple resize rule."""
+    """Match MiDaS's nearest-multiple rule with a nonzero image-side floor."""
+    minimum = max(min_value, multiple)
     constrained = int(np.round(value / multiple) * multiple)
     if max_value is not None and constrained > max_value:
         constrained = int(np.floor(value / multiple) * multiple)
-    if constrained < min_value:
-        constrained = int(np.ceil(value / multiple) * multiple)
+    if constrained < minimum:
+        constrained = max(
+            minimum,
+            int(np.ceil(value / multiple) * multiple),
+        )
     return constrained
 
 
