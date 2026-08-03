@@ -1697,7 +1697,7 @@ class BaseModel(ABC):
         self,
         data: str | None = None,
         batch: int = 16,
-        imgsz: int | None = None,
+        imgsz: int | tuple[int, int] | None = None,
         conf: float = 0.001,
         iou: float = 0.6,
         workers: int = 4,
@@ -1716,7 +1716,8 @@ class BaseModel(ABC):
         Args:
             data: Path to data.yaml file.
             batch: Batch size.
-            imgsz: Image size (defaults to model's native input size).
+            imgsz: Square image size or ``(height, width)`` tuple. Defaults to
+                the model's native input size.
             conf: Confidence threshold.
             iou: IoU threshold for NMS.
             workers: Number of dataloader workers.

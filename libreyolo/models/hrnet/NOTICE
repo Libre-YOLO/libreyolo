@@ -7,9 +7,13 @@ License: MIT
 
 The upstream repository license is Copyright (c) 2019 Leo Xiao.
 The adapted source files lib/models/pose_hrnet.py,
-lib/utils/transforms.py, lib/core/inference.py, and lib/nms/nms.py carry:
+lib/utils/transforms.py, lib/core/inference.py, lib/dataset/coco.py, and
+lib/nms/nms.py carry:
 
     Copyright (c) Microsoft. Written by Bin Xiao.
+
+The box-to-center/scale flow also follows demo/inference.py under the upstream
+root MIT license.
 
 LibreYOLO adapts the native HRNet pose graph, affine person-crop geometry,
 heatmap decoding, flip restoration, and OKS suppression. LibreYOLO-specific

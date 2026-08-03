@@ -1,7 +1,8 @@
 """HRNet top-down pose geometry, preprocessing, and heatmap decoding.
 
-Affine and decoding arithmetic is adapted from ``lib/utils/transforms.py`` and
-``lib/core/inference.py`` in
+Affine, box-to-center/scale, and decoding arithmetic is adapted from
+``lib/utils/transforms.py``, ``lib/core/inference.py``,
+``lib/dataset/coco.py``, and ``demo/inference.py`` in
 ``leoxiaobin/deep-high-resolution-net.pytorch`` at commit
 ``6f69e4676ad8d43d0d61b64b1b9726f0c369e7b1`` (MIT License).
 
