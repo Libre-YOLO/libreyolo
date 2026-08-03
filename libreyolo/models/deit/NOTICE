@@ -16,6 +16,7 @@ The native inference implementation in ``nn.py`` is derived from:
                 timm/layers/attention.py
                 timm/layers/patch_embed.py
                 timm/layers/mlp.py
+                timm/data/_info/imagenet_synsets.txt
     License:    Apache License 2.0
     Copyright:  Copyright (c) Ross Wightman and the timm contributors.
 

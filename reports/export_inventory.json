@@ -168,7 +168,7 @@
     "export_override": "none",
     "optional_extra": null,
     "available": true,
-    "group": null
+    "group": "g4"
   },
   "depth_anything": {
     "class": "libreyolo.models.depth_anything.model.LibreDepthAnythingV2",

@@ -795,7 +795,11 @@ Used for: the native image-classification model families ported from
           efficientnetv2,resnet}/ — and the shared Swin backbone at
           libreyolo/models/swin/. Module/attribute names mirror timm so
           its Apache-2.0 ImageNet-1k pretrained weights load unchanged and
-          inference is bit-identical. Architecture lineage: ConvNeXt also
+          inference is bit-identical. The unmodified Apache-2.0 timm
+          data/_info/imagenet_synsets.txt index is included as
+          libreyolo/data/imagenet1k_synsets.txt so standard WNID ImageFolder
+          datasets map to those classifier indices. Architecture lineage:
+          ConvNeXt also
           derives from facebookresearch/ConvNeXt (MIT); DeiT from
           facebookresearch/deit (Apache-2.0); EfficientNetV2 from google/automl
           (Apache-2.0); ResNet from He et al. 2015. Weights
