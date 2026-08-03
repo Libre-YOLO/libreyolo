@@ -20,6 +20,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 
+from ....kernels.attention.ms_deform_attn import (
+    maybe_ms_deform_attn_v2,
+    ms_deform_attn_available,
+    spatial_shapes_tensor,
+)
+
 
 def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
     x = x.clip(min=0.0, max=1.0)
@@ -48,7 +54,24 @@ def deformable_attention_core_func_v2(
 
     Returns:
         output (Tensor): [bs, Length_{query}, C]
+
+    The loop below is the default and the export path. When the optional
+    accelerated ``ms_deform_attn`` slot resolves and the flat point layout
+    reshapes onto the slot's ``(n_levels, n_points)`` one, it takes over
+    (see ``libreyolo/kernels/attention/ms_deform_attn.py``);
+    ``method='discrete'`` never does, its integer-index sampling is a
+    different equation.
     """
+    if method == "default" and ms_deform_attn_available():
+        accelerated = maybe_ms_deform_attn_v2(
+            value,
+            spatial_shapes_tensor(value_spatial_shapes, value.device),
+            sampling_locations,
+            attention_weights,
+            num_points_list,
+        )
+        if accelerated is not None:
+            return accelerated
     bs, _, n_head, c = value.shape
     _, Len_q, _, _, _ = sampling_locations.shape
 
