@@ -6,6 +6,7 @@ import pytest
 import torch
 import numpy as np
 
+from libreyolo import LibreEfficientDet
 from libreyolo.postprocess.efficientdet import (
     decode_candidates,
     generate_anchors,
@@ -93,3 +94,24 @@ def test_validation_preprocessor_matches_family_pipeline():
     assert preprocessor.uses_letterbox
     assert preprocessor.custom_normalization
     assert preprocessor.wants_unresized_image
+
+
+def test_model_postprocess_recovers_validation_letterbox_ratio():
+    model = object.__new__(LibreEfficientDet)
+    model.input_size = 128
+    model.nb_classes = 80
+    model._arch_num_classes = 90
+
+    result = model._postprocess(
+        _synthetic_output(),
+        conf_thres=0.5,
+        iou_thres=0.5,
+        original_size=(64, 48),
+        input_size=128,
+        letterbox=True,
+        max_candidates=3,
+        max_det=10,
+    )
+
+    assert result["num_detections"] == 2
+    assert result["boxes"].tolist() == [[0.0, 0.0, 10.0, 10.0]] * 2

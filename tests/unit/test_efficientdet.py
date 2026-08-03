@@ -14,6 +14,7 @@ from libreyolo import (
     LibreRTMDet,
     LibreYOLOX,
 )
+from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
 pytestmark = pytest.mark.unit
 
@@ -117,3 +118,24 @@ def test_efficientdet_rejects_wrong_head_shapes():
     bad_boxes = _efficientdet_state()
     bad_boxes["box_net.predict.conv_pw.weight"] = torch.empty(45, 64, 1, 1)
     assert not LibreEfficientDet.can_load(bad_boxes)
+
+
+def test_checkpoint_class_rebuild_updates_architectural_head_width(tmp_path):
+    source = LibreEfficientDet(None, size="d0", nb_classes=3, device="cpu")
+    checkpoint = wrap_libreyolo_checkpoint(
+        source.model.state_dict(),
+        model_family="efficientdet",
+        size="d0",
+        task="detect",
+        nc=3,
+        names={0: "one", 1: "two", 2: "three"},
+        imgsz=512,
+    )
+    path = tmp_path / "custom-efficientdet.pt"
+    torch.save(checkpoint, path)
+    loaded = LibreEfficientDet(str(path), size="d0", nb_classes=80, device="cpu")
+
+    assert loaded.nb_classes == 3
+    assert loaded._arch_num_classes == 3
+    assert loaded.model.class_net.predict.conv_pw.out_channels == 27
+    assert loaded.names == {0: "one", 1: "two", 2: "three"}

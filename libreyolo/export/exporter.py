@@ -884,7 +884,10 @@ class BaseExporter(ABC):
                 # upstream 5000-point budget on every other runtime and use
                 # its maximum only for the TensorRT graph.
                 max_candidates=3840 if self.format_name == "tensorrt" else 5000,
-                sparse_coco=getattr(self.model, "nb_classes", None) == 80,
+                sparse_coco=(
+                    getattr(self.model, "nb_classes", None) == 80
+                    and getattr(self.model, "_arch_num_classes", None) == 90
+                ),
             ).to(device)
             nn_model.eval()
             dfine_wrapped = True

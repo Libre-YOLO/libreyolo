@@ -124,6 +124,23 @@ class LibreEfficientDet(BaseModel):
             size=self.size, num_classes=self._arch_num_classes
         )
 
+    def _rebuild_for_checkpoint_classes(
+        self, new_nb_classes: int, state_dict: dict
+    ) -> None:
+        """Rebuild the prediction head to the checkpoint's serialized width."""
+        class_weight = state_dict.get(_CLASS_PREDICT_KEY)
+        if class_weight is None or getattr(class_weight, "ndim", 0) != 4:
+            raise RuntimeError(
+                f"EfficientDet checkpoint is missing {_CLASS_PREDICT_KEY!r}"
+            )
+        channels = int(class_weight.shape[0])
+        if channels % _ANCHORS_PER_LOCATION:
+            raise RuntimeError(
+                "EfficientDet checkpoint class head is not divisible by nine anchors"
+            )
+        self._arch_num_classes = channels // _ANCHORS_PER_LOCATION
+        super()._rebuild_for_checkpoint_classes(new_nb_classes, state_dict)
+
     def _get_available_layers(self) -> Dict[str, nn.Module]:
         return {
             "backbone": self.model.backbone,
@@ -166,6 +183,12 @@ class LibreEfficientDet(BaseModel):
         **kwargs,
     ) -> Dict:
         actual_input_size = kwargs.pop("input_size", self.input_size)
+        if kwargs.pop("letterbox", False):
+            original_width, original_height = original_size
+            ratio = min(
+                float(actual_input_size) / original_height,
+                float(actual_input_size) / original_width,
+            )
         return postprocess(
             output,
             conf_thres=conf_thres,
@@ -174,7 +197,10 @@ class LibreEfficientDet(BaseModel):
             original_size=original_size,
             max_det=max_det,
             ratio=ratio,
-            sparse_coco=self._arch_num_classes == _COCO_SPARSE_CLASSES,
+            sparse_coco=(
+                self.nb_classes == 80
+                and self._arch_num_classes == _COCO_SPARSE_CLASSES
+            ),
             **kwargs,
         )
 

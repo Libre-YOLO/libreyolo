@@ -27,6 +27,7 @@ before 1.4.0 are documented in the
   Apache-2.0 `rwightman/efficientdet-pytorch` source, and validated ONNX,
   TorchScript, OpenVINO, and TensorRT prediction parity. The focal-loss and
   anchor-matching training recipe is not implemented and `train()` raises
+  `NotImplementedError`.
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr
