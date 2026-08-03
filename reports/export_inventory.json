@@ -1,4 +1,22 @@
 {
+  "alexnet": {
+    "class": "libreyolo.models.alexnet.model.LibreAlexNet",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "b": 224
+    },
+    "default_imgsz": {
+      "b": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "birefnet": {
     "class": "libreyolo.models.birefnet.model.LibreBiRefNet",
     "tasks": [
@@ -15,6 +33,26 @@
     },
     "task_sizes": {},
     "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
+  "centernet": {
+    "class": "libreyolo.models.centernet.model.LibreCenterNet",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "resdcn18": 512,
+      "dla34": 512
+    },
+    "default_imgsz": {
+      "resdcn18": 512,
+      "dla34": 512
+    },
+    "task_sizes": {},
+    "export_override": "custom",
     "optional_extra": null,
     "available": true,
     "group": "g3"
@@ -63,6 +101,28 @@
     "optional_extra": null,
     "available": true,
     "group": "g2"
+  },
+  "deeplabv3": {
+    "class": "libreyolo.models.deeplabv3.model.LibreDeepLabv3",
+    "tasks": [
+      "semantic"
+    ],
+    "default_task": "semantic",
+    "sizes": {
+      "r50": 520,
+      "r101": 520,
+      "mv3": 520
+    },
+    "default_imgsz": {
+      "r50": 520,
+      "r101": 520,
+      "mv3": 520
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
   },
   "deformable_detr": {
     "class": "libreyolo.models.deformable_detr.model.LibreDeformableDETR",
@@ -147,6 +207,28 @@
     "optional_extra": null,
     "available": true,
     "group": "g1"
+  },
+  "deit": {
+    "class": "libreyolo.models.deit.model.LibreDeiT",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "t": 224,
+      "s": 224,
+      "b": 224
+    },
+    "default_imgsz": {
+      "t": 224,
+      "s": 224,
+      "b": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g4"
   },
   "depth_anything": {
     "class": "libreyolo.models.depth_anything.model.LibreDepthAnythingV2",
@@ -274,6 +356,28 @@
     "available": true,
     "group": "g1"
   },
+  "dinodetr": {
+    "class": "libreyolo.models.dinodetr.model.LibreDINODETR",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r50": 800,
+      "r50s5": 800,
+      "swinl": 800
+    },
+    "default_imgsz": {
+      "r50": 800,
+      "r50s5": 800,
+      "swinl": 800
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "dinov2": {
     "class": "libreyolo.models.dinov2.model.LibreDINOv2",
     "tasks": [
@@ -376,6 +480,32 @@
     "available": true,
     "group": "s"
   },
+  "efficientdet": {
+    "class": "libreyolo.models.efficientdet.model.LibreEfficientDet",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "d0": 512,
+      "d1": 640,
+      "d2": 768,
+      "d3": 896,
+      "d4": 1024
+    },
+    "default_imgsz": {
+      "d0": 512,
+      "d1": 640,
+      "d2": 768,
+      "d3": 896,
+      "d4": 1024
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "efficientnetv2": {
     "class": "libreyolo.models.efficientnetv2.model.LibreEfficientNetV2",
     "tasks": [
@@ -464,6 +594,44 @@
     "available": true,
     "group": "g3"
   },
+  "fcn": {
+    "class": "libreyolo.models.fcn.model.LibreFCN",
+    "tasks": [
+      "semantic"
+    ],
+    "default_task": "semantic",
+    "sizes": {
+      "r50": 520,
+      "r101": 520
+    },
+    "default_imgsz": {
+      "r50": 520,
+      "r101": 520
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
+  "fcos": {
+    "class": "libreyolo.models.fcos.model.LibreFCOS",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r50": 800
+    },
+    "default_imgsz": {
+      "r50": 800
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "feynobg": {
     "class": "libreyolo.models.feynobg.model.LibreFeyNobg",
     "tasks": [
@@ -543,6 +711,38 @@
     "optional_extra": "openvocab",
     "available": true,
     "group": "s"
+  },
+  "hrnet": {
+    "class": "libreyolo.models.hrnet.model.LibreHRNet",
+    "tasks": [
+      "pose"
+    ],
+    "default_task": "pose",
+    "sizes": {
+      "w32": [
+        256,
+        192
+      ],
+      "w48": [
+        384,
+        288
+      ]
+    },
+    "default_imgsz": {
+      "w32": [
+        256,
+        192
+      ],
+      "w48": [
+        384,
+        288
+      ]
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
   },
   "internvl3": {
     "class": "libreyolo.models.vlm.internvl3.LibreInternVL3",
@@ -692,6 +892,52 @@
       "m": 640,
       "l": 640,
       "x": 640
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
+  "mask_rcnn": {
+    "class": "libreyolo.models.mask_rcnn.model.LibreMaskRCNN",
+    "tasks": [
+      "detect",
+      "segment"
+    ],
+    "default_task": "segment",
+    "sizes": {
+      "r50": 800
+    },
+    "default_imgsz": {
+      "r50": 800
+    },
+    "task_sizes": {
+      "detect": {
+        "r50": 800
+      },
+      "segment": {
+        "r50": 800
+      }
+    },
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
+  "midas": {
+    "class": "libreyolo.models.midas.model.LibreMiDaS",
+    "tasks": [
+      "depth"
+    ],
+    "default_task": "depth",
+    "sizes": {
+      "s": 256,
+      "l": 384
+    },
+    "default_imgsz": {
+      "s": 256,
+      "l": 384
     },
     "task_sizes": {},
     "export_override": "none",
@@ -990,6 +1236,26 @@
     "optional_extra": null,
     "available": true,
     "group": "g2"
+  },
+  "retinanet": {
+    "class": "libreyolo.models.retinanet.model.LibreRetinaNet",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r50": 800,
+      "r50v2": 800
+    },
+    "default_imgsz": {
+      "r50": 800,
+      "r50v2": 800
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
   },
   "rfdetr": {
     "class": "libreyolo.models.rfdetr.model.LibreRFDETR",
@@ -1319,6 +1585,48 @@
     "available": true,
     "group": "s"
   },
+  "ssd": {
+    "class": "libreyolo.models.ssd.model.LibreSSD",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "300": 300
+    },
+    "default_imgsz": {
+      "300": 300
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
+  "swin": {
+    "class": "libreyolo.models.swin.model.LibreSwin",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "t": 224,
+      "s": 224,
+      "b": 224,
+      "l": 224
+    },
+    "default_imgsz": {
+      "t": 224,
+      "s": 224,
+      "b": 224,
+      "l": 224
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "swinir": {
     "class": "libreyolo.models.swinir.model.LibreSwinIR",
     "tasks": [
@@ -1352,6 +1660,54 @@
     },
     "default_imgsz": {
       "t": 352
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
+  "vgg": {
+    "class": "libreyolo.models.vgg.model.LibreVGG",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "16": 224,
+      "19": 224,
+      "16bn": 224,
+      "19bn": 224
+    },
+    "default_imgsz": {
+      "16": 224,
+      "19": 224,
+      "16bn": 224,
+      "19bn": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
+  "vit": {
+    "class": "libreyolo.models.vit.model.LibreViT",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "ti": 224,
+      "s": 224,
+      "b": 224,
+      "l": 224
+    },
+    "default_imgsz": {
+      "ti": 224,
+      "s": 224,
+      "b": 224,
+      "l": 224
     },
     "task_sizes": {},
     "export_override": "none",

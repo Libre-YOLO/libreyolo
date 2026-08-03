@@ -389,6 +389,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 iou_type="bbox",
                 label_to_category_id=self._coco_label_to_category_id,
                 max_det=self._coco_max_det(),
+                faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
             )
             if self.config.verbose:
                 logger.info(
@@ -457,7 +458,10 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             )
             self._gt_coco_api = coco_api
         self.coco_evaluator = COCOEvaluator(
-            coco_api, iou_type="bbox", max_det=self._coco_max_det()
+            coco_api,
+            iou_type="bbox",
+            max_det=self._coco_max_det(),
+            faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
         )
 
         if self.config.verbose:
@@ -968,6 +972,9 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             save_json = str(self.save_dir / "predictions.json")
 
         coco_metrics = self.coco_evaluator.compute(save_json=save_json)
+        # Provenance for callers (surfaced as model.last_eval_backend).
+        # getattr: tests substitute lightweight evaluator stubs.
+        self.eval_backend = getattr(self.coco_evaluator, "last_backend", None)
 
         metrics = {
             "metrics/precision": coco_metrics["precision"],
@@ -1056,6 +1063,7 @@ class SegmentationValidator(DetectionValidator):
             iou_type="segm",
             label_to_category_id=self._coco_label_to_category_id,
             max_det=self._coco_max_det(),
+            faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
         )
 
     def _update_metrics(
@@ -1150,6 +1158,9 @@ class SegmentationValidator(DetectionValidator):
 
         bbox = self.bbox_evaluator.compute(save_json=bbox_json)
         mask = self.mask_evaluator.compute(save_json=mask_json)
+        # Provenance for callers (surfaced as model.last_eval_backend).
+        # getattr: tests substitute lightweight evaluator stubs.
+        self.eval_backend = getattr(self.bbox_evaluator, "last_backend", None)
 
         return {
             "metrics/mAP50-95": mask["mAP"],

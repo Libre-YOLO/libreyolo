@@ -549,6 +549,7 @@ def _pose_val_gate_worker(rank, world_size, port, out_dir):
             dist.destroy_process_group()
 
 
+@pytest.mark.distributed
 @pytest.mark.skipif(
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",

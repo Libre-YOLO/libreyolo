@@ -121,6 +121,38 @@ def test_classify_validator_uses_model_name_order(tmp_path):
     assert labels_by_path["cat"] == 1
 
 
+def test_classify_validator_maps_imagenet_wnid_subset_to_head_indices(tmp_path):
+    from libreyolo.data.imagenet import imagenet1k_names
+    from libreyolo.validation import ClassifyValidator, ValidationConfig
+
+    _make_named_imagefolder(tmp_path, ["n01440764", "n15075141"])
+
+    class _Model:
+        names = imagenet1k_names()
+        nb_classes = 1000
+
+    validator = ClassifyValidator(
+        model=_Model(),
+        config=ValidationConfig(
+            data=str(tmp_path),
+            batch_size=4,
+            imgsz=32,
+            device="cpu",
+            num_workers=0,
+            split="val",
+            verbose=False,
+        ),
+    )
+
+    dataloader = validator._setup_dataloader()
+    labels_by_path = {
+        Path(path).parent.name: int(label)
+        for path, label in dataloader.dataset._impl.samples
+    }
+    assert labels_by_path == {"n01440764": 0, "n15075141": 999}
+    assert validator._num_classes == 1000
+
+
 @pytest.mark.external_data
 @pytest.mark.network
 @pytest.mark.slow
@@ -497,5 +529,3 @@ def test_public_train_api_accepts_augment_pack(tmp_path):
     assert best.exists()
     epoch_metrics = metrics.get("epoch_metrics", [])
     assert epoch_metrics and epoch_metrics[-1].get("validated") is True
-
-

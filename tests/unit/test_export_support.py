@@ -65,6 +65,18 @@ def test_experimental_export_warns_in_preflight():
         exporter._preflight(half=False, int8=False, data=None)
 
 
+def test_vit_onnx_is_parity_validated():
+    entry = get_support("vit", "classify", "onnx")
+    assert entry.tier == "validated"
+    assert entry.constraint == "FP32, fixed 224x224 input"
+    assert "test_vit_export.py" in entry.reason
+def test_ssd_exports_only_through_its_validated_onnx_contract():
+    assert get_support("ssd", "detect", "onnx").tier == "validated"
+    for fmt in EXPORT_FORMATS:
+        if fmt != "onnx":
+            assert get_support("ssd", "detect", fmt).tier == "blocked"
+
+
 def test_executorch_realtime_support_is_evidence_backed():
     validated = {
         ("clip", "embed"),
@@ -205,6 +217,16 @@ def test_yolonas_detect_tflite_is_validated():
     assert get_support("yolonas", "detect", "tflite").tier == "validated"
 
 
+def test_fcn_semantic_export_support_matches_trained_checkpoint_evidence():
+    for format in ("onnx", "torchscript", "openvino", "tensorrt"):
+        entry = get_support("fcn", "semantic", format)
+        assert entry.tier == "validated"
+        assert "parity" in entry.reason
+        assert "divisible by 8" in entry.constraint
+    for format in ("executorch", "ncnn", "tflite", "coreml", "coreai"):
+        assert get_support("fcn", "semantic", format).tier == "blocked"
+
+
 def test_round7_swinir_fixed_canvas_exports_are_validated():
     for format in ("onnx", "torchscript", "openvino", "tflite"):
         entry = get_support("swinir", "restore", format)
@@ -232,6 +254,14 @@ def test_round8_tensorrt_fp32_parity_promotes_nine_cells():
     pidnet = get_support("pidnet", "semantic", "tensorrt")
     assert pidnet.tier == "experimental"
     assert "0.9970" in pidnet.reason
+
+
+def test_swin_classifier_exports_are_backed_by_trained_runtime_parity():
+    for format in ("onnx", "torchscript", "openvino", "tensorrt"):
+        entry = get_support("swin", "classify", format)
+        assert entry.tier == "validated"
+        assert "test_swin_export.py" in entry.reason
+        assert "224x224" in entry.constraint
 
 
 def test_round9_promotes_three_parity_cells_and_records_seven_gaps():
@@ -454,6 +484,14 @@ def test_round24_promotes_six_embedding_and_depth_cells():
     assert get_support("moge2", "normal", "tflite").tier == "blocked"
 
 
+def test_midas_trained_export_cells_are_validated():
+    for format in ("onnx", "torchscript", "tensorrt", "openvino"):
+        entry = get_support("midas", "depth", format)
+        assert entry.tier == "validated"
+        assert "parity" in entry.reason
+        assert "fixed square" in entry.constraint
+
+
 def test_round13_records_ten_measured_tflite_holds():
     measured_holds = {
         ("yolo1", "detect"): "ONNX_EINSUM",
@@ -561,9 +599,12 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         if fmt == "openvino" and entry.tier == "validated"
     }
     assert validated == {
+        ("alexnet", "classify"),
         ("clip", "classify"),
         ("clip", "embed"),
         ("convnext", "classify"),
+        ("deeplabv3", "semantic"),
+        ("deit", "classify"),
         ("depth_anything", "depth"),
         ("depth_anything3", "depth"),
         ("dexined", "edge"),
@@ -573,11 +614,15 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("dinov2", "semantic"),
         ("ec", "detect"),
         ("ec", "segment"),
+        ("efficientdet", "detect"),
         ("efficientnetv2", "classify"),
         ("eomt", "semantic"),
+        ("fcn", "semantic"),
         ("fomo", "point"),
+        ("hrnet", "pose"),
         ("lingbotvision", "semantic"),
         ("l2cs", "gaze"),
+        ("midas", "depth"),
         ("mobilenetv4", "classify"),
         ("moge2", "normal"),
         ("nafnet", "restore"),
@@ -592,8 +637,10 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("segformer", "semantic"),
         ("siglip2", "classify"),
         ("siglip2", "embed"),
+        ("swin", "classify"),
         ("swinir", "restore"),
         ("teed", "edge"),
+        ("vgg", "classify"),
         ("yolo1", "detect"),
         ("yolo2", "detect"),
         ("yolo3", "detect"),

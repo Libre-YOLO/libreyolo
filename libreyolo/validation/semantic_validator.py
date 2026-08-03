@@ -105,7 +105,10 @@ class SemanticValidator(ValidationLossMixin, BaseValidator):
         """Unwrap raw model output into ``[B, C, H, W]`` logits at ``target_hw``."""
         logits = preds
         if isinstance(logits, dict):
-            logits = logits.get("semantic_logits", logits.get("logits"))
+            logits = logits.get(
+                "semantic_logits",
+                logits.get("logits", logits.get("out")),
+            )
         if isinstance(logits, (list, tuple)):
             logits = logits[0]
         logits = torch.as_tensor(logits)

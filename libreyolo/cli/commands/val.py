@@ -51,6 +51,12 @@ def val_cmd(
         None,
         help="COCO evaluator cap (default: pycocotools AP@100)",
     ),
+    faster_coco_eval: bool = typer.Option(
+        True,
+        "--faster-coco-eval/--no-faster-coco-eval",
+        help="Use the faster-coco-eval C++ backend for COCO metrics "
+        "(default: on when installed; falls back to pycocotools)",
+    ),
     half: bool = typer.Option(False, help="FP16 inference"),
     amp_dtype: str = typer.Option(
         "float16", help="CUDA autocast dtype when half=true: float16 or bfloat16"
@@ -138,6 +144,7 @@ def val_cmd(
             amp_dtype=amp_dtype,
             max_det=max_det,
             eval_max_det=eval_max_det,
+            faster_coco_eval=faster_coco_eval,
         )
     except FileNotFoundError as e:
         exit_with_error(out, "data_not_found", str(e))
@@ -300,6 +307,8 @@ def val_cmd(
         "data": data,
         "split": split,
         "device": str(loaded_model.device),
+        # COCO eval backend provenance, e.g. "faster-coco-eval 1.7.2".
+        "eval_backend": getattr(loaded_model, "last_eval_backend", None),
         "metrics": {
             "mAP50": round(mAP50, 4),
             "mAP50_95": round(mAP50_95, 4),

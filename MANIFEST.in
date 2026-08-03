@@ -19,6 +19,7 @@ global-exclude *.mp4
 recursive-include libreyolo/assets *.jpg
 recursive-include libreyolo *.yaml
 recursive-include libreyolo/data *.json
+recursive-include libreyolo/data *.txt
 
 # LibreCLIP shipped data: vendored BPE vocab + ImageNet labels/templates
 recursive-include libreyolo/models/clip *.gz

@@ -8,19 +8,24 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 
 | Family | Task | onnx | torchscript | executorch | tensorrt | openvino | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| alexnet | classify | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | birefnet | matte | exp | ✓ |  |  |  |  |  |  |  |
+| centernet | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | clip | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | clip | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
+| deeplabv3 | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
 | deformable_detr | detect | ✓ | exp | exp | exp | exp |  |  |  |  |
 | deim | detect | ✓ | ✓ |  | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ |  | exp | exp |  |  |  | ✓ |
+| deit | classify | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | depth_anything | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | depth_anything3 | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | detr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | dexined | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | dfine | detect | ✓ | ✓ |  | exp | ✓ |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ |  | exp | ✓ |  |  |  |  |
+| dinodetr | detect | ✓ | exp | exp | exp | exp |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
 | dinov2 | classify | ✓ | ✓ | ✓ | exp | ✓ |  |  |  | exp |
 | dinov2 | embed | ✓ | ✓ | exp | exp | exp |  | ✓ |  |  |
@@ -28,15 +33,19 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |
 | edgetam | segment |  |  |  |  |  |  |  |  |  |
+| efficientdet | detect | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | efficientnetv2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | eomt | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |  |
 | faster_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |
+| fcn | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
+| fcos | detect | ✓ | ✓ |  |  | exp |  |  |  |  |
 | feynobg | matte | exp | ✓ | exp |  |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |
+| hrnet | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |  |
 | l2cs | gaze | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |
@@ -45,6 +54,9 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | locateanything | detect |  |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |  |
 | lwdetr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
+| mask_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |
+| mask_rcnn | segment | ✓ |  |  |  |  |  |  |  |  |
+| midas | depth | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |
 | moge2 | normal | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  |  |
@@ -59,6 +71,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | qwen3vl | detect |  |  |  |  |  |  |  |  |  |
 | realesrgan | restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | resnet | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
+| retinanet | detect | ✓ |  |  |  |  |  |  |  |  |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | exp | ✓ |
 | rfdetr | segment | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |
@@ -76,8 +89,12 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | siglip2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  | ✓ |
 | siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |
+| ssd | detect | ✓ |  |  |  |  |  |  |  |  |
+| swin | classify | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
+| vgg | classify | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
+| vit | classify | ✓ | exp | exp | exp | exp | exp |  |  |  |
 | yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  | ✓ |
 | yolo3 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
@@ -105,7 +122,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 
 A check mark applies only under any constraint listed here.
 
+- `alexnet` / `classify` / `onnx`: FP32 at the native 224x224 input resolution; ONNX supports a dynamic batch axis
+- `alexnet` / `classify` / `torchscript`: FP32 at the native 224x224 input resolution
+- `alexnet` / `classify` / `tensorrt`: TensorRT 10.16 FP32 at the fixed native 224x224 resolution
+- `alexnet` / `classify` / `openvino`: OpenVINO 2026.2 CPU FP32 at the fixed native 224x224 resolution
 - `birefnet` / `matte` / `torchscript`: fixed 1024x1024 input
+- `centernet` / `detect` / `onnx`: FP32, fixed square input; ONNX Runtime CPU or TorchScript
+- `centernet` / `detect` / `torchscript`: FP32, fixed square input; ONNX Runtime CPU or TorchScript
 - `clip` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `clip` / `classify` / `torchscript`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
 - `clip` / `classify` / `executorch`: batch 1, fixed square input, class set frozen at export time; SigLIP2 uses single-label softmax mode
@@ -122,10 +145,18 @@ A check mark applies only under any constraint listed here.
 - `convnext` / `classify` / `openvino`: fixed family-native input resolution
 - `convnext` / `classify` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; two-input raw parity, factory reload, metadata, and public predict parity
 - `convnext` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `deeplabv3` / `semantic` / `onnx`: FP32, batch 1, fixed 520x520 input
+- `deeplabv3` / `semantic` / `torchscript`: FP32, batch 1, fixed 520x520 input
+- `deeplabv3` / `semantic` / `tensorrt`: TensorRT 10.16 FP32, RTX 5070 Ti, batch 1, fixed 520x520 input
+- `deeplabv3` / `semantic` / `openvino`: OpenVINO 2026.2 FP32 IR, CPU default inference precision, batch 1, fixed 520x520 input
 - `deformable_detr` / `detect` / `onnx`: FP32, fixed square input, ONNX opset 17
 - `deim` / `detect` / `onnx`: DETR query rows are aligned as an unordered set for parity
 - `deim` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `deimv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `deit` / `classify` / `onnx`: CPU FP32, fixed 224x224 input; ONNX uses opset 17
+- `deit` / `classify` / `torchscript`: CPU FP32 with fixed 224x224 input
+- `deit` / `classify` / `tensorrt`: TensorRT 10.16 FP16 on RTX 5070 Ti, fixed 224x224 batch-1 input, 0.25 GiB tactic workspace
+- `deit` / `classify` / `openvino`: OpenVINO 2026.2 CPU FP32 with fixed 224x224 input
 - `depth_anything` / `depth` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; Depth Anything uses the Apache-2.0 Small checkpoint
 - `depth_anything` / `depth` / `tensorrt`: FP32 with a fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `openvino`: fixed input resolution divisible by 14
@@ -146,6 +177,7 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `detect` / `openvino`: fixed export canvas
 - `dfine` / `detect` / `coreai`: fixed export canvas; trained LibreDFINEn weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `dfine` / `segment` / `openvino`: fixed export canvas
+- `dinodetr` / `detect` / `onnx`: FP32, fixed square input, ONNX opset 17
 - `dinov2` / `semantic` / `onnx`: fixed 518x518 input
 - `dinov2` / `semantic` / `torchscript`: fixed 518x518 input
 - `dinov2` / `semantic` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 518x518 input shape
@@ -168,6 +200,10 @@ A check mark applies only under any constraint listed here.
 - `ec` / `segment` / `torchscript`: fixed 640x640 input
 - `ec` / `segment` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1; fixed input shape large enough for the top-300 query selection
 - `ec` / `segment` / `openvino`: fixed 640x640 input
+- `efficientdet` / `detect` / `onnx`: FP32, batch 1, fixed per-variant square input
+- `efficientdet` / `detect` / `torchscript`: FP32, batch 1, fixed per-variant square input
+- `efficientdet` / `detect` / `tensorrt`: TensorRT 10.16, FP32, batch 1, fixed per-variant square input; TensorRT's ITopK limit uses 3840 candidates instead of the native 5000-candidate budget
+- `efficientdet` / `detect` / `openvino`: OpenVINO 2026.2, FP32, batch 1, fixed per-variant square input on CPU
 - `efficientnetv2` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `efficientnetv2` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `efficientnetv2` / `classify` / `openvino`: fixed family-native input resolution
@@ -178,12 +214,22 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `semantic` / `tensorrt`: FP32 with a fixed family-native export canvas
 - `eomt` / `semantic` / `openvino`: fixed family-native export canvas
 - `faster_rcnn` / `detect` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream aspect resize and final class-wise NMS are embedded in the graph
+- `fcn` / `semantic` / `onnx`: FP32, batch 1, fixed square input divisible by 8
+- `fcn` / `semantic` / `torchscript`: FP32, batch 1, fixed square input divisible by 8
+- `fcn` / `semantic` / `tensorrt`: TensorRT 10.16 FP32, batch 1, fixed square input divisible by 8
+- `fcn` / `semantic` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed square input divisible by 8
+- `fcos` / `detect` / `onnx`: FP32, batch 1, out-of-graph aspect resize, opset 18, dynamic padded H/W
+- `fcos` / `detect` / `torchscript`: FP32, batch 1, out-of-graph aspect resize, variable padded H/W
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
 - `fomo` / `point` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed square input shape
 - `fomo` / `point` / `tensorrt`: FP32 with a fixed 96x96 input
 - `fomo` / `point` / `openvino`: fixed square input
 - `fomo` / `point` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed 96x96 input; two-input raw parity, factory reload, metadata, and public predict parity
 - `fomo` / `point` / `coreai`: native 96 canvas; a deterministic model state trained from scratch for eight steps on synthetic tensors is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion and the existing heatmap contract, not point-localization accuracy
+- `hrnet` / `pose` / `onnx`: PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
+- `hrnet` / `pose` / `torchscript`: PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
+- `hrnet` / `pose` / `tensorrt`: TensorRT 10.16.1.11, CUDA 12.8, RTX 5070 Ti, FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
+- `hrnet` / `pose` / `openvino`: OpenVINO 2026.2.1 CPU FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
 - `l2cs` / `gaze` / `onnx`: head-only contract: each input image is one face crop
 - `l2cs` / `gaze` / `torchscript`: head-only contract: each input image is one face crop
 - `l2cs` / `gaze` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 448x448 face crop
@@ -194,6 +240,12 @@ A check mark applies only under any constraint listed here.
 - `lingbotvision` / `semantic` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `lingbotvision` / `semantic` / `openvino`: fixed family-native export canvas
 - `lingbotvision` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
+- `mask_rcnn` / `detect` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream aspect resize, class-wise NMS, RoIAlign, and mask paste are embedded
+- `mask_rcnn` / `segment` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream aspect resize, class-wise NMS, RoIAlign, and mask paste are embedded
+- `midas` / `depth` / `onnx`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
+- `midas` / `depth` / `torchscript`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
+- `midas` / `depth` / `tensorrt`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
+- `midas` / `depth` / `openvino`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
 - `mobilenetv4` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `mobilenetv4` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `mobilenetv4` / `classify` / `openvino`: fixed family-native input resolution
@@ -234,6 +286,7 @@ A check mark applies only under any constraint listed here.
 - `resnet` / `classify` / `openvino`: fixed family-native input resolution
 - `resnet` / `classify` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 at the family-native input resolution; two-input raw parity, factory reload, metadata, and public predict parity
 - `resnet` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `retinanet` / `detect` / `onnx`: ONNX Runtime, FP32, opset 13, batch 1, dynamic preprocessed H/W; class-aware NMS runs in the LibreYOLO backend
 - `rfdetr` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `rfdetr` / `detect` / `coreai`: fixed export canvas; trained LibreRFDETRn weights are covered on macOS 27 against the graph the exporter itself prepares, using direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin. Conversion needed _rebake_rfdetr_pos_embed in export/coreai.py: the backbone bakes its position embedding for its configured 384 canvas, so exporting at any other size left an antialiased bicubic in the graph and the converter has no lowering for aten._upsample_bicubic2d_aa. The rebake re-runs the model's OWN baking path for the actual canvas, so the interpolation happens eagerly, outside the graph, computing exactly what it computed before. NOTE the reference. This family is verified against the exporter's prepared graph, not against ONNX, and the difference is not a detail: at a 640 canvas the rfdetr ONNX artifact disagrees with that same prepared graph by 9.3e-01. Core AI's rebake preserves the antialiased resize the eager model performs, whereas the ONNX path disables antialiasing (the model checks torch.onnx.is_in_onnx_export). Which artifact is right is an ONNX question and is not settled here, but ONNX cannot be used as the reference for this family at a non-native canvas.
 - `rfdetr` / `segment` / `onnx`: fixed task-native input resolution
@@ -276,6 +329,11 @@ A check mark applies only under any constraint listed here.
 - `siglip2` / `embed` / `tensorrt`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
 - `siglip2` / `embed` / `openvino`: FP32, batch 1, fixed family-native square input; ExecuTorch uses 1.2/XNNPACK, TensorRT uses 10.16, and OpenVINO uses 2026.2
 - `siglip2` / `embed` / `tflite`: onnx2tf 2.6.7, LiteRT 2.1.2 CPU FP32, batch 1, fixed square input
+- `ssd` / `detect` / `onnx`: ONNX Runtime, FP32, opset 13, fixed 300 x 300 input
+- `swin` / `classify` / `onnx`: Swin V1 at its fixed 224x224 native input resolution
+- `swin` / `classify` / `torchscript`: Swin V1 at its fixed 224x224 native input resolution
+- `swin` / `classify` / `tensorrt`: FP32, batch 1, and a fixed 224x224 input resolution
+- `swin` / `classify` / `openvino`: FP32 with a fixed 224x224 input resolution
 - `swinir` / `restore` / `onnx`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `torchscript`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `swinir` / `restore` / `tensorrt`: FP32 with a fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas.
@@ -287,6 +345,11 @@ A check mark applies only under any constraint listed here.
 - `teed` / `edge` / `tensorrt`: TensorRT 10.16 FP32, batch 1, fixed input shape
 - `teed` / `edge` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed input shape
 - `teed` / `edge` / `tflite`: LiteRT 2.1.2 CPU FP32, batch 1, fixed input shape
+- `vgg` / `classify` / `onnx`: FP32, batch 1, fixed 224x224 input
+- `vgg` / `classify` / `torchscript`: FP32, batch 1, fixed 224x224 input
+- `vgg` / `classify` / `tensorrt`: FP32, batch 1, fixed 224x224 input
+- `vgg` / `classify` / `openvino`: FP32, batch 1, fixed 224x224 input
+- `vit` / `classify` / `onnx`: FP32, fixed 224x224 input
 - `yolo1` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo1` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
@@ -341,6 +404,9 @@ A check mark applies only under any constraint listed here.
 
 ## Blocked combinations
 
+- `alexnet` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `alexnet` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `alexnet` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `birefnet` / `matte` / `executorch`: Strict capture succeeds at the fixed 1024x1024 canvas, but ExecuTorch 1.2 lowering has no out variant for torchvision::deform_conv2d.
 - `birefnet` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `birefnet` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
@@ -348,6 +414,10 @@ A check mark applies only under any constraint listed here.
 - `birefnet` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `birefnet` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `birefnet` / `matte` / `coreai`: The decoder needs torchvision deform_conv2d, which the Core AI converter cannot lower ('unable to handle call function op: deform_conv2d.default'). The same operator already blocks the NCNN path. An encoder-only contract is the realistic route, matching the seam the CUDA graph work used.
+- `centernet` / `detect` / `ncnn`: NCNN cannot lower CenterNet's portable deformable sampling plus baked top-k decode contract. Use ONNX or TorchScript.
+- `centernet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `centernet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `centernet` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `clip` / `classify` / `ncnn`: No parity-valid frozen-class artifact is available for this runtime.
 - `clip` / `classify` / `tflite`: onnx2tf 2.6.7 emits a LiteRT graph whose TRANSPOSE receives a rank-5 permutation for a rank-4 tensor.
 - `clip` / `classify` / `coreml`: No parity-valid frozen-class artifact is available for this runtime.
@@ -356,6 +426,11 @@ A check mark applies only under any constraint listed here.
 - `clip` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `clip` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
 - `convnext` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `deeplabv3` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `deeplabv3` / `semantic` / `ncnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `deeplabv3` / `semantic` / `tflite`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `deeplabv3` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `deeplabv3` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `deformable_detr` / `detect` / `ncnn`: NCNN export is not supported for Deformable DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deformable_detr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deformable_detr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -368,6 +443,9 @@ A check mark applies only under any constraint listed here.
 - `deimv2` / `detect` / `ncnn`: NCNN export is not supported for DEIMv2: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deimv2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deimv2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `deit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `deit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `deit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `depth_anything` / `depth` / `ncnn`: PNNX 20260526 reports unsupported batch-index reshapes in the DINOv2 transformer graph; the produced NCNN artifact fails numeric parity.
 - `depth_anything` / `depth` / `tflite`: onnx2tf 2.6.7 converts the DINOv2 depth graph, but LiteRT 2.1.2 cannot broadcast [1,3,3,32] and [1,72,72,32] in a generated ADD.
 - `depth_anything` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -391,6 +469,10 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `segment` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
+- `dinodetr` / `detect` / `ncnn`: NCNN export is not supported for DINO-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
+- `dinodetr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `dinodetr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `dinodetr` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `dinov2` / `semantic` / `ncnn`: PNNX 20260526 cannot lower the DINOv2 attention graph's batch-axis broadcasts and leaves an unsupported pnnx.Expression node.
 - `dinov2` / `semantic` / `tflite`: onnx2tf 2.6.7 flatbuffer-direct lowering cannot lower the backbone's cubic Resize because its input C/H/W signature remains dynamic.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
@@ -421,6 +503,9 @@ A check mark applies only under any constraint listed here.
 - `edgetam` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
+- `efficientdet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `efficientdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `efficientdet` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `efficientnetv2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `eomt` / `semantic` / `executorch`: Strict torch.export capture fails on a data-dependent symbolic expression in the mask path before XNNPACK lowering.
 - `eomt` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
@@ -453,6 +538,17 @@ A check mark applies only under any constraint listed here.
 - `faster_rcnn` / `detect` / `tflite`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `coreml`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `coreai`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
+- `fcn` / `semantic` / `executorch`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
+- `fcn` / `semantic` / `ncnn`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
+- `fcn` / `semantic` / `tflite`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
+- `fcn` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
+- `fcn` / `semantic` / `coreai`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
+- `fcos` / `detect` / `executorch`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
+- `fcos` / `detect` / `tensorrt`: FCOS requires dynamic padded H/W to preserve its 800/1333 aspect transform, while the current TensorRT runtime profiles dynamic batch only.
+- `fcos` / `detect` / `ncnn`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
+- `fcos` / `detect` / `tflite`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
+- `fcos` / `detect` / `coreml`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
+- `fcos` / `detect` / `coreai`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
 - `feynobg` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `feynobg` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `feynobg` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
@@ -479,6 +575,11 @@ A check mark applies only under any constraint listed here.
 - `grounding_dino` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `coreai`: Open-vocabulary runtime export is out of scope for v1.
+- `hrnet` / `pose` / `executorch`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `hrnet` / `pose` / `ncnn`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `hrnet` / `pose` / `tflite`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `hrnet` / `pose` / `coreml`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `hrnet` / `pose` / `coreai`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `internvl3` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
@@ -535,6 +636,25 @@ A check mark applies only under any constraint listed here.
 - `lwdetr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `lwdetr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `lwdetr` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
+- `mask_rcnn` / `detect` / `torchscript`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `executorch`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `tensorrt`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `openvino`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `ncnn`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `tflite`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `coreml`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `coreai`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `torchscript`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `executorch`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `tensorrt`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `openvino`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `ncnn`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `tflite`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `coreml`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `coreai`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `midas` / `depth` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `midas` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `midas` / `depth` / `coreai`: This family and task have not been validated for Core AI export.
 - `mobilenetv4` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `mobilesam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
@@ -608,6 +728,14 @@ A check mark applies only under any constraint listed here.
 - `qwen3vl` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `realesrgan` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `resnet` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `retinanet` / `detect` / `torchscript`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `executorch`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `tensorrt`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `openvino`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `ncnn`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `tflite`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `coreml`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `retinanet` / `detect` / `coreai`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
 - `rfdetr` / `detect` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `detect` / `tflite`: onnx2tf emits a flatbuffer at the native 384x384 canvas, but LiteRT cannot allocate it because STRIDED_SLICE receives an input above its supported 5-D rank.
 - `rfdetr` / `segment` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
@@ -696,6 +824,17 @@ A check mark applies only under any constraint listed here.
 - `smolvlm2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `ssd` / `detect` / `torchscript`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `executorch`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `tensorrt`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `openvino`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `ncnn`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `tflite`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `coreml`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `ssd` / `detect` / `coreai`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
+- `swin` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `swin` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `swin` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `swinir` / `restore` / `executorch`: The fixed-canvas graph captures, lowers, serializes, and reloads, but ExecuTorch 1.2 runtime execution fails in aten::alias_copy.out because the source and destination tensors have different dimension orders.
 - `swinir` / `restore` / `ncnn`: PNNX writes NCNN artifacts after reporting unsupported 5-rank Permute operations, but the NCNN runtime process exits while loading or executing the resulting graph.
 - `swinir` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -703,6 +842,12 @@ A check mark applies only under any constraint listed here.
 - `teed` / `edge` / `ncnn`: PNNX 20260526 leaves an unsupported Tensor.index channel-reversal node, so the generated NCNN network has no runnable input.
 - `teed` / `edge` / `coreml`: This edge runtime has no parity-valid artifact for the requested format.
 - `teed` / `edge` / `coreai`: This edge runtime has no parity-valid artifact for the requested format.
+- `vgg` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `vgg` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `vgg` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
+- `vit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `vit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `vit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `yolo1` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_EINSUM custom operation that LiteRT 2.1.2 cannot prepare at the native 448x448 canvas.
 - `yolo1` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo2` / `detect` / `tflite`: LiteRT 2.1.2 cannot prepare the onnx2tf 2.6.7 artifact because a RESHAPE maps 4,225 input elements to one output element.

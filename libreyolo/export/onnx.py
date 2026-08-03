@@ -11,6 +11,7 @@ import torch
 _DETR_TUPLE_OUTPUT_FAMILIES = {
     "deformable_detr",
     "detr",
+    "dinodetr",
     "dfine",
     "deim",
     "deimv2",
@@ -45,7 +46,11 @@ def _uses_dfine_style_export_wrapper(model_family) -> bool:
 
 def _requires_onnx_opset17(model_family) -> bool:
     """Whether the family needs opset 17 for ONNX auto-opset selection."""
-    return model_family in _DETR_TUPLE_OUTPUT_FAMILIES or model_family == "moge2"
+    return model_family in _DETR_TUPLE_OUTPUT_FAMILIES or model_family in {
+        "deit",
+        "midas",
+        "moge2",
+    }
 
 
 def _set_metadata(model_proto, metadata: dict) -> None:
@@ -220,6 +225,7 @@ def export_onnx(
     model_family = metadata.get("model_family")
     is_seg = metadata.get("segmentation") == "true" or task == "segment"
     is_yolo9_pose = model_family == "yolo9" and task == "pose"
+    is_hrnet_pose = model_family == "hrnet" and task == "pose"
     is_rfdetr_pose = model_family == "rfdetr" and task == "pose"
     is_ec_pose = model_family == "ec" and task == "pose"
     is_yolonas_pose = model_family == "yolonas" and task == "pose"
@@ -232,13 +238,21 @@ def export_onnx(
     is_normal = task == "normal"
     is_edge = task == "edge"
     is_gaze = task == "gaze"
+    is_mask_rcnn = model_family == "mask_rcnn"
     is_faster_rcnn = model_family == "faster_rcnn"
+    is_retinanet = model_family == "retinanet"
+    is_ssd = model_family == "ssd"
+    is_fcos = model_family == "fcos"
     known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
     if (
         not is_seg
         and not known_detr_detection
+        and not is_mask_rcnn
         and not is_faster_rcnn
+        and not is_retinanet
+        and not is_ssd
+        and not is_fcos
         and not is_restore
         and not is_matte
         and not is_depth
@@ -246,6 +260,7 @@ def export_onnx(
         and not is_edge
         and not is_semantic
         and not is_gaze
+        and not is_hrnet_pose
     ):
         num_outputs = _detect_num_outputs(nn_model, dummy)
         is_seg = num_outputs >= 3
@@ -256,8 +271,10 @@ def export_onnx(
             "detection-only in LibreYOLO."
         )
 
-    if is_faster_rcnn:
+    if is_mask_rcnn or is_faster_rcnn:
         output_names = ["boxes", "scores", "labels"]
+        if is_mask_rcnn and task == "segment":
+            output_names.append("masks")
         # Batch stays fixed at one, but the source spatial axes must remain
         # dynamic. GeneralizedRCNNTransform performs the upstream min/max
         # aspect resize in-graph; forcing a square canvas here would require
@@ -269,6 +286,43 @@ def export_onnx(
                 "scores": {0: "detections"},
                 "labels": {0: "detections"},
             }
+            if dynamic
+            else None
+        )
+        if dynamic_axes is not None and "masks" in output_names:
+            dynamic_axes["masks"] = {
+                0: "detections",
+                2: "mask_height",
+                3: "mask_width",
+            }
+    elif is_retinanet:
+        output_names = ["output"]
+        dynamic_axes = (
+            {
+                "images": {2: "height", 3: "width"},
+                "output": {1: "anchors"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_fcos:
+        output_names = ["output"]
+        # FCOS preprocessing is outside the graph and preserves aspect ratio,
+        # so padded spatial dimensions vary with the source image.
+        dynamic_axes = (
+            {
+                "images": {0: "batch", 2: "height", 3: "width"},
+                "output": {0: "batch", 1: "anchors"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_ssd:
+        # One fixed-anchor tensor: decoded xyxy boxes followed by contiguous
+        # class probabilities, transposed to the standard detector layout.
+        output_names = ["output"]
+        dynamic_axes = (
+            {"images": {0: "batch"}, "output": {0: "batch"}}
             if dynamic
             else None
         )
@@ -296,6 +350,11 @@ def export_onnx(
             }
             if dynamic
             else None
+        )
+    elif is_hrnet_pose:
+        output_names = ["heatmaps"]
+        dynamic_axes = (
+            {"images": {0: "people"}, "heatmaps": {0: "people"}} if dynamic else None
         )
     elif is_classify:
         # Classification emits a single logits tensor (B, num_classes).

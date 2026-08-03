@@ -67,6 +67,7 @@ logger = logging.getLogger(__name__)
 
 ImageSize = Union[int, Tuple[int, int]]
 _RECTANGULAR_BACKEND_FAMILIES = {
+    "hrnet",
     "yolo9",
     "yolo9_e2e",
     "yolo9_p2",
@@ -147,7 +148,7 @@ def _read_metadata_imgsz(
         ):
             raise NotImplementedError(
                 "Rectangular exported-backend inference is currently supported "
-                "for YOLO9-family and NAFNet exports only. "
+                "for YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports only. "
                 f"{artifact} declares model_family={model_family or 'unknown'!r}."
             )
         return imgsz
@@ -267,13 +268,16 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
     valid detections and make exported runtimes diverge from native PyTorch.
     """
     return model_family in {
+        "centernet",
         "deformable_detr",
         "detr",
+        "dinodetr",
         "dfine",
         "deim",
         "deimv2",
         "ec",
         "faster_rcnn",
+        "mask_rcnn",
         "lwdetr",
         "rfdetr",
         "rtdetr",
@@ -457,6 +461,14 @@ class BaseBackend(ABC):
             return self._preprocess_matte(image, effective_imgsz, color_format)
         if self.task == "gaze":
             return self._preprocess_gaze(image, effective_imgsz, color_format)
+        if self.model_family == "hrnet" and self.task == "pose":
+            from ..models.hrnet.utils import preprocess_crop_image
+
+            return preprocess_crop_image(
+                image,
+                input_size=effective_imgsz,
+                color_format=color_format,
+            )
         if self.task in {"classify", "embed"}:
             return self._preprocess_classify(image, effective_imgsz, color_format)
         if self.task == "point" and self.model_family == "fomo":
@@ -500,15 +512,44 @@ class BaseBackend(ABC):
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
-        elif self.model_family == "faster_rcnn":
+        elif self.model_family in {"faster_rcnn", "mask_rcnn"}:
             return self._preprocess_faster_rcnn(
                 image, effective_imgsz, color_format
             )
-        elif self.model_family == "deformable_detr":
+        elif self.model_family == "retinanet":
+            from ..models.retinanet.utils import (
+                preprocess_image as retinanet_preprocess_image,
+            )
+
+            input_h, input_w = _imgsz_hw(effective_imgsz)
+            if input_h != input_w:
+                raise NotImplementedError(
+                    "RetinaNet exported inference requires a scalar or square imgsz."
+                )
+            return retinanet_preprocess_image(
+                image,
+                input_size=input_h,
+                color_format=color_format,
+            )
+        elif self.model_family == "ssd":
+            from ..models.ssd.utils import preprocess_image as ssd_preprocess_image
+
+            return ssd_preprocess_image(
+                image,
+                input_size=effective_imgsz,
+                color_format=color_format,
+            )
+        elif self.model_family == "fcos":
+            return self._preprocess_fcos(image, effective_imgsz, color_format)
+        elif self.model_family in {"deformable_detr", "dinodetr"}:
             tensor, img, size = self._preprocess_deformable_detr(
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
+        elif self.model_family == "centernet":
+            return self._preprocess_centernet(
+                image, effective_imgsz, color_format
+            )
         elif self.model_family in ("dfine", "rtdetrv4"):
             tensor, img, size = self._preprocess_dfine(
                 image, effective_imgsz, color_format
@@ -539,6 +580,8 @@ class BaseBackend(ABC):
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
+        elif self.model_family == "efficientdet":
+            return self._preprocess_efficientdet(image, effective_imgsz, color_format)
         elif self.model_family == "rtmdet":
             tensor, img, size, ratio = self._preprocess_rtmdet(
                 image, effective_imgsz, color_format
@@ -618,6 +661,15 @@ class BaseBackend(ABC):
                 interpolation="bilinear",
                 square_resize=True,
             )
+        elif self.model_family == "vit":
+            from ..models.vit.utils import VIT_MEAN, VIT_STD
+
+            transform_kwargs.update(
+                mean=VIT_MEAN,
+                std=VIT_STD,
+                crop_pct=0.9,
+                interpolation="bicubic",
+            )
         transform = build_classify_transforms(
             h,
             augment=False,
@@ -639,6 +691,10 @@ class BaseBackend(ABC):
             chw, ratio = preprocess_numpy(arr, (input_h, input_w))
         elif self.model_family == "segformer":
             from ..models.segformer.model import preprocess_numpy
+
+            chw, ratio = preprocess_numpy(arr, (input_h, input_w))
+        elif self.model_family == "deeplabv3":
+            from ..models.deeplabv3.utils import preprocess_numpy
 
             chw, ratio = preprocess_numpy(arr, (input_h, input_w))
         else:
@@ -901,6 +957,20 @@ class BaseBackend(ABC):
         return torch.from_numpy(chw).unsqueeze(0), img.copy(), original_size, 1.0
 
     @staticmethod
+    def _preprocess_fcos(image, input_size, color_format):
+        """Apply the out-of-graph torchvision FCOS transform."""
+        from ..models.fcos.utils import preprocess_image
+
+        input_h, input_w = _imgsz_hw(input_size)
+        if input_h != input_w:
+            raise ValueError(f"FCOS requires a scalar/square imgsz, got {input_size}")
+        return preprocess_image(
+            image,
+            input_size=input_h,
+            color_format=color_format,
+        )
+
+    @staticmethod
     def _preprocess_deformable_detr(image, input_size, color_format):
         """Deformable DETR preprocessing: square resize and ImageNet norm."""
         from ..models.deformable_detr.utils import preprocess_numpy
@@ -912,6 +982,20 @@ class BaseBackend(ABC):
         img_chw, _ = preprocess_numpy(np.array(img), input_size)
         img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
         return img_tensor, original_img, original_size
+
+    @staticmethod
+    def _preprocess_centernet(image, input_size, color_format):
+        """CenterNet preprocessing: centered BGR affine warp and normalization."""
+        from ..models.centernet.utils import preprocess_image
+
+        input_h, input_w = _imgsz_hw(input_size)
+        if input_h != input_w:
+            raise NotImplementedError(
+                "CenterNet exported inference requires a square input canvas."
+            )
+        return preprocess_image(
+            image, input_size=input_h, color_format=color_format
+        )
 
     @staticmethod
     def _preprocess_detr(image, input_size, color_format):
@@ -1001,6 +1085,13 @@ class BaseBackend(ABC):
         return img_tensor, original_img, original_size
 
     @staticmethod
+    def _preprocess_efficientdet(image, input_size, color_format):
+        """EfficientDet top-left resize-pad plus ImageNet normalization."""
+        from ..models.efficientdet.utils import preprocess_image
+
+        return preprocess_image(image, input_size=input_size, color_format=color_format)
+
+    @staticmethod
     def _preprocess_rtmdet(image, input_size, color_format):
         """RTMDet preprocessing: BGR letterbox + mmdet mean/std normalization."""
         from ..models.rtmdet.utils import preprocess_numpy as rtmdet_preprocess_numpy
@@ -1065,6 +1156,14 @@ class BaseBackend(ABC):
             )
             return boxes, scores, cls, None
 
+        if self.model_family == "hrnet" and self.task == "pose":
+            return self._parse_hrnet_pose(
+                all_outputs,
+                effective_imgsz,
+                original_size,
+                max_det=max_det,
+            )
+
         if self.model_family == "yolox":
             boxes, scores, cls = self._parse_yolox(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio
@@ -1103,14 +1202,57 @@ class BaseBackend(ABC):
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
             return boxes, scores, cls, None
+        elif self.model_family == "mask_rcnn":
+            return self._parse_mask_rcnn(
+                all_outputs, effective_imgsz, orig_w, orig_h, conf
+            )
         elif self.model_family == "faster_rcnn":
             boxes, scores, cls = self._parse_faster_rcnn(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf
             )
             return boxes, scores, cls, None
-        elif self.model_family == "deformable_detr":
+        elif self.model_family == "retinanet":
+            boxes, scores, cls = self._parse_retinanet(
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+            )
+            return boxes, scores, cls, None
+        elif self.model_family == "fcos":
+            boxes, scores, cls = self._parse_fcos(
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+            )
+            return boxes, scores, cls, None
+        elif self.model_family == "ssd":
+            boxes, scores, cls = self._parse_ssd(
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+                iou=iou,
+                max_det=max_det,
+            )
+            return boxes, scores, cls, None
+        elif self.model_family in {"deformable_detr", "dinodetr"}:
             boxes, scores, cls = self._parse_deformable_detr(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
+            return boxes, scores, cls, None
+        elif self.model_family == "centernet":
+            boxes, scores, cls = self._parse_centernet(
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+                max_det=max_det,
             )
             return boxes, scores, cls, None
         elif self.model_family in ("dfine", "rtdetrv4"):
@@ -1155,6 +1297,16 @@ class BaseBackend(ABC):
                 all_outputs, effective_imgsz, orig_w, orig_h, conf
             )
             return boxes, scores, cls, None
+        elif self.model_family == "efficientdet":
+            boxes, scores, cls = self._parse_efficientdet(
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+                ratio,
+            )
+            return boxes, scores, cls, None
         elif self.model_family == "rtmdet":
             boxes, scores, cls = self._parse_rtmdet(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio
@@ -1172,6 +1324,48 @@ class BaseBackend(ABC):
                 return parsed
             boxes, scores, cls = parsed
             return boxes, scores, cls, None
+
+    @staticmethod
+    def _parse_hrnet_pose(
+        all_outputs: list,
+        effective_imgsz: ImageSize,
+        original_size: Tuple[int, int],
+        *,
+        max_det: int,
+    ):
+        """Decode one exported HRNet person-crop heatmap tensor."""
+        if len(all_outputs) != 1:
+            raise ValueError(
+                "HRNet pose backend requires one heatmap output, "
+                f"got {len(all_outputs)} outputs."
+            )
+        from ..models.hrnet.utils import box_to_center_scale
+        from ..postprocess.hrnet import postprocess_hrnet
+
+        original_width, original_height = original_size
+        box = np.asarray(
+            [[0.0, 0.0, float(original_width), float(original_height)]],
+            dtype=np.float32,
+        )
+        center, scale = box_to_center_scale(box[0], effective_imgsz)
+        decoded = postprocess_hrnet(
+            np.asarray(all_outputs[0], dtype=np.float32),
+            centers=center[None, :],
+            scales=scale[None, :],
+            boxes=box,
+            box_scores=np.ones((1,), dtype=np.float32),
+            keypoint_threshold=0.2,
+            oks_threshold=0.9,
+            max_det=min(int(max_det), 1),
+        )
+        return (
+            decoded["boxes"],
+            decoded["scores"],
+            decoded["classes"],
+            None,
+            None,
+            decoded["keypoints"],
+        )
 
     def _parse_yolox(
         self, all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=1.0
@@ -1355,6 +1549,35 @@ class BaseBackend(ABC):
 
         return boxes, max_scores, class_ids
 
+    @staticmethod
+    def _parse_efficientdet(
+        all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=1.0
+    ):
+        """Parse ``(B, 5000, 6)`` decoded EfficientDet candidates."""
+        candidates = np.asarray(all_outputs[0])[0]
+        keep = (candidates[:, 4] > conf) & (candidates[:, 5] >= 0)
+        candidates = candidates[keep]
+        if candidates.shape[0] == 0:
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int64),
+            )
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        boxes = candidates[:, :4].astype(np.float32, copy=True)
+        scores = candidates[:, 4].astype(np.float32, copy=False)
+        class_ids = candidates[:, 5].astype(np.int64, copy=False)
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, input_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, input_h)
+        if ratio is None or ratio <= 0:
+            ratio = min(input_h / orig_h, input_w / orig_w)
+        boxes /= ratio
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        return boxes[valid], scores[valid], class_ids[valid]
+
     def _parse_embedded_nms(self, all_outputs, effective_imgsz, orig_w, orig_h, conf):
         """Parse a graph-embedded-NMS detection output.
 
@@ -1408,6 +1631,275 @@ class BaseBackend(ABC):
             input_h, input_w = _imgsz_hw(effective_imgsz)
             boxes[:, [0, 2]] *= orig_w / input_w
             boxes[:, [1, 3]] *= orig_h / input_h
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        return boxes[valid], scores[valid], class_ids[valid]
+
+    def _parse_retinanet(
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+    ):
+        """Select RetinaNet candidates per FPN level before backend NMS."""
+        from ..postprocess.retinanet import level_anchor_counts, resize_geometry
+
+        predictions = np.asarray(all_outputs[0], dtype=np.float32)
+        if predictions.ndim == 3:
+            if predictions.shape[0] != 1:
+                raise ValueError(
+                    "RetinaNet exported inference currently requires batch=1, "
+                    f"got batch={predictions.shape[0]}"
+                )
+            predictions = predictions[0]
+        if predictions.ndim != 2 or predictions.shape[1] < 5:
+            raise ValueError(
+                "RetinaNet output must have shape (1, anchors, 4 + classes), "
+                f"got {np.asarray(all_outputs[0]).shape}"
+            )
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        if input_h != input_w:
+            raise NotImplementedError(
+                "RetinaNet exported inference requires a scalar or square imgsz."
+            )
+        resized_h, resized_w, scale_x, scale_y = resize_geometry(
+            (orig_w, orig_h), input_h
+        )
+        counts = level_anchor_counts(resized_h, resized_w)
+        if sum(counts) != predictions.shape[0]:
+            raise ValueError(
+                "RetinaNet anchor count does not match preprocessing geometry: "
+                f"output has {predictions.shape[0]}, expected {sum(counts)}."
+            )
+
+        selected_boxes = []
+        selected_scores = []
+        selected_classes = []
+        offset = 0
+        for count in counts:
+            level = predictions[offset : offset + count]
+            offset += count
+            boxes, scores = level[:, :4], level[:, 4:]
+            anchor_ids, class_ids = np.nonzero(scores > conf)
+            if not len(anchor_ids):
+                continue
+            level_scores = scores[anchor_ids, class_ids]
+            keep_count = min(1000, len(level_scores))
+            if keep_count < len(level_scores):
+                keep = np.argpartition(-level_scores, keep_count - 1)[:keep_count]
+                level_scores = level_scores[keep]
+                anchor_ids = anchor_ids[keep]
+                class_ids = class_ids[keep]
+            order = np.argsort(-level_scores, kind="stable")
+            level_boxes = boxes[anchor_ids[order]].copy()
+            level_boxes[:, [0, 2]] = np.clip(
+                level_boxes[:, [0, 2]], 0, resized_w
+            )
+            level_boxes[:, [1, 3]] = np.clip(
+                level_boxes[:, [1, 3]], 0, resized_h
+            )
+            selected_boxes.append(level_boxes)
+            selected_scores.append(level_scores[order])
+            selected_classes.append(class_ids[order].astype(np.int64, copy=False))
+
+        if not selected_boxes:
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int64),
+            )
+
+        boxes = np.concatenate(selected_boxes)
+        scores = np.concatenate(selected_scores).astype(np.float32, copy=False)
+        class_ids = np.concatenate(selected_classes)
+        finite = np.isfinite(boxes).all(axis=1) & np.isfinite(scores)
+        boxes, scores, class_ids = boxes[finite], scores[finite], class_ids[finite]
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        boxes, scores, class_ids = boxes[valid], scores[valid], class_ids[valid]
+        boxes[:, [0, 2]] /= scale_x
+        boxes[:, [1, 3]] /= scale_y
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        return boxes, scores, class_ids
+
+    def _parse_ssd(
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+        iou: float = 0.45,
+        max_det: int = 300,
+    ):
+        """Parse SSD's decoded YOLO-grid tensor before shared class-wise NMS."""
+        del iou, max_det
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        if (input_h, input_w) != (300, 300):
+            raise ValueError(
+                "SSD exported inference requires the fixed 300 x 300 canvas"
+            )
+
+        packed = np.asarray(all_outputs[0], dtype=np.float32)
+        if packed.ndim == 3 and packed.shape[0] == 1:
+            packed = packed[0]
+        if packed.ndim != 2:
+            raise ValueError("SSD backend expects one packed rank-3 output")
+        if packed.shape[1] == 8732:
+            packed = packed.T
+        if packed.shape[0] != 8732 or packed.shape[1] != 4 + self.nb_classes:
+            raise ValueError(
+                "SSD backend output must have shape "
+                f"(1, {4 + self.nb_classes}, 8732)"
+            )
+
+        boxes_all = packed[:, :4]
+        scores_all = packed[:, 4:]
+        image_boxes = []
+        image_scores = []
+        image_classes = []
+        for class_id in range(scores_all.shape[1]):
+            class_scores = scores_all[:, class_id]
+            indices = np.flatnonzero(class_scores > conf)
+            if indices.size > 400:
+                top = np.argpartition(-class_scores[indices], 399)[:400]
+                indices = indices[top]
+            image_boxes.append(boxes_all[indices])
+            image_scores.append(class_scores[indices])
+            image_classes.append(np.full(indices.shape, class_id, dtype=np.int64))
+
+        boxes = np.concatenate(image_boxes, axis=0).astype(np.float32, copy=True)
+        scores = np.concatenate(image_scores, axis=0).astype(np.float32, copy=False)
+        classes = np.concatenate(image_classes, axis=0)
+        if not len(boxes):
+            return boxes, scores, classes
+
+        boxes[:, [0, 2]] *= orig_w / input_w
+        boxes[:, [1, 3]] *= orig_h / input_h
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        return boxes[valid], scores[valid], classes[valid]
+
+    def _parse_mask_rcnn(
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+    ):
+        """Parse aligned boxes and full-image masks from the export wrapper."""
+        boxes = np.asarray(all_outputs[0], dtype=np.float32).reshape(-1, 4)
+        scores = np.asarray(all_outputs[1], dtype=np.float32).reshape(-1)
+        class_ids = np.asarray(all_outputs[2], dtype=np.int64).reshape(-1)
+        masks = None
+        if self.task == "segment":
+            if len(all_outputs) < 4:
+                raise ValueError(
+                    "Mask R-CNN segment export did not provide a masks output"
+                )
+            masks = np.asarray(all_outputs[3], dtype=np.float32)
+            if masks.ndim == 4 and masks.shape[1] == 1:
+                masks = masks[:, 0]
+
+        keep = scores > conf
+        boxes, scores, class_ids = boxes[keep], scores[keep], class_ids[keep]
+        if masks is not None:
+            masks = masks[keep]
+        if not len(boxes):
+            if masks is not None:
+                masks = np.zeros((0, orig_h, orig_w), dtype=np.bool_)
+            return boxes, scores, class_ids, masks
+
+        boxes = boxes.copy()
+        if not getattr(self, "_dynamic_spatial_axes", False):
+            input_h, input_w = _imgsz_hw(effective_imgsz)
+            boxes[:, [0, 2]] *= orig_w / input_w
+            boxes[:, [1, 3]] *= orig_h / input_h
+            if masks is not None:
+                masks = np.stack(
+                    [
+                        cv2.resize(
+                            mask,
+                            (orig_w, orig_h),
+                            interpolation=cv2.INTER_LINEAR,
+                        )
+                        for mask in masks
+                    ],
+                    axis=0,
+                )
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        if masks is not None:
+            masks = masks[valid] >= 0.5
+        return boxes[valid], scores[valid], class_ids[valid], masks
+
+    def _parse_fcos(
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+    ):
+        """Parse ``[xyxy, level_id, mapped class scores]`` FCOS rows."""
+        output = np.asarray(all_outputs[0], dtype=np.float32)
+        if output.ndim == 3:
+            if output.shape[0] != 1:
+                raise ValueError(
+                    f"FCOS backend parsing expects batch 1, got {output.shape[0]}"
+                )
+            output = output[0]
+        if output.ndim != 2 or output.shape[1] < 6:
+            raise ValueError(
+                "FCOS export output must have shape (1, anchors, 5 + classes)"
+            )
+
+        boxes_all = output[:, :4]
+        level_ids = np.rint(output[:, 4]).astype(np.int64)
+        class_scores = output[:, 5:]
+        box_indices, class_ids = np.nonzero(class_scores > conf)
+        if not len(box_indices):
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int64),
+            )
+        scores = class_scores[box_indices, class_ids]
+
+        selected = []
+        for level in range(5):
+            level_candidates = np.nonzero(level_ids[box_indices] == level)[0]
+            if level_candidates.size > 1000:
+                level_scores = scores[level_candidates]
+                top = np.argpartition(-level_scores, 999)[:1000]
+                top = top[np.argsort(-level_scores[top])]
+                level_candidates = level_candidates[top]
+            selected.append(level_candidates)
+        selected_indices = np.concatenate(selected)
+        box_indices = box_indices[selected_indices]
+        class_ids = class_ids[selected_indices]
+        scores = scores[selected_indices]
+        boxes = boxes_all[box_indices].copy()
+
+        from ..models.fcos.utils import resize_dimensions
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        if input_h != input_w:
+            raise ValueError(
+                f"FCOS backend parsing requires a scalar/square imgsz, got {effective_imgsz}"
+            )
+        resized_h, resized_w, _ = resize_dimensions(orig_h, orig_w, input_h)
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, resized_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, resized_h)
+        boxes[:, [0, 2]] *= orig_w / resized_w
+        boxes[:, [1, 3]] *= orig_h / resized_h
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
         valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
@@ -1811,6 +2303,28 @@ class BaseBackend(ABC):
         return self._parse_dfine(
             all_outputs, orig_w, orig_h, conf, max_det=effective_max_det
         )
+
+    @staticmethod
+    def _parse_centernet(
+        all_outputs,
+        input_size,
+        orig_w,
+        orig_h,
+        conf,
+        max_det: int = 100,
+    ):
+        """Parse the export graph's baked top-100 CenterNet detections."""
+        from ..postprocess.centernet import postprocess
+
+        decoded = all_outputs[0] if isinstance(all_outputs, (tuple, list)) else all_outputs
+        result = postprocess(
+            decoded,
+            conf_thres=conf,
+            original_size=(orig_w, orig_h),
+            input_size=input_size,
+            max_det=min(max_det, 100),
+        )
+        return result["boxes"], result["scores"], result["classes"]
 
     def _parse_dfine_segment(
         self, all_outputs, orig_w, orig_h, conf, max_det: int = 300
@@ -2877,6 +3391,9 @@ class BaseBackend(ABC):
         max_det: int,
     ) -> Results:
         """Apply family-appropriate suppression/max_det/filtering and wrap."""
+        if self.model_family == "ssd":
+            max_det = min(max(0, int(max_det)), 200)
+
         if len(boxes) == 0:
             keypoints_obj = None
             if keypoints is not None:
@@ -2908,8 +3425,12 @@ class BaseBackend(ABC):
             # backend clipping so letterboxed-image behavior stays aligned with
             # native YOLO9 postprocess.
             if self.model_family in (
+                "efficientdet",
+                "fcos",
                 "picodet",
+                "retinanet",
                 "rtmdet",
+                "ssd",
                 "yolo9",
                 "yolonas",
                 "yolox",
@@ -2926,6 +3447,9 @@ class BaseBackend(ABC):
                 masks = masks[keep]
             if keypoints is not None:
                 keypoints = keypoints[keep]
+
+        if self.model_family == "fcos":
+            max_det = min(int(max_det), 100)
 
         if len(boxes) > max_det:
             top_indices = np.argsort(max_scores)[::-1][:max_det]
@@ -3113,9 +3637,11 @@ class BaseBackend(ABC):
             DEIMv2DINOValPreprocessor,
             DEIMv2ValPreprocessor,
             DeformableDETRValPreprocessor,
+            CenterNetValPreprocessor,
             DETRValPreprocessor,
             DFINEValPreprocessor,
             ECValPreprocessor,
+            EfficientDetValPreprocessor,
             LWDETRValPreprocessor,
             PICODETValPreprocessor,
             RFDETRValPreprocessor,
@@ -3143,9 +3669,12 @@ class BaseBackend(ABC):
         preprocessor_cls = {
             "deim": DEIMValPreprocessor,
             "deformable_detr": DeformableDETRValPreprocessor,
+            "centernet": CenterNetValPreprocessor,
             "detr": DETRValPreprocessor,
+            "dinodetr": DeformableDETRValPreprocessor,
             "dfine": DFINEValPreprocessor,
             "ec": ECValPreprocessor,
+            "efficientdet": EfficientDetValPreprocessor,
             "lwdetr": LWDETRValPreprocessor,
             "picodet": PICODETValPreprocessor,
             "rfdetr": RFDETRValPreprocessor,
@@ -3169,7 +3698,7 @@ class BaseBackend(ABC):
         ):
             raise NotImplementedError(
                 "Rectangular imgsz backend inference is currently supported "
-                "for YOLO9-family and NAFNet exports only."
+                "for YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports only."
             )
         return effective
 
@@ -3357,6 +3886,11 @@ class BaseBackend(ABC):
         if imgsz is None:
             imgsz = self._get_input_size()
         imgsz = self._resolve_predict_imgsz(imgsz)
+        if self.model_family == "hrnet" and self.task == "pose":
+            raise NotImplementedError(
+                "Exported HRNet artifacts are person-crop pose heads. Validate the "
+                "native composed HRNet model so a person detector can provide boxes."
+            )
         if _is_rectangular_imgsz(imgsz):
             raise NotImplementedError(
                 "Rectangular exported-backend validation is not supported yet."

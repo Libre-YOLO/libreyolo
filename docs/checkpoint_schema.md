@@ -38,14 +38,15 @@ Required field meanings:
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
   legacy sparse mappings, but out-of-range keys are invalid.
-- `imgsz`: positive integer square input resolution. Checkpoints trained with
-  a rectangular input size (supported detection families only) keep a scalar
-  here for legacy readers, set to `max(imgsz_h, imgsz_w)`, and additionally
+- `imgsz`: positive integer square input resolution or the legacy scalar for a
+  rectangular family contract. Rectangular checkpoints keep a scalar here for
+  legacy readers, set to `max(imgsz_h, imgsz_w)`, and additionally
   dual-write `imgsz_h` and `imgsz_w` with the real dimensions, mirroring the
   export-runtime convention below. Readers that understand the rectangular
-  fields must prefer them over the scalar; loading a checkpoint does not set
-  the inference input size in either case (pass `imgsz` explicitly at predict
-  or validation time, same as for non-default square sizes).
+  fields must prefer them over the scalar. Families with a fixed rectangular
+  contract, such as HRNet pose, reject incompatible runtime sizes; otherwise
+  inference sizing follows the family's documented predict and validation
+  rules.
 
 Pose checkpoints additionally include:
 
@@ -134,17 +135,19 @@ LibreYOLO behavior. Other checkpoint formats may differ.
 
 ## Export Runtime Metadata
 
-The checkpoint schema above remains square-only. Exported runtime artifacts may
-also carry metadata for graph tracing and backend loading. For rectangular
-graph exports, exporters may dual-write `imgsz_h` and `imgsz_w` next to the
-legacy scalar `imgsz`; readers that do not understand the rectangular fields
-must not silently treat the scalar as a square runtime contract.
+Checkpoint and export runtime metadata use the same rectangular dual-write
+convention. Exporters write `imgsz_h` and `imgsz_w` next to the legacy scalar
+`imgsz`; readers that do not understand the rectangular fields must not
+silently treat the scalar as a square runtime contract.
 
 Backend support for rectangular runtime metadata is family- and format-scoped.
-YOLO9-family and NAFNet exports may use non-square `imgsz_h/imgsz_w` in
-supported runtime formats; families or formats without explicit rectangular
-support must reject the metadata instead of preprocessing those artifacts as
-square inputs.
+YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports may use non-square
+`imgsz_h/imgsz_w` in supported runtime formats; families or formats without
+explicit rectangular support must reject the metadata instead of preprocessing
+those artifacts as square inputs. HRNet exports are fixed, batch-one, FP32
+person-crop heads: W32 accepts 256x192 and W48 accepts 384x288. The native
+Python runner owns person detection and crop geometry and is not embedded in
+the exported graph.
 
 NAFNet restore runtime exports use a fixed-resolution v1 contract. ONNX exports
 emit one dense `restored` output tensor and force `dynamic=false`; backend
@@ -188,6 +191,9 @@ Pose runtime exports may also write these flat metadata keys:
 - `num_keypoints_per_class`: optional JSON-encoded list of per-class keypoint
   counts for GroupPose-style heads. Readers must preserve zero-keypoint class
   slots because they define the class-to-keypoint schema.
+- `pose_input`: optional input-stage contract. `"person_crop"` means the graph
+  consumes one already-extracted person crop rather than a full image and does
+  not contain a detector. HRNet runtime exports require this value.
 
 Classification runtime exports (MobileNetV4 / ConvNeXt / EfficientNetV2 /
 ResNet) may also write these flat metadata keys so that exported-backend

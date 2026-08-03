@@ -78,7 +78,11 @@ For weights, check the HF model card YAML at the top:
 ```yaml
 license: apache-2.0    # ← permissive
 license: gpl-3.0       # ← copyleft
-license: cc-by-nc-4.0  # ← non-commercial: usually a hard "no"
+license: cc-by-nc-4.0  # ← non-commercial: still hostable — redistributable is
+                       #   the only bar for weights. Ship the license verbatim
+                       #   and lead the card with a non-commercial banner
+                       #   (SegFormer precedent); users are responsible for
+                       #   complying with the weight license.
 ```
 
 **Already-shipped reference cases**:
@@ -118,6 +122,11 @@ Pick one and document scope explicitly:
 3. **Production-grade training.** `test_rf1_training` passes; row in `MODEL_CATALOG`; recipe gaps documented in family docstring. YOLOX, YOLOv9, YOLO-NAS detect, D-FINE, DEIM, DEIMv2, RT-DETR, RF-DETR sit here, plus the classify families (MobileNetV4 / ConvNeXt / EfficientNetV2 / ResNet) on the shared classify path.
 
 **Inference-only is a legitimate ship state.** Don't gate the port on a working trainer.
+
+Which target to pick belongs to the PRD: `libreyolo-write-model-prd` section 4
+carries the three-gate trainer rule (task shape, upstream fine-tune recipe,
+audience/rollout tier). If the PRD is silent on maturity, apply the same gates
+and record the answer in the PR description.
 
 ## 3. Pick your scaffold
 
@@ -204,6 +213,7 @@ Compact rows — clone these directly for the newer archetypes:
 | **YOLO7** (`models/yolo7/`) | anchor-grid CNN | detect | experimental training (RF1 skip map) + infer | MIT upstream (same repo as the YOLO9 source); own `v7.yaml` + net; converter `weights/convert_yolo7_weights.py`, parity via `weights/parity_yolo7.py`; training via SimOTA loss (`loss.py`) adapted from Apache-2.0 YOLOX |
 | **BiRefNet** (`models/birefnet/`) | Swin v1 + bilateral-reference decoder | matte | inference-only (v1) | MIT upstream; `matte` task (ADR 0010); `MatteValidator` (MAE + S-measure); **family-local Swin v1** (original lineage, NOT the timm `models/swin/` tower, see NOTICE); ASPP deformable conv exports to ONNX `DeformConv` (opset 19) via a registered symbolic; converter `weights/convert_birefnet_weights.py`, parity via `weights/parity_birefnet.py` (max_abs_diff == 0) |
 | **Faster R-CNN** (`models/faster_rcnn/`) | two-stage RPN + RoIAlign + class-wise NMS | detect | inference-only | native port from torchvision v0.26.0 (BSD-3-Clause), sizes n/s/m/l; official state keys load strictly and all four variants have exact eager parity. COCO-91 sparse ids map to contiguous COCO-80. ONNX is batch-1/fixed-square and emits final already-NMSed boxes/scores/labels. Weight mirrors carry BSD-3-Clause on a disclosed implied basis plus torchvision's pretrained-model caveat; `weights/upload_faster_rcnn_hf.py` enforces the five-file contract |
+| **FCN** (`models/fcn/`) | dilated ResNet + primary/auxiliary FCN heads | semantic | inference-only | native port from torchvision v0.26.0 (BSD-3-Clause), sizes r50/r101 at 520; this is not the original VGG FCN-8s graph. Both heads have exact eager parity. Semantic predict/val and ONNX/TorchScript/OpenVINO/TensorRT are validated. Weight mirrors carry BSD-3-Clause on a disclosed implied basis plus torchvision's pretrained-model caveat; `weights/upload_fcn_hf.py` enforces the five-file contract |
 
 ### 4.1 Sibling factory tiers (not `BaseModel` families)
 
@@ -1164,7 +1174,13 @@ Always edited:
 | `libreyolo/training/config.py` | append `<Family>Config(TrainConfig)` if shared route. Family-local `models/<family>/config.py` is also fine — RF-DETR, RT-DETR, YOLOv9-E2E |
 | `libreyolo/validation/preprocessors.py` | append `<Family>ValPreprocessor` |
 | `tests/unit/test_<family>_*.py` | parity / shape / loss / smoke / sibling-rejection |
-| `tests/e2e/conftest.py` | append rows to `MODEL_CATALOG` |
+| `tests/e2e/conftest.py` | task-appropriate registration: for detect, append rows to `MODEL_CATALOG` and `GENERAL_NIGHTLY_INFERENCE_MODELS` (and add the family to `_EXPERIMENTAL_TRAINING_SKIP` in `tests/e2e/test_rf1_training.py` when training is out of scope). `MODEL_CATALOG` is detect-only — its mAP gate fails classify / semantic / depth rows by construction; mirror the closest merged non-detect family instead |
+| `CHANGELOG.md` | `Unreleased / Added` entry for the new family |
+| `README.md` | one row in the family support table — nothing else (README policy in `AGENTS.md`; tick only export columns you actually ran) |
+| `reports/export_inventory.json` | regenerate — `tests/unit` checks the committed snapshot matches the runtime inventory (including the family's `group`) |
+| `docs/testing.md` | bump the general-nightly test count when nightly models were added |
+| `pyproject.toml` | add the `<family>` pytest marker |
+| `docs/nomenclature.md` | family / filename rows |
 
 Conditional:
 

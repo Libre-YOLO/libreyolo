@@ -91,6 +91,15 @@ DETR_RF1_FAMILIES = {"dfine", "deim", "deimv2", "rtdetr"}
 # convergence has not been validated against the RF1 mAP floor. Every RF1
 # training test skips them — keep the two tests consistent via this map.
 _EXPERIMENTAL_TRAINING_SKIP = {
+    "vit": (
+        "ViT ships inference-only: the AugReg fine-tuning recipe is outside "
+        "this museum port, and train() raises. Pretrained and export parity "
+        "are verified separately."
+    ),
+    "efficientdet": (
+        "EfficientDet ships inference-only: its focal-loss, anchor matching, "
+        "and compound-scale training recipe are outside this port, and train() raises."
+    ),
     "detr": (
         "Original DETR ships inference-only: its 500-epoch Hungarian-matching "
         "training recipe is not implemented, and train() raises. Inference "
@@ -100,16 +109,42 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "Faster R-CNN ships inference-only: RPN and sampled-RoI training "
         "are intentionally outside the museum-port scope, and train() raises."
     ),
+    "retinanet": (
+        "RetinaNet ships inference-only: focal-loss target assignment and "
+        "training losses are not implemented, and train() raises."
+    ),
+    "ssd": (
+        "SSD ships inference-only: MultiBox matching, hard-negative mining, "
+        "and training losses are outside the museum-port scope, and train() raises."
+    ),
+    "mask_rcnn": (
+        "Mask R-CNN ships inference-only: sampled-RoI and mask training are "
+        "not implemented, and train() raises."
+    ),
+    "fcos": (
+        "FCOS ships inference-only: dense target assignment and focal, box, "
+        "and centerness losses are outside the museum-port scope, and train() raises."
+    ),
     "deformable_detr": (
         "Deformable DETR ships inference-only: its Hungarian matcher, focal/L1/GIoU "
         "losses, auxiliary decoder losses, and backbone learning-rate recipe are "
         "not implemented. Exact upstream inference parity is verified separately."
+    ),
+    "dinodetr": (
+        "DINO-DETR ships inference-only: contrastive denoising, Hungarian matching, "
+        "auxiliary losses, and its multi-scale training recipe are outside this port. "
+        "Exact upstream inference parity is verified separately."
     ),
     "lwdetr": (
         "LW-DETR ships inference-only: its Group-DETR one-to-many recipe "
         "(13 query groups, IoU-aware classification loss, two-stage encoder "
         "losses) is not implemented, and train() raises. Inference parity vs "
         "Atten4Vis is exact and verified separately."
+    ),
+    "centernet": (
+        "CenterNet ships inference-only: its focal heatmap, size, and offset "
+        "training recipe is not implemented, and train() raises. Exact raw "
+        "inference parity is verified separately."
     ),
     "picodet": (
         "PICODET training is experimental and not expected to clear the "

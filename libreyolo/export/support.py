@@ -72,6 +72,51 @@ _add(
 )
 _add(
     "validated",
+    ("efficientdet",),
+    ("detect",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The official Apache-2.0 D0 checkpoint is covered by one-output "
+        "artifact reload, metadata, runtime execution, and matched public "
+        "post-NMS detection parity in tests/e2e/test_efficientdet_export.py."
+    ),
+    since="1.6",
+    constraint="FP32, batch 1, fixed per-variant square input",
+)
+_add(
+    "validated",
+    ("efficientdet",),
+    ("detect",),
+    ("openvino",),
+    reason=(
+        "The official Apache-2.0 D0 checkpoint is covered by one-output "
+        "artifact reload, metadata, OpenVINO CPU execution, and matched public "
+        "post-NMS detection parity in tests/e2e/test_efficientdet_export.py."
+    ),
+    since="1.6",
+    constraint=(
+        "OpenVINO 2026.2, FP32, batch 1, fixed per-variant square input on CPU"
+    ),
+)
+_add(
+    "validated",
+    ("efficientdet",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "The official Apache-2.0 D0 checkpoint is covered by engine build, "
+        "artifact reload, metadata, runtime execution, and matched public "
+        "post-NMS detection parity in tests/e2e/test_efficientdet_export.py."
+    ),
+    since="1.6",
+    constraint=(
+        "TensorRT 10.16, FP32, batch 1, fixed per-variant square input; "
+        "TensorRT's ITopK limit uses 3840 candidates instead of the native "
+        "5000-candidate budget"
+    ),
+)
+_add(
+    "validated",
     ("yolo9", "rfdetr"),
     ("detect",),
     ("executorch",),
@@ -607,6 +652,106 @@ _add(
 )
 _add(
     "validated",
+    ("vit",),
+    ("classify",),
+    ("onnx",),
+    reason=(
+        "A real AugReg ImageNet-1k checkpoint is covered by raw-logit and "
+        "public probability parity in tests/unit/test_vit_export.py."
+    ),
+    since="1.5",
+    constraint="FP32, fixed 224x224 input",
+)
+_add(
+    "validated",
+    ("deit",),
+    ("classify",),
+    ("onnx",),
+    reason=(
+        "The official DeiT-tiny checkpoint preserves upstream/native logits, "
+        "exported raw logits, public probabilities, and top-1/top-5 results."
+    ),
+    since="1.5",
+    constraint="CPU FP32, fixed 224x224 input; ONNX uses opset 17",
+)
+_add(
+    "validated",
+    ("deit",),
+    ("classify",),
+    ("torchscript",),
+    reason=(
+        "The official DeiT-tiny checkpoint preserves upstream/native logits, "
+        "bit-exact exported raw logits and probabilities, and top-1/top-5 results."
+    ),
+    since="1.5",
+    constraint="CPU FP32 with fixed 224x224 input",
+)
+_add(
+    "validated",
+    ("alexnet",),
+    ("classify",),
+    ("onnx",),
+    reason=(
+        "Tests cover raw logits plus ONNX Runtime artifact reload, public "
+        "probabilities, metadata, and top-1 parity."
+    ),
+    since="1.7",
+    constraint=(
+        "FP32 at the native 224x224 input resolution; ONNX supports a dynamic "
+        "batch axis"
+    ),
+)
+_add(
+    "validated",
+    ("alexnet",),
+    ("classify",),
+    ("torchscript",),
+    reason=(
+        "Tests cover TorchScript artifact reload, public probabilities, "
+        "metadata, and top-1 parity."
+    ),
+    since="1.7",
+    constraint="FP32 at the native 224x224 input resolution",
+)
+_add(
+    "validated",
+    ("alexnet",),
+    ("classify",),
+    ("openvino",),
+    reason=(
+        "Official-checkpoint and deterministic-fixture runtime tests preserve "
+        "probability cosine agreement and ordered top-k predictions."
+    ),
+    since="1.7",
+    constraint="OpenVINO 2026.2 CPU FP32 at the fixed native 224x224 resolution",
+)
+_add(
+    "validated",
+    ("alexnet",),
+    ("classify",),
+    ("tensorrt",),
+    reason=(
+        "Official-checkpoint and deterministic-fixture runtime tests preserve "
+        "probability cosine agreement and ordered top-k predictions."
+    ),
+    since="1.7",
+    constraint="TensorRT 10.16 FP32 at the fixed native 224x224 resolution",
+)
+_add(
+    "validated",
+    ("swin",),
+    ("classify",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The released Tiny ImageNet checkpoint is covered by artifact reload, "
+        "trained-logit probability parity, metadata, and public top-1 parity "
+        "in tests/e2e/test_swin_export.py."
+    ),
+    since="1.6",
+    constraint="Swin V1 at its fixed 224x224 native input resolution",
+)
+_add(
+    "validated",
     ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
     ("classify",),
     ("openvino",),
@@ -615,11 +760,89 @@ _add(
 )
 _add(
     "validated",
+    ("deit",),
+    ("classify",),
+    ("openvino",),
+    reason=(
+        "The official DeiT-tiny checkpoint preserves raw-logit and probability "
+        "cosine above 0.999 with identical top-1/top-5 results."
+    ),
+    since="1.5",
+    constraint="OpenVINO 2026.2 CPU FP32 with fixed 224x224 input",
+)
+_add(
+    "validated",
+    ("swin",),
+    ("classify",),
+    ("openvino",),
+    reason=(
+        "The released Tiny ImageNet checkpoint is covered by FP32 OpenVINO IR "
+        "reload, trained probability cosine parity, metadata, and public "
+        "top-1 parity in tests/e2e/test_swin_export.py."
+    ),
+    since="1.6",
+    constraint="FP32 with a fixed 224x224 input resolution",
+)
+_add(
+    "validated",
     ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
     ("classify",),
     ("tensorrt",),
     since="1.6",
     constraint="FP32 with fixed family-native input resolution",
+)
+_add(
+    "validated",
+    ("deit",),
+    ("classify",),
+    ("tensorrt",),
+    reason=(
+        "The official DeiT-tiny checkpoint preserves finite raw logits, "
+        "probability cosine above 0.999, and identical top-1/top-5 results."
+    ),
+    since="1.5",
+    constraint=(
+        "TensorRT 10.16 FP16 on RTX 5070 Ti, fixed 224x224 batch-1 input, "
+        "0.25 GiB tactic workspace"
+    ),
+)
+_add(
+    "validated",
+    ("vgg",),
+    ("classify",),
+    ("onnx", "torchscript"),
+    reason=(
+        "A small-artifact PR-gate fixture covers conversion and raw-logit "
+        "parity, while the official trained VGG-16 checkpoint covers native "
+        "and backend probability/top-1 parity."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed 224x224 input",
+)
+_add(
+    "validated",
+    ("vgg",),
+    ("classify",),
+    ("openvino", "tensorrt"),
+    reason=(
+        "The official trained VGG-16 checkpoint is covered by fixed-224 FP32 "
+        "backend probability parity and identical public top-1 output."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed 224x224 input",
+)
+_add(
+    "validated",
+    ("swin",),
+    ("classify",),
+    ("tensorrt",),
+    reason=(
+        "The released Tiny ImageNet checkpoint is covered by FP32 TensorRT "
+        "engine reload, trained probability cosine parity, metadata, and "
+        "public top-1 parity in tests/e2e/test_swin_export.py."
+    ),
+    since="1.6",
+    constraint="FP32, batch 1, and a fixed 224x224 input resolution",
 )
 _add(
     "validated",
@@ -1919,6 +2142,18 @@ _add(
 )
 _add(
     "validated",
+    ("dinodetr",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "All three official ResNet-50 and Swin-L variants preserve raw-logit, "
+        "box, and public prediction parity through ONNX Runtime."
+    ),
+    since="1.5",
+    constraint="FP32, fixed square input, ONNX opset 17",
+)
+_add(
+    "validated",
     ("lwdetr",),
     ("detect",),
     ("onnx", "torchscript"),
@@ -1928,6 +2163,28 @@ _add(
         "and 6e-8 (TorchScript)."
     ),
     since="1.5",
+)
+_add(
+    "validated",
+    ("centernet",),
+    ("detect",),
+    ("onnx", "torchscript"),
+    reason=(
+        "Both official checkpoints preserve baked top-100 detections and public "
+        "prediction parity through the portable grid-sample DCN graph."
+    ),
+    since="1.7",
+    constraint="FP32, fixed square input; ONNX Runtime CPU or TorchScript",
+)
+_add(
+    "blocked",
+    ("centernet",),
+    ("detect",),
+    ("ncnn",),
+    reason=(
+        "NCNN cannot lower CenterNet's portable deformable sampling plus "
+        "baked top-k decode contract. Use ONNX or TorchScript."
+    ),
 )
 _add(
     "validated",
@@ -1942,6 +2199,37 @@ _add(
     constraint=(
         "ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream "
         "aspect resize and final class-wise NMS are embedded in the graph"
+    ),
+)
+_add(
+    "validated",
+    ("ssd",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "The official trained checkpoint preserves the decoded raw grid and "
+        "public post-NMS predictions through ONNX Runtime."
+    ),
+    since="1.7",
+    constraint="ONNX Runtime, FP32, opset 13, fixed 300 x 300 input",
+)
+_add(
+    "blocked",
+    ("ssd",),
+    ("detect",),
+    (
+        "torchscript",
+        "executorch",
+        "tensorrt",
+        "openvino",
+        "ncnn",
+        "tflite",
+        "coreml",
+        "coreai",
+    ),
+    reason=(
+        "SSD's decoded fixed-default-box head has only been parity-validated "
+        "through the ONNX Runtime contract."
     ),
 )
 _add(
@@ -1962,6 +2250,123 @@ _add(
     reason=(
         "This runtime has no parity evidence for Faster R-CNN's proposal, "
         "RoIAlign, variable-length output, and embedded-NMS graph."
+    ),
+)
+_add(
+    "validated",
+    ("retinanet",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "Official-checkpoint parity covers decoded graph outputs and unified "
+        "ONNX-backend detections against native PyTorch."
+    ),
+    since="1.7",
+    constraint=(
+        "ONNX Runtime, FP32, opset 13, batch 1, dynamic preprocessed H/W; "
+        "class-aware NMS runs in the LibreYOLO backend"
+    ),
+)
+_add(
+    "validated",
+    ("fcos",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "The official trained checkpoint preserves the single-tensor raw "
+        "contract and public post-NMS detections in ONNX Runtime."
+    ),
+    since="1.7",
+    constraint=(
+        "FP32, batch 1, out-of-graph aspect resize, opset 18, dynamic padded H/W"
+    ),
+)
+_add(
+    "validated",
+    ("mask_rcnn",),
+    ("detect", "segment"),
+    ("onnx",),
+    reason=(
+        "Official trained-checkpoint parity covers final boxes, scores, labels, "
+        "and full-image masks through ONNX Runtime and the unified backend."
+    ),
+    since="1.7",
+    constraint=(
+        "ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream "
+        "aspect resize, class-wise NMS, RoIAlign, and mask paste are embedded"
+    ),
+)
+_add(
+    "validated",
+    ("fcos",),
+    ("detect",),
+    ("torchscript",),
+    reason=(
+        "The official trained checkpoint preserves the single-tensor raw "
+        "contract and public post-NMS detections in TorchScript."
+    ),
+    since="1.7",
+    constraint="FP32, batch 1, out-of-graph aspect resize, variable padded H/W",
+)
+_add(
+    "experimental",
+    ("fcos",),
+    ("detect",),
+    ("openvino",),
+    reason=(
+        "FP32 dynamic-shape conversion and high-confidence public predictions "
+        "pass, but small score/box drift can change low-confidence NMS ordering."
+    ),
+    since="1.7",
+    constraint="OpenVINO CPU, FP32, batch 1, dynamic padded H/W",
+)
+_add(
+    "blocked",
+    ("fcos",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "FCOS requires dynamic padded H/W to preserve its 800/1333 aspect "
+        "transform, while the current TensorRT runtime profiles dynamic batch only."
+    ),
+)
+_add(
+    "blocked",
+    ("retinanet",),
+    ("detect",),
+    (
+        "torchscript",
+        "executorch",
+        "tensorrt",
+        "openvino",
+        "ncnn",
+        "tflite",
+        "coreml",
+        "coreai",
+    ),
+    reason=(
+        "RetinaNet's dynamic P3-P7 anchor graph and external class-aware "
+        "postprocessing have parity evidence only through ONNX Runtime."
+    ),
+)
+_add(
+    "blocked",
+    ("mask_rcnn",),
+    ("detect", "segment"),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
+    reason=(
+        "Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, "
+        "RoIAlign, variable-length detection, and full-image mask graph."
+    ),
+)
+_add(
+    "blocked",
+    ("fcos",),
+    ("detect",),
+    ("executorch", "ncnn", "tflite", "coreml", "coreai"),
+    reason=(
+        "No runtime parity contract exists for FCOS dynamic anchor grids and "
+        "variable padded spatial shapes in this format."
     ),
 )
 _add(
@@ -2103,6 +2508,61 @@ _add(
 )
 _add(
     "validated",
+    ("fcn",),
+    ("semantic",),
+    ("onnx", "torchscript"),
+    reason=(
+        "Both official trained checkpoints have two-input raw-logit parity, "
+        "metadata reload, and public semantic-mask parity coverage."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed square input divisible by 8",
+)
+_add(
+    "validated",
+    ("fcn",),
+    ("semantic",),
+    ("openvino",),
+    reason=(
+        "Both official trained checkpoints have OpenVINO CPU FP32 raw-logit "
+        "parity, input-sensitivity, metadata, and public-mask coverage."
+    ),
+    since="1.5",
+    constraint="OpenVINO 2026.2 CPU FP32, batch 1, fixed square input divisible by 8",
+)
+_add(
+    "validated",
+    ("fcn",),
+    ("semantic",),
+    ("tensorrt",),
+    reason=(
+        "Both official trained checkpoints have TensorRT FP32 raw-logit "
+        "parity, input-sensitivity, metadata, and public-mask coverage."
+    ),
+    since="1.5",
+    constraint=(
+        "TensorRT 10.16 FP32, batch 1, fixed square input divisible by 8"
+    ),
+)
+_add(
+    "blocked",
+    ("fcn",),
+    ("semantic",),
+    ("executorch", "ncnn", "tflite", "coreai"),
+    reason=(
+        "This runtime has no parity-valid FCN artifact yet; only ONNX, "
+        "TorchScript, TensorRT, and OpenVINO were assessed for this port."
+    ),
+)
+_add(
+    "blocked",
+    ("fcn",),
+    ("semantic",),
+    ("coreml",),
+    reason="The CoreML wrapper does not implement the dense semantic-logits contract.",
+)
+_add(
+    "validated",
     ("segformer",),
     ("semantic",),
     ("onnx", "torchscript"),
@@ -2198,6 +2658,23 @@ _add(
     ("depth",),
     ("onnx", "torchscript"),
     since="1.4",
+)
+_add(
+    "validated",
+    ("midas",),
+    ("depth",),
+    ("onnx", "torchscript", "tensorrt", "openvino"),
+    reason=(
+        "The official Small and DPT-Large checkpoints cover opset-17 "
+        "conversion, artifact reload, and two-image public depth-map parity "
+        "above 46 dB PSNR with a signal/error margin above 10,000x across all "
+        "four runtimes."
+    ),
+    constraint=(
+        "FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend "
+        "inference follows the ADR 0006 stretch-resize contract; TensorRT "
+        "10.16 engines target the build GPU and OpenVINO evidence uses 2026.2"
+    ),
 )
 _add(
     "validated",
@@ -2704,6 +3181,102 @@ _add(
     ),
 )
 
+_add(
+    "validated",
+    ("deeplabv3",),
+    ("semantic",),
+    ("onnx", "torchscript"),
+    reason=(
+        "All three official checkpoints preserve 100% raw argmax and public-"
+        "mask agreement. TorchScript logits are bit-exact; ONNX Runtime FP32 "
+        "maximum absolute logit error is at most 3.07e-05."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed 520x520 input",
+)
+_add(
+    "validated",
+    ("deeplabv3",),
+    ("semantic",),
+    ("openvino",),
+    reason=(
+        "All three official checkpoints export, reload, and preserve at least "
+        "99.987% public-mask agreement through the default CPU runtime."
+    ),
+    since="1.5",
+    constraint=(
+        "OpenVINO 2026.2 FP32 IR, CPU default inference precision, batch 1, "
+        "fixed 520x520 input"
+    ),
+)
+_add(
+    "validated",
+    ("hrnet",),
+    ("pose",),
+    ("onnx", "torchscript"),
+    reason=(
+        "Both official converted W32 and W48 checkpoints have raw-heatmap and "
+        "public decoded-keypoint parity in tests/e2e/test_hrnet_exports.py; "
+        "tests/unit/test_hrnet_parity.py separately proves the native graph, "
+        "affine crop, normalization, flip-shift, and decoder against the pinned "
+        "MIT upstream implementation."
+    ),
+    since="1.6",
+    constraint=(
+        "PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU "
+        "FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 "
+        "(W48) person-crop input; the full-image person detector is not in-graph"
+    ),
+)
+_add(
+    "validated",
+    ("hrnet",),
+    ("pose",),
+    ("openvino",),
+    reason=(
+        "Both official converted W32 and W48 checkpoints have conversion, "
+        "artifact reload, raw-heatmap parity within 3e-3, metadata, and public "
+        "decoded-keypoint parity in tests/e2e/test_hrnet_exports.py."
+    ),
+    since="1.6",
+    constraint=(
+        "OpenVINO 2026.2.1 CPU FP32, batch 1, fixed checkpoint-native 256x192 "
+        "(W32) or 384x288 (W48) person-crop input; the full-image person "
+        "detector is not in-graph"
+    ),
+)
+_add(
+    "validated",
+    ("deeplabv3",),
+    ("semantic",),
+    ("tensorrt",),
+    reason=(
+        "All three official checkpoints build and reload with at least "
+        "99.985% public-mask agreement on the validated GPU."
+    ),
+    since="1.5",
+    constraint=(
+        "TensorRT 10.16 FP32, RTX 5070 Ti, batch 1, fixed 520x520 input"
+    ),
+)
+_add(
+    "validated",
+    ("hrnet",),
+    ("pose",),
+    ("tensorrt",),
+    reason=(
+        "Both official converted W32 and W48 checkpoints have conversion, "
+        "artifact reload, raw-heatmap parity within 3e-3, metadata, and public "
+        "decoded-keypoint parity in tests/e2e/test_hrnet_exports.py."
+    ),
+    since="1.6",
+    constraint=(
+        "TensorRT 10.16.1.11, CUDA 12.8, RTX 5070 Ti, FP32, batch 1, fixed "
+        "checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; "
+        "the full-image person detector is not in-graph"
+    ),
+)
+
 
 _TASK_BLOCKS = {
     "ocr": (
@@ -2743,6 +3316,10 @@ _FAMILY_BLOCKS = {
         "The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, "
         "TensorRT, and OpenVINO only."
     ),
+    "hrnet": (
+        "The HRNet person-crop pose-head export contract supports ONNX, "
+        "TorchScript, OpenVINO, and TensorRT only."
+    ),
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
     "edgetam": "Promptable model export is out of scope for the v1 runtime contract.",
@@ -2764,6 +3341,7 @@ _FAMILY_BLOCKS = {
 _NCNN_BLOCKS = {
     "deformable_detr": "Deformable DETR",
     "detr": "DETR",
+    "dinodetr": "DINO-DETR",
     "dfine": "D-FINE",
     "lwdetr": "LW-DETR",
     "deim": "DEIM",

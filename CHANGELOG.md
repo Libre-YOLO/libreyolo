@@ -31,6 +31,87 @@ before 1.4.0 are documented in the
   also publishes it under the shared `metrics/loss` keys, so `libreyolo
   monitor` overlays it like every other family (`metrics/val_loss` is kept)
 
+- LibreHRNet W32 and W48, inference-only top-down COCO-17 pose models with
+  fixed 256x192 and 384x288 person-crop canvases. Native heatmaps, affine crop
+  geometry, flip testing, and decoding are exact against the pinned MIT
+  upstream. Full-image inference composes a configurable person detector and
+  also accepts explicit boxes or ready-made crops. Official weights and
+  fixed-crop ONNX, TorchScript, TensorRT, and OpenVINO exports are validated;
+  `train()` raises
+- Opt-in `faster_coco_eval` flag (off by default) on `ValidationConfig`,
+  `TrainConfig`, `model.val()` / `model.train()` kwargs, and the CLI
+  (`--faster-coco-eval` on `libreyolo val` / `libreyolo train`). Routes
+  bbox/segm COCO metrics through the faster-coco-eval C++ backend
+  (10-50x faster on detection-dense datasets; validated bit-identical to
+  pycocotools within float64 summation order across the 100 RF100-VL
+  datasets). The `LIBREYOLO_FASTER_COCO_EVAL` env var overrides the flag
+  in either direction, the backend actually used (name + version) is
+  logged and exposed as `COCOEvaluator.last_backend` for provenance, and
+  the evaluator falls back to pycocotools with a warning if the package
+  is missing. Install via `pip install libreyolo[fast-eval]`.
+
+- LibreViT, an inference-only classic Vision Transformer classifier in
+  patch-16 tiny/small/base/large sizes at 224px. Native pretrained logits are
+  bit-exact against the pinned Apache-2.0 timm AugReg checkpoints for all four
+  sizes, with top-1/top-5 validation and ONNX Runtime prediction parity
+- LibreRetinaNet, an inference-only torchvision RetinaNet port in ResNet-50
+  FPN v1 and v2 variants (`r50`, `r50v2`). Both official COCO checkpoints
+  have exact native head and detection parity against the pinned BSD-3-Clause
+  source. Batch-one ONNX export supports dynamic aspect-preserved inputs with
+  class-aware NMS in the unified backend; `train()` raises
+- LibreDINODETR, an inference-only museum port of IDEA's Apache-2.0 DINO
+  detector in the three released COCO variants (`r50`, `r50s5`, `swinl`).
+  Native outputs are bit-exact against the pinned standalone source for every
+  checkpoint, and fixed-canvas ONNX Runtime preserves raw and public prediction
+  parity. Contrastive-denoising training is not implemented and `train()`
+  raises `NotImplementedError`.
+- LibreFCN, an inference-only semantic museum family in `r50` and `r101`
+  sizes with the official 21-class COCO-trained, VOC-label heads. The shipped
+  torchvision dilated-ResNet graph is not the original VGG FCN-8s topology;
+  primary and auxiliary logits are bit-exact against pytorch/vision v0.26.0.
+  ONNX, TorchScript, OpenVINO, and TensorRT prediction parity are validated,
+  and the BSD-3-Clause code attribution and pretrained-weight caveat ship with
+  the family (#637)
+- LibreDeiT, an inference-only museum port of the plain DeiT patch-16
+  ImageNet-1k classifiers in tiny, small, and base sizes at fixed 224px.
+  Official Apache-2.0 timm checkpoints load with unchanged tensors and
+  bit-exact upstream/native logits; ONNX Runtime, TorchScript, OpenVINO, and
+  TensorRT FP16 export parity is covered. Distilled and 384px variants remain
+  out of scope (#637)
+- LibreCenterNet, an inference-only museum port of the official CenterNet
+  `resdcn18` and `dla34` COCO detectors. Native preprocessing, raw heads, and
+  top-100 no-NMS decoding match the pinned MIT source; legacy DCNv2 is replaced
+  by torchvision deformable convolution. Fixed-512 ONNX and TorchScript exports
+  use a portable deformable-convolution graph and return decoded detections
+- LibreAlexNet, an inference-only museum port of torchvision's BSD-3-Clause
+  AlexNet classifier. The canonical `LibreAlexNetb-cls.pt` checkpoint preserves
+  the official ImageNet-1K tensors and produces bit-exact native logits;
+  ONNX, TorchScript, OpenVINO, and TensorRT export parity is validated
+- LibreVGG, an inference-only image-classification family with VGG-16,
+  VGG-19, VGG-16-BN, and VGG-19-BN at fixed 224. Official torchvision
+  ImageNet-1k V1 logits are bit-exact for every variant; ONNX, TorchScript,
+  OpenVINO, and TensorRT backend parity is verified for VGG-16. The
+  BSD-3-Clause code attribution and pretrained-weight caveat ship with the
+  family, and `train()` raises `NotImplementedError`.
+- LibreSwin, an inference-only Swin Transformer V1 image-classification family
+  in Tiny, Small, Base, and Large sizes at 224px. All four released ImageNet-1k
+  variants are bit-exact against the pinned timm reference, and trained
+  prediction parity is verified for ONNX, TorchScript, OpenVINO, and TensorRT
+- LibreMiDaS, an inference-only museum port of MiDaS v2.1 Small (`s`, 256)
+  and DPT-Large (`l`, 384). Both native graphs are bit-exact against the
+  pinned MIT upstream implementation and official checkpoints. Predictions
+  are relative inverse depth with no metric unit; zero-shot depth validation
+  and fixed-resolution ONNX, TorchScript, TensorRT, and OpenVINO export are
+  supported. Official release assets are downloaded directly and
+  checksum-verified rather than rehosted while ADR 0006 training-data
+  clearance remains unresolved
+- LibreEfficientDet, an inference-only EfficientDet D0-D4 museum family with
+  fixed 512/640/768/896/1024 inputs, native EfficientNet backbones and weighted
+  BiFPN, exact raw-output and decoded-candidate parity against the pinned
+  Apache-2.0 `rwightman/efficientdet-pytorch` source, and validated ONNX,
+  TorchScript, OpenVINO, and TensorRT prediction parity. The focal-loss and
+  anchor-matching training recipe is not implemented and `train()` raises
+  `NotImplementedError`.
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr
@@ -47,6 +128,33 @@ before 1.4.0 are documented in the
   resize and final class-wise NMS in-graph with dynamic source H/W. The
   BSD-3-Clause code attribution and the pretrained-weight caveat ship with
   the family, and `train()` raises
+- LibreSSD300, an inference-only museum port of torchvision's fixed-resolution
+  SSD300 VGG16 COCO detector. Native preprocessing, raw heads, default boxes,
+  and final detections are exact against pytorch/vision v0.26.0. Batch-dynamic,
+  fixed-300 ONNX export emits decoded predictions for LibreYOLO's shared
+  class-aware NMS. The BSD-3-Clause source and implied checkpoint-license
+  basis are disclosed alongside the Oxford VGG feature-weight CC BY 4.0
+  lineage; `train()` raises
+- LibreMaskRCNN, an inference-only Mask R-CNN R50 FPN v2 port with instance
+  segmentation by default and detection from the same checkpoint. Native RPN,
+  box, raw mask-logit, and final-mask outputs are exact against pinned
+  torchvision v0.26.0. Batch-one ONNX for both tasks preserves dynamic source
+  H/W. BSD-3-Clause attribution and the pretrained-weight caveat ship with the
+  family, and `train()` raises
+- LibreFCOS, an inference-only ResNet-50/FPN port of torchvision's FCOS. The
+  official COCO checkpoint loads all 319 state entries strictly; raw heads,
+  anchors, preprocessing, and native detections are exact against the pinned
+  BSD-3-Clause source. ONNX and TorchScript have trained-checkpoint runtime
+  parity, OpenVINO is experimental due to low-confidence NMS ordering drift,
+  and the published `LibreFCOSr50.pt` mirror carries the explicit
+  pretrained-weight license caveat
+- LibreDeepLabv3, an inference-only semantic port of torchvision's three
+  released COCO-with-VOC-label variants (`r50`, `r101`, `mv3`). Native
+  21-class logits are bit-exact against pytorch/vision v0.26.0 before
+  postprocessing; fixed-520 ONNX, TorchScript, OpenVINO, and TensorRT exports
+  reload through the unified backend. Conversion removes only the upstream
+  auxiliary FCN head, the BSD-3-Clause provenance and checkpoint-license
+  caveat ship with the family, and `train()` raises
 - LibreDeformableDETR, an inference-only museum port of the original
   Apache-2.0 Deformable DETR in all five released ResNet-50 variants
   (`r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage`). The portable
@@ -77,8 +185,43 @@ before 1.4.0 are documented in the
 - Native fp8 execution tier: finalized fp8 QuantLinear runs on the fp8 tensor cores via torch._scaled_mm (Ada/Hopper/Blackwell); optional Triton kernels fuse activation conversion and the per-channel scale/bias epilogue, while validation-selected FeyNobg Swin stage-0 Linears use manifest-recorded tensorwise weight scales for a fully fused cuBLASLt epilogue. Finalized fp8 QuantConv2d convolves in fp16 on cached dequantized weights, and fp16-remainder checkpoints get float32 I/O root hooks. On LibreFeyNobg/RTX 5070 Ti, fp8 is 123.1 vs 129.3 ms for batch-1 graphed predict and 515.4 vs 535.3 ms at batch 4, with a 275 vs 531 MB file.
 - CUDA graph capture for the birefnet and feynobg families via encoder-only capture (the deformable decoder replays wrong under capture and stays eager; graphed output is bit-identical to eager); GraphRunner warms up on the capture stream so lazily-allocated cuBLASLt/cuDNN workspaces stop invalidating capture, and quant modules cache the calibration flag as a host bool (the per-forward .item() sync also invalidated capture)
 
+### Changed
+
+- The faster-coco-eval COCO metrics backend is now the default
+  (`faster_coco_eval=True` on `ValidationConfig` / `TrainConfig`; CLI gains
+  `--no-faster-coco-eval` to opt out, and `LIBREYOLO_FASTER_COCO_EVAL=0`
+  still forces pycocotools). Decision based on measured parity across all
+  100 RF100-VL test splits: 1381/1400 metric values bit-identical to
+  pycocotools, max deviation 2.22e-16, headline deltas exactly 0, with
+  15.6x faster evaluation overall (56x on detection-dense datasets).
+  pycocotools remains the automatic fallback when faster-coco-eval is not
+  installed. For provenance, the backend actually used is now always
+  logged at INFO, surfaced as `model.last_eval_backend` after `val()`,
+  and included as `eval_backend` in the CLI JSON payload
+
 ### Fixed
 
+- Non-strict checkpoint loads (families with `_strict_loading() == False`,
+  e.g. YOLOX) now log a warning with the counts and first names of missing
+  and unexpected state-dict keys instead of silently discarding them. Shape
+  mismatches always raised, but name mismatches let a partially matching
+  checkpoint "load" and predict with fresh-initialized tensors for the
+  dropped keys with no trace. Healthy loads stay silent; full key lists are
+  available at DEBUG level
+- YOLOX BatchNorm eps=1e-3 / momentum=0.03 (official YOLOX values) is now
+  applied by `LibreYOLOXModel` at construction instead of as a post-hoc fixup
+  in the `LibreYOLOX` wrapper, so it survives the class-count rebuild
+  (`_rebuild_for_new_classes`) that `train()` performs when the dataset `nc`
+  differs from the checkpoint. Previously any such fine-tune trained and
+  reported in-training validation at torch's default eps=1e-5 but was
+  reloaded for inference at 1e-3 — same tensors, different normalization.
+  Regular-conv sizes barely move, but depthwise `n` has per-channel
+  running_var small enough for eps to dominate: on RF100-VL `ball` the same
+  nano checkpoint scores 0.566 mAP50-95 evaluated at its trained eps and
+  0.151 after a stock reload. Checkpoints trained before this fix carry
+  eps=1e-5 semantics and must be evaluated with BN eps overridden to 1e-5
+  (or have `sqrt((var+1e-3)/(var+1e-5))` folded into BN weights) to report
+  faithful numbers
 - CUDA graph capture no longer races with DataLoader pin-memory threads:
   training capture (`train(..., cuda_graph=True)`) and inference/validation
   capture now run with `capture_error_mode="thread_local"`, so a
