@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, Mapping, Optional
 
@@ -9,6 +10,45 @@ import numpy as np
 import torch
 
 logger = logging.getLogger(__name__)
+
+# Env override for the COCO eval backend: "1"/"true"/"yes" forces the
+# faster-coco-eval backend on, "0"/"false"/"no" forces it off, unset defers
+# to the faster_coco_eval config flag. Useful for benchmark harnesses that
+# cannot touch per-run configs.
+FASTER_COCO_EVAL_ENV_VAR = "LIBREYOLO_FASTER_COCO_EVAL"
+
+_warned_faster_unavailable = False
+
+
+def _faster_coco_eval_env_override() -> Optional[bool]:
+    value = os.environ.get(FASTER_COCO_EVAL_ENV_VAR)
+    if value is None:
+        return None
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def resolve_faster_coco_eval(requested: bool) -> bool:
+    """Decide whether to use the faster-coco-eval backend.
+
+    The LIBREYOLO_FASTER_COCO_EVAL env var, when set, overrides `requested`.
+    Returns False (stock pycocotools) if the package is not importable.
+    """
+    override = _faster_coco_eval_env_override()
+    enabled = requested if override is None else override
+    if not enabled:
+        return False
+    try:
+        import faster_coco_eval  # noqa: F401
+    except ImportError:
+        global _warned_faster_unavailable
+        if not _warned_faster_unavailable:
+            logger.warning(
+                "faster_coco_eval requested but not installed; falling back to "
+                "pycocotools. Install with: pip install faster-coco-eval"
+            )
+            _warned_faster_unavailable = True
+        return False
+    return True
 
 
 class COCOEvaluator:
@@ -25,12 +65,14 @@ class COCOEvaluator:
         iou_type: str = "bbox",
         label_to_category_id: Optional[Mapping[int, int]] = None,
         max_det: int = 100,
+        faster_coco_eval: bool = False,
     ):
         if max_det < 1:
             raise ValueError(f"max_det must be >= 1, got {max_det}")
         self.coco_gt = coco_gt
         self.iou_type = iou_type
         self.max_det = int(max_det)
+        self.faster_coco_eval = faster_coco_eval
         self.label_to_category_id = (
             {int(k): int(v) for k, v in label_to_category_id.items()}
             if label_to_category_id is not None
@@ -39,6 +81,8 @@ class COCOEvaluator:
         self.results = []
         self._img_ids = set()
         self._last_coco_eval = None
+        # Provenance: backend actually used by the last compute() call.
+        self.last_backend: Optional[str] = None
 
     def update(self, predictions: Dict, image_id: int):
         """
@@ -137,16 +181,7 @@ class COCOEvaluator:
             logger.warning("No predictions to evaluate")
             return self._empty_metrics()
 
-        try:
-            from pycocotools.coco import COCO  # noqa: F401
-            from pycocotools.cocoeval import COCOeval
-        except ImportError:
-            raise ImportError(
-                "pycocotools not installed. Install with: pip install pycocotools"
-            )
-
-        coco_dt = self.coco_gt.loadRes(self.results)
-        coco_eval = COCOeval(self.coco_gt, coco_dt, self.iou_type)
+        coco_eval = self._build_coco_eval()
         if self._img_ids:
             coco_eval.params.imgIds = sorted(self._img_ids)
         # Retain a real AR@100 compatibility slot while adding the requested
@@ -202,6 +237,56 @@ class COCOEvaluator:
             "AR_medium": float(coco_eval.stats[10]),
             "AR_large": float(coco_eval.stats[11]),
         }
+
+    def _build_coco_eval(self):
+        """Construct a COCOeval instance using the configured backend.
+
+        With faster_coco_eval=True (or the LIBREYOLO_FASTER_COCO_EVAL env
+        override) and the faster-coco-eval package installed, evaluation runs
+        through its C++ backend, which is 10-50x faster on detection-dense
+        datasets while producing metrics identical to pycocotools within
+        float64 summation order (<= 1 ULP).
+        """
+        if resolve_faster_coco_eval(self.faster_coco_eval):
+            import faster_coco_eval
+            from faster_coco_eval import COCO as FasterCOCO
+            from faster_coco_eval import COCOeval_faster
+
+            gt_dataset = getattr(self.coco_gt, "dataset", None)
+            if not gt_dataset or not gt_dataset.get("images"):
+                # COCO-like GT objects (e.g. YOLOCocoAPI) that don't carry a
+                # raw dataset dict: synthesize one from their index maps.
+                gt_dataset = {
+                    "images": list(self.coco_gt.imgs.values()),
+                    "annotations": list(self.coco_gt.anns.values()),
+                    "categories": list(self.coco_gt.cats.values()),
+                }
+            # use_deepcopy so backend-side mutations (e.g. segm polygon->RLE
+            # conversion) never leak back into self.coco_gt.
+            coco_gt = FasterCOCO(gt_dataset, use_deepcopy=True)
+            coco_dt = coco_gt.loadRes(self.results)
+            fce_version = getattr(
+                getattr(faster_coco_eval, "version", None), "__version__", "?"
+            )
+            self.last_backend = f"faster-coco-eval {fce_version}"
+            logger.info("COCO eval backend: %s", self.last_backend)
+            return COCOeval_faster(coco_gt, coco_dt, self.iou_type)
+
+        try:
+            import pycocotools
+            from pycocotools.coco import COCO  # noqa: F401
+            from pycocotools.cocoeval import COCOeval
+        except ImportError:
+            raise ImportError(
+                "pycocotools not installed. Install with: pip install pycocotools"
+            )
+
+        self.last_backend = (
+            f"pycocotools {getattr(pycocotools, '__version__', '?')}"
+        )
+        logger.debug("COCO eval backend: %s", self.last_backend)
+        coco_dt = self.coco_gt.loadRes(self.results)
+        return COCOeval(self.coco_gt, coco_dt, self.iou_type)
 
     def _empty_metrics(self) -> Dict[str, float]:
         """Return all-zero metrics dict."""

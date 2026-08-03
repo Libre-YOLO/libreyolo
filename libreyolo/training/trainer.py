@@ -2615,6 +2615,7 @@ class BaseTrainer(ABC):
                 iou_thres=0.65,
                 max_det=getattr(self.config, "max_det", 300),
                 eval_max_det=getattr(self.config, "eval_max_det", None),
+                faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
                 amp_dtype=getattr(self.config, "amp_dtype", "float16"),

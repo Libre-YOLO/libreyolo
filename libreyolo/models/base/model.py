@@ -1712,6 +1712,8 @@ class BaseModel(ABC):
             save_json: Save predictions in COCO JSON format.
             plots: Alias for save_plots.
             verbose: Print detailed metrics.
+            faster_coco_eval: (kwarg) Use the faster-coco-eval C++ backend
+                for COCO metrics; falls back to pycocotools if unavailable.
 
         Returns:
             Dictionary with metrics/precision, metrics/recall,
