@@ -2,22 +2,40 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 import torch
 
+from libreyolo.models.base.detr_validation_loss import DETRValidationLoss
+from libreyolo.models.base.validation_loss import (
+    emit_loss_outputs,
+    loss_output_modules,
+    padded_targets_to_flat_pixels,
+)
+from libreyolo.models.deim.trainer import DEIMTrainer
+from libreyolo.models.dfine.trainer import DFINETrainer
 from libreyolo.models.rfdetr import loss as rfdetr_loss_module
 from libreyolo.models.rfdetr.config import RFDETRConfig
 from libreyolo.models.rfdetr.loss import SetCriterion
 from libreyolo.models.rfdetr.trainer import RFDETRTrainer
 from libreyolo.models.rfdetr.validation_loss import RFDETRValidationLoss
+from libreyolo.models.rtdetr.trainer import RTDETRTrainer
+from libreyolo.models.rtmdet.trainer import RTMDetTrainer
 from libreyolo.models.yolo9 import loss as yolo9_loss_module
 from libreyolo.models.yolo9.loss import YOLO9Loss
+from libreyolo.models.yolo9.trainer import YOLO9Trainer
 from libreyolo.models.yolo9.validation_loss import YOLO9ValidationLoss
 from libreyolo.models.yolo9_e2e.trainer import YOLO9E2ETrainer
 from libreyolo.models.yolo9_p2.trainer import YOLO9P2Trainer
-from libreyolo.training.config import YOLO9Config
+from libreyolo.models.yolonas.trainer import YOLONASTrainer
+from libreyolo.training.config import (
+    DFINEConfig,
+    TrainConfig,
+    YOLO9Config,
+    YOLONASConfig,
+)
 from libreyolo.training.loggers.base import epoch_metrics
 from libreyolo.ui.train_monitor_page import INDEX_HTML
 from libreyolo.validation.config import ValidationConfig
@@ -59,18 +77,65 @@ def _validator(adapter: _Adapter, *, augment: bool = False) -> DetectionValidato
 
 
 def test_validation_loss_is_opt_in_by_default():
+    assert TrainConfig().val_loss is False
     assert YOLO9Config().val_loss is False
     assert RFDETRConfig().val_loss is False
+    assert DFINEConfig().val_loss is False
+    assert YOLONASConfig().val_loss is False
 
 
-@pytest.mark.parametrize("trainer_class", [YOLO9E2ETrainer, YOLO9P2Trainer])
-def test_yolo9_derived_variants_reject_validation_loss(trainer_class):
+@pytest.mark.parametrize(
+    "trainer_class, match",
+    [
+        (YOLO9Trainer, "YOLO9 detection only"),
+        (YOLO9P2Trainer, "YOLO9 detection only"),
+        (YOLO9E2ETrainer, "YOLO9-E2E detection only"),
+        (YOLONASTrainer, "YOLO-NAS detection only"),
+        (DFINETrainer, "dfine detection only"),
+        (DEIMTrainer, "deim detection only"),
+        (RTDETRTrainer, "rtdetr detection only"),
+    ],
+)
+def test_non_detection_tasks_reject_validation_loss(trainer_class, match):
     trainer = trainer_class.__new__(trainer_class)
     trainer.config = SimpleNamespace(val_loss=True)
-    trainer.wrapper_model = SimpleNamespace(task="detect")
+    trainer.wrapper_model = SimpleNamespace(task="segment")
     trainer.model = SimpleNamespace()
 
-    with pytest.raises(ValueError, match="standard YOLO9 detection only"):
+    with pytest.raises(ValueError, match=match):
+        trainer.validate_validation_loss_config()
+
+
+def test_unsupported_family_rejects_validation_loss():
+    trainer = RTMDetTrainer.__new__(RTMDetTrainer)
+    trainer.config = SimpleNamespace(val_loss=True)
+
+    with pytest.raises(ValueError, match="not supported by rtmdet training"):
+        trainer.validate_validation_loss_config()
+
+
+def test_yolo9_variant_guard_accepts_p2_and_rejects_e2e_head():
+    from libreyolo.models.yolo9.nn import LibreYOLO9Model
+    from libreyolo.models.yolo9_e2e.nn import LibreYOLO9E2EModel
+    from libreyolo.models.yolo9_p2.nn import LibreYOLO9P2Model
+
+    for model_class, size in (
+        (LibreYOLO9Model, "t"),
+        (LibreYOLO9P2Model, "t"),
+    ):
+        trainer = YOLO9Trainer.__new__(YOLO9Trainer)
+        trainer.config = SimpleNamespace(val_loss=True)
+        trainer.wrapper_model = SimpleNamespace(task="detect")
+        trainer.model = model_class(config=size, nb_classes=2, img_size=64)
+        trainer.validate_validation_loss_config()
+
+    # The E2E model subclasses LibreYOLO9Model but swaps the head, so the
+    # shared guard must not claim it.
+    trainer = YOLO9Trainer.__new__(YOLO9Trainer)
+    trainer.config = SimpleNamespace(val_loss=True)
+    trainer.wrapper_model = SimpleNamespace(task="detect")
+    trainer.model = LibreYOLO9E2EModel(config="t", nb_classes=2, img_size=64)
+    with pytest.raises(ValueError, match="YOLO9 detection only"):
         trainer.validate_validation_loss_config()
 
 
@@ -306,6 +371,222 @@ def test_rfdetr_training_normalizer_keeps_global_average(monkeypatch):
 
     assert criterion._box_count_normalizer(outputs, targets, 1) == pytest.approx(2.0)
     assert calls == [True]
+
+
+def test_flat_pixel_target_conversion_drops_padding_and_keeps_pixels():
+    targets = torch.tensor(
+        [
+            [[20.0, 10.0, 60.0, 30.0, 2.0], [0.0, 0.0, 0.0, 0.0, 0.0]],
+            [[50.0, 25.0, 150.0, 75.0, 1.0], [0.0, 0.0, 0.0, 0.0, 0.0]],
+        ]
+    )
+
+    converted = padded_targets_to_flat_pixels(
+        targets,
+        num_classes=3,
+        device=torch.device("cpu"),
+        family="YOLO-NAS",
+    )
+
+    assert converted.shape == (2, 6)
+    assert converted[0].tolist() == pytest.approx([0.0, 2.0, 40.0, 20.0, 40.0, 20.0])
+    assert converted[1].tolist() == pytest.approx([1.0, 1.0, 100.0, 50.0, 100.0, 50.0])
+
+
+def test_flat_pixel_target_conversion_rejects_out_of_range_class():
+    targets = torch.tensor([[[1.0, 1.0, 5.0, 5.0, 9.0]]])
+
+    with pytest.raises(ValueError, match="outside"):
+        padded_targets_to_flat_pixels(
+            targets,
+            num_classes=3,
+            device=torch.device("cpu"),
+            family="YOLO-NAS",
+        )
+
+
+class _Decoder(torch.nn.Module):
+    def __init__(self, *, eval_idx=2, num_layers=3):
+        super().__init__()
+        self.emit_loss_outputs = False
+        self.eval_idx = eval_idx
+        self.num_layers = num_layers
+        self.weight = torch.nn.Parameter(torch.zeros(1))
+
+
+class _Model(torch.nn.Module):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.decoder = _Decoder(**kwargs)
+
+
+def test_emit_loss_outputs_sets_and_restores_the_flag():
+    model = _Model()
+    assert loss_output_modules(model) == [model.decoder]
+
+    with emit_loss_outputs(model):
+        assert model.decoder.emit_loss_outputs is True
+    assert model.decoder.emit_loss_outputs is False
+
+
+def test_emit_loss_outputs_restores_the_flag_after_an_error():
+    model = _Model()
+
+    with pytest.raises(RuntimeError):
+        with emit_loss_outputs(model):
+            raise RuntimeError("boom")
+
+    assert model.decoder.emit_loss_outputs is False
+
+
+def test_emit_loss_outputs_rejects_a_model_without_the_hook():
+    with pytest.raises(TypeError, match="emit_loss_outputs"):
+        with emit_loss_outputs(torch.nn.Linear(2, 2)):
+            pass
+
+
+def test_detr_adapter_rejects_decoder_whose_eval_layer_is_not_last():
+    criterion = SimpleNamespace(num_classes=2, eval=lambda: None)
+
+    with pytest.raises(TypeError, match="eval_idx=1 of 3 layers"):
+        DETRValidationLoss(_Model(eval_idx=1, num_layers=3), criterion)
+
+
+def _detr_adapter(loss_dict):
+    class _Criterion:
+        num_classes = 2
+
+        def eval(self):
+            return self
+
+        def __call__(self, predictions, targets, **kwargs):
+            del predictions, targets, kwargs
+            return loss_dict
+
+    adapter = object.__new__(DETRValidationLoss)
+    adapter.model = _Model()
+    adapter.criterion = _Criterion()
+    adapter.device = torch.device("cpu")
+    adapter.num_classes = 2
+    return adapter
+
+
+def _scoped_predictions():
+    return {
+        "pred_logits": torch.zeros(1, 4, 3),
+        "pred_boxes": torch.zeros(1, 4, 4),
+        "aux_outputs": [],
+    }
+
+
+def test_detr_adapter_groups_decorated_names_into_components():
+    adapter = _detr_adapter(
+        {
+            "loss_vfl": torch.tensor(1.0),
+            "loss_vfl_aux_0": torch.tensor(2.0),
+            "loss_vfl_pre": torch.tensor(0.5),
+            "loss_bbox": torch.tensor(3.0),
+            "loss_bbox_enc_0": torch.tensor(1.5),
+            "loss_giou_dn_1": torch.tensor(4.0),
+        }
+    )
+
+    values = adapter(
+        _scoped_predictions(),
+        torch.tensor([[[2.0, 2.0, 6.0, 6.0, 1.0]]]),
+        image_size=(8, 8),
+    )
+
+    assert float(values["loss"]) == pytest.approx(12.0)
+    assert float(values["loss/vfl"]) == pytest.approx(3.5)
+    assert float(values["loss/bbox"]) == pytest.approx(4.5)
+    assert float(values["loss/giou"]) == pytest.approx(4.0)
+    components = sum(float(v) for k, v in values.items() if k != "loss")
+    assert components == pytest.approx(float(values["loss"]))
+
+
+def test_detr_adapter_ignores_the_criterion_aggregate_key():
+    adapter = _detr_adapter(
+        {
+            "loss_vfl": torch.tensor(1.0),
+            "loss_bbox": torch.tensor(2.0),
+            "total_loss": torch.tensor(3.0),
+        }
+    )
+
+    values = adapter(_scoped_predictions(), torch.zeros(1, 1, 5), image_size=(8, 8))
+
+    assert float(values["loss"]) == pytest.approx(3.0)
+    assert set(values) == {"loss", "loss/vfl", "loss/bbox"}
+
+
+def test_detr_adapter_requires_the_forward_scope_output():
+    adapter = _detr_adapter({"loss_vfl": torch.tensor(1.0)})
+    predictions = {
+        "pred_logits": torch.zeros(1, 4, 3),
+        "pred_boxes": torch.zeros(1, 4, 4),
+    }
+
+    with pytest.raises(ValueError, match="forward scope was not active"):
+        adapter(predictions, torch.zeros(1, 1, 5), image_size=(8, 8))
+
+
+def test_validator_enters_the_adapter_forward_scope():
+    entered = []
+
+    class _ScopedAdapter(_Adapter):
+        def forward_scope(self):
+            @contextmanager
+            def scope():
+                entered.append("in")
+                try:
+                    yield
+                finally:
+                    entered.append("out")
+
+            return scope()
+
+    validator = _validator(_ScopedAdapter())
+    validator._active_loss_adapter = validator.loss_adapter
+    with validator._validation_loss_scope():
+        assert entered == ["in"]
+    assert entered == ["in", "out"]
+
+
+def test_validator_scope_is_a_noop_without_an_adapter_hook():
+    validator = _validator(_Adapter())
+    validator._active_loss_adapter = validator.loss_adapter
+    with validator._validation_loss_scope():
+        pass
+
+
+def test_dfine_loss_scope_leaves_the_metric_predictions_untouched():
+    """The mAP path must not notice the loss scope.
+
+    ``eval_idx`` is the last decoder layer on every shipped size, so scoring
+    the earlier layers only adds keys; ``pred_logits``/``pred_boxes`` stay the
+    tensors the metrics already used.
+    """
+    from libreyolo.models.dfine.nn import LibreDFINEModel
+
+    # 256px is the smallest square that still yields the decoder's 300 queries.
+    model = LibreDFINEModel(
+        config="n", nb_classes=2, eval_spatial_size=(256, 256)
+    ).eval()
+    images = torch.randn(1, 3, 256, 256)
+
+    with torch.no_grad():
+        plain = model(images)
+        with emit_loss_outputs(model):
+            scoped = model(images)
+        after = model(images)
+
+    assert set(plain) == set(after) == {"pred_logits", "pred_boxes"}
+    assert {"aux_outputs", "enc_aux_outputs", "pre_outputs"} <= set(scoped)
+    assert len(scoped["aux_outputs"]) == model.decoder.num_layers - 1
+    for key in ("pred_logits", "pred_boxes"):
+        assert torch.equal(plain[key], scoped[key])
+        assert torch.equal(plain[key], after[key])
 
 
 def test_monitor_overlays_validation_loss_when_present():

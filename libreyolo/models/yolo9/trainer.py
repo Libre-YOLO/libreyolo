@@ -60,15 +60,18 @@ class YOLO9Trainer(BaseTrainer):
         from .nn import DDetect, LibreYOLO9Model
 
         task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        # ``isinstance`` covers yolo9_p2, which is the same dense head over a
+        # fourth stride. YOLO9-E2E subclasses this model too but swaps in a
+        # dual-branch head, so the exact head check routes it to its own
+        # trainer override.
         standard_model = (
-            self.get_model_family() == "yolo9"
-            and type(self.model) is LibreYOLO9Model
+            isinstance(self.model, LibreYOLO9Model)
             and type(self.model.head) is DDetect
         )
         if task != "detect" or not standard_model:
             raise ValueError(
-                "val_loss=True currently supports standard YOLO9 detection only; "
-                "YOLO9-E2E, YOLO9-P2, and non-detect tasks are not supported"
+                "val_loss=True currently supports YOLO9 detection only; "
+                "non-detect tasks are not supported"
             )
 
     def build_validation_loss_adapter(self, model: torch.nn.Module):

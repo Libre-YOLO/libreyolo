@@ -183,6 +183,12 @@ class TrainConfig:
     # maxDets=[1, 10, 100] behavior independently of the prediction cap.
     eval_max_det: Optional[int] = None
     save_plots: bool = False
+    # Compute the family's training objective on validation batches and emit
+    # metrics/loss plus its per-component values. Off by default because target
+    # assignment adds validation time and memory use. Families that do not
+    # implement it reject ``val_loss=True`` in
+    # ``BaseTrainer.validate_validation_loss_config``.
+    val_loss: bool = False
 
     # System
     workers: int = 4
@@ -330,10 +336,6 @@ class YOLO9Config(TrainConfig):
     # (e.g. aerial imagery) exceed the historical 100-box default; boxes
     # beyond the cap are silently dropped, so raise it for such data.
     max_labels: int = 100
-    # Compute the detection training objective on validation batches and emit
-    # metrics/loss plus box/class/DFL components. Off by default because task
-    # assignment adds validation time and memory use.
-    val_loss: bool = False
     # Copy-paste instance augmentation (segmentation task only). ``copy_paste``
     # is the per-sample probability (0 disables it); ``copy_paste_mode`` selects
     # the source: "flip" reuses the same sample mirrored, "mixup" pulls a second

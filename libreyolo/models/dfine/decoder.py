@@ -365,6 +365,10 @@ class TransformerDecoder(nn.Module):
         self.num_layers = num_layers
         self.layer_scale = layer_scale
         self.num_head = num_head
+        # Set by ``emit_loss_outputs`` while training-time validation computes
+        # the criterion: eval otherwise scores only the ``eval_idx`` layer,
+        # which is not enough for the auxiliary-decoder loss terms.
+        self.emit_loss_outputs = False
         self.eval_idx = eval_idx if eval_idx >= 0 else num_layers + eval_idx
         self.up = up
         self.reg_scale = reg_scale
@@ -475,7 +479,8 @@ class TransformerDecoder(nn.Module):
                 ref_points_initial, integral(pred_corners, project), reg_scale
             )
 
-            if self.training or i == self.eval_idx:
+            score_every_layer = self.training or self.emit_loss_outputs
+            if score_every_layer or i == self.eval_idx:
                 scores = score_head[i](output)
                 scores = self.lqe_layers[i](scores, pred_corners)
                 dec_out_logits.append(scores)
@@ -483,7 +488,7 @@ class TransformerDecoder(nn.Module):
                 dec_out_pred_corners.append(pred_corners)
                 dec_out_refs.append(ref_points_initial)
 
-                if not self.training:
+                if not score_every_layer:
                     break
 
             pred_corners_undetach = pred_corners
@@ -557,6 +562,9 @@ class DFINETransformer(nn.Module):
         self.enable_mask_head = bool(enable_mask_head)
         self.mask_dim = int(mask_dim)
         self._anchor_cache = OrderedDict()
+        # See ``TransformerDecoder.emit_loss_outputs``: eval assembles a
+        # two-key inference dict, and the criterion needs the training keys.
+        self.emit_loss_outputs = False
 
         assert query_select_method in ("default", "one2many", "agnostic")
         assert cross_attn_method in ("default", "discrete")
@@ -878,7 +886,7 @@ class DFINETransformer(nn.Module):
 
         enc_topk_bbox_unact = self.enc_bbox_head(enc_topk_memory) + enc_topk_anchors
 
-        if self.training:
+        if self.training or self.emit_loss_outputs:
             enc_topk_bboxes = F.sigmoid(enc_topk_bbox_unact)
             enc_topk_bboxes_list.append(enc_topk_bboxes)
             enc_topk_logits_list.append(enc_topk_logits)
@@ -922,7 +930,7 @@ class DFINETransformer(nn.Module):
                 dim=1,
                 index=topk_ind.unsqueeze(-1).repeat(1, 1, outputs_logits.shape[-1]),
             )
-            if self.training
+            if (self.training or self.emit_loss_outputs)
             else None
         )
         topk_memory = memory.gather(
@@ -1048,7 +1056,11 @@ class DFINETransformer(nn.Module):
             dn_pred_masks = None
             dn_aux_masks = None
 
-        if self.training:
+        # ``emit_loss_outputs`` reproduces the training-shaped dict during
+        # validation. ``out_logits[-1]`` is the same layer either way because
+        # loss outputs are only allowed when ``eval_idx`` is the last layer.
+        loss_shaped = self.training or self.emit_loss_outputs
+        if loss_shaped:
             out = {
                 "pred_logits": out_logits[-1],
                 "pred_boxes": out_bboxes[-1],
@@ -1064,7 +1076,7 @@ class DFINETransformer(nn.Module):
             if enable_mask_head:
                 out["pred_masks"] = torch.sigmoid(pred_masks)
 
-        if self.training and self.aux_loss:
+        if loss_shaped and self.aux_loss:
             out["aux_outputs"] = self._set_aux_loss2(
                 out_logits[:-1],
                 out_bboxes[:-1],

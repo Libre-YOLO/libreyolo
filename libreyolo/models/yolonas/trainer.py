@@ -52,6 +52,27 @@ class YOLONASTrainer(BaseTrainer):
             use_varifocal_loss=True,
         ).to(self.device)
 
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+
+        from .nn import LibreYOLONASModel
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect" or type(self.model) is not LibreYOLONASModel:
+            raise ValueError(
+                "val_loss=True currently supports YOLO-NAS detection only; "
+                "pose and other tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import YOLONASValidationLoss
+
+        return YOLONASValidationLoss(
+            model,
+            max_labels=int(getattr(self.config, "max_labels", 100)),
+        )
+
     def get_loss_components(self, outputs: Dict) -> Dict[str, float]:
         def _scalar(v):
             return v.item() if isinstance(v, torch.Tensor) else v

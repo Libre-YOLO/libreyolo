@@ -9,6 +9,16 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- `val_loss=True` extended from the `g0` flagships to every `g1` detection
+  family: `yolo9_p2`, `yolo9_e2e`, `yolonas`, `rtdetr`, `rtdetrv2`,
+  `rtdetrv4`, `dfine`, `deim`, `deimv2`, and `ec`. Components stay weighted so
+  they sum to the reported total, and the DETR-line decoders emit their
+  auxiliary, encoder and pre-decoder outputs for the validation pass only, so
+  predictions and mAP are unchanged. Denoising terms are never included
+  because validation forwards without ground truth. `val_loss` moved from
+  `YOLO9Config`/`RFDETRConfig` to `TrainConfig`, so an unsupported family now
+  raises a clear error instead of ignoring the flag
+
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr

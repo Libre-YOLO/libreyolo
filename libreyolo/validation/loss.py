@@ -13,6 +13,11 @@ class ValidationLossAdapter(Protocol):
     ``image_size`` is ``(height, width)``. Implementations must be safe to run
     on rank 0 while a distributed process group is initialized; validation in
     :class:`~libreyolo.training.trainer.BaseTrainer` is rank-0-only.
+
+    An implementation whose family needs the model to produce extra outputs
+    may also define ``forward_scope() -> ContextManager[None]``. The validator
+    enters it around the whole pass, including CUDA-graph capture, and the
+    model must return to its inference-shaped output on exit.
     """
 
     max_labels: int | None

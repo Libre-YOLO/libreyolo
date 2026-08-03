@@ -18,11 +18,23 @@ class RTDETRv2Trainer(RTDETRTrainer):
         (zero gradient). ``RTDETRv2Loss`` adds that encoder query-selection
         supervision, matching upstream RT-DETRv2.
         """
+        self._maybe_apply_lora()
+        self.criterion = self.build_criterion()
+
+    def build_criterion(self, *, distributed_normalize: bool = True):
         from .loss import RTDETRv2Loss
 
-        self._maybe_apply_lora()
-        self.criterion = RTDETRv2Loss(num_classes=self.config.num_classes)
-        self.criterion.to(self.device)
+        return RTDETRv2Loss(
+            num_classes=self.config.num_classes,
+            distributed_normalize=distributed_normalize,
+        ).to(self.device)
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import RTDETRv2ValidationLoss
+
+        return RTDETRv2ValidationLoss(
+            model, self.build_criterion(distributed_normalize=False)
+        )
 
     def _setup_device(self) -> torch.device:
         device = super()._setup_device()

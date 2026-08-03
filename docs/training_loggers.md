@@ -66,27 +66,54 @@ backend package raises at construction with the install command.
 
 ### Validation loss for detection
 
-Standard YOLO9 and RF-DETR detection training can opt in to validation loss:
+Detection training in the `g0` and `g1` model groups can opt in to validation
+loss:
 
 ```python
 model.train(data="coco8.yaml", val_loss=True)
 ```
 
+Supported families and the components each reports, all prefixed `val/loss/`:
+
+| Family | Components |
+| --- | --- |
+| `yolo9`, `yolo9_p2` | `box`, `cls`, `dfl` |
+| `yolo9_e2e` | `box`, `cls`, `dfl` (one-to-many plus one-to-one) |
+| `yolonas` | `cls`, `iou`, `dfl` |
+| `rfdetr` | `ce`, `bbox`, `giou` |
+| `rtdetr`, `rtdetrv2` | `vfl`, `bbox`, `giou` |
+| `dfine` | `vfl`, `bbox`, `giou`, `fgl`, `ddf` |
+| `deim`, `deimv2`, `rtdetrv4`, `ec` | `mal`, `bbox`, `giou`, `fgl`, `ddf` |
+
+Components are weighted exactly as training weights them, so they sum to the
+reported `val/loss`. The always-on artifact names are the corresponding
+`metrics/loss...` keys, and `libreyolo monitor` overlays `metrics/loss` with
+`train/loss`.
+
 The validator reuses the model output already produced for mAP; it does not
-run a second network forward. YOLO9 reports `val/loss`, `val/loss/box`,
-`val/loss/cls`, and `val/loss/dfl`. RF-DETR reports `val/loss`,
-`val/loss/ce`, `val/loss/bbox`, and `val/loss/giou`, with the total covering
-the same main, auxiliary-decoder, and encoder terms as training. Components
-are weighted for both families, so they sum to the reported total. The always-on
-artifact names are the corresponding `metrics/loss...` keys, and
-`libreyolo monitor` overlays `metrics/loss` with `train/loss`.
+run a second network forward. Two families need slightly more than the plain
+inference output, still without re-running the backbone:
+
+- The DETR-line decoders score only their evaluation layer and return a
+  two-key dict in eval. For the duration of the validation pass they also
+  emit the auxiliary-decoder, encoder and pre-decoder outputs their criterion
+  consumes. The predictions the metrics use are unchanged, and the extra work
+  is per-layer prediction heads, not extra decoder layers.
+- YOLO9-E2E infers through its one-to-one branch only, so the one-to-many
+  branch is rebuilt from the neck features the eval forward already published.
+
+The reported total therefore covers the same terms as training with one
+documented exception: contrastive-denoising groups need the ground truth at
+forward time, and validation forwards without it, so `dn_*` terms are never
+included. RF-DETR is the analogous case with `group_detr` collapsing to 1 in
+eval.
 
 This option is off by default because target assignment adds work and memory
 to validation. It runs under `torch.no_grad()` with the evaluation/EMA model,
 and distributed training computes it locally on rank 0 without collectives.
 Best-checkpoint selection remains based on the configured accuracy metric.
-YOLO9-E2E, YOLO9-P2, augmented validation, and non-detection tasks are not
-supported by this first implementation and raise a clear configuration error.
+Augmented validation, non-detection tasks, and families outside `g0`/`g1` are
+not supported and raise a clear configuration error.
 
 ### TensorBoard
 
