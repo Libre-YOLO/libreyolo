@@ -147,6 +147,20 @@ def test_callable_detector_and_empty_box_bypass():
     assert calls["count"] == 1
 
 
+def test_image_list_runs_each_crop_sequentially():
+    wrapper = FakeHRNet()
+    results = HRNetPoseInferenceRunner(wrapper)(
+        [_image(80, 120), _image(120, 80)],
+        cropped=True,
+        batch=2,
+    )
+
+    assert len(results) == 2
+    assert wrapper.model.calls == 2
+    assert [result.orig_shape for result in results] == [(120, 80), (80, 120)]
+    assert all(result.keypoints.data.shape == (1, 17, 3) for result in results)
+
+
 def test_default_detector_is_resolved_once_and_cached(monkeypatch):
     from libreyolo.models.hrnet import inference
 

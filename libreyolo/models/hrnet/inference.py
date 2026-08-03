@@ -39,7 +39,7 @@ class HRNetPoseInferenceRunner:
 
     def __call__(
         self,
-        source: ImageInput | None = None,
+        source: ImageInput | Sequence[ImageInput] | None = None,
         *,
         person_boxes: Sequence | np.ndarray | None = None,
         person_detector: PersonDetector | object | None = None,
@@ -140,11 +140,17 @@ class HRNetPoseInferenceRunner:
                 return generator
             return collect_video_results(generator, source, vid_stride)
 
-        if isinstance(source, (str, Path)) and Path(source).is_dir():
+        image_sources = None
+        if isinstance(source, (list, tuple)):
+            image_sources = list(source)
+        elif isinstance(source, (str, Path)) and Path(source).is_dir():
+            image_sources = ImageLoader.collect_images(source)
+
+        if image_sources is not None:
             if person_boxes is not None:
                 raise ValueError(
                     "person_boxes apply to one image only; use a person_detector "
-                    "for directory inference."
+                    "for multi-image inference."
                 )
             return [
                 self._predict_single(
@@ -163,7 +169,7 @@ class HRNetPoseInferenceRunner:
                     color_format=color_format,
                     output_file_format=output_file_format,
                 )
-                for image_path in ImageLoader.collect_images(source)
+                for image_path in image_sources
             ]
 
         return self._predict_single(

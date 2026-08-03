@@ -35,6 +35,14 @@ Every mirror carries the verbatim upstream MIT `LICENSE` and a `NOTICE` that
 states this limitation. Training-data rights remain separate and users remain
 responsible for their use case.
 
+The public five-file mirrors are
+[`LibreHRNetw32-pose`](https://huggingface.co/LibreYOLO/LibreHRNetw32-pose)
+(initial revision `5a92f7f31751a74518f2d73024a96f851c9763cb`) and
+[`LibreHRNetw48-pose`](https://huggingface.co/LibreYOLO/LibreHRNetw48-pose)
+(initial revision `93cff5a34743fc57cd3f2831ec7330810e0fde68`). Both are
+members of the LibreYOLO Models collection and passed bare-filename,
+clean-cache download plus prediction checks.
+
 ## Ported surface
 
 | LibreYOLO surface | Pinned upstream source |
