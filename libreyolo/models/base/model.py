@@ -1750,7 +1750,10 @@ class BaseModel(ABC):
             plots: Alias for save_plots.
             verbose: Print detailed metrics.
             faster_coco_eval: (kwarg) Use the faster-coco-eval C++ backend
-                for COCO metrics; falls back to pycocotools if unavailable.
+                for COCO metrics. Default True; falls back to pycocotools
+                if the package is unavailable. Pass False (or set
+                LIBREYOLO_FASTER_COCO_EVAL=0) to force pycocotools. The
+                backend used is surfaced as ``model.last_eval_backend``.
 
         Returns:
             Dictionary with metrics/precision, metrics/recall,
@@ -1892,4 +1895,9 @@ class BaseModel(ABC):
         else:
             validator_cls = DetectionValidator
         validator = validator_cls(model=self, config=config)
-        return validator()
+        metrics = validator()
+        # Provenance: which COCO eval backend produced these metrics
+        # (e.g. "faster-coco-eval 1.7.2" / "pycocotools 2.0.10"; None for
+        # validators that don't run COCO evaluation).
+        self.last_eval_backend = getattr(validator, "eval_backend", None)
+        return metrics

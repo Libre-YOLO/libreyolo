@@ -41,8 +41,9 @@ class ValidationConfig:
         half: Whether to use FP16 inference.
         amp_dtype: Mixed-precision dtype used when half is enabled.
         faster_coco_eval: Use the faster-coco-eval C++ backend for COCO
-            metrics (bbox/segm). Requires the faster-coco-eval package;
-            falls back to pycocotools with a warning if unavailable.
+            metrics (bbox/segm). On by default; falls back to pycocotools
+            with a warning if the faster-coco-eval package is unavailable.
+            Set False (or LIBREYOLO_FASTER_COCO_EVAL=0) to force pycocotools.
     """
 
     # Data
@@ -108,8 +109,12 @@ class ValidationConfig:
     amp_dtype: str = field(default="float16", kw_only=True)
     allow_download_scripts: bool = False
 
-    # COCO eval backend (off by default; opt-in C++ evaluator)
-    faster_coco_eval: bool = False
+    # COCO eval backend. On by default: uses the faster-coco-eval C++
+    # evaluator when installed (metrics identical to pycocotools within
+    # float64 summation order), silently-audited fallback to pycocotools
+    # otherwise. The backend actually used is logged and surfaced as
+    # model.last_eval_backend.
+    faster_coco_eval: bool = True
 
     # TTA
     augment: bool = False
