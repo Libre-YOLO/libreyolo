@@ -60,8 +60,8 @@ through `LibreYOLO`.
   or unexpected keys.
 - Pinned timm pretrained-logit parity is bit-exact for all four sizes:
   `max_abs_diff == 0.0` on a seeded CUDA input at 224.
-- The existing shared 640px Swin backbone parity gate remains bit-exact at all
-  four feature stages.
+- The existing shared 640px Swin backbone parity gate remains bit-exact at the
+  three exported feature stages (2, 3, and 4).
 - On the bundled parkour image, the converted Tiny checkpoint returns 1,000
   normalized probabilities and top-1 ImageNet class 880 (`unicycle`).
 - Trained Tiny public-runtime probability parity on the same image:
@@ -74,5 +74,7 @@ through `LibreYOLO`.
 LibreSwin accepts only Swin V1 patch-4/window-7 classifier checkpoints with a
 fixed classification head. It rejects Swin V2 (`cpb_mlp` / `logit_scale`),
 window-12 releases, backbone-only checkpoints, and the unrelated SwinIR family.
+Prediction, validation, and export reject non-224 input canvases before the
+resolution-specific final-stage attention graph runs.
 Bidirectional discriminator tests also keep it disjoint from ResNet, ConvNeXt,
 EfficientNetV2, MobileNetV4, CLIP, DINOv2, and SAM-style ViT checkpoints.
