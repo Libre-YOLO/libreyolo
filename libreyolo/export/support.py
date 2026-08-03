@@ -737,6 +737,31 @@ _add(
 )
 _add(
     "validated",
+    ("vgg",),
+    ("classify",),
+    ("onnx", "torchscript"),
+    reason=(
+        "A small-artifact PR-gate fixture covers conversion and raw-logit "
+        "parity, while the official trained VGG-16 checkpoint covers native "
+        "and backend probability/top-1 parity."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed 224x224 input",
+)
+_add(
+    "validated",
+    ("vgg",),
+    ("classify",),
+    ("openvino", "tensorrt"),
+    reason=(
+        "The official trained VGG-16 checkpoint is covered by fixed-224 FP32 "
+        "backend probability parity and identical public top-1 output."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed 224x224 input",
+)
+_add(
+    "validated",
     ("clip", "siglip2"),
     ("classify",),
     ("onnx",),

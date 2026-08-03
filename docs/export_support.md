@@ -89,6 +89,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
 | vit | classify | ✓ | exp | exp | exp | exp | exp |  |  |  |
+| vgg | classify | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  | ✓ |
 | yolo3 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |
@@ -320,6 +321,10 @@ A check mark applies only under any constraint listed here.
 - `teed` / `edge` / `openvino`: OpenVINO 2026.2 CPU FP32, batch 1, fixed input shape
 - `teed` / `edge` / `tflite`: LiteRT 2.1.2 CPU FP32, batch 1, fixed input shape
 - `vit` / `classify` / `onnx`: FP32, fixed 224x224 input
+- `vgg` / `classify` / `onnx`: FP32, batch 1, fixed 224x224 input
+- `vgg` / `classify` / `torchscript`: FP32, batch 1, fixed 224x224 input
+- `vgg` / `classify` / `tensorrt`: FP32, batch 1, fixed 224x224 input
+- `vgg` / `classify` / `openvino`: FP32, batch 1, fixed 224x224 input
 - `yolo1` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo1` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
@@ -796,6 +801,9 @@ A check mark applies only under any constraint listed here.
 - `vit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `vit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `vit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
+- `vgg` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `vgg` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `vgg` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `yolo1` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_EINSUM custom operation that LiteRT 2.1.2 cannot prepare at the native 448x448 canvas.
 - `yolo1` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo2` / `detect` / `tflite`: LiteRT 2.1.2 cannot prepare the onnx2tf 2.6.7 artifact because a RESHAPE maps 4,225 input elements to one output element.

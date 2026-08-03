@@ -58,6 +58,12 @@ before 1.4.0 are documented in the
   AlexNet classifier. The canonical `LibreAlexNetb-cls.pt` checkpoint preserves
   the official ImageNet-1K tensors and produces bit-exact native logits;
   ONNX, TorchScript, OpenVINO, and TensorRT export parity is validated
+- LibreVGG, an inference-only image-classification family with VGG-16,
+  VGG-19, VGG-16-BN, and VGG-19-BN at fixed 224. Official torchvision
+  ImageNet-1k V1 logits are bit-exact for every variant; ONNX, TorchScript,
+  OpenVINO, and TensorRT backend parity is verified for VGG-16. The
+  BSD-3-Clause code attribution and pretrained-weight caveat ship with the
+  family, and `train()` raises `NotImplementedError`.
 - LibreDETR, an inference-only museum port of the original DETR (ECCV 2020)
   in all four released COCO variants (`r50`, `r50dc5`, `r101`, `r101dc5`).
   Native outputs are bit-exact against the pinned facebookresearch/detr

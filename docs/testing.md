@@ -237,11 +237,11 @@ V2.3 contract:
 
 - `general_nightly`: one smallest native inference case for every public model
   family with a task-appropriate deterministic prediction path, including
-  inference-only museum families (such as the DeiT and AlexNet classifiers),
-  that has a public auto-download route (LibreYOLO HF, or Deci's CDN for
-  YOLO-NAS), plus batched/sequential parity and selected open-vocabulary smoke
-  cases. FCN adds one task-specific real-checkpoint semantic predict, mIoU,
-  and UI-render smoke; currently 42 tests.
+  inference-only museum and classification families (such as the DeiT, AlexNet,
+  and VGG classifiers), that has a public auto-download route (LibreYOLO HF, or
+  Deci's CDN for YOLO-NAS), plus batched/sequential parity and selected
+  open-vocabulary smoke cases. FCN adds one task-specific real-checkpoint
+  semantic predict, mIoU, and UI-render smoke; currently 43 tests.
 - `flagship_nightly`: heavier YOLO9/RF-DETR native validation, video, tracking,
   CLI, and one RF1 training/reload size per flagship family; currently 48 tests
   with `not export_backend`. The full RF1 size matrix remains available under

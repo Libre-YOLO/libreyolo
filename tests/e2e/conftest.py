@@ -563,6 +563,7 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("picodet", "s", "LibrePICODETs.pt"),
     ("rtmdet", "t", "LibreRTMDett.pt"),
     ("vit", "ti", "LibreViTti-cls.pt"),
+    ("vgg", "16", "LibreVGG16-cls.pt"),
 ]
 
 # Non-detect families use task-specific nightly assertions instead of the
@@ -660,6 +661,7 @@ FAMILY_MARKERS = {
     "l2cs": pytest.mark.l2cs,
     "fomo": pytest.mark.fomo,
     "vit": pytest.mark.vit,
+    "vgg": pytest.mark.vgg,
 }
 
 

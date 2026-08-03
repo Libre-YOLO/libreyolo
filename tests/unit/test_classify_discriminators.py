@@ -26,7 +26,9 @@ def test_supported_variants_detected():
         LibreEfficientNetV2,
         LibreMobileNetV4,
         LibreResNet,
+        LibreVGG,
     )
+    from torchvision.models import vgg16, vgg16_bn, vgg19, vgg19_bn
 
     cases = [
         (LibreResNet, "resnet18", "18"),
@@ -57,6 +59,15 @@ def test_supported_variants_detected():
     alexnet_sd = alexnet(weights=None).state_dict()
     assert LibreAlexNet.detect_size(alexnet_sd) == "b"
     assert LibreAlexNet.can_load(alexnet_sd) is True
+    for cls, builder, expected in [
+        (LibreVGG, vgg16, "16"),
+        (LibreVGG, vgg19, "19"),
+        (LibreVGG, vgg16_bn, "16bn"),
+        (LibreVGG, vgg19_bn, "19bn"),
+    ]:
+        sd = builder(weights=None).state_dict()
+        assert cls.detect_size(sd) == expected
+        assert cls.can_load(sd) is True
 
 
 def test_unsupported_variants_rejected():
@@ -96,6 +107,7 @@ def test_classify_filenames_require_cls_suffix():
         LibreMobileNetV4,
         LibreResNet,
         LibreViT,
+        LibreVGG,
     )
 
     for cls, size in [
@@ -106,6 +118,7 @@ def test_classify_filenames_require_cls_suffix():
         (LibreEfficientNetV2, "b0"),
         (LibreMobileNetV4, "s"),
         (LibreViT, "ti"),
+        (LibreVGG, "16bn"),
     ]:
         stem = f"{cls.FILENAME_PREFIX}{size}"
         assert cls.detect_size_from_filename(f"{stem}-cls.pt") == size, (
@@ -114,3 +127,35 @@ def test_classify_filenames_require_cls_suffix():
         assert cls.detect_size_from_filename(f"{stem}.pt") is None, (
             f"{cls.__name__} must reject a suffixless filename"
         )
+
+
+def test_vgg_and_existing_classifiers_reject_each_other():
+    from libreyolo import (
+        LibreConvNeXt,
+        LibreEfficientNetV2,
+        LibreMobileNetV4,
+        LibreResNet,
+        LibreVGG,
+    )
+    from libreyolo.models.convnext.nn import ConvNeXt
+    from libreyolo.models.efficientnetv2.nn import EfficientNetV2
+    from libreyolo.models.mobilenetv4.nn import MobileNetV4
+    from libreyolo.models.resnet.nn import ResNet
+    from libreyolo.models.vgg.nn import VGG
+
+    vgg_state = VGG(size="16", num_classes=1000).state_dict()
+    sibling_cases = [
+        (LibreResNet, ResNet(size="18", num_classes=1000).state_dict()),
+        (LibreConvNeXt, ConvNeXt(size="t", num_classes=1000).state_dict()),
+        (
+            LibreEfficientNetV2,
+            EfficientNetV2(size="b0", num_classes=1000).state_dict(),
+        ),
+        (
+            LibreMobileNetV4,
+            MobileNetV4(size="s", num_classes=1000).state_dict(),
+        ),
+    ]
+    for sibling, sibling_state in sibling_cases:
+        assert LibreVGG.can_load(sibling_state) is False
+        assert sibling.can_load(vgg_state) is False

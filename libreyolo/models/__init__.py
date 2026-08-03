@@ -120,6 +120,7 @@ from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; c
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .deit.model import LibreDeiT  # noqa: E402  (classify-only museum family; exact ViT geometry)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
+from .vgg.model import LibreVGG  # noqa: E402  (classify-only; exact 3x3 stem + FC shape signature)
 from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
 from .alexnet.model import LibreAlexNet  # noqa: E402  (classify-only; unique 11x11 stem + 3-layer classifier)
 
@@ -791,6 +792,7 @@ __all__ = [
     "LibreMobileNetV4",
     "LibreConvNeXt",
     "LibreEfficientNetV2",
+    "LibreVGG",
     "LibreResNet",
     "LibreAlexNet",
     "LibreCLIP",

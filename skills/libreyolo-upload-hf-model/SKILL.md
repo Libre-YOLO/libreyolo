@@ -73,6 +73,7 @@ file = name + ".pt"
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
 | ViT | `LibreViT` | `LibreViTti-cls.pt` (classic patch-16 AugReg classifier; Apache-2.0 code + weights; inference-only) |
 | AlexNet | `LibreAlexNet` | `LibreAlexNetb-cls.pt` (torchvision museum classifier; BSD-3-Clause implied for the checkpoint) |
+| VGG | `LibreVGG` | `LibreVGG16-cls.pt` |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 | SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
@@ -217,6 +218,8 @@ LibreResNet50-cls.pt, LibreResNet101-cls.pt,
 LibreViTti-cls.pt, LibreViTs-cls.pt,
 LibreViTb-cls.pt, LibreViTl-cls.pt,
 LibreAlexNetb-cls.pt,
+LibreVGG16-cls.pt, LibreVGG19-cls.pt,
+LibreVGG16bn-cls.pt, LibreVGG19bn-cls.pt,
 
 LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 
@@ -313,8 +316,10 @@ Classification (`-cls`) repos use `pipeline_tag: image-classification`,
 tracks detection only). Record each classifier's actual upstream and license;
 do not assume they are all timm-derived or Apache-2.0. AlexNet is the
 torchvision BSD-3-Clause graph, and its checkpoint uses the explicitly
-disclosed implied-BSD basis plus the torchvision/ImageNet terms caveat. Native
-classifier parity remains a `max_abs_diff == 0` gate.
+disclosed implied-BSD basis plus the torchvision/ImageNet terms caveat.
+Torchvision VGG likewise uses BSD-3-Clause implied by the releasing project
+and must carry the upstream pretrained-model caveat. Native classifier parity
+remains a `max_abs_diff == 0` gate.
 
 LibreCLIP is the zero-shot, open-vocabulary classifier (CLIP). Its HF cards use
 `pipeline_tag: zero-shot-image-classification`, **must document the LAION-2B

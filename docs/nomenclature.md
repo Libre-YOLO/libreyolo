@@ -51,7 +51,8 @@ The model families registered into the model factory (the VLM tier is a
 separate category, covered in the note below). Most are detectors; `fcn`,
 `pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
 instance, and panoptic segmentation; the `alexnet` / `deit` / `mobilenetv4` /
-`convnext` / `efficientnetv2` / `resnet` / `vit` families are classify-only:
+`convnext` / `efficientnetv2` / `resnet` / `vgg` / `vit` families are
+classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
 |---|---|---|
@@ -100,6 +101,7 @@ instance, and panoptic segmentation; the `alexnet` / `deit` / `mobilenetv4` /
 | `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
 | `vit`       | `LibreViT`       | All-caps acronym (`ViT` classic Vision Transformer) — inference-only classifier |
 | `alexnet`   | `LibreAlexNet`   | CamelCase preserved (`AlexNet` brand casing) — inference-only museum classifier |
+| `vgg`       | `LibreVGG`       | All-caps acronym (`VGG`); classify-only, inference-only family |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot classify + image/text embed) — inference-only |
 | `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot classify + image/text embed); inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
@@ -210,6 +212,7 @@ ships:
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
 | `vit`       | `ti`, `s`, `b`, `l` (classic patch-16 Tiny/Small/Base/Large; all at 224) |
 | `alexnet`   | `b` (the single torchvision ImageNet-1K graph; fixed 224 input) |
+| `vgg`       | `16`, `19`, `16bn`, `19bn` (VGG depth plus optional batch normalization; all fixed 224) |
 | `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models). Weight variants select the degradation: `LibreNAFNetl-restore.pt` (GoPro deblur) and `LibreNAFNetl-restore-sidd.pt` (SIDD denoise, the model behind the `denoise` alias) |
 | `realesrgan` | `x4`, `x2`, `x4t` (size code encodes scale + tier: `x4` = RealESRGAN_x4plus RRDBNet 4x quality default, `x2` = RealESRGAN_x2plus RRDBNet 2x, `x4t` = realesr-general-x4v3 SRVGG compact 4x fast/video tier) |
 | `swinir`    | `s`, `m`, `l` (all 4x: lightweight SwinIR-S, real-world SwinIR-M, and real-world SwinIR-L) |
@@ -473,6 +476,7 @@ Detector-factory family support follows:
 | `resnet`    | `("classify",)`             | classify | vanilla ResNet image classifier (v1.5); 18/34/50/101 at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `vit`       | `("classify",)`             | classify | classic patch-16 Vision Transformer; ti/s/b/l at 224 with AugReg ImageNet-1k weights; predict + top-1/top-5 `val` + ONNX; inference-only |
 | `alexnet`   | `("classify",)`             | classify | torchvision AlexNet museum classifier; b at 224; predict + top-1/top-5 `val`; inference-only; ONNX, TorchScript, OpenVINO, and TensorRT |
+| `vgg`       | `("classify",)`             | classify | VGG-16/VGG-19 with optional batch normalization; all at 224; predict plus fixed-resolution ONNX, TorchScript, OpenVINO, and TensorRT; inference-only |
 | `clip`      | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or whole-image/text embeddings in one space |
 | `siglip2`   | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or multilingual whole-image/text embeddings in one space |
 | `facerec`   | `("embed",)`                | embed | two-stage face-region embeddings; rows align with face boxes; inference-only |
@@ -733,6 +737,10 @@ LibreViTs-cls.pt           # ViT-Small/16 (224, AugReg ImageNet-1k)
 LibreViTb-cls.pt           # ViT-Base/16  (224, AugReg2 ImageNet-1k)
 LibreViTl-cls.pt           # ViT-Large/16 (224, AugReg ImageNet-1k)
 LibreAlexNetb-cls.pt       # AlexNet     (224, ImageNet-1k, inference only)
+LibreVGG16-cls.pt          # VGG-16     (224, ImageNet-1k)
+LibreVGG19-cls.pt          # VGG-19     (224, ImageNet-1k)
+LibreVGG16bn-cls.pt        # VGG-16-BN  (224, ImageNet-1k)
+LibreVGG19bn-cls.pt        # VGG-19-BN  (224, ImageNet-1k)
 ```
 
 Unlike `gaze`/`point` (which carry their suffix despite being single-task),
@@ -753,6 +761,13 @@ Only ConvNeXt **V1** ships — ConvNeXt-V2's small checkpoints are CC-BY-NC and
 are excluded; EfficientNetV2 ships only the ImageNet-1k checkpoints, as the
 `.in21k`/JFT variants carry extra-data terms. DeiT ships only the plain 224px
 models; distilled-token and 384px variants require separate public contracts.
+
+`vgg` is an inference-only native port of torchvision's BSD-3-Clause VGG
+implementation. Official ImageNet-1k V1 tensors load unchanged and produce
+bit-exact logits for all four variants. The publisher does not attach a
+checkpoint-specific license file, so the separate weight repositories disclose
+BSD-3-Clause as implied by the releasing project and repeat torchvision's
+pretrained-model data-provenance caveat.
 
 **Eval resolution is a deliberate choice.** The classify families evaluate at a
 real-time-friendly default (224 for AlexNet, DeiT, MobileNetV4 s/m, ConvNeXt,

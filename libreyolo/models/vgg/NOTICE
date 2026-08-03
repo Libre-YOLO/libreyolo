@@ -1,0 +1,54 @@
+LibreVGG -- third-party attribution
+===================================
+
+Source: https://github.com/pytorch/vision
+Commit: 10f68dbd78b9aa5cab9328f3b2e99cfb0b608122
+File: torchvision/models/vgg.py
+License: BSD-3-Clause
+Copyright (c) Soumith Chintala 2016
+
+The native inference graph in nn.py is derived from torchvision's VGG
+implementation. LibreYOLO retains the upstream feature and classifier module
+layout so the official VGG-16, VGG-19, VGG-16-BN, and VGG-19-BN state dicts
+load unchanged. LibreYOLO adds its own factory, checkpoint metadata,
+preprocessing, result payload, and export/backend integration. Training is not
+included.
+
+The four official ImageNet-1k V1 checkpoints used for parity are not distributed
+in the LibreYOLO source tree. Their separate LibreYOLO Hugging Face mirrors use
+BSD-3-Clause on an explicitly disclosed implied basis: the checkpoints are
+released by the BSD-licensed project but do not carry per-object license files.
+Torchvision warns that pretrained-model terms can depend on the training data
+and that users must determine permission for their use case. Each mirror ships
+the verbatim BSD license and repeats that caveat; the license must not be
+described as an explicit checkpoint-specific grant.
+
+BSD 3-Clause License
+
+Copyright (c) Soumith Chintala 2016,
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
