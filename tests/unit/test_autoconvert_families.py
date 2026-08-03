@@ -177,6 +177,16 @@ def _mask_rcnn_r50():
     }
 
 
+def _fcos_r50():
+    return {
+        "backbone.body.conv1.weight": torch.zeros(64, 3, 7, 7),
+        "backbone.fpn.extra_blocks.p6.weight": torch.zeros(256, 256, 3, 3),
+        "backbone.fpn.extra_blocks.p7.weight": torch.zeros(256, 256, 3, 3),
+        "head.classification_head.cls_logits.weight": torch.zeros(91, 256, 3, 3),
+        "head.regression_head.bbox_ctrness.weight": torch.zeros(1, 256, 3, 3),
+    }
+
+
 def _yolo9_e2e_t():
     return {
         "backbone.conv0.conv.weight": torch.zeros(16, 3, 3, 3),
@@ -248,6 +258,7 @@ CASES = [
     ("faster-rcnn", _faster_rcnn_n, _identity, "fasterrcnn_mobilenet_v3_large_320_fpn-907ea3f9.pth", "faster_rcnn", "LibreFasterRCNN", "n", "detect", 80),
     ("ssd", _ssd_300, _identity, "ssd300_vgg16_coco-b556d3b4.pth", "ssd", "LibreSSD", "300", "detect", 80),
     ("mask-rcnn", _mask_rcnn_r50, _identity, "maskrcnn_resnet50_fpn_v2_coco-73cbd019.pth", "mask_rcnn", "LibreMaskRCNN", "r50", "segment", 80),
+    ("fcos", _fcos_r50, _identity, "fcos_resnet50_fpn_coco-99b0c9b7.pth", "fcos", "LibreFCOS", "r50", "detect", 80),
     ("yolo9-e2e", _yolo9_e2e_t, _wrap_model, "gelan_e2e_t.pt", "yolo9_e2e", "LibreYOLO9E2E", "t", "detect", 80),
     ("deit", _deit_t, _wrap_model, "deit_tiny_patch16_224.pth", "deit", "LibreDeiT", "t", "classify", 1000),
 ]

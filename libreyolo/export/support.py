@@ -2109,6 +2109,20 @@ _add(
 )
 _add(
     "validated",
+    ("fcos",),
+    ("detect",),
+    ("onnx",),
+    reason=(
+        "The official trained checkpoint preserves the single-tensor raw "
+        "contract and public post-NMS detections in ONNX Runtime."
+    ),
+    since="1.7",
+    constraint=(
+        "FP32, batch 1, out-of-graph aspect resize, opset 18, dynamic padded H/W"
+    ),
+)
+_add(
+    "validated",
     ("mask_rcnn",),
     ("detect", "segment"),
     ("onnx",),
@@ -2120,6 +2134,40 @@ _add(
     constraint=(
         "ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream "
         "aspect resize, class-wise NMS, RoIAlign, and mask paste are embedded"
+    ),
+)
+_add(
+    "validated",
+    ("fcos",),
+    ("detect",),
+    ("torchscript",),
+    reason=(
+        "The official trained checkpoint preserves the single-tensor raw "
+        "contract and public post-NMS detections in TorchScript."
+    ),
+    since="1.7",
+    constraint="FP32, batch 1, out-of-graph aspect resize, variable padded H/W",
+)
+_add(
+    "experimental",
+    ("fcos",),
+    ("detect",),
+    ("openvino",),
+    reason=(
+        "FP32 dynamic-shape conversion and high-confidence public predictions "
+        "pass, but small score/box drift can change low-confidence NMS ordering."
+    ),
+    since="1.7",
+    constraint="OpenVINO CPU, FP32, batch 1, dynamic padded H/W",
+)
+_add(
+    "blocked",
+    ("fcos",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "FCOS requires dynamic padded H/W to preserve its 800/1333 aspect "
+        "transform, while the current TensorRT runtime profiles dynamic batch only."
     ),
 )
 _add(
@@ -2149,6 +2197,16 @@ _add(
     reason=(
         "Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, "
         "RoIAlign, variable-length detection, and full-image mask graph."
+    ),
+)
+_add(
+    "blocked",
+    ("fcos",),
+    ("detect",),
+    ("executorch", "ncnn", "tflite", "coreml", "coreai"),
+    reason=(
+        "No runtime parity contract exists for FCOS dynamic anchor grids and "
+        "variable padded spatial shapes in this format."
     ),
 )
 _add(

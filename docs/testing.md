@@ -240,7 +240,7 @@ V2.3 contract:
   classifier), that has a public auto-download route (LibreYOLO HF, or Deci's
   CDN for YOLO-NAS), plus batched/sequential parity and selected
   open-vocabulary smoke cases. FCN adds one task-specific real-checkpoint
-  semantic predict, mIoU, and UI-render smoke; currently 40 tests.
+  semantic predict, mIoU, and UI-render smoke; currently 41 tests.
 - `flagship_nightly`: heavier YOLO9/RF-DETR native validation, video, tracking,
   CLI, and one RF1 training/reload size per flagship family; currently 48 tests
   with `not export_backend`. The full RF1 size matrix remains available under

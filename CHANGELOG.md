@@ -83,6 +83,13 @@ before 1.4.0 are documented in the
   torchvision v0.26.0. Batch-one ONNX for both tasks preserves dynamic source
   H/W. BSD-3-Clause attribution and the pretrained-weight caveat ship with the
   family, and `train()` raises
+- LibreFCOS, an inference-only ResNet-50/FPN port of torchvision's FCOS. The
+  official COCO checkpoint loads all 319 state entries strictly; raw heads,
+  anchors, preprocessing, and native detections are exact against the pinned
+  BSD-3-Clause source. ONNX and TorchScript have trained-checkpoint runtime
+  parity, OpenVINO is experimental due to low-confidence NMS ordering drift,
+  and the published `LibreFCOSr50.pt` mirror carries the explicit
+  pretrained-weight license caveat
 - LibreDeformableDETR, an inference-only museum port of the original
   Apache-2.0 Deformable DETR in all five released ResNet-50 variants
   (`r50ss`, `r50ssdc5`, `r50`, `r50refine`, `r50twostage`). The portable

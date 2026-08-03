@@ -386,6 +386,61 @@ class SSDValPreprocessor(BaseValPreprocessor):
         return resized_img, padded_targets
 
 
+class FCOSValPreprocessor(BaseValPreprocessor):
+    """Torchvision FCOS aspect resize, ImageNet normalization, and stride pad."""
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        return True
+
+    @property
+    def uses_letterbox(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def letterbox_scale(
+        self, orig_h: int, orig_w: int, imgsz: int
+    ) -> Tuple[float, float, float]:
+        from ..models.fcos.utils import resize_dimensions
+
+        if isinstance(imgsz, (tuple, list)):
+            if len(imgsz) != 2 or int(imgsz[0]) != int(imgsz[1]):
+                raise ValueError(f"FCOS requires a scalar/square imgsz, got {imgsz}")
+            imgsz = int(imgsz[0])
+        _, _, scale = resize_dimensions(orig_h, orig_w, int(imgsz))
+        return scale, 0.0, 0.0
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.fcos.utils import preprocess_numpy
+
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError(
+                f"FCOS validation requires a scalar/square imgsz, got {input_size}"
+            )
+
+        rgb = np.ascontiguousarray(img[:, :, ::-1])
+        image_chw, scale = preprocess_numpy(rgb, input_size=target_h)
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, :4] *= scale
+            padded_targets[:count] = scaled[:count]
+        return image_chw, padded_targets
+
+
 class DeformableDETRValPreprocessor(RFDETRValPreprocessor):
     """Deformable DETR fixed-square ImageNet-normalized preprocessor.
 

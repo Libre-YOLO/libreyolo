@@ -894,6 +894,12 @@ class BaseExporter(ABC):
             nn_model = SSDExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "fcos":
+            from ..models.fcos.nn import FCOSExportWrapper
+
+            nn_model = FCOSExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "deformable_detr":
             from ..models.deformable_detr.nn import DeformableDETRExportWrapper
 

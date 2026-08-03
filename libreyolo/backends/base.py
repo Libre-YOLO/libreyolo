@@ -530,6 +530,8 @@ class BaseBackend(ABC):
                 input_size=effective_imgsz,
                 color_format=color_format,
             )
+        elif self.model_family == "fcos":
+            return self._preprocess_fcos(image, effective_imgsz, color_format)
         elif self.model_family in {"deformable_detr", "dinodetr"}:
             tensor, img, size = self._preprocess_deformable_detr(
                 image, effective_imgsz, color_format
@@ -940,6 +942,20 @@ class BaseBackend(ABC):
         return torch.from_numpy(chw).unsqueeze(0), img.copy(), original_size, 1.0
 
     @staticmethod
+    def _preprocess_fcos(image, input_size, color_format):
+        """Apply the out-of-graph torchvision FCOS transform."""
+        from ..models.fcos.utils import preprocess_image
+
+        input_h, input_w = _imgsz_hw(input_size)
+        if input_h != input_w:
+            raise ValueError(f"FCOS requires a scalar/square imgsz, got {input_size}")
+        return preprocess_image(
+            image,
+            input_size=input_h,
+            color_format=color_format,
+        )
+
+    @staticmethod
     def _preprocess_deformable_detr(image, input_size, color_format):
         """Deformable DETR preprocessing: square resize and ImageNet norm."""
         from ..models.deformable_detr.utils import preprocess_numpy
@@ -1167,6 +1183,15 @@ class BaseBackend(ABC):
             return boxes, scores, cls, None
         elif self.model_family == "retinanet":
             boxes, scores, cls = self._parse_retinanet(
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+            )
+            return boxes, scores, cls, None
+        elif self.model_family == "fcos":
+            boxes, scores, cls = self._parse_fcos(
                 all_outputs,
                 effective_imgsz,
                 orig_w,
@@ -1703,6 +1728,71 @@ class BaseBackend(ABC):
         if masks is not None:
             masks = masks[valid] >= 0.5
         return boxes[valid], scores[valid], class_ids[valid], masks
+
+    def _parse_fcos(
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+    ):
+        """Parse ``[xyxy, level_id, mapped class scores]`` FCOS rows."""
+        output = np.asarray(all_outputs[0], dtype=np.float32)
+        if output.ndim == 3:
+            if output.shape[0] != 1:
+                raise ValueError(
+                    f"FCOS backend parsing expects batch 1, got {output.shape[0]}"
+                )
+            output = output[0]
+        if output.ndim != 2 or output.shape[1] < 6:
+            raise ValueError(
+                "FCOS export output must have shape (1, anchors, 5 + classes)"
+            )
+
+        boxes_all = output[:, :4]
+        level_ids = np.rint(output[:, 4]).astype(np.int64)
+        class_scores = output[:, 5:]
+        box_indices, class_ids = np.nonzero(class_scores > conf)
+        if not len(box_indices):
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int64),
+            )
+        scores = class_scores[box_indices, class_ids]
+
+        selected = []
+        for level in range(5):
+            level_candidates = np.nonzero(level_ids[box_indices] == level)[0]
+            if level_candidates.size > 1000:
+                level_scores = scores[level_candidates]
+                top = np.argpartition(-level_scores, 999)[:1000]
+                top = top[np.argsort(-level_scores[top])]
+                level_candidates = level_candidates[top]
+            selected.append(level_candidates)
+        selected_indices = np.concatenate(selected)
+        box_indices = box_indices[selected_indices]
+        class_ids = class_ids[selected_indices]
+        scores = scores[selected_indices]
+        boxes = boxes_all[box_indices].copy()
+
+        from ..models.fcos.utils import resize_dimensions
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        if input_h != input_w:
+            raise ValueError(
+                f"FCOS backend parsing requires a scalar/square imgsz, got {effective_imgsz}"
+            )
+        resized_h, resized_w, _ = resize_dimensions(orig_h, orig_w, input_h)
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, resized_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, resized_h)
+        boxes[:, [0, 2]] *= orig_w / resized_w
+        boxes[:, [1, 3]] *= orig_h / resized_h
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        return boxes[valid], scores[valid], class_ids[valid]
 
     def _parse_yolo9(
         self,
@@ -3224,6 +3314,7 @@ class BaseBackend(ABC):
             # backend clipping so letterboxed-image behavior stays aligned with
             # native YOLO9 postprocess.
             if self.model_family in (
+                "fcos",
                 "picodet",
                 "retinanet",
                 "rtmdet",
@@ -3244,6 +3335,9 @@ class BaseBackend(ABC):
                 masks = masks[keep]
             if keypoints is not None:
                 keypoints = keypoints[keep]
+
+        if self.model_family == "fcos":
+            max_det = min(int(max_det), 100)
 
         if len(boxes) > max_det:
             top_indices = np.argsort(max_scores)[::-1][:max_det]

@@ -240,6 +240,7 @@ def export_onnx(
     is_faster_rcnn = model_family == "faster_rcnn"
     is_retinanet = model_family == "retinanet"
     is_ssd = model_family == "ssd"
+    is_fcos = model_family == "fcos"
     known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
     if (
@@ -249,6 +250,7 @@ def export_onnx(
         and not is_faster_rcnn
         and not is_retinanet
         and not is_ssd
+        and not is_fcos
         and not is_restore
         and not is_matte
         and not is_depth
@@ -296,6 +298,18 @@ def export_onnx(
             {
                 "images": {2: "height", 3: "width"},
                 "output": {1: "anchors"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_fcos:
+        output_names = ["output"]
+        # FCOS preprocessing is outside the graph and preserves aspect ratio,
+        # so padded spatial dimensions vary with the source image.
+        dynamic_axes = (
+            {
+                "images": {0: "batch", 2: "height", 3: "width"},
+                "output": {0: "batch", 1: "anchors"},
             }
             if dynamic
             else None

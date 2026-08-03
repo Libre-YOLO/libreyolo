@@ -117,6 +117,10 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "Mask R-CNN ships inference-only: sampled-RoI and mask training are "
         "not implemented, and train() raises."
     ),
+    "fcos": (
+        "FCOS ships inference-only: dense target assignment and focal, box, "
+        "and centerness losses are outside the museum-port scope, and train() raises."
+    ),
     "deformable_detr": (
         "Deformable DETR ships inference-only: its Hungarian matcher, focal/L1/GIoU "
         "losses, auxiliary decoder losses, and backbone learning-rate recipe are "

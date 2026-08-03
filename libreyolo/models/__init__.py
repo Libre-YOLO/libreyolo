@@ -76,6 +76,7 @@ from .lwdetr.model import LibreLWDETR  # noqa: E402
 # Mask R-CNN shares the Faster R-CNN box graph, so its distinctive mask-head
 # discriminator must register first.
 from .mask_rcnn.model import LibreMaskRCNN  # noqa: E402
+from .fcos.model import LibreFCOS  # noqa: E402  (unique centerness + P6/P7 fingerprint)
 from .faster_rcnn.model import LibreFasterRCNN  # noqa: E402
 from .retinanet.model import LibreRetinaNet  # noqa: E402
 from .ssd.model import LibreSSD  # noqa: E402  (VGG extras + paired MultiBox heads are unique)
@@ -751,6 +752,7 @@ __all__ = [
     "LibreDETR",
     "LibreDEIMv2",
     "LibreMaskRCNN",
+    "LibreFCOS",
     "LibreFasterRCNN",
     "LibreRetinaNet",
     "LibreSSD",
