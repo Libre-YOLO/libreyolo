@@ -1016,6 +1016,27 @@ class LibreYOLOXModel(nn.Module):
             act=act,
         )
 
+        # Official YOLOX sets BatchNorm eps=1e-3, momentum=0.03 on every size
+        # (Exp.get_model() in yolox_base.py). It must be applied HERE, at
+        # construction, not as a post-hoc fixup in the LibreYOLOX wrapper:
+        # training calls _rebuild_for_new_classes() when the dataset class
+        # count differs from the checkpoint, which constructs a fresh
+        # LibreYOLOXModel — a wrapper-level fixup does not survive that
+        # rebuild. The result was a model trained (and in-training validated)
+        # at torch's default eps=1e-5 but reloaded for inference at 1e-3.
+        # Harmless for the regular-conv sizes, catastrophic for depthwise
+        # "n", whose per-channel running_var is small enough that eps
+        # dominates: on RF100-VL "ball", the same nano checkpoint scores
+        # 0.566 mAP at eps=1e-5 and 0.151 at eps=1e-3.
+        self._apply_official_bn_hyperparams()
+
+    def _apply_official_bn_hyperparams(self) -> None:
+        """Set BatchNorm eps/momentum to the values official YOLOX uses."""
+        for module in self.modules():
+            if isinstance(module, nn.BatchNorm2d):
+                module.eps = 1e-3
+                module.momentum = 0.03
+
     def forward(self, x, targets=None):
         """
         Forward pass supporting both training and inference.

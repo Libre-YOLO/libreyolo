@@ -69,6 +69,20 @@ before 1.4.0 are documented in the
 
 ### Fixed
 
+- YOLOX BatchNorm eps=1e-3 / momentum=0.03 (official YOLOX values) is now
+  applied by `LibreYOLOXModel` at construction instead of as a post-hoc fixup
+  in the `LibreYOLOX` wrapper, so it survives the class-count rebuild
+  (`_rebuild_for_new_classes`) that `train()` performs when the dataset `nc`
+  differs from the checkpoint. Previously any such fine-tune trained and
+  reported in-training validation at torch's default eps=1e-5 but was
+  reloaded for inference at 1e-3 — same tensors, different normalization.
+  Regular-conv sizes barely move, but depthwise `n` has per-channel
+  running_var small enough for eps to dominate: on RF100-VL `ball` the same
+  nano checkpoint scores 0.566 mAP50-95 evaluated at its trained eps and
+  0.151 after a stock reload. Checkpoints trained before this fix carry
+  eps=1e-5 semantics and must be evaluated with BN eps overridden to 1e-5
+  (or have `sqrt((var+1e-3)/(var+1e-5))` folded into BN weights) to report
+  faithful numbers
 - CUDA graph capture no longer races with DataLoader pin-memory threads:
   training capture (`train(..., cuda_graph=True)`) and inference/validation
   capture now run with `capture_error_mode="thread_local"`, so a
