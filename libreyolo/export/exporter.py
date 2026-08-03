@@ -646,6 +646,11 @@ class BaseExporter(ABC):
             imgsz = (int(imgsz), int(imgsz))
         if imgsz[0] <= 0 or imgsz[1] <= 0:
             raise ValueError(f"imgsz values must be positive, got {imgsz}.")
+        if model_name == "vgg" and imgsz != (native_imgsz, native_imgsz):
+            raise ValueError(
+                "VGG export imgsz must match its fixed native resolution "
+                f"{native_imgsz}x{native_imgsz}, got {imgsz}."
+            )
         imgsz_divisor = int(getattr(self.model, "IMGSZ_DIVISOR", 1) or 1)
         if imgsz[0] % imgsz_divisor or imgsz[1] % imgsz_divisor:
             raise ValueError(

@@ -76,3 +76,15 @@ def test_torchscript_round_trip_matches_eager(tmp_path):
     with torch.inference_mode():
         actual = runtime(sample)
     torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+
+
+def test_export_rejects_non_native_resolution(tmp_path):
+    model = _compact_vgg()
+    output = tmp_path / "vgg16.torchscript"
+    with pytest.raises(ValueError, match="fixed native resolution 224x224"):
+        model.export(
+            format="torchscript",
+            imgsz=256,
+            output_path=str(output),
+        )
+    assert not output.exists()
