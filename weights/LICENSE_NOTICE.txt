@@ -295,6 +295,23 @@ project the weights were derived from. Per-family summary:
              adds LibreYOLO checkpoint metadata. Convert with
              weights/convert_moge2_weights.py.
 
+    HRNet   (LibreHRNet{w32,w48}-pose)                 MIT implied by release
+             upstream: leoxiaobin/deep-high-resolution-net.pytorch at
+             6f69e4676ad8d43d0d61b64b1b9726f0c369e7b1 (MIT).
+             Official source files:
+               pose_hrnet_w32_256x192.pth
+                 SHA-256 19bc083708bb8d873211e50d85d56344c10290c6e8b564c813fdde09645c4c1c
+               pose_hrnet_w48_384x288.pth
+                 SHA-256 95e0fec3194826d5e3f806ea89be68bbb84517b114c3a32b3058c56610b5ef61
+             The official model zoo distributes these files from the MIT
+             project but attaches no separate per-file license. LibreYOLO
+             therefore describes the weight license as implied by the
+             releasing project, not checkpoint-specific or independently
+             publisher-confirmed. Every mirror includes the verbatim upstream
+             MIT LICENSE and this limitation in NOTICE. Conversion preserves
+             all learned tensors and adds only checkpoint metadata. See
+             docs/provenance/hrnet.md for converted hashes and evidence.
+
     NAFNet   (LibreNAFNet{s,l}-restore)                no bundled weights
              upstream code: megvii-research/NAFNet (MIT)
              Some published GoPro-trained checkpoint files do not carry an

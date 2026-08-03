@@ -1504,3 +1504,38 @@ Used for: the native DexiNed edge-detection architecture in
           parameter layout for strict local checkpoint conversion. The full
           MIT notice and the source/weights/data separation are recorded in
           libreyolo/models/dexined/NOTICE.
+
+--------------------------------------------------------------------
+HRNet pose (Leo Xiao / Microsoft)
+--------------------------------------------------------------------
+Source: https://github.com/leoxiaobin/deep-high-resolution-net.pytorch
+Commit: 6f69e4676ad8d43d0d61b64b1b9726f0c369e7b1
+License: MIT
+Repository license: Copyright (c) 2019 Leo Xiao
+Adapted source headers: Copyright (c) Microsoft. Written by Bin Xiao.
+Used for: the native HRNet W32/W48 COCO-17 pose graph, affine person-crop
+          geometry, heatmap decoding, flip restoration, and OKS suppression
+          in libreyolo/models/hrnet/ and libreyolo/postprocess/hrnet.py.
+          Exact file mapping and hashes are in docs/provenance/hrnet.md.
+
+MIT License
+
+Copyright (c) 2019 Leo Xiao
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

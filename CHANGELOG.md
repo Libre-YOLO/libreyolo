@@ -9,6 +9,13 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- LibreHRNet W32 and W48, inference-only top-down COCO-17 pose models with
+  fixed 256x192 and 384x288 person-crop canvases. Native heatmaps, affine crop
+  geometry, flip testing, and decoding are exact against the pinned MIT
+  upstream. Full-image inference composes a configurable person detector and
+  also accepts explicit boxes or ready-made crops. Official weights and
+  fixed-crop ONNX, TorchScript, TensorRT, and OpenVINO exports are validated;
+  `train()` raises
 - Opt-in `faster_coco_eval` flag (off by default) on `ValidationConfig`,
   `TrainConfig`, `model.val()` / `model.train()` kwargs, and the CLI
   (`--faster-coco-eval` on `libreyolo val` / `libreyolo train`). Routes

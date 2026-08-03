@@ -187,6 +187,15 @@ def _fcos_r50():
     }
 
 
+def _hrnet_w32_pose():
+    return {
+        "conv1.weight": torch.zeros(64, 3, 3, 3),
+        "transition1.0.0.weight": torch.zeros(32, 256, 3, 3),
+        "stage3.0.branches.0.0.conv1.weight": torch.zeros(32, 32, 3, 3),
+        "final_layer.weight": torch.zeros(17, 32, 1, 1),
+    }
+
+
 def _yolo9_e2e_t():
     return {
         "backbone.conv0.conv.weight": torch.zeros(16, 3, 3, 3),
@@ -259,6 +268,7 @@ CASES = [
     ("ssd", _ssd_300, _identity, "ssd300_vgg16_coco-b556d3b4.pth", "ssd", "LibreSSD", "300", "detect", 80),
     ("mask-rcnn", _mask_rcnn_r50, _identity, "maskrcnn_resnet50_fpn_v2_coco-73cbd019.pth", "mask_rcnn", "LibreMaskRCNN", "r50", "segment", 80),
     ("fcos", _fcos_r50, _identity, "fcos_resnet50_fpn_coco-99b0c9b7.pth", "fcos", "LibreFCOS", "r50", "detect", 80),
+    ("hrnet-pose", _hrnet_w32_pose, _identity, "pose_hrnet_w32_256x192.pth", "hrnet", "LibreHRNet", "w32", "pose", 1),
     ("yolo9-e2e", _yolo9_e2e_t, _wrap_model, "gelan_e2e_t.pt", "yolo9_e2e", "LibreYOLO9E2E", "t", "detect", 80),
     ("deit", _deit_t, _wrap_model, "deit_tiny_patch16_224.pth", "deit", "LibreDeiT", "t", "classify", 1000),
 ]

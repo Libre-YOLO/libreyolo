@@ -67,6 +67,7 @@ file = name + ".pt"
 | RTDETRv4 | `LibreRTDETRv4` | `LibreRTDETRv4s.pt` |
 | RTMDet | `LibreRTMDet` | `LibreRTMDets.pt` |
 | YOLONAS | `LibreYOLONAS` | `LibreYOLONASs.pt` |
+| HRNet | `LibreHRNet` | `LibreHRNetw32-pose.pt`, `LibreHRNetw48-pose.pt` |
 | MobileNetV4 | `LibreMobileNetV4` | `LibreMobileNetV4s-cls.pt` |
 | ConvNeXt | `LibreConvNeXt` | `LibreConvNeXtt-cls.pt` |
 | DeiT | `LibreDeiT` | `LibreDeiTt-cls.pt` (plain 224px classifier; Apache-2.0; inference-only) |
@@ -141,6 +142,8 @@ LibreYOLO9P2t-visdrone.pt, LibreYOLO9P2s-visdrone.pt,
 LibreYOLONASs.pt, LibreYOLONASm.pt, LibreYOLONASl.pt,
 LibreYOLONASn-pose.pt, LibreYOLONASs-pose.pt,
 LibreYOLONASm-pose.pt, LibreYOLONASl-pose.pt,
+
+LibreHRNetw32-pose.pt, LibreHRNetw48-pose.pt,
 
 LibreDFINEn.pt, LibreDFINEs.pt, LibreDFINEm.pt, LibreDFINEl.pt,
 LibreDFINEx.pt,
@@ -461,6 +464,7 @@ After the repo is uploaded, add it to a collection:
 |---|---|
 | Detection weights | `LibreYOLO/libreyolo-models-698875bf2b5f695708415169` |
 | Classification weights | `LibreYOLO/libreyolo-classification-6a4164414d64a10aa8576885` |
+| Pose weights | `LibreYOLO/libreyolo-models-698875bf2b5f695708415169` |
 | RF-DETR segmentation | `LibreYOLO/rf-detr-instance-segmentation-69bde2744d6c285366a69603` |
 | New seg family (e.g. YOLOX-seg) | **Ask the user** — create a new collection or extend existing |
 | New detection family with no siblings yet | Add to `LibreYOLO Models` |

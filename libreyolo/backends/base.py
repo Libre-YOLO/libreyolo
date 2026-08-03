@@ -67,6 +67,7 @@ logger = logging.getLogger(__name__)
 
 ImageSize = Union[int, Tuple[int, int]]
 _RECTANGULAR_BACKEND_FAMILIES = {
+    "hrnet",
     "yolo9",
     "yolo9_e2e",
     "yolo9_p2",
@@ -147,7 +148,7 @@ def _read_metadata_imgsz(
         ):
             raise NotImplementedError(
                 "Rectangular exported-backend inference is currently supported "
-                "for YOLO9-family and NAFNet exports only. "
+                "for YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports only. "
                 f"{artifact} declares model_family={model_family or 'unknown'!r}."
             )
         return imgsz
@@ -460,6 +461,14 @@ class BaseBackend(ABC):
             return self._preprocess_matte(image, effective_imgsz, color_format)
         if self.task == "gaze":
             return self._preprocess_gaze(image, effective_imgsz, color_format)
+        if self.model_family == "hrnet" and self.task == "pose":
+            from ..models.hrnet.utils import preprocess_crop_image
+
+            return preprocess_crop_image(
+                image,
+                input_size=effective_imgsz,
+                color_format=color_format,
+            )
         if self.task in {"classify", "embed"}:
             return self._preprocess_classify(image, effective_imgsz, color_format)
         if self.task == "point" and self.model_family == "fomo":
@@ -1138,6 +1147,14 @@ class BaseBackend(ABC):
             )
             return boxes, scores, cls, None
 
+        if self.model_family == "hrnet" and self.task == "pose":
+            return self._parse_hrnet_pose(
+                all_outputs,
+                effective_imgsz,
+                original_size,
+                max_det=max_det,
+            )
+
         if self.model_family == "yolox":
             boxes, scores, cls = self._parse_yolox(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio
@@ -1288,6 +1305,48 @@ class BaseBackend(ABC):
                 return parsed
             boxes, scores, cls = parsed
             return boxes, scores, cls, None
+
+    @staticmethod
+    def _parse_hrnet_pose(
+        all_outputs: list,
+        effective_imgsz: ImageSize,
+        original_size: Tuple[int, int],
+        *,
+        max_det: int,
+    ):
+        """Decode one exported HRNet person-crop heatmap tensor."""
+        if len(all_outputs) != 1:
+            raise ValueError(
+                "HRNet pose backend requires one heatmap output, "
+                f"got {len(all_outputs)} outputs."
+            )
+        from ..models.hrnet.utils import box_to_center_scale
+        from ..postprocess.hrnet import postprocess_hrnet
+
+        original_width, original_height = original_size
+        box = np.asarray(
+            [[0.0, 0.0, float(original_width), float(original_height)]],
+            dtype=np.float32,
+        )
+        center, scale = box_to_center_scale(box[0], effective_imgsz)
+        decoded = postprocess_hrnet(
+            np.asarray(all_outputs[0], dtype=np.float32),
+            centers=center[None, :],
+            scales=scale[None, :],
+            boxes=box,
+            box_scores=np.ones((1,), dtype=np.float32),
+            keypoint_threshold=0.2,
+            oks_threshold=0.9,
+            max_det=min(int(max_det), 1),
+        )
+        return (
+            decoded["boxes"],
+            decoded["scores"],
+            decoded["classes"],
+            None,
+            None,
+            decoded["keypoints"],
+        )
 
     def _parse_yolox(
         self, all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=1.0
@@ -3588,7 +3647,7 @@ class BaseBackend(ABC):
         ):
             raise NotImplementedError(
                 "Rectangular imgsz backend inference is currently supported "
-                "for YOLO9-family and NAFNet exports only."
+                "for YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports only."
             )
         return effective
 
@@ -3776,6 +3835,11 @@ class BaseBackend(ABC):
         if imgsz is None:
             imgsz = self._get_input_size()
         imgsz = self._resolve_predict_imgsz(imgsz)
+        if self.model_family == "hrnet" and self.task == "pose":
+            raise NotImplementedError(
+                "Exported HRNet artifacts are person-crop pose heads. Validate the "
+                "native composed HRNet model so a person detector can provide boxes."
+            )
         if _is_rectangular_imgsz(imgsz):
             raise NotImplementedError(
                 "Rectangular exported-backend validation is not supported yet."

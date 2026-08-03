@@ -686,6 +686,38 @@
     "available": true,
     "group": "s"
   },
+  "hrnet": {
+    "class": "libreyolo.models.hrnet.model.LibreHRNet",
+    "tasks": [
+      "pose"
+    ],
+    "default_task": "pose",
+    "sizes": {
+      "w32": [
+        256,
+        192
+      ],
+      "w48": [
+        384,
+        288
+      ]
+    },
+    "default_imgsz": {
+      "w32": [
+        256,
+        192
+      ],
+      "w48": [
+        384,
+        288
+      ]
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "internvl3": {
     "class": "libreyolo.models.vlm.internvl3.LibreInternVL3",
     "tasks": [

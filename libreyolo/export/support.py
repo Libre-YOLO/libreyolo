@@ -3166,6 +3166,42 @@ _add(
 )
 _add(
     "validated",
+    ("hrnet",),
+    ("pose",),
+    ("onnx", "torchscript"),
+    reason=(
+        "Both official converted W32 and W48 checkpoints have raw-heatmap and "
+        "public decoded-keypoint parity in tests/e2e/test_hrnet_exports.py; "
+        "tests/unit/test_hrnet_parity.py separately proves the native graph, "
+        "affine crop, normalization, flip-shift, and decoder against the pinned "
+        "MIT upstream implementation."
+    ),
+    since="1.6",
+    constraint=(
+        "PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU "
+        "FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 "
+        "(W48) person-crop input; the full-image person detector is not in-graph"
+    ),
+)
+_add(
+    "validated",
+    ("hrnet",),
+    ("pose",),
+    ("openvino",),
+    reason=(
+        "Both official converted W32 and W48 checkpoints have conversion, "
+        "artifact reload, raw-heatmap parity within 3e-3, metadata, and public "
+        "decoded-keypoint parity in tests/e2e/test_hrnet_exports.py."
+    ),
+    since="1.6",
+    constraint=(
+        "OpenVINO 2026.2.1 CPU FP32, batch 1, fixed checkpoint-native 256x192 "
+        "(W32) or 384x288 (W48) person-crop input; the full-image person "
+        "detector is not in-graph"
+    ),
+)
+_add(
+    "validated",
     ("deeplabv3",),
     ("semantic",),
     ("tensorrt",),
@@ -3176,6 +3212,23 @@ _add(
     since="1.5",
     constraint=(
         "TensorRT 10.16 FP32, RTX 5070 Ti, batch 1, fixed 520x520 input"
+    ),
+)
+_add(
+    "validated",
+    ("hrnet",),
+    ("pose",),
+    ("tensorrt",),
+    reason=(
+        "Both official converted W32 and W48 checkpoints have conversion, "
+        "artifact reload, raw-heatmap parity within 3e-3, metadata, and public "
+        "decoded-keypoint parity in tests/e2e/test_hrnet_exports.py."
+    ),
+    since="1.6",
+    constraint=(
+        "TensorRT 10.16.1.11, CUDA 12.8, RTX 5070 Ti, FP32, batch 1, fixed "
+        "checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; "
+        "the full-image person detector is not in-graph"
     ),
 )
 
@@ -3217,6 +3270,10 @@ _FAMILY_BLOCKS = {
     "l2cs": (
         "The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, "
         "TensorRT, and OpenVINO only."
+    ),
+    "hrnet": (
+        "The HRNet person-crop pose-head export contract supports ONNX, "
+        "TorchScript, OpenVINO, and TensorRT only."
     ),
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
