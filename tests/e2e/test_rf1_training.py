@@ -109,6 +109,10 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "RetinaNet ships inference-only: focal-loss target assignment and "
         "training losses are not implemented, and train() raises."
     ),
+    "ssd": (
+        "SSD ships inference-only: MultiBox matching, hard-negative mining, "
+        "and training losses are outside the museum-port scope, and train() raises."
+    ),
     "deformable_detr": (
         "Deformable DETR ships inference-only: its Hungarian matcher, focal/L1/GIoU "
         "losses, auxiliary decoder losses, and backbone learning-rate recipe are "

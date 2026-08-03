@@ -55,6 +55,7 @@ MODEL_GROUPS: dict[str, str] = {
     "faster_rcnn": "g3",
     "vit": "g3",
     "retinanet": "g3",
+    "ssd": "g3",
     "eomt": "g3",
     "pidnet": "g3",
     "depth_anything": "g3",

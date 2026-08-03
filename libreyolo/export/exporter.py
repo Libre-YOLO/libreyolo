@@ -154,6 +154,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "rtdetrv4",
     "rfdetr",
     "siglip2",
+    "ssd",
 }
 _RECTANGULAR_EXPORT_FAMILIES = {
     "yolo9",
@@ -873,6 +874,12 @@ class BaseExporter(ABC):
             from ..models.retinanet.nn import RetinaNetExportWrapper
 
             nn_model = RetinaNetExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "ssd":
+            from ..models.ssd.nn import SSDExportWrapper
+
+            nn_model = SSDExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
         elif family == "deformable_detr":

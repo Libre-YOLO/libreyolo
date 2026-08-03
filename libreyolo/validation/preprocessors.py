@@ -340,6 +340,52 @@ class RetinaNetValPreprocessor(BaseValPreprocessor):
         return processed, padded_targets
 
 
+class SSDValPreprocessor(BaseValPreprocessor):
+    """SSD300 fixed-square RGB resize and source normalization."""
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        # The family helper applies torchvision SSD's 0-255-space mean
+        # subtraction, so DetectionValidator must leave the tensor untouched.
+        return True
+
+    @property
+    def uses_letterbox(self) -> bool:
+        return False
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        # Avoid a dataset letterbox followed by SSD's direct square stretch.
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.ssd.utils import preprocess_numpy
+
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        if (target_h, target_w) != (300, 300):
+            raise ValueError("SSD300 validation requires a 300 x 300 canvas")
+
+        rgb = img[:, :, ::-1].copy()
+        resized_img, _ = preprocess_numpy(rgb, input_size=300)
+        resized_img = np.ascontiguousarray(resized_img, dtype=np.float32)
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, [0, 2]] *= target_w / orig_w
+            scaled[:count, [1, 3]] *= target_h / orig_h
+            padded_targets[:count] = scaled[:count]
+        return resized_img, padded_targets
+
+
 class DeformableDETRValPreprocessor(RFDETRValPreprocessor):
     """Deformable DETR fixed-square ImageNet-normalized preprocessor.
 

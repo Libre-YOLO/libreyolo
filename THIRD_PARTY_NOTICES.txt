@@ -654,6 +654,30 @@ license with every checkpoint, and repeat the caveat. The source distribution
 does not bundle the checkpoint files; conversion only adds metadata.
 
 --------------------------------------------------------------------
+TorchVision SSD300 (PyTorch contributors)
+--------------------------------------------------------------------
+Source: https://github.com/pytorch/vision
+Commit: 336d36e8db990a905498c73933e35231876e28bc
+Version: torchvision 0.26.0
+License: BSD-3-Clause
+Copyright (c) Soumith Chintala 2016
+Used for: the native inference-only SSD family in
+          libreyolo/models/ssd/nn.py, preprocessing, default-box decoding,
+          class-wise NMS, conversion, validation, and ONNX/backend integration.
+          The implementation derives from the pinned SSD300, VGG, anchor,
+          box-coder, and transform source. The full BSD license text is in
+          libreyolo/models/ssd/NOTICE.
+
+NOTE - code vs. weights: the official COCO checkpoint does not carry an
+explicit checkpoint-specific license. LibreYOLO's separate mirror uses
+BSD-3-Clause on an explicitly disclosed implied basis and repeats
+torchvision's pretrained-model/data warning. Its backbone initialization
+traces to Oxford VGG-16 feature weights by Karen Simonyan and Andrew Zisserman,
+released under CC BY 4.0. The family notice records the source, license URL,
+attribution, and changes. The source distribution does not bundle the
+checkpoint; conversion only adds metadata.
+
+--------------------------------------------------------------------
 NAFNet (Megvii Research)
 --------------------------------------------------------------------
 Source: https://github.com/megvii-research/NAFNet

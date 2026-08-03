@@ -65,6 +65,16 @@ project the weights were derived from. Per-family summary:
              pretrained-model terms may derive from training data and users
              must determine permission for their use case.
              Public mirrors: https://huggingface.co/LibreYOLO/LibreRetinaNet{r50,r50v2}
+    SSD300   (LibreSSD300)                            BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official COCO checkpoint carries no per-object license file.
+             Rehosting uses BSD-3-Clause implied by the releasing project and
+             repeats torchvision's pretrained-model/data warning. The VGG-16
+             backbone initialization traces to Oxford Visual Geometry Group
+             feature weights by Karen Simonyan and Andrew Zisserman under
+             CC BY 4.0; the model NOTICE preserves attribution and changes.
+             Public mirror: https://huggingface.co/LibreYOLO/LibreSSD300
 
     Deformable DETR                                     Apache-2.0
              (LibreDeformableDETR{r50ss,r50ssdc5,r50,
