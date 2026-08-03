@@ -54,6 +54,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | lwdetr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |
 | mask_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |
 | mask_rcnn | segment | ✓ |  |  |  |  |  |  |  |  |
+| midas | depth | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |
 | moge2 | normal | ✓ | ✓ | ✓ | ✓ | ✓ | exp |  |  |  |
@@ -231,6 +232,10 @@ A check mark applies only under any constraint listed here.
 - `lingbotvision` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
 - `mask_rcnn` / `detect` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream aspect resize, class-wise NMS, RoIAlign, and mask paste are embedded
 - `mask_rcnn` / `segment` / `onnx`: ONNX Runtime, FP32, opset 18, batch 1, dynamic source H/W; upstream aspect resize, class-wise NMS, RoIAlign, and mask paste are embedded
+- `midas` / `depth` / `onnx`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
+- `midas` / `depth` / `torchscript`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
+- `midas` / `depth` / `tensorrt`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
+- `midas` / `depth` / `openvino`: FP32, batch 1, fixed square canvas: 256 for s and 384 for l; backend inference follows the ADR 0006 stretch-resize contract; TensorRT 10.16 engines target the build GPU and OpenVINO evidence uses 2026.2
 - `mobilenetv4` / `classify` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `mobilenetv4` / `classify` / `tensorrt`: FP32 with fixed family-native input resolution
 - `mobilenetv4` / `classify` / `openvino`: fixed family-native input resolution
@@ -629,6 +634,9 @@ A check mark applies only under any constraint listed here.
 - `mask_rcnn` / `segment` / `tflite`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `segment` / `coreml`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `segment` / `coreai`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `midas` / `depth` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `midas` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `midas` / `depth` / `coreai`: This family and task have not been validated for Core AI export.
 - `mobilenetv4` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `mobilesam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.

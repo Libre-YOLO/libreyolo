@@ -64,6 +64,12 @@ rfdetr = [
 eomt = [
     "transformers>=5.1.0",
 ]
+midas = [
+    # MiDaS's official ViT-L/16 and EfficientNet-Lite3 encoders. The bounded
+    # 1.0 series preserves the checkpoint keys and bitwise parity validated by
+    # the native port without relying on MiDaS's historical Torch Hub fetch.
+    "timm>=1.0.28,<1.1",
+]
 lora = [
     # LoRA / PEFT fine-tuning (lora=True) for transformer backbones (RF-DETR).
     "libreyolo[rfdetr]",
@@ -207,6 +213,7 @@ all = [
     "libreyolo[onnx]",
     "libreyolo[rfdetr]",
     "libreyolo[eomt]",
+    "libreyolo[midas]",
     "libreyolo[lora]",
     "libreyolo[plots]",
     "libreyolo[tensorrt]",
@@ -411,6 +418,7 @@ markers = [
     "modus: tests covering the external-weight LibreMODUS any-to-any family",
     "clip: tests covering the LibreCLIP zero-shot open-vocabulary classifier family",
     "siglip2: tests covering the LibreSigLIP2 zero-shot open-vocabulary classifier family",
+    "midas: tests covering the MiDaS relative-depth family",
     "distributed: multi-rank gloo tests that mp.spawn a process group. Linux-only in the PR gate: they exercise distributed-training math, which is platform-independent, while dist.init_process_group(backend='gloo') costs ~105s per test on the macOS runner (a bare 2-rank scalar all-reduce takes 109s there vs 3.9s on Linux). They also compare a parent-process reference gradient against child-process gradients at a BLAS-sensitive tolerance, so running them on every OS yields flakes rather than coverage. The spawn-plumbing tests are deliberately NOT marked: they cover spawn-only failure modes that Linux's fork never hits.",
     "rf1: RF1 training tests",
     "rf5: RF5 training benchmark tests",

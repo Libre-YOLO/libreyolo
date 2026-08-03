@@ -571,6 +571,49 @@ Used for: ResNet_vd pretrained classification backbones loaded by
           ResNet{18,34,50,101}_vd weights that originate here).
 
 --------------------------------------------------------------------
+MiDaS (Intel ISL)
+--------------------------------------------------------------------
+Source: https://github.com/isl-org/MiDaS
+Pinned commit: 454597711a62eabcbf7d1e89f3fb9f569051ac9b
+License: MIT
+Copyright (c) 2019 Intel ISL (Intel Intelligent Systems Lab)
+Used for: the native inference-only MiDaS v2.1 Small and DPT-Large
+          relative-depth family in libreyolo/models/midas/. Module names and
+          arithmetic follow the pinned source so the official release state
+          dicts load unchanged and produce bit-exact outputs. LibreYOLO adds
+          its checkpoint metadata, depth-task result, validation, and fixed
+          export contracts.
+
+NOTE - weights: LibreYOLO does not bundle or rehost the official release
+checkpoints. They are downloaded directly from isl-org/MiDaS and SHA-256
+verified before safe loading. Although the releasing repository is MIT, the
+commercial-use clearance of the mixed training datasets has not been
+established as required for hosted depth weights by ADR 0006. Exact URLs,
+hashes, and the distribution decision are in docs/provenance/midas.md.
+
+MIT License
+
+Copyright (c) 2019 Intel ISL (Intel Intelligent Systems Lab)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------
 Depth Anything V2 (DepthAnything / TikTok)
 --------------------------------------------------------------------
 Source: https://github.com/DepthAnything/Depth-Anything-V2
@@ -1057,9 +1100,10 @@ License: Apache License 2.0
 Copyright (c) Ross Wightman and the timm contributors.
 Used for: the native image-classification model families ported from
           timm architectures — libreyolo/models/{mobilenetv4,convnext,deit,
-          efficientnetv2,resnet,swin,vit}/ — including the shared Swin
-          backbone at
-          libreyolo/models/swin/. Module/attribute names mirror timm so
+          efficientnetv2,resnet,swin,vit}/ — the MiDaS ViT-L/16 and
+          EfficientNet-Lite3 encoders at libreyolo/models/midas/, and the
+          shared Swin backbone at libreyolo/models/swin/. Module/attribute
+          names mirror timm so
           its Apache-2.0 ImageNet-1k pretrained weights load unchanged and
           inference is bit-identical. The unmodified Apache-2.0 timm
           data/_info/imagenet_synsets.txt index is included as

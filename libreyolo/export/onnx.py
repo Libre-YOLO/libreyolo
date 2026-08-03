@@ -48,6 +48,7 @@ def _requires_onnx_opset17(model_family) -> bool:
     """Whether the family needs opset 17 for ONNX auto-opset selection."""
     return model_family in _DETR_TUPLE_OUTPUT_FAMILIES or model_family in {
         "deit",
+        "midas",
         "moge2",
     }
 

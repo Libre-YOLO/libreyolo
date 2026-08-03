@@ -264,6 +264,19 @@ project the weights were derived from. Per-family summary:
              any-view checkpoints are not hosted. CC-BY-NC-4.0
              Large/Giant/Nested checkpoints are explicitly excluded.
 
+    MiDaS    (LibreMiDaS{s,l}-depth)                   upstream download only
+             upstream: isl-org/MiDaS release assets
+             midas_v21_small_256.pt SHA-256:
+               70d6b9c891758c67f974a6097fb0c608c7ee67fb81ac3e5588847d5596d56fca
+             dpt_large_384.pt SHA-256:
+               2f21e586477d90cb9624c7eef5df7891edca49a1c4795ee2cb631fd4daa6ca69
+             The releasing repository is MIT, but LibreYOLO does not bundle
+             or rehost these checkpoints while commercial-use clearance of
+             the mixed training datasets remains unresolved under ADR 0006.
+             Runtime auto-download uses the official GitHub release URLs,
+             verifies these hashes, safely loads the raw state dict, and adds
+             LibreYOLO metadata locally. See docs/provenance/midas.md.
+
     MoGe-2  (LibreMoGe2{s,b,l}-normal)                 MIT
              upstream / pinned revision / model.pt SHA-256:
              Ruicheng/moge-2-vits-normal
