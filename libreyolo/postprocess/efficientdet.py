@@ -206,7 +206,11 @@ def postprocess(
     if candidates.shape[0] != 1:
         raise ValueError("EfficientDet native postprocess expects a single-image batch")
     candidates = candidates[0]
-    keep = (candidates[:, 4] > conf_thres) & (candidates[:, 5] >= 0)
+    keep = (
+        torch.isfinite(candidates).all(dim=1)
+        & (candidates[:, 4] > conf_thres)
+        & (candidates[:, 5] >= 0)
+    )
     if not torch.any(keep):
         return _empty_result()
 

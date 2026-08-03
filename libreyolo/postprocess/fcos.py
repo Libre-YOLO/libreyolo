@@ -44,16 +44,26 @@ def _empty() -> dict[str, Any]:
     }
 
 
-def _map_labels(
-    labels: torch.Tensor,
+def _mapped_class_columns(
     class_map: Optional[Mapping[int, int]],
-) -> tuple[torch.Tensor, torch.Tensor]:
+    device: torch.device,
+) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    """Return (source columns, target labels) ordered by target label.
+
+    Selecting only mapped logit columns before ranking keeps sparse (unmapped)
+    COCO columns from consuming top-k, NMS, and ``max_det`` slots, matching
+    the export wrapper's ``index_select`` behavior.
+    """
     if class_map is None:
-        return labels, torch.ones_like(labels, dtype=torch.bool)
-    mapped = torch.full_like(labels, -1)
-    for source, target in class_map.items():
-        mapped = torch.where(labels == source, mapped.new_tensor(target), mapped)
-    return mapped, mapped >= 0
+        return None, None
+    ordered = sorted(class_map.items(), key=lambda item: item[1])
+    columns = torch.tensor(
+        [source for source, _ in ordered], dtype=torch.int64, device=device
+    )
+    targets = torch.tensor(
+        [target for _, target in ordered], dtype=torch.int64, device=device
+    )
+    return columns, targets
 
 
 def _decode_boxes(regression: torch.Tensor, anchors: torch.Tensor) -> torch.Tensor:
@@ -134,6 +144,10 @@ def postprocess(
         _input_size_value(input_size),
     )
 
+    class_columns, class_targets = _mapped_class_columns(class_map, logits.device)
+    if class_columns is not None:
+        logits = logits.index_select(-1, class_columns)
+
     image_boxes: list[torch.Tensor] = []
     image_scores: list[torch.Tensor] = []
     image_labels: list[torch.Tensor] = []
@@ -188,10 +202,8 @@ def postprocess(
     scores = scores[keep]
     labels = labels[keep]
 
-    labels, mapped_mask = _map_labels(labels, class_map)
-    boxes = boxes[mapped_mask]
-    scores = scores[mapped_mask]
-    labels = labels[mapped_mask]
+    if class_targets is not None:
+        labels = class_targets[labels]
     if not boxes.numel():
         return _empty()
 

@@ -137,6 +137,11 @@ class LibreVGG(BaseModel):
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
         effective_size = input_size if input_size is not None else self.input_size
+        if int(effective_size) != int(self.input_size):
+            raise ValueError(
+                "LibreVGG runs at its fixed native resolution "
+                f"{self.input_size}x{self.input_size}; got imgsz={effective_size}."
+            )
         return _vgg_preprocess(
             image,
             input_size=effective_size,
