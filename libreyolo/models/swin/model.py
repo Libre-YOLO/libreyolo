@@ -149,13 +149,44 @@ class LibreSwin(BaseModel):
 
         return partial(preprocess_numpy, crop_pct=self.crop_pct)
 
+    def _validate_imgsz(self, imgsz: Any, *, context: str) -> int:
+        """Enforce the resolution-specific final-stage attention graph."""
+        native = int(self._get_input_size())
+        if isinstance(imgsz, (tuple, list)):
+            try:
+                valid = tuple(int(side) for side in imgsz) == (native, native)
+            except (TypeError, ValueError):
+                valid = False
+        else:
+            try:
+                valid = int(imgsz) == native
+            except (TypeError, ValueError):
+                valid = False
+        if not valid:
+            raise ValueError(
+                f"Swin V1 {context} is fixed to native imgsz={native}; "
+                f"got {imgsz!r}. The final-stage attention graph is "
+                "resolution-specific."
+            )
+        return native
+
+    def _get_val_preprocessor(self, img_size: int | None = None):
+        if img_size is not None:
+            img_size = self._validate_imgsz(
+                img_size, context="validation imgsz"
+            )
+        return super()._get_val_preprocessor(img_size=img_size)
+
     def _preprocess(
         self,
         image: ImageInput,
         color_format: str = "auto",
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
-        effective_size = input_size if input_size is not None else self.input_size
+        effective_size = self._validate_imgsz(
+            input_size if input_size is not None else self.input_size,
+            context="prediction imgsz",
+        )
         return _swin_preprocess(
             image,
             input_size=effective_size,
@@ -168,6 +199,25 @@ class LibreSwin(BaseModel):
 
     def _postprocess(self, output: Any, *args, **kwargs) -> Dict:
         return _swin_postprocess(output, *args, **kwargs)
+
+    def val(self, *args, **kwargs):
+        positional = list(args)
+        if len(positional) >= 3 and positional[2] is not None:
+            positional[2] = self._validate_imgsz(
+                positional[2], context="validation imgsz"
+            )
+        elif kwargs.get("imgsz") is not None:
+            kwargs["imgsz"] = self._validate_imgsz(
+                kwargs["imgsz"], context="validation imgsz"
+            )
+        return super().val(*positional, **kwargs)
+
+    def export(self, format: str = "onnx", **kwargs) -> str:
+        if kwargs.get("imgsz") is not None:
+            kwargs["imgsz"] = self._validate_imgsz(
+                kwargs["imgsz"], context="export imgsz"
+            )
+        return super().export(format=format, **kwargs)
 
     def train(self, *args, **kwargs):
         del args, kwargs

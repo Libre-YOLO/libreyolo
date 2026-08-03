@@ -49,6 +49,7 @@ class SwinClassifier(SwinBackbone):
         # 7x7 window. timm disables cyclic shift when a stage is no larger
         # than its window; the shared dense-backbone path normally runs at
         # larger resolutions and therefore keeps the configured shift.
+        # LibreSwin rejects non-native resolutions before this graph runs.
         for block in self.layers[-1].blocks:
             block.shift_size = 0
         self.size = size

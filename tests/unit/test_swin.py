@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 import torch
 
@@ -118,3 +119,15 @@ def test_training_is_explicitly_out_of_scope():
     model = LibreSwin(size="t", nb_classes=7, device="cpu")
     with pytest.raises(NotImplementedError, match="inference-only"):
         model.train(data="unused")
+
+
+def test_non_native_imgsz_is_rejected_before_the_attention_graph():
+    model = LibreSwin(size="t", nb_classes=7, device="cpu")
+    image = np.zeros((32, 32, 3), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="prediction imgsz.*native imgsz=224"):
+        model.predict(image, imgsz=256)
+    with pytest.raises(ValueError, match="validation imgsz.*native imgsz=224"):
+        model.val(data="unused", imgsz=256, workers=1)
+    with pytest.raises(ValueError, match="export imgsz.*native imgsz=224"):
+        model.export(format="onnx", imgsz=(224, 256))
