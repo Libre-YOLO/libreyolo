@@ -12,7 +12,11 @@ from PIL import Image
 from libreyolo import LibreYOLO
 from libreyolo.ui.server import _UIState
 
-from .conftest import cuda_cleanup, require_test_weights
+from .conftest import (
+    FCN_SEMANTIC_NIGHTLY_PARAMS,
+    cuda_cleanup,
+    require_test_weights,
+)
 
 pytestmark = [
     pytest.mark.e2e,
@@ -52,10 +56,11 @@ def _write_self_consistency_dataset(tmp_path, model, image_path, mask) -> str:
     return str(yaml_path)
 
 
-def test_fcn_real_checkpoint_predict_val_and_ui(tmp_path):
-    weights = require_test_weights("LibreFCNr50.pt", expected_family="fcn")
+@pytest.mark.parametrize("family,size,weights", FCN_SEMANTIC_NIGHTLY_PARAMS)
+def test_fcn_real_checkpoint_predict_val_and_ui(family, size, weights, tmp_path):
+    weights = require_test_weights(weights, expected_family=family)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = LibreYOLO(weights, size="r50", device=device)
+    model = LibreYOLO(weights, size=size, device=device)
     ui_state = None
     try:
         rows = np.arange(64, dtype=np.uint16)[:, None]
@@ -76,7 +81,9 @@ def test_fcn_real_checkpoint_predict_val_and_ui(tmp_path):
         assert tuple(result.semantic_mask.data.shape) == (64, 64)
         mask = result.semantic_mask.data.cpu().numpy()
 
-        data = _write_self_consistency_dataset(tmp_path / "dataset", model, image_path, mask)
+        data = _write_self_consistency_dataset(
+            tmp_path / "dataset", model, image_path, mask
+        )
         metrics = model.val(
             data=data,
             imgsz=64,
@@ -95,7 +102,7 @@ def test_fcn_real_checkpoint_predict_val_and_ui(tmp_path):
         ui_state.run_dir = tmp_path / "ui"
         ui_state.run_dir.mkdir()
         rendered = ui_state.infer(
-            "fcn-r50",
+            f"fcn-{size}",
             0.25,
             image_path.name,
             image_path.read_bytes(),
