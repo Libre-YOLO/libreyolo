@@ -10,6 +10,8 @@
 
 import logging
 
+import torch
+import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torch import nn
 
@@ -50,13 +52,25 @@ class Attention(nn.Module):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
 
-        q, k, v = qkv[0] * self.scale, qkv[1], qkv[2]
-        attn = q @ k.transpose(-2, -1)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        if torch.onnx.is_in_onnx_export():
+            # LibreYOLO defaults to ONNX opset 13, which has no symbolic for
+            # fused SDPA: keep the exact primitive-op equation while tracing.
+            attn = (q * self.scale) @ k.transpose(-2, -1)
+            attn = self.attn_drop(attn.softmax(dim=-1))
+            x = attn @ v
+        else:
+            x = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=None,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+                is_causal=False,
+                scale=self.scale,
+            )
 
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
