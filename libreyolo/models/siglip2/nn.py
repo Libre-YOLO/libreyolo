@@ -115,6 +115,12 @@ class SiglipAttention(nn.Module):
         self.v_proj = nn.Linear(dim, dim)
         self.q_proj = nn.Linear(dim, dim)
         self.out_proj = nn.Linear(dim, dim)
+        # Opt-in fused SDPA. Default off by design: the manual matmul above is
+        # what makes the text tower and vision encoder bit-identical to the
+        # reference (tests/unit/test_siglip2_parity.py, _EXACT_TOL = 0.0), and
+        # the reference is forced to attn_implementation="eager" to get there.
+        # Flip with libreyolo.kernels.attention.set_fused_attention(model).
+        self.fused_attn = False
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         input_shape = x.shape[:-1]  # (B, T)
@@ -123,11 +129,18 @@ class SiglipAttention(nn.Module):
         k = self.k_proj(x).view(hidden_shape).transpose(1, 2)
         v = self.v_proj(x).view(hidden_shape).transpose(1, 2)
 
-        attn_weights = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        if attn_mask is not None:
-            attn_weights = attn_weights + attn_mask
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
-        attn_output = torch.matmul(attn_weights, v)
+        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+            # attn_mask is already additive float when present.
+            attn_output = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=0.0, is_causal=False,
+                scale=self.scale,
+            )
+        else:
+            attn_weights = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+            if attn_mask is not None:
+                attn_weights = attn_weights + attn_mask
+            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
+            attn_output = torch.matmul(attn_weights, v)
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         return self.out_proj(attn_output)
