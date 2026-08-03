@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from . import kernels as K
+from .. import kernels as K
 from .fake_quant import (
     E4M3_MAX,
     autocast_off,
@@ -344,7 +344,7 @@ class QuantLinear(nn.Linear, _ActObserverMixin):
             return None
         aux = self.__dict__.get("_q_native_aux")
         if aux is None or aux[0].device != x.device:
-            from .kernels.scaled_mm_fp8 import make_aux
+            from ..kernels.quant.execute.scaled_mm_fp8 import make_aux
 
             aux = make_aux(
                 self._native_act_scale(x.device),

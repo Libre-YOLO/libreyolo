@@ -118,15 +118,16 @@ convention; the E4M3 activation snap on conv inputs is simulation-only).
 Finalize with `remainder="fp16"` so the non-quantized interior runs in half
 precision (the loader installs the same float32 I/O root hooks the cast
 recipes use). Residual drift vs the simulated tier is half-precision
-rounding plus GEMM summation order; `LIBREYOLO_QUANT_KERNELS=off` restores
-the exact simulated path everywhere. Measured on LibreFeyNobg (263M Swin-L
+rounding plus GEMM summation order; `LIBREYOLO_KERNELS=off` (legacy alias
+`LIBREYOLO_QUANT_KERNELS`) restores the exact simulated path everywhere. Measured on LibreFeyNobg (263M Swin-L
 matte, RTX 5070 Ti, 1024px, controlled ABBA runs): fp8 vs fp16 is
 85.7 vs 95.0 ms for a batch-1 graphed forward and 123.1 vs 129.3 ms through
 the full graphed `predict` path. At batch 4 the full path is 515.4 vs
 535.3 ms. The finalized fp8 file is 275 MB vs 531 MB for fp16.
 
 `model.quant_info()` reports the recipe and module state;
-`libreyolo.quant.kernels.active()` reports the selected implementations.
+`libreyolo.kernels.active()` reports the selected implementations (the
+registry lives in `libreyolo/kernels/`; see `docs/kernels.md`).
 Linux CUDA PyTorch environments commonly already include Triton. On Windows,
 install a PyTorch-compatible `triton-windows` build to enable the fused cast
 and epilogue; inference remains functional without it.

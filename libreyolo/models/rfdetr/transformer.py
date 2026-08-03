@@ -23,6 +23,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from torch.nn.init import constant_, xavier_uniform_
 
+from ...kernels.attention.ms_deform_attn import maybe_ms_deform_attn
 from .keypoints import KEYPOINT_PRED_DIM, ConditionalQueryInitializer
 from .tensors import _bilinear_grid_sample
 
@@ -154,7 +155,14 @@ def ms_deform_attn_core_pytorch(
     attention_weights: torch.Tensor,
     value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
 ) -> torch.Tensor:
-    """Pure-PyTorch fallback for the deformable-attention core."""
+    """Portable deformable-attention core, used on every device/backend.
+
+    This is the upstream-parity ``grid_sample`` port and the only path
+    exports ever see. The accelerated ``ms_deform_attn`` kernel slot is
+    consulted in :meth:`MSDeformAttn.forward` *before* the layout transpose
+    that produces this function's ``(bs, heads, c, Len_in)`` value tensor,
+    so the fast path pays no extra copies.
+    """
     batch_size, n_heads, head_dim, _ = value.shape
     _, len_query, n_heads, num_levels, num_points, _ = sampling_locations.shape
     # Use Python int pairs when available (required for torch.export compatibility,
@@ -333,6 +341,23 @@ class MSDeformAttn(nn.Module):
                 "Last dim of reference_points must be 2 or 4, but get {} instead.".format(reference_points.shape[-1])
             )
         attention_weights = F.softmax(attention_weights, -1)
+
+        if not self._export:
+            # Consult the accelerated slot with the classic Deformable-DETR
+            # layout while ``value`` is still (bs, Len_in, d_model): one
+            # zero-copy view away from the slot's (bs, Len_in, heads, c).
+            # Export mode always takes the portable core below, whose
+            # ``value_spatial_shapes_hw`` int pairs keep it traceable.
+            accelerated = maybe_ms_deform_attn(
+                value.view(
+                    batch_size, len_input, self.n_heads, self.d_model // self.n_heads
+                ),
+                input_spatial_shapes,
+                sampling_locations,
+                attention_weights.unflatten(-1, (self.n_levels, self.n_points)),
+            )
+            if accelerated is not None:
+                return self.output_proj(accelerated)
 
         value = (
             value.transpose(1, 2).contiguous().view(batch_size, self.n_heads, self.d_model // self.n_heads, len_input)

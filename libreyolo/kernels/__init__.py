@@ -1,37 +1,52 @@
-"""Kernel registry: pluggable accelerated implementations for quant ops.
+"""Kernel registry: pluggable accelerated implementations for library ops.
 
 Architecture (vLLM-shaped, scaled down to a library that rents its runtime):
 
-- The reference implementations in ``fake_quant.py`` are always registered
-  and always available. They are the numerical oracle: any accelerated
-  implementation must match them (parity tests gate in-tree kernels, and
-  ``packing.py`` never has variants because it is the checkpoint contract).
-- Triton kernels live under ``kernels/triton/`` as plain Python (JIT
-  compiled at runtime, no build step, no wheels).
+- Op slots are organized by purpose, not backend:
+  ``kernels/quant/simulate/`` holds fake-quantization kernels (any device,
+  STE backward, run during QAT *and* simulated PTQ/val inference),
+  ``kernels/quant/execute/`` holds finalized-only real-precision paths
+  (no backward, real hardware), and ``kernels/attention/`` holds attention
+  ops shared across model families.
+- The reference implementations in ``quant/fake_quant.py`` are always
+  registered and always available. They are the numerical oracle: any
+  accelerated implementation must match them (parity tests gate in-tree
+  kernels, and ``quant/packing.py`` never has variants because it is the
+  checkpoint contract).
+- Triton kernels are plain Python (JIT compiled at runtime, no build step,
+  no wheels) and are imported lazily on first resolution.
 - Compiled kernels ship out-of-tree in the optional ``libreyolo-kernels``
   package. If installed, it is imported here and self-registers via
   :func:`register`; the core package never grows a build dependency.
+- Hugging Face Hub kernels load through the optional ``kernels`` package
+  (the ``libreyolo[hub-kernels]`` extra); installing it is the opt-in, and
+  ``LIBREYOLO_HUB_KERNELS=0`` disables it. Absence of the package is the
+  normal fallback case.
 - Selection is per-op: implementations are tried newest-first and the first
   one whose predicate passes wins, falling back to the reference. The
-  ``LIBREYOLO_QUANT_KERNELS`` environment variable overrides selection:
+  ``LIBREYOLO_KERNELS`` environment variable overrides selection:
   ``off``/``reference`` forces the reference implementations; any other
   value selects only implementations registered under that name.
+  ``LIBREYOLO_QUANT_KERNELS`` is honored as a legacy alias.
 
 Registered op slots (callables with the reference signatures):
 ``fake_quant_int8_per_channel``, ``fake_quant_int8_affine``,
 ``fake_quant_fp8``, ``fake_quant_int_grouped``, ``fake_quant_nvfp4_weight``,
 ``fake_quant_nvfp4_dynamic``, ``fake_quant_mxfp4_weight``,
-``fake_quant_mxfp4_dynamic``. GEMM slots (``nvfp4_gemm``, ...) may be
-registered by external packages; they have no reference implementation and
-callers must check :func:`resolve` returns non-None before use.
+``fake_quant_mxfp4_dynamic``, plus the unpack slots ``unpack_int_grouped``
+and ``unpack_nvfp4``. GEMM and attention slots (``fp8_gemm``,
+``ms_deform_attn``, ``nvfp4_gemm``, ...) have no reference implementation:
+callers must check :func:`resolve` returns non-None before use and keep
+their portable path as the fallback.
 """
 
+import importlib
 import importlib.util
 import logging
 import os
 from typing import Callable, Dict, List, Optional
 
-from .. import fake_quant as _reference
+from ..quant import fake_quant as _reference
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +89,32 @@ def clear_cache():
 
 
 def _forced() -> str:
+    forced = os.environ.get("LIBREYOLO_KERNELS", "").strip().lower()
+    if forced:
+        return forced
+    # Legacy alias from when the registry lived under libreyolo/quant/.
     return os.environ.get("LIBREYOLO_QUANT_KERNELS", "").strip().lower()
 
 
 _INTREE_ATTEMPTED = False
 
+# In-tree providers imported lazily on first resolution. Triton modules and
+# the attention provider self-register on import; each group fails
+# independently so a missing optional dependency never hides the others.
+_LAZY_PROVIDERS = (
+    # Triton fake-quant kernels (need triton; absent on Windows).
+    ".quant.simulate",
+    # Triton finalized-path kernels.
+    ".quant.execute.fp8_fusion",
+    ".quant.execute.unpack_int_grouped",
+    ".quant.execute.unpack_nvfp4",
+    # Hub-backed attention kernels (need the `kernels` package, opt-in).
+    ".attention.ms_deform_attn",
+)
+
 
 def _ensure_intree_loaded():
-    """Lazily import the in-tree Triton kernels on first resolution.
+    """Lazily import the in-tree accelerated providers on first resolution.
 
     Lazy so `import libreyolo` never pays the triton import cost, and
     skipped entirely when the env forces the reference implementations.
@@ -91,10 +124,11 @@ def _ensure_intree_loaded():
     if _INTREE_ATTEMPTED or _forced() in ("off", "reference"):
         return
     _INTREE_ATTEMPTED = True
-    try:
-        from . import triton  # noqa: F401  (self-registers on import)
-    except Exception as exc:
-        logger.debug("In-tree Triton kernels unavailable: %s", exc)
+    for module_name in _LAZY_PROVIDERS:
+        try:
+            importlib.import_module(module_name, __name__)
+        except Exception as exc:
+            logger.debug("In-tree kernel provider %s unavailable: %s", module_name, exc)
 
 
 def resolve(op: str) -> Optional[Callable]:
@@ -145,7 +179,7 @@ def _make_proxy(op: str) -> Callable:
     def proxy(*args, **kwargs):
         impl = resolve(op)
         if impl is None:
-            raise RuntimeError(f"No implementation available for quant op '{op}'.")
+            raise RuntimeError(f"No implementation available for op '{op}'.")
         return impl(*args, **kwargs)
 
     proxy.__name__ = op
@@ -161,7 +195,7 @@ for _op in REFERENCE_OPS:
 # Unpack slots (finalized-checkpoint dequantization): the packing module is
 # the contract and provides the reference implementations; accelerated
 # variants register on top exactly like the fake-quant slots.
-from .. import packing as _packing  # noqa: E402
+from ..quant import packing as _packing  # noqa: E402
 
 UNPACK_OPS = ("unpack_int_grouped", "unpack_nvfp4")
 register("unpack_int_grouped", _packing.unpack_int_grouped_weight, name="reference")
@@ -173,7 +207,7 @@ for _op in UNPACK_OPS:
 # In-tree GEMM kernels built on stock torch (no triton, no build step).
 # fp8_gemm: finalized fp8 QuantLinear on the fp8 tensor cores via
 # torch._scaled_mm (Ada/Hopper/Blackwell); resolves to None elsewhere.
-from . import scaled_mm_fp8  # noqa: E402,F401  (self-registers)
+from .quant.execute import scaled_mm_fp8  # noqa: E402,F401  (self-registers)
 
 # Optional out-of-tree compiled kernels (e.g. the CUTLASS NVFP4 GEMM).
 # The package self-registers on import; absence is the normal case.
