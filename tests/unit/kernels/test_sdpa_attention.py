@@ -297,3 +297,13 @@ def test_bool_mask_keeps_the_additive_bert_semantics():
 
 def test_set_fused_attention_reports_zero_on_a_model_without_the_flag():
     assert set_fused_attention(torch.nn.Linear(4, 4)) == 0
+
+
+def test_set_fused_attention_accepts_a_task_wrapper():
+    """Users hold the task object, whose nn.Module lives on `.model`."""
+    module, _ = OPT_IN["swin"]()
+    wrapper = SimpleNamespace(model=module)
+    assert set_fused_attention(wrapper) >= 1
+    assert all(m.fused_attn for m in fused_attention_modules(wrapper))
+    with pytest.raises(TypeError, match="expected an nn.Module"):
+        set_fused_attention(SimpleNamespace())
