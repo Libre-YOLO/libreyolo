@@ -906,6 +906,15 @@ class BaseExporter(ABC):
             nn_model = DINODETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "centernet":
+            from ..models.centernet.nn import CenterNetExportWrapper
+
+            # The portable grid-sample DCN flag is export-only. Keep the live
+            # eager model on torchvision's exact native operator.
+            nn_model = copy.deepcopy(nn_model)
+            nn_model = CenterNetExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "rtmdet":
             # RTMDet intentionally aliases the head convolution weights across
             # feature levels while keeping one batch norm per level. XNNPACK's

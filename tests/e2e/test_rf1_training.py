@@ -133,6 +133,11 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "losses) is not implemented, and train() raises. Inference parity vs "
         "Atten4Vis is exact and verified separately."
     ),
+    "centernet": (
+        "CenterNet ships inference-only: its focal heatmap, size, and offset "
+        "training recipe is not implemented, and train() raises. Exact raw "
+        "inference parity is verified separately."
+    ),
     "picodet": (
         "PICODET training is experimental and not expected to clear the "
         "RF1 mAP floor on small datasets (skill section 6: fine-tune parity, "

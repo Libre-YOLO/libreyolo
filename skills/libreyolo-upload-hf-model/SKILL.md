@@ -57,6 +57,7 @@ file = name + ".pt"
 | SSD | `LibreSSD` | `LibreSSD300.pt` (torchvision SSD300 VGG16; BSD-3-Clause implied for the checkpoint, Oxford VGG feature-weight lineage CC BY 4.0; inference-only) |
 | MaskRCNN | `LibreMaskRCNN` | `LibreMaskRCNNr50.pt` (torchvision Mask R-CNN v2; segment default plus detect; BSD-3-Clause implied for weights, with the pretrained-model caveat on the card; inference-only) |
 | FCN | `LibreFCN` | `LibreFCNr50.pt` (torchvision's ResNet FCN, not the original VGG FCN-8s; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; semantic inference-only) |
+| CenterNet | `LibreCenterNet` | `LibreCenterNetresdcn18.pt`, `LibreCenterNetdla34.pt` (official CenterNet COCO detectors; MIT implied for weights; inference-only) |
 | Deformable DETR | `LibreDeformableDETR` | `LibreDeformableDETRr50.pt` (original Apache-2.0 family; inference-only) |
 | DINO-DETR | `LibreDINODETR` | `LibreDINODETRr50.pt` (IDEA DINO detector; Apache-2.0 implied for weights; inference-only) |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
@@ -183,6 +184,7 @@ LibreFasterRCNNm.pt, LibreFasterRCNNl.pt,
 LibreRetinaNetr50.pt, LibreRetinaNetr50v2.pt,
 LibreMaskRCNNr50.pt,
 LibreFCNr50.pt, LibreFCNr101.pt,
+LibreCenterNetresdcn18.pt, LibreCenterNetdla34.pt,
 
 LibreDeformableDETRr50ss.pt, LibreDeformableDETRr50ssdc5.pt,
 LibreDeformableDETRr50.pt, LibreDeformableDETRr50refine.pt,

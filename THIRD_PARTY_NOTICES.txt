@@ -765,6 +765,40 @@ license with every checkpoint, and repeat the caveat. The source distribution
 does not bundle the checkpoint files; conversion only adds metadata.
 
 --------------------------------------------------------------------
+CenterNet (Xingyi Zhou)
+--------------------------------------------------------------------
+Source: https://github.com/xingyizhou/CenterNet
+Commit: 4c50fd3a46bdf63dbf2082c5cbb3458d39579e6c
+License: MIT, with permissive MIT/BSD-3-Clause lineage
+Copyright (c) 2019 Xingyi Zhou
+Used for: the native inference-only CenterNet detector in
+          libreyolo/models/centernet/nn.py, the fixed-512 BGR affine
+          preprocessing in libreyolo/models/centernet/utils.py, and the
+          top-100 center decoder in libreyolo/postprocess/centernet.py.
+
+The ResDCN-18 graph follows CenterNet's resnet_dcn.py, which credits
+Microsoft's MIT-licensed human-pose-estimation.pytorch. The DLA-34 graph
+follows pose_dla_dcn.py and dla.py, whose DLA implementation is
+BSD-3-Clause, Copyright (c) 2018 Fisher Yu. The upstream detector also credits
+CornerNet (BSD-3-Clause, Copyright (c) 2018 University of Michigan), DCNv2
+(BSD-3-Clause, Copyright (c) 2019 Charles Shang), and tf-faster-rcnn (MIT,
+Copyright (c) 2017 Xinlei Chen). The complete notices and license texts are
+reproduced in libreyolo/models/centernet/NOTICE.
+
+LibreYOLO does not vendor the legacy DCNv2 extension. Native execution uses
+torchvision 0.26.0 deform_conv2d from pytorch/vision commit
+336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause, Copyright (c)
+Soumith Chintala 2016). The export-only portable implementation was authored
+for LibreYOLO and does not copy the extension.
+
+NOTE - code vs. weights: the official COCO checkpoints were published by the
+MIT-licensed CenterNet project but have no separate per-object license file.
+LibreYOLO's separate mirrors therefore state that MIT is implied by the
+releasing project and is not a publisher-confirmed checkpoint-specific grant.
+Conversion strips the data-parallel prefix and adds metadata without changing
+learned tensors. The source distribution does not bundle checkpoint files.
+
+--------------------------------------------------------------------
 NAFNet (Megvii Research)
 --------------------------------------------------------------------
 Source: https://github.com/megvii-research/NAFNet

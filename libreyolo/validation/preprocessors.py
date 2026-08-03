@@ -402,6 +402,46 @@ class DeformableDETRValPreprocessor(RFDETRValPreprocessor):
         return preprocess_numpy
 
 
+class CenterNetValPreprocessor(BaseValPreprocessor):
+    """Official CenterNet BGR affine warp and dataset-metric target copy."""
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.centernet.utils import preprocess_bgr
+
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError("CenterNet validation requires a square input canvas")
+        processed, _ = preprocess_bgr(img, input_size=target_h)
+
+        # CenterNet's pixels use a centered uniform affine transform. The
+        # shared validation parser intentionally sees this independent
+        # stretch-scaled metric copy so its non-letterbox inverse recovers the
+        # original boxes exactly; the labels are not model inputs.
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            count = min(len(scaled), self.max_labels)
+            scaled[:count, [0, 2]] *= target_w / orig_w
+            scaled[:count, [1, 3]] *= target_h / orig_h
+            padded_targets[:count] = scaled[:count]
+        return processed, padded_targets
+
+
 class YOLO9ValPreprocessor(BaseValPreprocessor):
     """YOLOv9 preprocessor: letterbox with gray padding, 0-1 range, RGB format."""
 
