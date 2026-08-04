@@ -348,6 +348,26 @@ def test_export_rknn_releases_sdk_after_failure(monkeypatch, tmp_path):
     assert _FakeRKNN.instances[-1].released is True
 
 
+def test_simulator_failure_removes_exported_artifact(monkeypatch, tmp_path):
+    monkeypatch.setattr(rknn_module, "_load_rknn_class", lambda: _FakeRKNN)
+    _FakeRKNN.failures["init_runtime"] = 9
+    onnx_path = tmp_path / "model.onnx"
+    onnx_path.write_bytes(b"onnx")
+    output_path = tmp_path / "model.rknn"
+
+    with pytest.raises(RuntimeError, match="simulator initialization failed"):
+        rknn_module.export_rknn_with_simulator(
+            onnx_path=str(onnx_path),
+            output_path=str(output_path),
+            simulator_inputs=np.zeros((1, 3, 2, 2), dtype=np.float32),
+            metadata={"model_family": "yolo9"},
+        )
+
+    assert _FakeRKNN.instances[-1].released is True
+    assert not output_path.exists()
+    assert not Path(f"{output_path}.metadata.json").exists()
+
+
 def test_run_rknn_simulator_uses_board_free_runtime(monkeypatch, tmp_path):
     monkeypatch.setattr(rknn_module, "_load_rknn_class", lambda: _FakeRKNN)
     onnx_path = tmp_path / "model.onnx"

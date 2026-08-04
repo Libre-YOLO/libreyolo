@@ -220,9 +220,22 @@ def _compile_rknn(
     if int8 and calibration_data is None:
         raise ValueError("RKNN INT8 export requires calibration data.")
 
+    # The vendor API writes directly to its destination. Export to a unique
+    # sibling first so a failed compiler/simulator session cannot publish a
+    # partial final-path artifact or destroy a previous successful export.
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{output.stem}.",
+        suffix=output.suffix,
+        dir=output.parent,
+        delete=False,
+    ) as handle:
+        temporary_output = Path(handle.name)
+    temporary_output.unlink()
+
     RKNN = _load_rknn_class()
     rknn = RKNN(verbose=bool(verbose))
     completed = False
+    released = False
     simulator_outputs = None
     try:
         # The public vendor examples treat config() as exception-based and do
@@ -251,7 +264,7 @@ def _compile_rknn(
                 rknn.build(do_quantization=False, **build_options),
             )
 
-        _check_status("export", rknn.export_rknn(str(output)))
+        _check_status("export", rknn.export_rknn(str(temporary_output)))
         if simulator_inputs is not None:
             input_list = (
                 list(simulator_inputs)
@@ -268,9 +281,15 @@ def _compile_rknn(
             simulator_outputs = [np.asarray(value) for value in outputs]
         completed = True
     finally:
-        rknn.release()
+        try:
+            rknn.release()
+            released = True
+        finally:
+            if not completed or not released:
+                temporary_output.unlink(missing_ok=True)
 
-    if completed and metadata is not None:
+    temporary_output.replace(output)
+    if metadata is not None:
         _write_metadata_sidecar(output, metadata)
     return str(output), simulator_outputs
 
