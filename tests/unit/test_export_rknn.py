@@ -278,6 +278,43 @@ def test_rknn_exporter_preserves_failed_parity_report(monkeypatch, tmp_path):
     assert not Path(f"{output_path}.metadata.json").exists()
 
 
+def test_rknn_exporter_reference_failure_removes_artifacts(monkeypatch, tmp_path):
+    def fake_export_with_simulator(**kwargs):
+        Path(kwargs["output_path"]).write_bytes(b"rknn")
+        Path(f"{kwargs['output_path']}.metadata.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        return kwargs["output_path"], [np.zeros((1, 2), dtype=np.float32)]
+
+    monkeypatch.setattr(
+        rknn_module, "export_rknn_with_simulator", fake_export_with_simulator
+    )
+
+    def fail_reference(onnx_path, input_data):
+        raise RuntimeError("ONNX Runtime failed")
+
+    monkeypatch.setattr(rknn_module, "_run_onnx_reference", fail_reference)
+    output_path = tmp_path / "model.rknn"
+
+    with pytest.raises(RuntimeError, match="ONNX Runtime failed"):
+        RknnExporter(object())._export(
+            None,
+            torch.zeros((1, 3, 2, 2)),
+            output_path=str(output_path),
+            metadata={"model_family": "yolo9"},
+            calibration_data=None,
+            onnx_path=str(tmp_path / "model.onnx"),
+            int8=False,
+            opset=19,
+            verbose=False,
+            verify=True,
+        )
+
+    assert not output_path.exists()
+    assert not Path(f"{output_path}.metadata.json").exists()
+    assert not Path(f"{output_path}.parity.json").exists()
+
+
 def test_export_rknn_float_writes_artifact_and_metadata(monkeypatch, tmp_path):
     monkeypatch.setattr(rknn_module, "_load_rknn_class", lambda: _FakeRKNN)
     onnx_path = tmp_path / "model.onnx"

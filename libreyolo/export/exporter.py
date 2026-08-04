@@ -1953,55 +1953,62 @@ class RknnExporter(BaseExporter):
             config=rknn_config,
             build=rknn_build,
         )
-        reference = _run_onnx_reference(onnx_path, verify_input)
-        metrics = compare_rknn_outputs(
-            reference,
-            simulated,
-            rtol=float(verify_rtol),
-            atol=float(verify_atol),
-            raise_on_failure=False,
-        )
-        parity_passed, metrics = evaluate_rknn_metrics(
-            metrics,
-            min_cosine=float(verify_min_cosine),
-            max_normalized_rmse=float(verify_max_normalized_rmse),
-        )
-        report = {
-            "backend": "rknn-simulator",
-            "target": resolved_target,
-            "reference": "onnxruntime",
-            "rtol": float(verify_rtol),
-            "atol": float(verify_atol),
-            "min_cosine": float(verify_min_cosine),
-            "max_normalized_rmse": float(verify_max_normalized_rmse),
-            "passed": parity_passed,
-            "outputs": metrics,
-        }
-        report_path = Path(f"{result}.parity.json")
-        temporary = report_path.with_suffix(f"{report_path.suffix}.tmp")
-        temporary.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        temporary.replace(report_path)
-        if not parity_passed:
-            # A failed verification must not leave a final-path artifact that
-            # automation could mistake for a deployable export. Keep only the
-            # parity report for diagnosis.
-            Path(result).unlink(missing_ok=True)
-            Path(f"{result}.metadata.json").unlink(missing_ok=True)
-            failures = "; ".join(
-                f"output {item['index']}: max_abs={item['max_abs_error']:.6g}, "
-                f"cosine={item['cosine_similarity']:.6g}, "
-                f"normalized_rmse={item['normalized_rmse']:.6g}"
-                for item in metrics
-                if not item["accepted"]
+        verification_completed = False
+        try:
+            reference = _run_onnx_reference(onnx_path, verify_input)
+            metrics = compare_rknn_outputs(
+                reference,
+                simulated,
+                rtol=float(verify_rtol),
+                atol=float(verify_atol),
+                raise_on_failure=False,
             )
-            raise AssertionError(
-                "RKNN simulator acceptance failed "
-                f"(min_cosine={verify_min_cosine}, "
-                f"max_normalized_rmse={verify_max_normalized_rmse}): "
-                f"{failures}. Metrics: {report_path}"
+            parity_passed, metrics = evaluate_rknn_metrics(
+                metrics,
+                min_cosine=float(verify_min_cosine),
+                max_normalized_rmse=float(verify_max_normalized_rmse),
             )
+            report = {
+                "backend": "rknn-simulator",
+                "target": resolved_target,
+                "reference": "onnxruntime",
+                "rtol": float(verify_rtol),
+                "atol": float(verify_atol),
+                "min_cosine": float(verify_min_cosine),
+                "max_normalized_rmse": float(verify_max_normalized_rmse),
+                "passed": parity_passed,
+                "outputs": metrics,
+            }
+            report_path = Path(f"{result}.parity.json")
+            temporary = report_path.with_suffix(f"{report_path.suffix}.tmp")
+            temporary.write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(report_path)
+            if not parity_passed:
+                failures = "; ".join(
+                    f"output {item['index']}: "
+                    f"max_abs={item['max_abs_error']:.6g}, "
+                    f"cosine={item['cosine_similarity']:.6g}, "
+                    f"normalized_rmse={item['normalized_rmse']:.6g}"
+                    for item in metrics
+                    if not item["accepted"]
+                )
+                raise AssertionError(
+                    "RKNN simulator acceptance failed "
+                    f"(min_cosine={verify_min_cosine}, "
+                    f"max_normalized_rmse={verify_max_normalized_rmse}): "
+                    f"{failures}. Metrics: {report_path}"
+                )
+            verification_completed = True
+        finally:
+            if not verification_completed:
+                # Keep a completed parity report for diagnosis, but never a
+                # deployable-looking artifact from an unsuccessful verify run.
+                Path(result).unlink(missing_ok=True)
+                Path(f"{result}.metadata.json").unlink(missing_ok=True)
+                Path(f"{result}.parity.json.tmp").unlink(missing_ok=True)
         logger.info("RKNN simulator parity passed: %s", report_path)
         return result
 
