@@ -22,7 +22,7 @@ def export_cmd(
         "onnx",
         help=(
             "Export format: onnx, torchscript, executorch, tensorrt, openvino, "
-            "paddle, ncnn, tflite (alias: litert), coreml, coreai "
+            "paddle, mnn, ncnn, tflite (alias: litert), coreml, coreai "
             "(Apple, macOS only)"
         ),
     ),

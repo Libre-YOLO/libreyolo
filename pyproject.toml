@@ -171,6 +171,10 @@ paddle = [
     # Imported by X2Paddle but omitted from its wheel metadata.
     "six>=1.16.0",
 ]
+mnn = [
+    "libreyolo[onnx]",
+    "MNN>=3.6.1",
+]
 ncnn = [
     "pnnx",
     "ncnn",
@@ -267,6 +271,7 @@ all = [
     "libreyolo[tflite]",
     "libreyolo[openvino]",
     "libreyolo[paddle]",
+    "libreyolo[mnn]",
     "libreyolo[ncnn]",
     "libreyolo[tracking]",
     "libreyolo[rtdetr]",
@@ -440,6 +445,7 @@ markers = [
     "tensorrt: tests requiring TensorRT",
     "trt: alias for TensorRT tests requiring TensorRT",
     "openvino: tests requiring OpenVINO",
+    "mnn: tests requiring MNN",
     "ncnn: tests requiring ncnn",
     "tflite: tests requiring TensorFlow Lite export",
     "paddle: tests requiring PaddlePaddle export/runtime",

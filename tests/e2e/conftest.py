@@ -132,6 +132,17 @@ def has_openvino():
         return False
 
 
+def has_mnn():
+    """Check if the MNN runtime and converter are installed."""
+    try:
+        from libreyolo.export.mnn import check_mnn_available
+
+        check_mnn_available()
+        return True
+    except (ImportError, OSError):
+        return False
+
+
 def has_ncnn():
     """Check if ncnn is installed and usable."""
     try:
@@ -164,6 +175,10 @@ requires_tensorrt = pytest.mark.skipif(
 
 requires_openvino = pytest.mark.skipif(
     not has_openvino(), reason="OpenVINO not installed (pip install openvino)"
+)
+
+requires_mnn = pytest.mark.skipif(
+    not has_mnn(), reason="MNN not installed (pip install libreyolo[mnn])"
 )
 
 requires_ncnn = pytest.mark.skipif(

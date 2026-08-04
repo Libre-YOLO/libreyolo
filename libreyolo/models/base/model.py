@@ -1712,7 +1712,7 @@ class BaseModel(ABC):
 
         Args:
             format: Target format ("onnx", "torchscript", "executorch",
-                "tensorrt", "openvino", "ncnn", "tflite"). "litert" is
+                "tensorrt", "openvino", "mnn", "ncnn", "tflite"). "litert" is
                 accepted as an alias for "tflite" (LiteRT is TensorFlow
                 Lite's new name).
             **kwargs: Format-specific parameters forwarded to the exporter.

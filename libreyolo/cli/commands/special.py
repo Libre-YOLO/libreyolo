@@ -294,6 +294,7 @@ def checks_cmd(
         "openvino",
         "paddlepaddle",
         "x2paddle",
+        "mnn",
         "ncnn",
         "onnx2tf",
         "ai-edge-litert",
