@@ -181,12 +181,17 @@ class MNNBackend(BaseBackend):
             raise ValueError("MNN metadata must declare the exported class names.")
         names = {int(key): str(value) for key, value in names_raw.items()}
         metadata_nc = int(metadata.get("nc", metadata.get("nb_classes", len(names))))
-        resolved_nc = int(nb_classes) if nb_classes is not None else metadata_nc
         if len(names) != metadata_nc:
             raise ValueError(
                 "MNN class-name metadata does not match nc: "
                 f"{len(names)} names for nc={metadata_nc}."
             )
+        if nb_classes is not None and int(nb_classes) != metadata_nc:
+            raise ValueError(
+                "MNN nb_classes override does not match the fixed artifact metadata: "
+                f"{int(nb_classes)} != {metadata_nc}."
+            )
+        resolved_nc = metadata_nc
 
         thread_count = min(max(os.cpu_count() or 1, 1), 4)
         runtime_manager = mnn_api.nn.create_runtime_manager(

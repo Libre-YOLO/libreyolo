@@ -222,6 +222,14 @@ def test_backend_rejects_invalid_contract(tmp_path, monkeypatch, key, value, mes
         MNNBackend(str(path))
 
 
+def test_backend_rejects_mismatched_nb_classes_override(tmp_path, monkeypatch):
+    _install_fake_mnn(monkeypatch, ())
+    path = _write_artifact(tmp_path)
+
+    with pytest.raises(ValueError, match="nb_classes override does not match"):
+        MNNBackend(str(path), nb_classes=3)
+
+
 def test_libreyolo_routes_mnn_suffix_to_backend(tmp_path, monkeypatch):
     path = _write_artifact(tmp_path, batch=1)
     sentinel = object()
