@@ -526,9 +526,8 @@ class LibreYOLO9(BaseModel):
                 load the matching LibreYOLO9 detect checkpoint for transfer
                 learning, or pass a checkpoint path/name.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
 
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.

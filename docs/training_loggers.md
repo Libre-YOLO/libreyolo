@@ -43,8 +43,8 @@ module-level class, not a closure or lambda.
 ## Built-in loggers
 
 Built-in loggers are callback objects layered on the same universal hooks.
-Enable TensorBoard, MLflow, or Weights & Biases by name, or pass configured
-instances:
+Enable TensorBoard, MLflow, Weights & Biases, Comet, ClearML, Neptune or
+DVCLive by name, or pass configured instances:
 
 ```python
 model.train(data="coco8.yaml", loggers="tensorboard")
@@ -57,7 +57,7 @@ model.train(
 )
 ```
 
-All three log the same canonical metric names per epoch: `train/loss`,
+All seven log the same canonical metric names per epoch: `train/loss`,
 `train/loss/<component>`, `lr/<group>`, `val/<metric>`,
 `time/epoch_seconds`. They also log the resolved training config at
 start. A backend failure mid-run (server down, auth expired) disables
@@ -180,6 +180,76 @@ log_checkpoints=False)` — project falls back to `WANDB_PROJECT`, then
 `log_checkpoints=True` uploads `weights/best.pt` as a model artifact.
 
 Run names default to `<family><size>-<task>` (e.g. `yolo9s-detect`).
+
+### Comet
+
+```
+pip install libreyolo[comet]
+```
+
+`CometLogger(project_name=None, workspace=None, name=None, api_key=None,
+online=None, log_artifacts=True, log_checkpoints=False)` uses the current
+`comet_ml.start()` API. The project falls back to `COMET_PROJECT_NAME`, then
+`"libreyolo"`; credentials fall back to Comet's normal `COMET_API_KEY` or
+`comet login` configuration. Set `online=False` for an offline experiment.
+
+### ClearML
+
+```
+pip install libreyolo[clearml]
+```
+
+`ClearMLLogger(project_name="LibreYOLO", task_name=None, tags=None,
+output_uri=None, log_artifacts=True, log_checkpoints=False)` creates a fresh
+ClearML training task, reports the resolved config under `TrainConfig`, and
+marks the task failed when training raises. Automatic framework connection is
+disabled to prevent duplicate metric reporting; ClearML's configured server
+and credentials are otherwise used normally.
+
+### Neptune
+
+```
+pip install libreyolo[neptune]
+```
+
+`NeptuneLogger(project=None, api_token=None, name=None, run_id=None,
+tags=None, mode=None, capture_console=False, log_artifacts=True,
+log_checkpoints=False)` uses Neptune's current `neptune-scale` client, not the
+legacy `neptune` package. Project and credentials fall back to
+`NEPTUNE_PROJECT` and `NEPTUNE_API_TOKEN`. Use `mode="offline"` for local
+logging or `run_id=` to attach to an existing run.
+
+The stable Neptune client currently requires `protobuf<7`, while the TFLite
+extra requires protobuf 7 through `onnx2tf`. For that reason Neptune is not
+included in `libreyolo[all]`; install `libreyolo[neptune]` in an environment
+without the TFLite extra.
+
+### DVCLive / DVC
+
+```
+pip install libreyolo[dvclive]  # or libreyolo[dvc]
+```
+
+`DVCLiveLogger(log_dir=None, resume=None, report=None, save_dvc_exp=False,
+dvcyaml=None, monitor_system=False, log_checkpoints=False)` writes to
+`<save_dir>/dvclive`; both `loggers="dvclive"` and `loggers="dvc"` activate
+it. On resumed LibreYOLO training it resumes the DVCLive history and uses the
+trainer's 1-based epoch as the DVCLive step.
+
+DVCLive uses `/` to build its summary tree and cannot store a float at a path
+that is also a parent (for example, both `train/loss` and
+`train/loss/box`). LibreYOLO keeps the parent name and dot-encodes only the
+conflicting child separator: `train/loss.box`. This preserves every metric
+without disabling the logger; non-conflicting names stay unchanged.
+
+DVCLive itself normally defaults to saving a DVC experiment and writing a
+root `dvc.yaml`. LibreYOLO deliberately defaults both behaviours off so an
+opt-in logger does not create Git/DVC state outside the training run. Pass
+`save_dvc_exp=True` and/or an explicit `dvcyaml=".../dvc.yaml"` when that is
+the desired workflow. When `log_checkpoints=True` is explicitly enabled,
+checkpoint registration uses `cache=False`, so it never silently adds the
+checkpoint to the DVC cache. As with DVCLive directly, artifact registration
+requires a DVC repository.
 
 ## Always-on run status (`status.json`, `metrics.jsonl`, `train.log`)
 

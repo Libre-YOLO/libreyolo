@@ -9,6 +9,10 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- Built-in Comet, ClearML, Neptune (`neptune-scale`) and DVC/DVCLive training
+  loggers, with the same canonical metrics and failure-isolation contract as
+  the existing TensorBoard, MLflow and Weights & Biases integrations.
+
 - CUDA graph capture (`predict(..., cuda_graph=True)`) extended from the
   initial 8 families to **39**, spanning detect, segment, pose, point,
   classify, semantic, depth, restore, matte and OCR. Every enabled family is

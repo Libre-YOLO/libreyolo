@@ -1200,9 +1200,8 @@ class LibreRFDETR(BaseModel):
             output_dir: Directory for training runs and checkpoints.
             resume: Checkpoint path, or True to resume the loaded checkpoint.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
         """
         output_path = Path(output_dir)
         train_kwargs = dict(kwargs)
