@@ -231,22 +231,12 @@ def _unique_sibling(path: Path, label: str) -> Path:
     return reserved
 
 
-def _publish_rknn_artifacts(
-    *,
-    staged_model: Path,
-    staged_metadata: Path,
-    staged_report: Path,
-    destination: Path,
-) -> None:
-    """Publish the model and sidecars together, restoring any prior bundle."""
-    pairs = (
-        (Path(staged_model), Path(destination)),
-        (Path(staged_metadata), Path(f"{destination}.metadata.json")),
-        (Path(staged_report), Path(f"{destination}.parity.json")),
-    )
+def _publish_file_bundle(pairs: Sequence[tuple[Path, Path]]) -> None:
+    """Publish files together, restoring every prior destination on failure."""
+    pairs = tuple((Path(source), Path(target)) for source, target in pairs)
     for source, _ in pairs:
         if not source.is_file():
-            raise FileNotFoundError(f"Staged RKNN artifact is missing: {source}")
+            raise FileNotFoundError(f"Staged artifact is missing: {source}")
 
     backups: list[tuple[Path, Path]] = []
     installed: list[Path] = []
@@ -271,6 +261,23 @@ def _publish_rknn_artifacts(
             for target, backup in reversed(backups):
                 if backup.exists():
                     backup.replace(target)
+
+
+def _publish_rknn_artifacts(
+    *,
+    staged_model: Path,
+    staged_metadata: Path,
+    staged_report: Path,
+    destination: Path,
+) -> None:
+    """Publish the model and sidecars together, restoring any prior bundle."""
+    _publish_file_bundle(
+        (
+            (Path(staged_model), Path(destination)),
+            (Path(staged_metadata), Path(f"{destination}.metadata.json")),
+            (Path(staged_report), Path(f"{destination}.parity.json")),
+        )
+    )
 
 
 def _compile_rknn(
@@ -378,9 +385,18 @@ def _compile_rknn(
             if not completed or not released:
                 temporary_output.unlink(missing_ok=True)
 
-    temporary_output.replace(output)
-    if metadata is not None:
-        _write_metadata_sidecar(output, metadata)
+    staged_metadata = Path(f"{temporary_output}.metadata.json")
+    staged_metadata_tmp = Path(f"{staged_metadata}.tmp")
+    try:
+        pairs = [(temporary_output, output)]
+        if metadata is not None:
+            _write_metadata_sidecar(temporary_output, metadata)
+            pairs.append((staged_metadata, Path(f"{output}.metadata.json")))
+        _publish_file_bundle(pairs)
+    finally:
+        temporary_output.unlink(missing_ok=True)
+        staged_metadata.unlink(missing_ok=True)
+        staged_metadata_tmp.unlink(missing_ok=True)
     return str(output), simulator_outputs
 
 
