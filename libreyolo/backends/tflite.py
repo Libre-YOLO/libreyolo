@@ -149,7 +149,7 @@ class TFLiteBackend(BaseBackend):
             # must not affect unrelated outputs. Prefer explicit sidecar layout
             # metadata once the converter can emit it consistently.
             if (
-                self.task in {"semantic", "point", "depth", "matte"}
+                self.task in {"semantic", "point", "depth", "matte", "edge"}
                 and output.ndim == 4
                 and output.shape[-1] in {1, self.nb_classes, self.nb_classes + 1}
             ):
@@ -169,6 +169,13 @@ class TFLiteBackend(BaseBackend):
                 }
                 and output.ndim == 3
                 and output.shape[-1] == self.nb_classes + 4
+            ):
+                output = np.transpose(output, (0, 2, 1))
+            if (
+                self.model_family == "yolonas"
+                and self.task in {"detect", "pose"}
+                and output.ndim == 3
+                and output.shape[1] in {4, self.nb_classes}
             ):
                 output = np.transpose(output, (0, 2, 1))
             outputs.append(np.ascontiguousarray(output))

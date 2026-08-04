@@ -161,6 +161,12 @@ class FOMOTrainer(BaseTrainer):
     def get_loss_components(self, outputs: Dict) -> Dict[str, float]:
         return {"ce": float(outputs.get("ce", 0.0))}
 
+    def validate_validation_loss_config(self) -> None:
+        # Accepted, but nothing to switch on: FOMOValidator always computes the
+        # loss and publishes it under the shared metrics/loss keys. Raising
+        # "not supported" here would be wrong, since it is.
+        return
+
     def _run_validation(
         self, epoch: int, *, save_plots: bool | None = None
     ) -> Optional[Dict[str, Any]]:
@@ -185,8 +191,11 @@ class FOMOTrainer(BaseTrainer):
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
+                max_det=self.config.max_det,
+                eval_max_det=self.config.eval_max_det,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 save_plots=val_save_plots,

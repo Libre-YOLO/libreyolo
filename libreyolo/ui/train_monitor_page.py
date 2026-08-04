@@ -229,6 +229,9 @@ async function refreshStatus() {
     s.best_epoch != null ? `epoch ${s.best_epoch + 1}` : ""));
   cards.push(card("Train loss", fmtNum(s.train_loss, 4),
     s.model_family ? `${s.model_family}${s.model_size || ""} ${s.task || ""}` : ""));
+  if (s.metrics && s.metrics.loss != null) {
+    cards.push(card("Val loss", fmtNum(s.metrics.loss, 4), "latest validation"));
+  }
 
   let cardsHtml = cards.join("");
   cardsHtml += `<div class="card" style="grid-column:1/-1">
@@ -301,9 +304,12 @@ async function refreshMetrics() {
   const xs = rows.map(r => r.epoch != null ? r.epoch + 1 : 0);
   const lossCols = (m.columns || []).filter(c => c.startsWith("train/") && c.includes("loss"));
   const primaryLoss = lossCols.includes("train/loss") ? "train/loss" : lossCols[0];
-  const lossSeries = primaryLoss ? [{ name: primaryLoss, data: rows.map(r => r[primaryLoss]) }] : [];
+  const valLoss = (m.columns || []).includes("metrics/loss") ? "metrics/loss" : null;
+  const lossSeries = [];
+  if (primaryLoss) lossSeries.push({ name: primaryLoss, data: rows.map(r => r[primaryLoss]) });
+  if (valLoss) lossSeries.push({ name: "val/loss", data: rows.map(r => r[valLoss]) });
   drawChart($("chart-loss"), lossSeries, xs);
-  $("chart-loss-title").textContent = primaryLoss || "train/loss";
+  $("chart-loss-title").textContent = valLoss ? "train/loss · val/loss" : (primaryLoss || "train/loss");
   const metricCols = (m.columns || []).filter(c => c.startsWith("metrics/"));
   let chosen = null;
   for (const p of PREFERRED_METRICS) { const hit = metricCols.find(c => c.replace("metrics/", "") === p); if (hit) { chosen = hit; break; } }

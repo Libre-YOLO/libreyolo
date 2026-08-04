@@ -15,10 +15,11 @@ import torch.nn.functional as F
 from ...training.config import TrainConfig
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.trainer import BaseTrainer
+from ..base.classify_validation_loss import ClassifyValidationLossMixin
 from .config import ResNetConfig
 
 
-class ResNetTrainer(BaseTrainer):
+class ResNetTrainer(ClassifyValidationLossMixin, BaseTrainer):
     """Cross-entropy fine-tuning trainer for ResNet classification."""
 
     best_metric_key = "metrics/accuracy_top1"

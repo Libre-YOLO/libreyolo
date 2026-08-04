@@ -177,8 +177,23 @@ class LibreDepthAnything3(BaseModel):
             "weights/convert_depth_anything3_weights.py."
         )
 
-    def export(self, format: str = "onnx", **kwargs) -> str:
-        raise NotImplementedError(
-            "Export is not implemented for Depth Anything 3 yet (depth export "
-            "is out of scope per ADR 0006: depth task contract)."
-        )
+    def export(
+        self,
+        format: str = "onnx",
+        *,
+        opset: int = 17,
+        **kwargs,
+    ) -> str:
+        if format.lower() not in {
+            "onnx",
+            "torchscript",
+            "executorch",
+            "tensorrt",
+            "openvino",
+        }:
+            raise NotImplementedError(
+                f"Export to {format!r} is not implemented for Depth Anything 3; "
+                "supported formats are ONNX, TorchScript, ExecuTorch, "
+                "TensorRT, and OpenVINO."
+            )
+        return super().export(format=format, opset=opset, **kwargs)

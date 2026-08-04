@@ -17,6 +17,8 @@ from typing import Optional, Tuple, Union
 
 import torch
 
+from ..tasks import task_to_suffix
+from ..utils.serialization import SCHEMA_VERSION
 from .onnx import (
     _get_version,
     _requires_onnx_opset17,
@@ -24,10 +26,8 @@ from .onnx import (
     export_onnx,
     quantize_onnx_int8,
 )
-from .torchscript import export_torchscript
 from .support import get_support, validated_alternatives
-from ..tasks import task_to_suffix
-from ..utils.serialization import SCHEMA_VERSION
+from .torchscript import export_torchscript
 
 logger = logging.getLogger(__name__)
 
@@ -140,16 +140,25 @@ def _pose_keypoint_shape_metadata(model) -> dict:
 
 
 _FIXED_SQUARE_EXPORT_FAMILIES = {
+    "clip",
+    "deformable_detr",
+    "dinodetr",
+    "detr",
     "dfine",
     "deim",
     "deimv2",
     "ec",
+    "lwdetr",
+    "moge2",
     "rtdetr",
     "rtdetrv2",
     "rtdetrv4",
     "rfdetr",
+    "siglip2",
+    "ssd",
 }
 _RECTANGULAR_EXPORT_FAMILIES = {
+    "hrnet",
     "yolo9",
     "yolo9_e2e",
     "yolo9_p2",
@@ -157,6 +166,7 @@ _RECTANGULAR_EXPORT_FAMILIES = {
     "realesrgan",
 }
 _RECTANGULAR_EXPORT_FORMATS = {
+    "coreai",
     "coreml",
     "ncnn",
     "onnx",
@@ -195,8 +205,41 @@ class _SemanticExportWrapper(torch.nn.Module):
                 return output["logits"]
             if "predictions" in output:
                 return output["predictions"]
+            if "out" in output:
+                return output["out"]
         if isinstance(output, (list, tuple)):
             return output[-1]
+        return output
+
+
+class _ImageEmbeddingExportWrapper(torch.nn.Module):
+    """Trace an image tower as a normalized whole-image embedding graph."""
+
+    def __init__(self, image_tower: torch.nn.Module):
+        super().__init__()
+        self.image_tower = image_tower
+
+    def forward(self, x):
+        return torch.nn.functional.normalize(self.image_tower(x).float(), dim=-1)
+
+
+class _YOLONASExportWrapper(torch.nn.Module):
+    """Expose decoded YOLO-NAS tensors without training-only auxiliaries."""
+
+    def __init__(self, model: torch.nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        output = self.model(x)
+        # Eager and torch.export capture return ``(decoded, raw)``. ONNX
+        # tracing already returns ``decoded`` directly, so accept both forms.
+        if (
+            isinstance(output, tuple)
+            and len(output) == 2
+            and isinstance(output[0], tuple)
+        ):
+            return output[0]
         return output
 
 
@@ -313,20 +356,48 @@ class BaseExporter(ABC):
         pre_trace_hook = kwargs.pop("_pre_trace_hook", None)
 
         task = getattr(self.model, "task", "detect")
-        if task == "depth":
-            # Depth export uses the fixed-resolution dense contract: backends
-            # stretch-resize to the exported canvas and resize the depth map
-            # back to the original canvas (ADR 0006). The batch axis is static
-            # (dynamic is forced off) and backends schedule one image per run,
-            # so a batch != 1 artifact could never be fed correctly.
+        if task == "mesh":
+            # Gated off for the first version, as semantic and point were: the
+            # runtime metadata contract for a mesh graph (which body model,
+            # how many betas, whether the body-model decoder is inside the
+            # graph or applied afterwards) has to be defined before artifacts
+            # exist that backends would have to keep reading.
+            raise NotImplementedError(
+                "Body-mesh export is not implemented yet. The exported-graph "
+                "metadata contract for the mesh task is still to be defined; "
+                "run mesh models through the PyTorch path for now."
+            )
+        if task in {"depth", "normal"}:
+            # Dense-map export uses a fixed-resolution contract: backends
+            # stretch-resize to the exported canvas and resize the result back
+            # to the original canvas. The batch axis is static (dynamic is
+            # forced off) and backends schedule one image per run, so a batch
+            # != 1 artifact could never be fed correctly.
+            task_label = "Depth" if task == "depth" else "Surface-normal"
             if batch != 1:
                 raise ValueError(
-                    "Depth export uses a fixed-resolution, batch-1 runtime "
+                    f"{task_label} export uses a fixed-resolution, batch-1 runtime "
                     f"contract in v1; got batch={batch}."
                 )
             if dynamic:
                 warnings.warn(
-                    "Depth export uses a fixed-resolution runtime contract in "
+                    f"{task_label} export uses a fixed-resolution runtime "
+                    "contract in v1; forcing dynamic=False.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                dynamic = False
+        if task == "edge":
+            # Edge specialists export a single fused probability map on a
+            # fixed square canvas; runtimes resize it back to the source.
+            if batch != 1:
+                raise ValueError(
+                    "Edge export uses a fixed-resolution, batch-1 runtime "
+                    f"contract in v1; got batch={batch}."
+                )
+            if dynamic:
+                warnings.warn(
+                    "Edge export uses a fixed-resolution runtime contract in "
                     "v1; forcing dynamic=False.",
                     RuntimeWarning,
                     stacklevel=2,
@@ -374,6 +445,8 @@ class BaseExporter(ABC):
         if getattr(self.model, "task", "detect") == "matte":
             from ..models.birefnet.export import (
                 MIN_OPSET as _MATTE_MIN_OPSET,
+            )
+            from ..models.birefnet.export import (
                 register_deform_conv2d_onnx_symbolic,
             )
 
@@ -504,6 +577,10 @@ class BaseExporter(ABC):
                 stacklevel=2,
             )
             half = False
+        if half and not self.supports_fp16:
+            raise NotImplementedError(
+                f"{self.format_name.upper()} FP16 export is not supported."
+            )
         if int8 and not self.supports_int8:
             raise NotImplementedError(
                 f"{self.format_name.upper()} INT8 export is not supported."
@@ -565,7 +642,15 @@ class BaseExporter(ABC):
         native_imgsz = self.model._get_input_size()
         model_name = self.model._get_model_name()
         if imgsz is None:
-            imgsz = (native_imgsz, native_imgsz)
+            if isinstance(native_imgsz, (tuple, list)):
+                if len(native_imgsz) != 2:
+                    raise ValueError(
+                        "Native input size must be an int or (height, width), "
+                        f"got {native_imgsz!r}."
+                    )
+                imgsz = (int(native_imgsz[0]), int(native_imgsz[1]))
+            else:
+                imgsz = (int(native_imgsz), int(native_imgsz))
         elif isinstance(imgsz, tuple):
             if len(imgsz) != 2:
                 raise ValueError(f"imgsz tuple must be (height, width), got {imgsz}")
@@ -574,6 +659,22 @@ class BaseExporter(ABC):
             imgsz = (int(imgsz), int(imgsz))
         if imgsz[0] <= 0 or imgsz[1] <= 0:
             raise ValueError(f"imgsz values must be positive, got {imgsz}.")
+        if model_name in ("deit", "vgg") and imgsz != (native_imgsz, native_imgsz):
+            raise ValueError(
+                f"{model_name} export imgsz must match its fixed native resolution "
+                f"{native_imgsz}x{native_imgsz}, got {imgsz}."
+            )
+        if model_name == "hrnet":
+            native_h, native_w = (
+                (int(native_imgsz[0]), int(native_imgsz[1]))
+                if isinstance(native_imgsz, (tuple, list))
+                else (int(native_imgsz), int(native_imgsz))
+            )
+            if imgsz != (native_h, native_w):
+                raise ValueError(
+                    "HRNet pose exports use the checkpoint's fixed person-crop "
+                    f"canvas {(native_h, native_w)}, got {imgsz}."
+                )
         imgsz_divisor = int(getattr(self.model, "IMGSZ_DIVISOR", 1) or 1)
         if imgsz[0] % imgsz_divisor or imgsz[1] % imgsz_divisor:
             raise ValueError(
@@ -587,11 +688,26 @@ class BaseExporter(ABC):
                     "NAFNet export imgsz must be divisible by the network "
                     f"downsample factor {padder_size}, got {imgsz}."
                 )
-        if getattr(self.model, "task", "detect") == "depth":
-            divisor = int(getattr(self.model, "depth_imgsz_divisor", 1) or 1)
+        dense_task = getattr(self.model, "task", "detect")
+        divisor_attrs = {
+            "depth": "depth_imgsz_divisor",
+            "normal": "normal_imgsz_divisor",
+            "semantic": "semantic_imgsz_divisor",
+        }
+        if dense_task in divisor_attrs:
+            divisor_attr = divisor_attrs[dense_task]
+            divisor = int(getattr(self.model, divisor_attr, 1) or 1)
             if imgsz[0] % divisor or imgsz[1] % divisor:
                 raise ValueError(
-                    "Depth export imgsz must be divisible by the network "
+                    f"{dense_task.capitalize()} export imgsz must be divisible "
+                    "by the network "
+                    f"stride {divisor}, got {imgsz}."
+                )
+        if getattr(self.model, "task", "detect") == "edge":
+            divisor = int(getattr(self.model, "edge_imgsz_divisor", 1) or 1)
+            if imgsz[0] % divisor or imgsz[1] % divisor:
+                raise ValueError(
+                    "Edge export imgsz must be divisible by the network "
                     f"stride {divisor}, got {imgsz}."
                 )
         if model_name == "rfdetr":
@@ -616,7 +732,7 @@ class BaseExporter(ABC):
         ):
             raise NotImplementedError(
                 "Rectangular imgsz export is currently supported for "
-                "YOLO9-family exports only."
+                "YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports only."
             )
         if (
             _is_rectangular_imgsz(imgsz)
@@ -697,8 +813,20 @@ class BaseExporter(ABC):
         rfdetr_inner = None
         family = self.model._get_model_name()
         task = getattr(self.model, "task", "detect")
+        moge2_onnx_mode = family == "moge2" and hasattr(
+            root_model, "set_onnx_compatible_mode"
+        )
+        original_moge2_onnx_mode = bool(
+            getattr(root_model, "onnx_compatible_mode", False)
+        )
         if task == "semantic":
             nn_model = _SemanticExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "detr":
+            from ..models.detr.nn import DETRExportWrapper
+
+            nn_model = DETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
         elif family == "dfine":
@@ -750,16 +878,125 @@ class BaseExporter(ABC):
             nn_model = YOLO7ExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "yolonas":
+            nn_model = _YOLONASExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family in {"rtdetr", "rtdetrv2", "rtdetrv4"}:
             nn_model = _RTDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
-        elif family == "dinov2" and getattr(self.model, "task", None) == "classify":
-            # Classification (now in the LibreDINOv2 family) has no detection
-            # decoder; trace the backbone + linear classifier directly (it
-            # returns logits). The detection export wrapper forwards through
-            # ``model.model``, which is None for classification.
-            nn_model = nn_model.classifier.to(device)
+        elif family == "lwdetr":
+            from ..models.lwdetr.nn import LWDETRExportWrapper
+
+            nn_model = LWDETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "mask_rcnn":
+            from ..models.mask_rcnn.nn import MaskRCNNExportWrapper
+
+            nn_model = MaskRCNNExportWrapper(
+                nn_model,
+                include_masks=task == "segment",
+            ).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "faster_rcnn":
+            from ..models.faster_rcnn.nn import FasterRCNNExportWrapper
+
+            nn_model = FasterRCNNExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "retinanet":
+            from ..models.retinanet.nn import RetinaNetExportWrapper
+
+            nn_model = RetinaNetExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "ssd":
+            from ..models.ssd.nn import SSDExportWrapper
+
+            nn_model = SSDExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "fcos":
+            from ..models.fcos.nn import FCOSExportWrapper
+
+            nn_model = FCOSExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "efficientdet":
+            from ..models.efficientdet.nn import EfficientDetExportWrapper
+
+            if imgsz[0] != imgsz[1] or imgsz[0] != self.model.input_size:
+                raise ValueError(
+                    f"EfficientDet {self.model.size} exports require imgsz="
+                    f"{self.model.input_size}; got {imgsz}."
+                )
+            nn_model = EfficientDetExportWrapper(
+                nn_model,
+                input_size=imgsz[0],
+                # TensorRT's ITopK layer rejects K > 3840. Keep the exact
+                # upstream 5000-point budget on every other runtime and use
+                # its maximum only for the TensorRT graph.
+                max_candidates=3840 if self.format_name == "tensorrt" else 5000,
+                sparse_coco=(
+                    getattr(self.model, "nb_classes", None) == 80
+                    and getattr(self.model, "_arch_num_classes", None) == 90
+                ),
+            ).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "deformable_detr":
+            from ..models.deformable_detr.nn import DeformableDETRExportWrapper
+
+            nn_model = DeformableDETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "dinodetr":
+            from ..models.dinodetr.nn import DINODETRExportWrapper
+
+            nn_model = DINODETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "centernet":
+            from ..models.centernet.nn import CenterNetExportWrapper
+
+            # The portable grid-sample DCN flag is export-only. Keep the live
+            # eager model on torchvision's exact native operator.
+            nn_model = copy.deepcopy(nn_model)
+            nn_model = CenterNetExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "rtmdet":
+            # RTMDet intentionally aliases the head convolution weights across
+            # feature levels while keeping one batch norm per level. XNNPACK's
+            # batch-norm fusion assigns the shared parameters duplicate names,
+            # so give the export-only copy independent modules with identical
+            # weights. The user's live model and its sharing contract stay
+            # untouched.
+            nn_model = copy.deepcopy(nn_model)
+            for tower_name in ("cls_convs", "reg_convs"):
+                tower = getattr(nn_model.head, tower_name)
+                for level in range(1, len(tower)):
+                    for layer_index, layer in enumerate(tower[level]):
+                        layer.conv = copy.deepcopy(tower[0][layer_index].conv)
+            nn_model.to(device)
+            nn_model.eval()
+        elif family == "depth_anything3":
+            nn_model = copy.deepcopy(nn_model)
+            nn_model.export = True
+            nn_model.to(device)
+            nn_model.eval()
+        elif family == "dinov2" and getattr(self.model, "task", None) in {
+            "classify",
+            "embed",
+        }:
+            # Classification and embedding have no detection decoder. Trace
+            # their task-specific backbone path directly and bake the fixed
+            # DINOv2 positional encoding before capture.
+            if getattr(self.model, "task", None) == "classify":
+                nn_model = nn_model.classifier.to(device)
             nn_model.eval()
             # Precompute static DINOv2 positional encodings for the fixed export
             # resolution; otherwise the dynamic bicubic-antialias interpolation
@@ -774,6 +1011,39 @@ class BaseExporter(ABC):
                 encoder.shape = (imgsz[0], imgsz[1])
                 encoder.export()
                 rfdetr_export_activated = True
+            dfine_wrapped = True
+        elif family in {"clip", "siglip2"} and task == "embed":
+            image_tower = (
+                nn_model.visual if family == "clip" else nn_model.vision_model
+            )
+            nn_model = _ImageEmbeddingExportWrapper(image_tower).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family in {"clip", "siglip2"} and task == "classify":
+            text_embeds = getattr(self.model, "_text_embeds", None)
+            if text_embeds is None:
+                raise RuntimeError(
+                    "No classes set; call set_classes() before export()."
+                )
+            scale = float(nn_model.logit_scale.exp().detach().cpu())
+            weight = (scale * text_embeds).detach().to(device, torch.float32)
+            if family == "clip":
+                from ..models.clip.export import _FrozenCLIPClassifier
+
+                nn_model = _FrozenCLIPClassifier(nn_model.visual, weight).to(device)
+            else:
+                from ..models.siglip2.export import _FrozenSigLIP2Classifier
+
+                bias = nn_model.logit_bias.detach().to(
+                    device=device,
+                    dtype=torch.float32,
+                )
+                nn_model = _FrozenSigLIP2Classifier(
+                    nn_model.vision_model,
+                    weight,
+                    bias.reshape(()),
+                ).to(device)
+            nn_model.eval()
             dfine_wrapped = True
         elif family == "rfdetr":
             from ..models.rfdetr.nn import RFDETRExportWrapper
@@ -837,9 +1107,13 @@ class BaseExporter(ABC):
             nn_model.half()
             dummy = dummy.half()
 
+        if moge2_onnx_mode:
+            root_model.set_onnx_compatible_mode(True)
         try:
             yield nn_model, dummy
         finally:
+            if moge2_onnx_mode:
+                root_model.set_onnx_compatible_mode(original_moge2_onnx_mode)
             if rfdetr_export_snapshots:
                 _restore_rfdetr_export_state(rfdetr_export_snapshots)
             nn_model.to(original_device)
@@ -934,8 +1208,12 @@ class BaseExporter(ABC):
                 meta_h = meta_w = int(imgsz)
         else:
             native = self.model._get_input_size()
-            metadata_imgsz = int(native)
-            meta_h = meta_w = int(native)
+            if isinstance(native, (tuple, list)):
+                meta_h, meta_w = int(native[0]), int(native[1])
+                metadata_imgsz = max(meta_h, meta_w)
+            else:
+                metadata_imgsz = int(native)
+                meta_h = meta_w = int(native)
         # TODO(schema-v1.1): keep legacy model_size/nb_classes aliases for one
         # transition window, then prefer the canonical size/nc keys only.
         meta = {
@@ -959,8 +1237,21 @@ class BaseExporter(ABC):
         }
         if onnx_path is not None:
             meta["exported_from"] = str(Path(onnx_path).name)
+        # Classification eval preprocessing must travel with every artifact,
+        # not just ONNX. Exported-backend predict() otherwise falls back to
+        # crop_pct=0.875 and bilinear resize, which changes classifier logits
+        # for families such as ResNet (0.95/bicubic).
+        if task == "classify":
+            crop_pct = getattr(self.model, "crop_pct", None)
+            interpolation = getattr(self.model, "interpolation", None)
+            if crop_pct is not None:
+                meta["crop_pct"] = float(crop_pct)
+            if interpolation is not None:
+                meta["interpolation"] = str(interpolation)
         if task == "pose":
             meta.update(_pose_keypoint_shape_metadata(self.model))
+            if self.model._get_model_name() == "hrnet":
+                meta["pose_input"] = "person_crop"
         if task == "gaze":
             meta.update(
                 {
@@ -992,8 +1283,13 @@ class BaseExporter(ABC):
                 meta_h = meta_w = str(int(imgsz))
         else:
             native = self.model._get_input_size()
-            metadata_imgsz = str(native)
-            meta_h = meta_w = str(native)
+            if isinstance(native, (tuple, list)):
+                native_h, native_w = int(native[0]), int(native[1])
+                metadata_imgsz = str(max(native_h, native_w))
+                meta_h, meta_w = str(native_h), str(native_w)
+            else:
+                metadata_imgsz = str(int(native))
+                meta_h = meta_w = str(int(native))
         # TODO(schema-v1.1): keep legacy model_size/nb_classes aliases for one
         # transition window, then prefer the canonical size/nc keys only.
         meta = {
@@ -1039,6 +1335,8 @@ class BaseExporter(ABC):
                 meta["num_keypoints_per_class"] = json.dumps(
                     pose_meta["num_keypoints_per_class"]
                 )
+            if self.model._get_model_name() == "hrnet":
+                meta["pose_input"] = "person_crop"
         if task == "gaze":
             meta.update(
                 {
@@ -1060,7 +1358,7 @@ class BaseExporter(ABC):
         default_task = getattr(self.model, "DEFAULT_TASK", "detect")
         if not isinstance(default_task, str):
             default_task = "detect"
-        if self.model._get_model_name() == "rfdetr":
+        if self.model._get_model_name() in {"mask_rcnn", "rfdetr"}:
             return task, [task], task
         return task, list(supported_tasks), default_task
 
@@ -1101,6 +1399,29 @@ class OnnxExporter(BaseExporter):
     apply_model_half = True
     supports_embedded_nms = True
     default_int8_calibration_data = True
+
+    def _resolve_params(self, output_path, imgsz, device, half, int8):
+        imgsz, device, output_path = super()._resolve_params(
+            output_path, imgsz, device, half, int8
+        )
+        family = self.model._get_model_name()
+        size = getattr(self.model, "size", None)
+        if family == "deformable_detr" and size == "r50twostage":
+            if half:
+                raise NotImplementedError(
+                    "Deformable DETR two-stage ONNX export is validated in FP32 only."
+                )
+            if device.type != "cpu":
+                warnings.warn(
+                    "Deformable DETR two-stage ONNX export is traced on CPU because "
+                    "the legacy PyTorch exporter can terminate while lowering its "
+                    "CUDA top-k graph. The model is restored to its original device "
+                    "after export.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+                device = torch.device("cpu")
+        return imgsz, device, output_path
 
     def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
         if int8:
@@ -1248,6 +1569,86 @@ class TorchScriptExporter(BaseExporter):
     def _export(self, nn_model, dummy, *, output_path, metadata, **kwargs):
         return export_torchscript(
             nn_model, dummy, output_path=output_path, metadata=metadata
+        )
+
+
+class ExecuTorchExporter(BaseExporter):
+    """Fixed-shape, batch-1, FP32 ExecuTorch export with XNNPACK delegation."""
+
+    format_name = "executorch"
+    suffix = ".pte"
+    requires_onnx = False
+    supports_int8 = False
+    supports_fp16 = False
+    apply_model_half = False
+
+    def __call__(
+        self, *, dynamic: bool = False, batch: int = 1, **kwargs
+    ) -> str:
+        """Reject unsupported shapes before the destructive LoRA merge."""
+        if batch != 1:
+            raise ValueError(
+                f"ExecuTorch v1 requires batch=1, got batch={batch}."
+            )
+        if dynamic:
+            raise ValueError("ExecuTorch v1 requires dynamic=False.")
+        return super().__call__(dynamic=False, batch=1, **kwargs)
+
+    def _resolve_params(self, output_path, imgsz, device, half, int8):
+        if device is not None and str(device).lower() not in {"auto", "cpu"}:
+            raise ValueError("ExecuTorch XNNPACK export requires device='cpu'.")
+        return super()._resolve_params(
+            output_path, imgsz, torch.device("cpu"), half, int8
+        )
+
+    def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
+        delegate = str(kwargs.get("delegate", "xnnpack")).lower()
+        if delegate != "xnnpack":
+            raise ValueError(
+                "ExecuTorch v1 supports delegate='xnnpack' only, "
+                f"got {delegate!r}."
+            )
+        super()._preflight(half=half, int8=int8, data=data, **kwargs)
+        from .executorch import check_executorch_available
+
+        check_executorch_available()
+
+    def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
+        meta = super()._build_metadata(
+            precision, False, onnx_path, imgsz=imgsz
+        )
+        crop_pct = getattr(self.model, "crop_pct", None)
+        interpolation = getattr(self.model, "interpolation", None)
+        if crop_pct is not None:
+            meta["crop_pct"] = float(crop_pct)
+        if interpolation is not None:
+            meta["interpolation"] = str(interpolation)
+        return meta
+
+    def _export(
+        self,
+        nn_model,
+        dummy,
+        *,
+        output_path,
+        metadata,
+        dynamic,
+        delegate="xnnpack",
+        **kwargs,
+    ):
+        if dummy.shape[0] != 1:
+            raise ValueError(
+                f"ExecuTorch v1 requires batch=1, got batch={dummy.shape[0]}."
+            )
+        if dynamic:
+            raise ValueError("ExecuTorch v1 requires dynamic=False.")
+        from .executorch import export_executorch
+
+        return export_executorch(
+            nn_model,
+            dummy,
+            output_path=output_path,
+            metadata=metadata,
         )
 
 
@@ -1458,6 +1859,80 @@ class TFLiteExporter(BaseExporter):
             verbose=verbose,
             onnx2tf_args=onnx2tf_args,
             metadata=metadata,
+        )
+
+
+class CoreAIExporter(BaseExporter):
+    """Apple Core AI (``.aimodel``) export via ``torch.export``.
+
+    Unlike the Core ML path this uses a real graph capture rather than a
+    single recorded trace, so the static-eval monkey patches that path needs
+    are not required here. Artifacts are static-shape in v1 and declare a
+    minimum OS of v27, which is the only value the toolchain offers.
+    """
+
+    format_name = "coreai"
+    suffix = ".aimodel"
+    requires_onnx = False
+    supports_int8 = False
+    supports_fp16 = False
+    apply_model_half = False
+    supports_embedded_nms = False
+
+    def __call__(self, *, dynamic: bool = False, **kwargs) -> str:
+        """Export a fixed-canvas Core AI artifact.
+
+        The base exporter defaults ``dynamic=True`` for ONNX. Core AI has no
+        dynamic-shape contract in v1, so its format-specific default is false
+        and an explicit request is rejected rather than mislabeled.
+        """
+        if dynamic:
+            raise NotImplementedError(
+                "Core AI export uses a fixed input shape; dynamic=True is not "
+                "supported."
+            )
+        return super().__call__(dynamic=False, **kwargs)
+
+    def _preflight(self, **kwargs):
+        # Support policy is checked before optional dependencies, as required
+        # by ADR 0011. Dependency validation still happens before the
+        # destructive LoRA merge in BaseExporter.__call__.
+        super()._preflight(**kwargs)
+
+        # Check the optional dependency HERE, not at conversion time. Preflight
+        # runs before __call__ merges any live LoRA adapters, and that merge is
+        # destructive. Discovering the missing package afterwards would leave
+        # the caller's model permanently modified with no artifact to show for
+        # it.
+        from .coreai import _require_coreai
+
+        _require_coreai()
+
+    def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
+        # v1 artifacts are fixed-canvas, mirroring the CoreML/NCNN overrides.
+        meta = super()._build_metadata(precision, dynamic, onnx_path, imgsz=imgsz)
+        meta["dynamic"] = False
+        return meta
+
+    def _export(
+        self,
+        nn_model,
+        dummy,
+        *,
+        output_path,
+        precision,
+        metadata,
+        **kwargs,
+    ):
+        from .coreai import export_coreai
+
+        return export_coreai(
+            nn_model,
+            dummy,
+            output_path=output_path,
+            precision=precision,
+            metadata=metadata,
+            model_family=self.model._get_model_name(),
         )
 
 

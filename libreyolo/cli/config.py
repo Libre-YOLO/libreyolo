@@ -112,6 +112,15 @@ def _build_name_map() -> None:
     for cls in BaseModel._registry:
         _register_cli_names_for_class(cls)
 
+    # The face-embedding (facial-recognition) family is ONNX-only and lives
+    # outside BaseModel._registry; register its embedder names explicitly.
+    from libreyolo.models.facerec.weights import FACEREC_SIZES
+
+    for size_code in FACEREC_SIZES:
+        weight_name = f"librefacerec-{size_code}.onnx"
+        _CLI_NAME_TO_WEIGHTS[f"facerec-{size_code}"] = weight_name
+        _CLI_NAME_TO_WEIGHTS[f"librefacerec-{size_code}"] = weight_name
+
 
 def get_all_cli_names() -> list[str]:
     """Return all valid CLI model names (e.g. ['yolox-n', 'yolox-s', ...])."""
@@ -424,6 +433,10 @@ def _build_rfdetr_train_kwargs(
         "device": "device",
         "flip_prob": "flip_prob",
         "amp": "amp",
+        "amp_dtype": "amp_dtype",
+        "cuda_graph": "cuda_graph",
+        "max_det": "max_det",
+        "eval_max_det": "eval_max_det",
         "lora": "lora",
         "freeze": "freeze",
         "log_interval": "log_interval",
@@ -495,6 +508,7 @@ def build_family_train_kwargs(
             "ema",
             "ema_decay",
             "amp",
+            "amp_dtype",
             "name",
         }
         for internal_name in size_defaulted:

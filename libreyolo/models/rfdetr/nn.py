@@ -739,8 +739,15 @@ class LibreRFDETRModel(nn.Module):
             return self.segmenter(x, targets=targets)
         return self.model(x, targets=targets)
 
-    def build_criterion_and_postprocess(self):
-        return build_criterion_and_postprocessors(self.args)
+    def build_criterion_and_postprocess(
+        self,
+        *,
+        distributed_normalize: bool = True,
+    ):
+        return build_criterion_and_postprocessors(
+            self.args,
+            distributed_normalize=distributed_normalize,
+        )
 
     def load_state_dict(self, state_dict: dict[str, Any], strict: bool = True):
         if self.classification:

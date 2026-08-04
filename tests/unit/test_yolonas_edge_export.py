@@ -1,4 +1,4 @@
-"""NCNN raw-output parity for YOLO-NAS detection and pose."""
+"""Raw-output parity for YOLO-NAS edge exports."""
 
 from __future__ import annotations
 
@@ -10,13 +10,24 @@ import torch
 
 pytestmark = pytest.mark.unit
 
+_TASKS = (("detect", "s"), ("pose", "n"))
+_CASES = tuple(
+    (task, size, format)
+    for format in ("onnx", "torchscript", "openvino", "ncnn")
+    for task, size in _TASKS
+) + (("detect", "s", "tflite"),)
 
-@pytest.mark.parametrize(("task", "size"), [("detect", "s"), ("pose", "n")])
-@pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+
+@pytest.mark.parametrize(("task", "size", "format"), _CASES)
 def test_yolonas_raw_parity(tmp_path, task, size, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
+    if format == "tflite":
+        pytest.importorskip("onnx2tf")
+        pytest.importorskip("ai_edge_litert")
     if format == "ncnn" and (
         importlib.util.find_spec("pnnx") is None
         or importlib.util.find_spec("ncnn") is None
@@ -58,3 +69,10 @@ def test_yolonas_raw_parity(tmp_path, task, size, format):
             rtol=1e-3,
             atol=1e-3,
         )
+    if format in {"openvino", "tflite"}:
+        image = np.random.default_rng(45).integers(
+            0, 256, size=(72, 96, 3), dtype=np.uint8
+        )
+        result = LibreYOLO(artifact, device="cpu").predict(image, conf=0.99)
+        assert result.boxes is not None
+        assert result.orig_shape == (72, 96)

@@ -16,10 +16,11 @@ import torch.nn.functional as F
 from ...training.config import TrainConfig
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.trainer import BaseTrainer
+from ..base.classify_validation_loss import ClassifyValidationLossMixin
 from .config import EfficientNetV2Config
 
 
-class EfficientNetV2Trainer(BaseTrainer):
+class EfficientNetV2Trainer(ClassifyValidationLossMixin, BaseTrainer):
     """Cross-entropy fine-tuning trainer for EfficientNetV2 classification."""
 
     # Non-detect task: select the best checkpoint by top-1 accuracy.

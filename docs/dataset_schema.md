@@ -218,6 +218,108 @@ Float `.npy` maps are used as-is and do not apply `depth_scale`.
 
 Canonical loader: `libreyolo.data.DepthDataset`.
 
+## edge
+
+Edge detection pairs each RGB image with a same-stem, single-channel lossless
+map and an optional validity mask:
+
+```text
+images/val/scene.jpg -> edges/val/scene.png
+                      -> masks/val/scene.png    # optional
+```
+
+Edge-map rules:
+
+- the map is single-channel PNG/TIF (not an RGB visualization);
+- map resolution must equal the paired image resolution;
+- integer maps are divided by their dtype maximum; float maps must already be
+  finite and in `[0, 1]`;
+- `0` means non-edge and `1` means edge;
+- optional mask pixels are valid when nonzero;
+- resize uses nearest-neighbor interpolation for targets and masks;
+- padded pixels are invalid and do not contribute to validation.
+
+YAML keys:
+
+- `edges_dir`: edge-map directory substituted for `images` (default `edges`);
+- `edge_stem_suffix`: optional suffix appended to image stems;
+- `edge_extension`: lossless target extension (default `.png`);
+- `edge_invert`: set `true` when source maps store black edges over white;
+- `masks_dir`: optional validity-mask directory (default `masks`).
+
+```yaml
+path: edge-dataset
+train: images/train
+val: images/val
+edges_dir: edges
+masks_dir: masks
+nc: 1
+names: {0: edge}
+```
+
+Validation thins continuous predictions with four-direction gradient
+non-maximum suppression. It reports ODS and OIS F-measures over a configurable
+threshold sweep. Predicted and ground-truth pixels are matched one-to-one
+within `edge_max_dist * image_diagonal`; the default normalized tolerance is
+`0.0075`.
+
+Canonical loader: `libreyolo.data.EdgeDataset`.
+
+The loader is format-only: it does not download or redistribute benchmark
+data. BIPED/BIPEDv2 and Berkeley's BSDS data are published for non-commercial
+use, with additional terms on their official download pages. Users must obtain
+those datasets from their publishers and comply with the applicable terms;
+this generic schema does not relicense them:
+
+- BIPED/BIPEDv2: <https://www.kaggle.com/datasets/xavysp/biped>
+- BSDS500: <https://www2.eecs.berkeley.edu/Research/Projects/CS/vision/grouping/resources.html>
+
+## normal
+
+Surface-normal estimation pairs each image with a same-stem three-channel
+16-bit PNG, plus an optional same-stem validity mask:
+
+```text
+images/val/room.jpg -> normals/val/room.png
+                     -> masks/val/room.png    # optional
+```
+
+Normal-map rules:
+
+- the PNG is exactly three-channel `uint16`, with channels stored as RGB;
+- map resolution must equal the paired image resolution;
+- decode with `n = png / 65535 * 2 - 1`, then renormalize each vector;
+- decoded vectors use LibreYOLO's OpenCV camera frame (`+x` right, `+y` down,
+  `+z` into the scene) and face the camera;
+- the optional mask is a single-channel PNG where nonzero means valid;
+- when no mask exists, every finite, nonzero decoded vector is valid;
+- invalid and padded target pixels are represented internally by `(0, 0, 0)`;
+- resizing interpolates the three vector components bilinearly and then
+  renormalizes; validity masks use nearest-neighbor interpolation;
+- a horizontal flip also negates the x component.
+
+YAML adds two optional keys on top of the common split contract:
+
+- `normals_dir`: normal-map directory name substituted for `images`
+  (default `normals`).
+- `masks_dir`: optional validity-mask directory name substituted for `images`
+  (default `masks`). Missing same-stem mask files mean that sample has no
+  explicit mask.
+
+```yaml
+path: normal-dataset
+train: images/train
+val: images/val
+normals_dir: normals
+masks_dir: masks
+nc: 1
+names: {0: normal}
+```
+
+Validation reports mean and median angular error in degrees and the percentage
+of valid pixels within 11.25, 22.5, and 30 degrees. Canonical loader:
+`libreyolo.data.NormalDataset`.
+
 ## restore
 
 Image restoration pairs each degraded input image with a clean RGB target image

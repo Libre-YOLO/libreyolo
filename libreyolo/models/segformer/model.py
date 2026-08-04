@@ -493,7 +493,7 @@ class LibreSegformer(BaseModel):
         self.model.eval()
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        raise NotImplementedError("Export is not implemented for LibreSegformer yet.")
+        return super().export(format=format, **kwargs)
 
 
 __all__ = ["LibreSegformer", "preprocess_numpy"]

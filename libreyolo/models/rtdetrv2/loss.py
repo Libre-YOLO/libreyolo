@@ -27,8 +27,6 @@ import copy
 
 import torch
 
-from libreyolo.training.distributed import all_reduce_avg_scalar
-
 from ..rtdetr.loss import HungarianMatcher, SetCriterion
 
 
@@ -62,7 +60,7 @@ class RTDETRCriterionv2(SetCriterion):
 
         device = outputs["pred_logits"].device
         # Same normalization denominator as the parent's main/aux losses.
-        num_boxes = all_reduce_avg_scalar(
+        num_boxes = self._normalizer(
             sum(len(t["labels"]) for t in targets), device=device
         )
 
@@ -106,7 +104,7 @@ class RTDETRCriterionv2(SetCriterion):
         return losses
 
 
-def RTDETRv2Loss(num_classes=80, use_vfl=True):
+def RTDETRv2Loss(num_classes=80, use_vfl=True, distributed_normalize=True):
     """Create an RTDETRv2 criterion (matches ``RTDETRLoss`` settings).
 
     Identical matcher / weight_dict / losses as :func:`RTDETRLoss`, but returns
@@ -138,4 +136,5 @@ def RTDETRv2Loss(num_classes=80, use_vfl=True):
         alpha=0.75,
         gamma=2.0,
         num_classes=num_classes,
+        distributed_normalize=distributed_normalize,
     )

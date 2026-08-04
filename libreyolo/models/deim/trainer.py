@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple, Type
 
 import torch
-from torch.amp import autocast
 from tqdm import tqdm
 
 from ...data import (
@@ -150,13 +149,21 @@ class DEIMTrainer(BaseTrainer):
 
             apply_lora_to_detr(self.model)
 
+        self.criterion = self.build_criterion()
+
+    def build_criterion(self, *, distributed_normalize: bool = True):
+        """Build the training criterion.
+
+        Validation loss builds a second one with ``distributed_normalize``
+        off, so both stay defined in exactly one place.
+        """
         matcher = HungarianMatcher(
             weight_dict={"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0},
             use_focal_loss=True,
             alpha=0.25,
             gamma=2.0,
         )
-        self.criterion = DEIMCriterion(
+        return DEIMCriterion(
             matcher=matcher,
             weight_dict={
                 "loss_mal": 1.0,
@@ -170,7 +177,26 @@ class DEIMTrainer(BaseTrainer):
             gamma=1.5,
             num_classes=self.config.num_classes,
             reg_max=32,
+            distributed_normalize=distributed_normalize,
         ).to(self.device)
+
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            raise ValueError(
+                f"val_loss=True currently supports {self.get_model_family()} "
+                "detection only; other tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import DEIMValidationLoss
+
+        return DEIMValidationLoss(
+            model, self.build_criterion(distributed_normalize=False)
+        )
 
     def on_mosaic_disable(self):
         super().on_mosaic_disable()
@@ -538,7 +564,7 @@ class DEIMTrainer(BaseTrainer):
             targets = targets.to(self.device, non_blocking=True)
 
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._autocast_context():
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     loss = outputs["total_loss"]
                 self.optimizer.zero_grad()
@@ -657,7 +683,7 @@ class DEIMTrainer(BaseTrainer):
                 actual_window = min(accum, len(self.train_loader) - batch_idx)
 
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._autocast_context():
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     loss = outputs["total_loss"] / actual_window
                 self.scaler.scale(loss).backward()

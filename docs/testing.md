@@ -1,6 +1,6 @@
 # LibreYOLO Testing Strategy
 
-Version: 2.5
+Version: 2.7
 
 This is the CI/test contract for LibreYOLO. Times are UTC.
 
@@ -64,6 +64,88 @@ New unit tests are in the PR gate by default. If a test cannot satisfy this
 contract, prefer a local fixture or mock. If real external data is essential,
 move the coverage to the appropriate e2e, nightly, or manual suite.
 
+### Native-port parity gates
+
+A ported architecture must have a pinned-reference tensor parity test in
+addition to ordinary shape and API tests. The reference checkout and any
+checkpoint remain external and the test is marked `external_data`; the PR gate
+still exercises the port with local random weights plus exported-runtime
+parity.
+
+The edge-specialist gate is `tests/unit/test_edge_models_parity.py`:
+
+```bash
+LIBREYOLO_TEED_UPSTREAM=/path/to/TEED \
+LIBREYOLO_TEED_CHECKPOINT=/path/to/local/teed.pth \
+LIBREYOLO_DEXINED_UPSTREAM=/path/to/DexiNed \
+pytest -q tests/unit/test_edge_models_parity.py
+```
+
+The pinned commits and source licenses are recorded in the per-family NOTICE
+files. External checkpoints retain their own data/weight terms and must not be
+added to the repository as test fixtures.
+
+### LibreMODUS external-weight gates
+
+LibreMODUS is marked `modus`. Its PR-gate coverage is entirely local:
+
+```bash
+pytest -q tests/unit/test_modus.py
+```
+
+That test builds a two-layer random MoT model and a fake tokenizer. It checks
+the released 196,840-token ordering, learned checkpoint-key surface,
+Accelerate dispatch with checkpoint-absent deterministic buffers, constrained
+COCO/grounding grammars, dense payloads, the supported matrix, chaining,
+self-verification, and local FP8 cache arithmetic. It performs no HTTP request
+and loads no external weight.
+
+The dense-boundary tests also pin the public camera-facing normal convention,
+relative-depth normalization, aligned multi-input canvas requirement, separate
+standard text/image guidance scales (`4.0` / `2.0`), and authenticated-only
+upstream download policy.
+
+The real checkpoint is intentionally excluded from scheduled CI: it is about
+30 GB, is loaded directly from an external custom-term repository, and needs
+hardware larger than the standard nightly L4 for the BF16 reference. Before a
+release claims full LibreMODUS validation, a maintainer runs the following
+manual gates with:
+
+- MODUS source pinned to
+  `c299ef0fbba1cfe7c93336c45d7085afd770c0fa`;
+- checkpoint revision
+  `8428a81602c19141e422b1e1795dddcb5d2bc14b`;
+- the same GPU architecture, image preprocessing, seeds, noise tensors, and
+  ten flow steps for upstream/LibreYOLO parity;
+- externally obtained datasets that are never added to this repository.
+
+Required BF16 results:
+
+| Gate | Required result |
+| --- | --- |
+| Step parity, five images per task | velocity-field and autoregressive-logit maximum absolute difference `< 1e-3` |
+| NYUv2 depth | AbsRel within `0.005` of `0.065` |
+| NYUv2 normals | mean angular error within `0.5°` of `19.92°` |
+| RefCOCO val, fixed 500-example subset | grounding accuracy within `1.0` point of `54.5` |
+| COCO detection | record the exact subset, mAP, and a qualitative grid; upstream publishes no reference number |
+
+After recording this port's BF16 numbers, run the identical samples and seeds
+with `LibreMODUS(dtype="fp8")`:
+
+| FP8 delta versus this port's BF16 result | Acceptance |
+| --- | --- |
+| NYUv2 depth AbsRel | `<= +0.002` |
+| NYUv2 normal mean angle | `<= +0.15°` |
+| RefCOCO grounding | `>= -0.3` point |
+| BIPED edge ODS | `>= -0.005` |
+| 512px end-to-end peak VRAM | `< 12 GB` |
+
+If an FP8 quality gate fails, widen the high-precision decoder-block exemption
+and record the resulting recipe; do not weaken the threshold silently.
+Metric/parity/VRAM gates are **not yet passed** unless a PR or release record
+contains the hardware, software versions, commands, dataset subset manifests,
+and raw results. A CPU unit green run is not evidence for them.
+
 ## Install Smoke
 
 Scripts:
@@ -106,6 +188,7 @@ Files: `.github/workflows/e2e-nightly-release.yml`,
 `tools/ci/modal_nightly.py`,
 `tests/e2e/nightly_contract.py`, `tests/e2e/conftest.py`,
 `tests/e2e/test_deterministic_inference.py`,
+`tests/e2e/test_fcn_semantic.py`,
 `tests/e2e/test_rf1_training.py`, `Makefile`.
 
 Execution: scheduled nightly targets latest `dev` only; manual workflows can
@@ -150,20 +233,30 @@ make test_nightly
 make test_e2e E2E_TIMEOUT=1800
 ```
 
-V2.1 contract:
+V2.3 contract:
 
-- `general_nightly`: one smallest native inference case for every public
-  detector family that has a public auto-download route (LibreYOLO HF, or Deci's
-  CDN for YOLO-NAS), plus batched/sequential parity and selected open-vocabulary
-  smoke cases; currently 30 tests.
+- `general_nightly`: one smallest native inference case for every public model
+  family with a task-appropriate deterministic prediction path, including
+  inference-only museum, classification (such as the DeiT, AlexNet, VGG, and
+  Swin classifiers), and pose (HRNet) families, that has a public auto-download
+  route (LibreYOLO HF, or Deci's CDN for YOLO-NAS), plus batched/sequential
+  parity and selected open-vocabulary smoke cases. FCN adds one task-specific
+  real-checkpoint semantic predict, mIoU, and UI-render smoke, and DeepLabv3
+  adds a task-appropriate semantic stability case; currently 49 tests.
 - `flagship_nightly`: heavier YOLO9/RF-DETR native validation, video, tracking,
   CLI, and one RF1 training/reload size per flagship family; currently 48 tests
   with `not export_backend`. The full RF1 size matrix remains available under
   `-m rf1` for manual or future full-matrix runs.
-- Detector families cover detection. L2CS gaze is non-redistributable (no public
-  download route), so it runs as a non-gated per-family suite
+- Detector families cover detection, classifier families cover normalized
+  probability plus top-1 stability, and DeepLabv3 covers dense semantic masks.
+  L2CS gaze is non-redistributable (no public download route), so it runs as a
+  non-gated per-family suite
   (`tests/e2e/test_l2cs_gaze.py`) that skips when the weight is not staged
   locally, rather than gating the nightly.
+- HRNet pose uses its smallest public W32 checkpoint in the general nightly.
+  The case verifies row-aligned person boxes and COCO-17 keypoints through the
+  default YOLO9 person-detector composition, including list-source parity and
+  its explicit sequential fallback for `batch > 1`.
 - Export backends are outside default nightly.
 - Nightly-selected skips are failures.
 

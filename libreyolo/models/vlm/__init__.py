@@ -64,6 +64,12 @@ _LAZY_ALIASES: Dict[str, str] = {
     "sensenova-vision-7b": "7b",
     "sensenovavision": "7b",
 }
+_MODUS_ALIASES: Dict[str, str] = {
+    "libremodus": "14b-a7b",
+    "libremodus-14b-a7b": "14b-a7b",
+    "modus": "14b-a7b",
+    "modus-14b-a7b": "14b-a7b",
+}
 
 _DEFAULT_MODEL = "qwen3-vl-4b"
 
@@ -86,11 +92,15 @@ def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
         from ..sensenova import LibreSenseNovaVision
 
         return LibreSenseNovaVision(size=_LAZY_ALIASES[key], **kwargs)
+    if key in _MODUS_ALIASES:
+        from ..modus import LibreMODUS
+
+        return LibreMODUS(size=_MODUS_ALIASES[key], **kwargs)
     match = _ALIASES.get(key)
     if match is None:
         raise ValueError(
             f"Unknown VLM model {model!r}. Known aliases: "
-            f"{', '.join(sorted(set(_ALIASES) | set(_LAZY_ALIASES)))}."
+            f"{', '.join(sorted(set(_ALIASES) | set(_LAZY_ALIASES) | set(_MODUS_ALIASES)))}."
         )
     family_cls, size = match
     return family_cls(size=size, **kwargs)
@@ -101,6 +111,10 @@ def __getattr__(name: str):
         from ..sensenova import LibreSenseNovaVision
 
         return LibreSenseNovaVision
+    if name in {"LibreMODUS", "LibreModus"}:
+        from ..modus import LibreMODUS
+
+        return LibreMODUS
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -115,4 +129,6 @@ __all__ = [
     "LibreKosmos2",
     "LibreLocateAnything",
     "LibreSenseNovaVision",
+    "LibreMODUS",
+    "LibreModus",
 ]

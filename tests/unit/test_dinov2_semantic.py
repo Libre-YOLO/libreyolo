@@ -58,7 +58,10 @@ class TestDINOv2Metadata:
         from libreyolo.models.dinov2.model import LibreDINOv2
 
         assert "semantic" in LibreDINOv2.SUPPORTED_TASKS
+        assert "embed" in LibreDINOv2.SUPPORTED_TASKS
         assert LibreDINOv2.INPUT_SIZES["n"] == 518
+        assert LibreDINOv2.TASK_INPUT_SIZES["embed"]["n"] == 224
+        assert LibreDINOv2.detect_size_from_filename("LibreDINOv2n-embed.pt") is None
         assert LibreDINOv2.semantic_resize_mode == "stretch"
 
     def test_family_is_dinov2(self):
@@ -140,7 +143,9 @@ class TestDINOv2SemanticSegmenter:
         assert result.semantic_mask is not None
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
 
-    def test_wrapper_predict_augment_returns_semantic_mask(self, fake_backbone, tmp_path):
+    def test_wrapper_predict_augment_returns_semantic_mask(
+        self, fake_backbone, tmp_path
+    ):
         from libreyolo.models.dinov2.model import LibreDINOv2
 
         img_path = tmp_path / "img.jpg"
@@ -176,11 +181,13 @@ class TestDINOv2SemanticSegmenter:
                 model_path=None, size="n", task="detect", nb_classes=3, device="cpu"
             )
 
-    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    @pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino"])
     def test_exported_semantic_parity(self, fake_backbone, tmp_path, format):
         if format == "onnx":
             pytest.importorskip("onnx")
             pytest.importorskip("onnxruntime")
+        if format == "openvino":
+            pytest.importorskip("openvino")
 
         from libreyolo import LibreYOLO
         from libreyolo.models.dinov2.model import LibreDINOv2
@@ -193,8 +200,11 @@ class TestDINOv2SemanticSegmenter:
             0, 256, size=(70, 70, 3), dtype=np.uint8
         )
         native = model.predict(image, imgsz=70).semantic_mask.data
-        suffix = ".onnx" if format == "onnx" else ".torchscript"
-        artifact = tmp_path / f"dinov2_semantic{suffix}"
+        artifact = tmp_path / {
+            "onnx": "dinov2_semantic.onnx",
+            "torchscript": "dinov2_semantic.torchscript",
+            "openvino": "dinov2_semantic_openvino",
+        }[format]
         model.export(
             format=format,
             output_path=str(artifact),
@@ -205,6 +215,207 @@ class TestDINOv2SemanticSegmenter:
         exported = LibreYOLO(str(artifact), device="cpu").predict(image)
         agreement = (native == exported.semantic_mask.data).float().mean().item()
         assert agreement > 0.95
+
+
+def test_dinov2_classify_torchscript_predict_parity(fake_backbone, tmp_path):
+    from libreyolo import LibreYOLO
+    from libreyolo.models.dinov2.model import LibreDINOv2
+
+    torch.manual_seed(7)
+    model = LibreDINOv2(
+        model_path=None,
+        size="n",
+        task="classify",
+        nb_classes=3,
+        device="cpu",
+    )
+    image = np.random.default_rng(7).integers(
+        0, 256, size=(180, 260, 3), dtype=np.uint8
+    )
+    native = model.predict(image, imgsz=224)
+    artifact = tmp_path / "dinov2_classify.torchscript"
+
+    model.export(
+        format="torchscript",
+        output_path=str(artifact),
+        imgsz=224,
+    )
+    exported = LibreYOLO(str(artifact), device="cpu").predict(image)
+
+    torch.testing.assert_close(
+        exported.probs.data,
+        native.probs.data,
+        rtol=1e-5,
+        atol=1e-6,
+    )
+
+
+class TestDINOv2Embed:
+    def test_wrapper_uses_final_cls_token(self, monkeypatch):
+        from types import SimpleNamespace
+
+        import libreyolo.models.rfdetr.nn as rfdetr_nn
+        from libreyolo.models.dinov2.model import _DINOv2EmbedderWrapper
+
+        class _Embeddings(nn.Module):
+            def forward(self, images):
+                batch = images.shape[0]
+                tokens = torch.full((batch, 3, 4), 10.0)
+                tokens[:, 0] = torch.tensor([1.0, 2.0, 3.0, 4.0])
+                return tokens
+
+        class _Encoder(nn.Module):
+            def forward(self, hidden, **_):
+                return (hidden + 1.0,)
+
+        class _Dino(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace(hidden_size=4)
+                self.embeddings = _Embeddings()
+                self.encoder = _Encoder()
+                self.layernorm = nn.Identity()
+
+        class _DinoContainer(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.encoder = _Dino()
+
+        class _Backbone(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.encoder = _DinoContainer()
+                self.projector = nn.Linear(4, 4)
+
+        class _Classifier:
+            resolution = 224
+            patch_size = 14
+            num_windows = 1
+
+            def __init__(self, **_):
+                self.backbone = _Backbone()
+
+        monkeypatch.setattr(rfdetr_nn, "RFDETRClassifier", _Classifier)
+        wrapper = _DINOv2EmbedderWrapper("n")
+        output = wrapper(torch.zeros(2, 3, 16, 16))
+
+        assert wrapper.embedding_dim == 4
+        assert output.shape == (2, 4)
+        assert not any("projector" in key for key in wrapper.state_dict())
+        assert torch.equal(
+            output,
+            torch.tensor([[2.0, 3.0, 4.0, 5.0]]).repeat(2, 1),
+        )
+
+    def test_wrapper_matches_canonical_hf_forward(self):
+        """The hand-rolled embeddings->encoder->layernorm->CLS path must stay
+        equivalent to the canonical model forward at num_windows=1."""
+        from libreyolo.models.dinov2.model import _DINOv2EmbedderWrapper
+        from libreyolo.models.rfdetr.dinov2 import (
+            WindowedDinov2WithRegistersBackbone,
+            WindowedDinov2WithRegistersConfig,
+            WindowedDinov2WithRegistersModel,
+        )
+
+        config = WindowedDinov2WithRegistersConfig(
+            image_size=28,
+            patch_size=14,
+            hidden_size=16,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_register_tokens=2,
+            num_windows=1,
+            out_indices=[1],
+        )
+        torch.manual_seed(0)
+        backbone = WindowedDinov2WithRegistersBackbone(config).eval()
+        canonical = WindowedDinov2WithRegistersModel(config).eval()
+        canonical.load_state_dict(backbone.state_dict())
+
+        wrapper = object.__new__(_DINOv2EmbedderWrapper)
+        nn.Module.__init__(wrapper)
+        container = nn.Module()
+        container.encoder = backbone
+        wrapper.backbone = nn.Module()
+        wrapper.backbone.encoder = container
+
+        x = torch.randn(2, 3, 28, 28)
+        with torch.no_grad():
+            ours = wrapper(x)
+            expected = canonical(x).pooler_output
+        assert ours.shape == (2, 16)
+        torch.testing.assert_close(ours, expected)
+
+    def test_predict_and_embed_verb_contract(self, monkeypatch):
+        from libreyolo.models.dinov2.model import LibreDINOv2
+
+        class _FakeEmbedder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.backbone = nn.Conv2d(3, 6, 1, bias=False)
+
+            def forward(self, images):
+                return self.backbone(images).mean(dim=(2, 3))
+
+        monkeypatch.setattr(
+            LibreDINOv2,
+            "_init_model",
+            lambda self: _FakeEmbedder(),
+        )
+        model = LibreDINOv2(
+            model_path=None,
+            size="n",
+            task="embed",
+            device="cpu",
+        )
+        image_a = Image.new("RGB", (40, 30), color=(120, 30, 10))
+        image_b = Image.new("RGB", (40, 30), color=(10, 30, 120))
+
+        result = model(image_a)
+        assert result.boxes is None
+        assert result.embeddings.data.shape == (1, 6)
+        assert torch.allclose(
+            result.embeddings.data.norm(dim=-1),
+            torch.ones(1),
+            atol=1e-5,
+        )
+        assert model.embed([image_a, image_b]).shape == (2, 6)
+        assert not hasattr(model, "embed_text")
+
+    @pytest.mark.parametrize("format", ["onnx", "tflite"])
+    def test_train_val_are_out_of_scope_and_embed_export_routes(
+        self, monkeypatch, format
+    ):
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.models.dinov2.model import LibreDINOv2
+
+        model = object.__new__(LibreDINOv2)
+        model.task = "embed"
+
+        with pytest.raises(NotImplementedError, match="training is not implemented"):
+            model.train(data="unused")
+        with pytest.raises(NotImplementedError, match="retrieval validation"):
+            model.val(data="unused")
+
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return f"dinov2-embed.{format}"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+        assert model.export(format=format, dynamic=False) == (
+            f"dinov2-embed.{format}"
+        )
+        assert captured == {"format": format, "opset": 17, "dynamic": False}
+
+    def test_classify_unsupported_export_keeps_classify_error(self):
+        from libreyolo.models.dinov2.model import LibreDINOv2
+
+        model = object.__new__(LibreDINOv2)
+        model.task = "classify"
+        with pytest.raises(NotImplementedError, match="classify export"):
+            model.export(format="tflite")
 
 
 def _make_semantic_yaml(root, n_images=4, size=70):
@@ -329,8 +540,6 @@ def test_dinov2_semantic_forward_real_backbone():
 @pytest.mark.parametrize(("task", "imgsz"), [("semantic", 518), ("classify", 224)])
 @pytest.mark.parametrize("format", ["onnx", "torchscript"])
 def test_dinov2_real_export_raw_parity(tmp_path, task, imgsz, format):
-    if task == "classify" and format != "onnx":
-        pytest.skip("LibreDINOv2 classify export is intentionally ONNX-only")
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")

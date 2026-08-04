@@ -12,6 +12,10 @@ Sizes: ``t`` = BiRefNet_lite (Swin-T tier, fast), ``l`` = BiRefNet general
 relative-position tables are resolution-tied; a non-native resolution silently
 interpolates them badly), and the matte is resized back to the original canvas.
 
+The sibling ``feynobg`` family (LibreFeyNobg) shares this architecture with a
+deeper stage 3; its checkpoints carry 24 stage-3 blocks and are rejected here
+so each family claims only its own weights.
+
 Inference-only in v1. Fine-tuning is a documented follow-up (see :meth:`train`);
 the paired-data schema is specced in ``docs/dataset_schema.md``.
 """
@@ -50,8 +54,11 @@ class LibreBiRefNet(BaseModel):
 
     _UPSTREAM_URL = "https://github.com/ZhengPeng7/BiRefNet"
 
-    # The Swin patch-embed width uniquely identifies the backbone tier.
+    # The Swin patch-embed width identifies the backbone tier. FeyNobg shares
+    # the Swin-L width (192) but has 24 stage-3 blocks; its marker key makes
+    # detect_size return None so the feynobg family claims those checkpoints.
     _EMBED_DIM_TO_SIZE: ClassVar[Dict[int, str]] = {96: "t", 192: "l"}
+    _FEYNOBG_MARKER = "bb.layers.2.blocks.23.norm1.weight"
 
     # ====================================================================
     # Checkpoint detection
@@ -72,6 +79,8 @@ class LibreBiRefNet(BaseModel):
         proj = weights_dict.get("bb.patch_embed.proj.weight")
         if proj is None or getattr(proj, "ndim", 0) != 4:
             return None
+        if cls._FEYNOBG_MARKER in weights_dict:
+            return None  # FeyNobg checkpoint: belongs to the feynobg family
         return cls._EMBED_DIM_TO_SIZE.get(int(proj.shape[0]))
 
     @classmethod
@@ -161,8 +170,16 @@ class LibreBiRefNet(BaseModel):
         mode = getattr(self, "_cuda_graph_mode", None)
         if mode is None:
             return self.model(input_tensor)
+        # forward_enc/forward_dec are called as plain methods, so the root
+        # __call__ hooks that implement the float32 I/O contract for
+        # half-precision checkpoints (fp16 cast recipe, fp16-remainder
+        # finalized quant) never fire; apply the same contract at the seam.
+        param_dtype = next(self.model.parameters()).dtype
+        if input_tensor.dtype == torch.float32 and param_dtype != torch.float32:
+            input_tensor = input_tensor.to(param_dtype)
         feats = self._get_graph_runner().run(input_tensor, auto=(mode == "auto"))
-        return self.model.forward_dec(input_tensor, feats)
+        out = self.model.forward_dec(input_tensor, feats)
+        return out.float() if out.dtype != torch.float32 else out
 
     def _postprocess(
         self,

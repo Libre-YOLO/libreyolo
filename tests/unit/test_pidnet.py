@@ -193,11 +193,15 @@ class TestPIDNetForwardAndPredict:
         with pytest.raises(NotImplementedError):
             model.train(data="cityscapes.yaml")
 
-    @pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn", "tflite"])
+    @pytest.mark.parametrize(
+        "format", ["onnx", "torchscript", "openvino", "ncnn", "tflite"]
+    )
     def test_exported_semantic_parity(self, tmp_path, format):
         if format == "onnx":
             pytest.importorskip("onnx")
             pytest.importorskip("onnxruntime")
+        if format == "openvino":
+            pytest.importorskip("openvino")
         if format == "tflite" and (
             importlib.util.find_spec("onnx2tf") is None
             or importlib.util.find_spec("ai_edge_litert") is None
@@ -212,6 +216,11 @@ class TestPIDNetForwardAndPredict:
         from libreyolo import LibreYOLO
         from libreyolo.models.pidnet.model import LibrePIDNet
 
+        # Random untrained logits can be almost tied, making a tiny backend
+        # rounding difference flip many argmax pixels and turn this parity
+        # check into an ambient-RNG failure. Fix the draw so the test measures
+        # the export path rather than whichever tests happened to run first.
+        torch.manual_seed(0)
         model = LibrePIDNet(
             model_path=None, size="s", task="semantic", nb_classes=3, device="cpu"
         )

@@ -39,7 +39,11 @@ def preprocess_numpy(
         Tuple of (preprocessed CHW float32 array in BGR 0-255, ratio).
     """
     orig_h, orig_w = img_rgb_hwc.shape[:2]
-    ratio = min(input_size / orig_h, input_size / orig_w)
+    if isinstance(input_size, (list, tuple)):
+        input_h, input_w = int(input_size[0]), int(input_size[1])
+    else:
+        input_h = input_w = int(input_size)
+    ratio = min(input_w / orig_w, input_h / orig_h)
     new_w, new_h = int(orig_w * ratio), int(orig_h * ratio)
 
     img_resized = Image.fromarray(img_rgb_hwc).resize(
@@ -47,7 +51,7 @@ def preprocess_numpy(
     )
 
     # Letterbox with gray padding at top-left
-    padded = Image.new("RGB", (input_size, input_size), (114, 114, 114))
+    padded = Image.new("RGB", (input_w, input_h), (114, 114, 114))
     padded.paste(img_resized, (0, 0))
 
     # RGB to BGR, HWC to CHW, keep 0-255

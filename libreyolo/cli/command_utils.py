@@ -7,6 +7,8 @@ from typing import Any, NoReturn, Optional, Set, Tuple, Union
 import click
 import typer
 
+from libreyolo.utils.image_size import normalize_imgsz
+
 from .errors import CLIError
 from .output import OutputHandler
 
@@ -78,6 +80,29 @@ def _coerce_input_size(value: Any) -> ImageSize:
         h, w = int(value[0]), int(value[1])
         return h if h == w else (h, w)
     return int(value)
+
+
+def parse_imgsz_str(imgsz: str | int | None) -> int | tuple[int, int] | None:
+    """Parse an imgsz value from CLI string format.
+
+    Accepts:
+        "640"      -> 640
+        "480x640"  -> (480, 640)
+        "480X640"  -> (480, 640)
+        "480,640"  -> (480, 640), legacy alias
+        None       -> None
+        int        -> int (pass-through)
+    """
+    if imgsz is None:
+        return None
+    if isinstance(imgsz, str) and not imgsz.strip():
+        return None
+    return normalize_imgsz(
+        imgsz,
+        name="imgsz",
+        allow_string=True,
+        allow_comma=True,
+    )
 
 
 def get_loaded_model_input_size(

@@ -30,6 +30,7 @@ from .obb import (
     xywhr_to_proxy_xyxy,
 )
 from libreyolo.training.distributed import is_main_process
+from libreyolo.utils.image_size import imgsz_to_hw
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +246,7 @@ class YOLODataset(ImageCacheMixin, Dataset):
         self,
         data_dir: str | None = None,
         split: str = "train",
-        img_size: Tuple[int, int] = (640, 640),
+        img_size: int | Tuple[int, int] | List[int] = (640, 640),
         preproc=None,
         img_files: List[Path] | None = None,
         label_files: List[Path] | None = None,
@@ -265,9 +266,9 @@ class YOLODataset(ImageCacheMixin, Dataset):
             label_files: List of label paths (optional, inferred if not provided).
             num_classes: Optional class-count bound used for OBB label validation.
         """
-        self.img_size = img_size
+        self.img_size = imgsz_to_hw(img_size, name="img_size")
         self.preproc = preproc
-        self._input_dim = img_size
+        self._input_dim = self.img_size
         self.load_segments = load_segments
         self.load_obb = load_obb
         self.num_classes = num_classes
@@ -529,16 +530,8 @@ class YOLODataset(ImageCacheMixin, Dataset):
             raise ValueError(f"Failed to load {img_file}")
         return img
 
-    def load_resized_img(self, index: int) -> np.ndarray:
-        """Load and resize image."""
-        img = self.load_image(index)
-        r = min(self.img_size[0] / img.shape[0], self.img_size[1] / img.shape[1])
-        resized_img = cv2.resize(
-            img,
-            (int(img.shape[1] * r), int(img.shape[0] * r)),
-            interpolation=cv2.INTER_LINEAR,
-        ).astype(np.uint8)
-        return resized_img
+    # load_resized_img comes from ImageCacheMixin: the deterministic resize is
+    # the post-resize cache point, so the mixin owns both the math and the cache.
 
     def _load_segments(self, index: int):
         if self.segments is None:
@@ -613,7 +606,7 @@ class COCODataset(ImageCacheMixin, Dataset):
         data_dir: str,
         json_file: str = "instances_train2017.json",
         name: str = "train2017",
-        img_size: Tuple[int, int] = (640, 640),
+        img_size: int | Tuple[int, int] | List[int] = (640, 640),
         preproc=None,
         load_segments: bool = False,
         load_obb: bool = False,
@@ -643,8 +636,8 @@ class COCODataset(ImageCacheMixin, Dataset):
         self.data_dir = Path(data_dir)
         self.json_file = json_file
         self.name = name
-        self.img_size = img_size
-        self._input_dim = img_size
+        self.img_size = imgsz_to_hw(img_size, name="img_size")
+        self._input_dim = self.img_size
         self.preproc = preproc
         self.load_segments = load_segments
         self.load_obb = load_obb
@@ -891,16 +884,8 @@ class COCODataset(ImageCacheMixin, Dataset):
             raise ValueError(f"Failed to load {img_file}")
         return img
 
-    def load_resized_img(self, index: int) -> np.ndarray:
-        """Load and resize image."""
-        img = self.load_image(index)
-        r = min(self.img_size[0] / img.shape[0], self.img_size[1] / img.shape[1])
-        resized_img = cv2.resize(
-            img,
-            (int(img.shape[1] * r), int(img.shape[0] * r)),
-            interpolation=cv2.INTER_LINEAR,
-        ).astype(np.uint8)
-        return resized_img
+    # load_resized_img comes from ImageCacheMixin: the deterministic resize is
+    # the post-resize cache point, so the mixin owns both the math and the cache.
 
     def _load_segments(self, index: int):
         if self.segments is None:

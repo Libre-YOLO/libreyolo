@@ -32,13 +32,21 @@ Required field meanings:
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
 - `task`: canonical task, one of `detect`, `segment`, `semantic`, `panoptic`,
-  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `restore`, `matte`, or
-  `ocr`.
+  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `edge`, `normal`, `restore`,
+  `matte`, `ocr`, `embed`, or `mesh`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
   legacy sparse mappings, but out-of-range keys are invalid.
-- `imgsz`: positive integer square input resolution.
+- `imgsz`: positive integer square input resolution or the legacy scalar for a
+  rectangular family contract. Rectangular checkpoints keep a scalar here for
+  legacy readers, set to `max(imgsz_h, imgsz_w)`, and additionally
+  dual-write `imgsz_h` and `imgsz_w` with the real dimensions, mirroring the
+  export-runtime convention below. Readers that understand the rectangular
+  fields must prefer them over the scalar. Families with a fixed rectangular
+  contract, such as HRNet pose, reject incompatible runtime sizes; otherwise
+  inference sizing follows the family's documented predict and validation
+  rules.
 
 Pose checkpoints additionally include:
 
@@ -58,9 +66,33 @@ Pose checkpoints additionally include:
   `0` for classes without keypoints. Runtime backends use this schema to select
   the active keypoints for the predicted class.
 
+Mesh checkpoints use the task string `mesh`, `nc: 1`, and
+`names: {0: "person"}`. Because parameter layouts differ between body models,
+the dimensions are recorded rather than assumed, the same way pose records
+`num_keypoints`:
+
+- `body_model`: the parameterization the checkpoint predicts into, such as
+  `mhr`. Required; consumers use it to interpret every field below and to pick
+  a body-model decoder.
+- `num_betas`: identity/shape coefficient count (45 for MHR).
+- `num_body_pose`: width of the body-pose parameter block (130 for MHR). This
+  is a flat parameter vector, not one triplet per joint, because rig joints
+  carry different degrees of freedom.
+- `num_vertices` / `num_joints`: geometry sizes the body-model decoder emits
+  (18439 and 127 for MHR), recorded so a payload can be validated before the
+  decoder is loaded.
+- `rotation_format`: how rotations are encoded, such as `euler_zyx` for MHR or
+  `axis_angle`. Never inferred from the tensor shape, since a 3-vector is
+  ambiguous between the two.
+
 Depth checkpoints use the task string `depth`, `nc: 1`, and
 `names: {0: "depth"}`. The single class-like slot exists only for checkpoint
 schema compatibility; depth predictions are dense float maps, not classes.
+
+Edge checkpoints use the task string `edge`, `nc: 1`, and
+`names: {0: "edge"}`. The single class-like slot exists only for checkpoint
+schema compatibility; edge predictions are dense float32 probability maps in
+`[0, 1]`, not classes.
 
 Restore checkpoints use the task string `restore`, `nc: 1`, and
 `names: {0: "image"}`. The single class-like slot exists only for checkpoint
@@ -103,17 +135,19 @@ LibreYOLO behavior. Other checkpoint formats may differ.
 
 ## Export Runtime Metadata
 
-The checkpoint schema above remains square-only. Exported runtime artifacts may
-also carry metadata for graph tracing and backend loading. For rectangular
-graph exports, exporters may dual-write `imgsz_h` and `imgsz_w` next to the
-legacy scalar `imgsz`; readers that do not understand the rectangular fields
-must not silently treat the scalar as a square runtime contract.
+Checkpoint and export runtime metadata use the same rectangular dual-write
+convention. Exporters write `imgsz_h` and `imgsz_w` next to the legacy scalar
+`imgsz`; readers that do not understand the rectangular fields must not
+silently treat the scalar as a square runtime contract.
 
 Backend support for rectangular runtime metadata is family- and format-scoped.
-YOLO9-family and NAFNet exports may use non-square `imgsz_h/imgsz_w` in
-supported runtime formats; families or formats without explicit rectangular
-support must reject the metadata instead of preprocessing those artifacts as
-square inputs.
+YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports may use non-square
+`imgsz_h/imgsz_w` in supported runtime formats; families or formats without
+explicit rectangular support must reject the metadata instead of preprocessing
+those artifacts as square inputs. HRNet exports are fixed, batch-one, FP32
+person-crop heads: W32 accepts 256x192 and W48 accepts 384x288. The native
+Python runner owns person detection and crop geometry and is not embedded in
+the exported graph.
 
 NAFNet restore runtime exports use a fixed-resolution v1 contract. ONNX exports
 emit one dense `restored` output tensor and force `dynamic=false`; backend
@@ -157,6 +191,9 @@ Pose runtime exports may also write these flat metadata keys:
 - `num_keypoints_per_class`: optional JSON-encoded list of per-class keypoint
   counts for GroupPose-style heads. Readers must preserve zero-keypoint class
   slots because they define the class-to-keypoint schema.
+- `pose_input`: optional input-stage contract. `"person_crop"` means the graph
+  consumes one already-extracted person crop rather than a full image and does
+  not contain a detector. HRNet runtime exports require this value.
 
 Classification runtime exports (MobileNetV4 / ConvNeXt / EfficientNetV2 /
 ResNet) may also write these flat metadata keys so that exported-backend
@@ -167,6 +204,19 @@ bit-identical:
   `round(imgsz / crop_pct)`. Readers default to `0.875` when the key is absent.
 - `interpolation`: resize filter, `"bilinear"` or `"bicubic"`. Readers default
   to `"bilinear"` when the key is absent.
+
+ExecuTorch exports write the flat metadata to a required
+`<program>.pte.json` sidecar. The v1 contract is CPU, FP32, batch 1, and a
+fixed input canvas. It additionally requires:
+
+- `executorch_version`: installed ExecuTorch package version used to export.
+- `executorch_delegate`: `"xnnpack"`.
+- `executorch_delegate_partitions`: positive number of XNNPACK delegate calls
+  retained in the lowered edge program.
+
+The loader rejects a sidecar that claims another delegate, dynamic shapes, or
+non-FP32 precision. A `.pte` is backend-specific and is not a native PyTorch
+checkpoint.
 
 For ONNX YOLO9 detection exports with `nms=true`, output `0` / `output` is the
 standalone post-NMS tensor using the export-time `nms_conf`, `nms_iou`, and
@@ -179,8 +229,11 @@ want graph-embedded NMS should use the first output.
 
 Quantized models add one optional flat key, `quant`: a small manifest dict
 (`schema`, `recipe`, `keep_high_precision`, `execution`, calibration
-provenance, `module_count`, `state`). Loaders that see `quant` rebuild the
-quantized module structure before `load_state_dict`. See `quantization.md`.
+provenance, `module_count`, `state`). FP8 manifests may additionally carry
+`fp8_tensorwise_weights`, an exact list of `QuantLinear` module names whose
+weight scale is tensorwise rather than per-output-channel. Loaders that see
+`quant` rebuild the quantized module structure and scaling policy before
+`load_state_dict`. See `quantization.md`.
 
 `state` distinguishes the two artifact forms:
 
@@ -194,7 +247,9 @@ quantized module structure before `load_state_dict`. See `quantization.md`.
     (fp32 per-channel). Dequant: `weight_packed * scale`. Activation range
     buffers (`_q_act_lo`/`_q_act_hi`/`_q_calibrated`) are retained.
   - fp8: `weight_packed` (float8_e4m3fn, original weight shape) and
-    `_q_w_scale` (fp32 per-channel). Dequant: `weight_packed * scale`.
+    `_q_w_scale` (fp32, one entry per output channel). Modules listed in
+    `fp8_tensorwise_weights` repeat one tensorwise scale in every entry so the
+    state-dict tensor shape remains stable. Dequant: `weight_packed * scale`.
   - w4a16 / w4a8: `weight_packed` (uint8, two 4-bit codes per byte, low
     nibble first; code = q + 8) and `_q_w_gscale` (fp32, [out, ngroups],
     group 128 along in_features). int2: four 2-bit codes per byte
@@ -244,6 +299,27 @@ distributed as training checkpoints.
 
 For release compatibility, readers accept legacy best-metric aliases such as
 `best_mAP50_95`, `best_mAP50`, `best_metric`, and `best_metric_name`.
+
+## External Snapshot Exception
+
+The schema above governs LibreYOLO-authored `.pt` checkpoints. It does not
+rename or wrap multi-file upstream snapshots used by separate model tiers.
+
+LibreMODUS size `14b-a7b` is one such explicit exception. The alias
+`libremodus-14b-a7b` resolves through `LibreVLM(...)` to a directory containing
+the pinned upstream safetensors, configs, and tokenizer files. LibreYOLO neither
+adds v1.0 metadata to that directory nor republishes it as a `.pt` file. A local
+FP8 cache is an internal sharded safetensors derivative keyed by source and
+recipe; it is not an official checkpoint and must not be uploaded.
+
+Before dispatch, the LibreMODUS loader validates all required files and checks
+that the rebuilt tokenizer length exactly matches the row count of
+`language_model.model.embed_tokens.weight`. That tensor is authoritative
+because the released `llm_config.json` retains the smaller base-vocabulary
+value.
+
+See [`nomenclature.md`](nomenclature.md) and
+[`libremodus.md`](libremodus.md).
 
 ## Legacy And Foreign Weights
 

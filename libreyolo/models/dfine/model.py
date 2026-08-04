@@ -52,6 +52,12 @@ class LibreDFINE(BaseModel):
     }
     val_preprocessor_class = DFINEValPreprocessor
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
+    # The eval forward (HGNetv2 backbone + hybrid encoder + FDR decoder) is
+    # pure tensor work at a fixed eval_spatial_size: anchors are regenerated
+    # lazily but settle during capture warmup, and top-k selection has a
+    # static output shape. Captures and replays bit-identically
+    # (tests/unit/test_cuda_graph_detr_families.py).
+    SUPPORTS_CUDA_GRAPH = True
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:

@@ -1,0 +1,85 @@
+"""Contract tests for explicit automatic mixed-precision dtypes."""
+
+from inspect import Parameter, signature
+from types import SimpleNamespace
+
+import pytest
+import torch
+
+from libreyolo.training.config import TrainConfig
+from libreyolo.training.trainer import BaseTrainer
+from libreyolo.utils.amp import (
+    amp_uses_grad_scaler,
+    normalize_amp_dtype,
+    torch_amp_dtype,
+)
+from libreyolo.validation.config import ValidationConfig
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("value", "canonical", "torch_dtype"),
+    [
+        ("float16", "float16", torch.float16),
+        ("fp16", "float16", torch.float16),
+        ("bfloat16", "bfloat16", torch.bfloat16),
+        ("bf16", "bfloat16", torch.bfloat16),
+    ],
+)
+def test_amp_dtype_aliases(value, canonical, torch_dtype):
+    assert normalize_amp_dtype(value) == canonical
+    assert torch_amp_dtype(value) == torch_dtype
+
+
+@pytest.mark.unit
+def test_invalid_amp_dtype_fails_in_train_and_validation_configs():
+    with pytest.raises(ValueError, match="amp_dtype"):
+        TrainConfig(amp_dtype="float32")
+    with pytest.raises(ValueError, match="amp_dtype"):
+        ValidationConfig(data="unused.yaml", amp_dtype="float32")
+
+
+@pytest.mark.unit
+def test_new_validation_options_do_not_shift_legacy_positional_api():
+    parameters = signature(ValidationConfig).parameters
+
+    assert parameters["amp_dtype"].kind is Parameter.KEYWORD_ONLY
+    assert parameters["eval_max_det"].kind is Parameter.KEYWORD_ONLY
+
+
+@pytest.mark.unit
+def test_only_float16_amp_enables_grad_scaling():
+    assert amp_uses_grad_scaler("float16") is True
+    assert amp_uses_grad_scaler("bf16") is False
+
+
+@pytest.mark.unit
+def test_trainer_autocast_context_uses_configured_dtype(monkeypatch):
+    calls = []
+
+    class _Context:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *_):
+            return False
+
+    def fake_autocast(device_type, *, dtype, cache_enabled=True):
+        calls.append((device_type, dtype, cache_enabled))
+        return _Context()
+
+    monkeypatch.setattr("libreyolo.training.trainer.autocast", fake_autocast)
+    trainer = SimpleNamespace(config=SimpleNamespace(amp_dtype="bfloat16"))
+
+    # Without a CUDA graph manager the autocast weight cache stays enabled.
+    with BaseTrainer._autocast_context(trainer):
+        pass
+
+    assert calls == [("cuda", torch.bfloat16, True)]
+
+    # With a manager active the capture recipe requires the cache disabled.
+    trainer._cuda_graph_manager = object()
+    with BaseTrainer._autocast_context(trainer):
+        pass
+
+    assert calls[-1] == ("cuda", torch.bfloat16, False)

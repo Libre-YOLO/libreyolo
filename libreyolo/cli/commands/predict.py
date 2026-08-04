@@ -14,6 +14,7 @@ from ..command_utils import (
     get_user_provided_params,
     help_json_callback,
     load_model_or_exit,
+    parse_imgsz_str,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
@@ -43,7 +44,7 @@ def _build_predict_kwargs(
     user_provided: set[str],
     conf: float,
     iou: float,
-    imgsz: Optional[int],
+    imgsz: Optional[int | tuple[int, int]],
     classes: Optional[list[int]],
     max_det: int,
     save: bool,
@@ -104,7 +105,9 @@ def predict_cmd(
     model: str = typer.Option("yolox-s", help="Model name or path"),
     conf: float = typer.Option(0.25, help="Confidence threshold"),
     iou: float = typer.Option(0.45, help="NMS IoU threshold"),
-    imgsz: Optional[int] = typer.Option(None, help="Input image size"),
+    imgsz: Optional[str] = typer.Option(
+        None, help="Input image size: 640 (square) or 480x640 (HxW)"
+    ),
     classes: Optional[str] = typer.Option(
         None, help="Filter by class IDs, e.g. [0,2,5]"
     ),
@@ -131,6 +134,15 @@ def predict_cmd(
         "--face-detector",
         help="Face detector model (path or CLI name); required for gaze models",
     ),
+    gallery: Optional[str] = typer.Option(
+        None,
+        "--gallery",
+        help="Face gallery (.npz from `libreyolo enroll`) to identify faces "
+        "against; facial-recognition models only",
+    ),
+    gallery_threshold: float = typer.Option(
+        0.4, help="Cosine threshold for a gallery identity match"
+    ),
     project: str = typer.Option("runs/detect", help="Output directory root"),
     name: str = typer.Option("predict", help="Experiment name"),
     exist_ok: bool = typer.Option(False, help="Reuse existing output directory"),
@@ -151,6 +163,10 @@ def predict_cmd(
 
     out = OutputHandler(json_mode=json_output, quiet=quiet)
     user_provided = get_user_provided_params()
+    try:
+        imgsz = parse_imgsz_str(imgsz) if imgsz is not None else None
+    except ValueError as exc:
+        exit_with_error(out, "invalid_imgsz", str(exc))
 
     # Validate source exists
     source_path = Path(source)
@@ -184,6 +200,40 @@ def predict_cmd(
         from libreyolo.models.l2cs.face import resolve_face_detector
 
         loaded_model.face_detector = resolve_face_detector(fd_model)
+
+    # Face-embedding models: optional --face-detector override (the family
+    # otherwise falls back to its auto-downloaded default detector) and
+    # optional --gallery for 1:N identification.
+    gallery_obj = None
+    if getattr(loaded_model, "task", None) == "embed":
+        if face_detector is not None:
+            from .special import _resolve_embed_face_detector
+
+            loaded_model.face_detector = _resolve_embed_face_detector(
+                out, face_detector, device
+            )
+        if gallery is not None:
+            if not Path(gallery).exists():
+                exit_with_error(
+                    out,
+                    "source_not_found",
+                    f"Gallery not found: {gallery}. Build one with "
+                    "`libreyolo enroll model=... source=people/ gallery=...`.",
+                )
+            from libreyolo.models.facerec import FaceGallery
+
+            try:
+                gallery_obj = FaceGallery.load(gallery, embedder=loaded_model)
+            except ValueError as exc:
+                exit_with_error(out, "config_unsupported", str(exc))
+    elif gallery is not None:
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "--gallery is only supported for embed-task models "
+            "(e.g. model=facerec-l, or a CLIP/SigLIP2/DINOv2 model loaded "
+            "with task=embed).",
+        )
 
     # FP16 (half) precision: exported runtimes (ONNX, TensorRT, ...) accept the
     # flag and run in FP16, so forward it there. For native PyTorch inference it
@@ -246,6 +296,9 @@ def predict_cmd(
     )
     if half and is_exported_backend:
         predict_kwargs["half"] = half
+    if gallery_obj is not None:
+        predict_kwargs["gallery"] = gallery_obj
+        predict_kwargs["threshold"] = gallery_threshold
     results = loaded_model(source, **predict_kwargs)
     elapsed = time.time() - t0
 
@@ -312,10 +365,13 @@ def predict_cmd(
                     )
                     class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
                 result_data["detections"] = detections
-                summary = ", ".join(
-                    f"{v} {k}{'s' if v > 1 else ''}"
-                    for k, v in class_counts.items()
-                ) or "(no detections)"
+                summary = (
+                    ", ".join(
+                        f"{v} {k}{'s' if v > 1 else ''}"
+                        for k, v in class_counts.items()
+                    )
+                    or "(no detections)"
+                )
             elif getattr(r, "probs", None) is not None:
                 top_rows = r.summary()
                 result_data["classification"] = top_rows[0] if top_rows else None
@@ -344,6 +400,27 @@ def predict_cmd(
                     f"depth min={depth_map.min:.4g} "
                     f"max={depth_map.max:.4g} mean={depth_map.mean:.4g}"
                 )
+            elif getattr(r, "normal_map", None) is not None:
+                normal_map = r.normal_map
+                result_data["normal"] = {
+                    "shape": list(normal_map.data.shape),
+                    "dtype": str(normal_map.data.dtype),
+                    "frame": "opencv",
+                    "orientation": "camera-facing",
+                }
+                summary = (
+                    f"normal map {normal_map.data.shape[1]}x{normal_map.data.shape[0]}"
+                )
+            elif getattr(r, "edges", None) is not None:
+                edge_map = r.edges
+                result_data["edges"] = {
+                    "shape": list(edge_map.data.shape),
+                    "dtype": str(edge_map.data.dtype),
+                    "min": round(float(edge_map.array.min()), 4),
+                    "max": round(float(edge_map.array.max()), 4),
+                    "mean": round(float(edge_map.array.mean()), 4),
+                }
+                summary = f"edge map {edge_map.data.shape[1]}x{edge_map.data.shape[0]}"
             else:
                 summary = "(no detections)"
 
@@ -413,8 +490,14 @@ def predict_cmd(
                         kp["confidence"] = round(float(kp_conf[i, k]), 4)
                     keypoints.append(kp)
                 det["keypoints"] = keypoints
+            identities = getattr(r, "identities", None)
+            if identities is not None and i < len(identities):
+                det["identity"] = identities.name[i]
+                score = float(identities.score[i])
+                det["identity_score"] = round(score, 4) if score == score else None
             detections.append(det)
-            class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
+            count_key = det.get("identity") or cls_name
+            class_counts[count_key] = class_counts.get(count_key, 0) + 1
 
         result_data = {
             "path": r.path or str(source),

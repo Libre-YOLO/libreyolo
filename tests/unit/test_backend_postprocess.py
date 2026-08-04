@@ -77,6 +77,40 @@ def test_gaze_backend_decodes_head_logits_for_full_crop():
     assert float(result.gaze.yaw_deg[0]) == pytest.approx(140.0, abs=1e-4)
 
 
+def test_embedding_backend_normalizes_vectors_and_builds_results():
+    backend = _DummyBackend(
+        "dinov2",
+        task="embed",
+        supported_tasks=("embed",),
+        imgsz=224,
+    )
+    result = backend._build_embedding_result(
+        [np.array([[3.0, 4.0]], dtype=np.float32)],
+        orig_shape=(80, 120),
+        image_path=None,
+    )
+
+    assert result.boxes is None
+    assert result.embeddings.data.shape == (1, 2)
+    torch.testing.assert_close(
+        result.embeddings.data,
+        torch.tensor([[0.6, 0.8]], dtype=torch.float32),
+    )
+
+
+def test_depth_anything3_backend_applies_sky_correction_and_inverse_depth():
+    depth = np.full((1, 1, 8, 8), 2.0, dtype=np.float32)
+    sky = np.zeros_like(depth)
+    depth[..., :4, :] = 100.0
+    sky[..., :4, :] = 1.0
+
+    parsed = BaseBackend._parse_depth_anything3_output(
+        [depth, sky], original_size=(8, 8)
+    )
+
+    torch.testing.assert_close(parsed, torch.full((8, 8), 0.5))
+
+
 def test_removed_family_export_is_rejected():
     """A removed-family (DAMO-YOLO) exported artifact must fail loudly instead of
     silently falling through to YOLO9 preprocessing/parsing."""
@@ -676,6 +710,22 @@ def test_ec_segment_backend_does_not_clip_boxes():
     assert scores[0] > 0.99
     np.testing.assert_array_equal(classes, [0])
     assert parsed_masks.shape == (1, 100, 200)
+
+
+@pytest.mark.parametrize("family", ("dfine", "rtdetrv4", "rtdetr", "rtdetrv2"))
+def test_detr_detection_backend_does_not_clip_boxes(family):
+    backend = _DummyBackend(family)
+    logits = np.array([[[10.0]]], dtype=np.float32)
+    boxes = np.array([[[0.05, 0.5, 0.3, 0.5]]], dtype=np.float32)
+
+    parsed_boxes, scores, classes, masks = backend._parse_outputs(
+        [logits, boxes], 64, (200, 100), conf=0.5
+    )
+
+    np.testing.assert_allclose(parsed_boxes, [[-20.0, 25.0, 40.0, 75.0]])
+    assert scores[0] > 0.99
+    np.testing.assert_array_equal(classes, [0])
+    assert masks is None
 
 
 def test_ec_segment_backend_honors_max_det():
@@ -1721,6 +1771,46 @@ def test_backend_save_annotated_accepts_directory_output_path(tmp_path):
     )
 
     expected = output_dir / "source.jpg"
+    assert expected.exists()
+    assert result.saved_path == str(expected)
+
+
+@pytest.mark.parametrize("task", ["semantic", "matte", "point"])
+def test_backend_save_annotated_handles_boxless_dense_results(tmp_path, task):
+    from libreyolo.utils.results import Matte, Points, Results, SemanticMask
+
+    backend = _DummyBackend(
+        "fomo" if task == "point" else "test",
+        task=task,
+        supported_tasks=(task,),
+        imgsz=8,
+    )
+    payload = {}
+    if task == "semantic":
+        payload["semantic_mask"] = SemanticMask(torch.zeros(8, 8), (8, 8))
+    elif task == "matte":
+        payload["matte"] = Matte(torch.ones(8, 8), (8, 8))
+    else:
+        payload["points"] = Points(
+            torch.tensor([[4.0, 4.0, 0.0, 0.9]]),
+            (8, 8),
+        )
+    result = Results(
+        boxes=None,
+        orig_shape=(8, 8),
+        names={0: "object"},
+        **payload,
+    )
+    output = tmp_path / f"{task}.jpg"
+
+    backend._save_annotated(
+        result,
+        Image.new("RGB", (8, 8), "white"),
+        output.name,
+        str(output),
+    )
+
+    expected = output.with_suffix(".png") if task == "matte" else output
     assert expected.exists()
     assert result.saved_path == str(expected)
 

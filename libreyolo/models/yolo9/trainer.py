@@ -53,6 +53,35 @@ class YOLO9Trainer(BaseTrainer):
     def get_model_tag(self) -> str:
         return f"YOLOv9-{self.config.size}"
 
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+
+        from .nn import DDetect, LibreYOLO9Model
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        # ``isinstance`` covers yolo9_p2, which is the same dense head over a
+        # fourth stride. YOLO9-E2E subclasses this model too but swaps in a
+        # dual-branch head, so the exact head check routes it to its own
+        # trainer override.
+        standard_model = (
+            isinstance(self.model, LibreYOLO9Model)
+            and type(self.model.head) is DDetect
+        )
+        if task != "detect" or not standard_model:
+            raise ValueError(
+                "val_loss=True currently supports YOLO9 detection only; "
+                "non-detect tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import YOLO9ValidationLoss
+
+        return YOLO9ValidationLoss(
+            model,
+            max_labels=int(getattr(self.config, "max_labels", 100)),
+        )
+
     def get_freeze_groups(self) -> List[FreezeGroup]:
         model = self.model
         backbone = getattr(model, "backbone", None)
@@ -118,3 +147,37 @@ class YOLO9Trainer(BaseTrainer):
 
     def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
         return self.model(imgs, targets=targets)
+
+    def cuda_graph_train_spec(self):
+        """Capture spec: graph the network, keep the DFL/TAL loss eager.
+
+        The split reuses the model's own boundary: a train-mode forward
+        without targets returns the concatenated head maps, and
+        ``assemble`` replays exactly the loss path ``LibreYOLO9Model.
+        forward`` takes with targets (anchors tracking the input size,
+        then the head's loss over the raw maps). Restricted to the plain
+        detect head: subclasses with derived heads (e2e dual assignment)
+        or other tasks compute loss at a different boundary and run eager.
+        """
+        from libreyolo.training.cuda_graph import (
+            CudaGraphTrainSpec,
+            GraphableNetwork,
+        )
+        from .nn import DDetect, LibreYOLO9Model
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            return None
+        if not isinstance(self.model, LibreYOLO9Model):
+            return None
+        if type(self.model.head) is not DDetect:
+            return None
+
+        network = GraphableNetwork(self.model)
+
+        def assemble(flat, imgs, targets, polygons=None):
+            loss_fn = self.model.head._get_loss_fn(imgs.device)
+            loss_fn.update_anchors([imgs.shape[3], imgs.shape[2]])
+            return loss_fn(network.rebuild(flat), targets)
+
+        return CudaGraphTrainSpec(network=network, assemble=assemble)

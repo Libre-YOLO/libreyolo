@@ -115,13 +115,16 @@ class ECTrainer(DFINETrainer):
 
             apply_lora_to_ec(self.model)
 
+        self.criterion = self.build_criterion()
+
+    def build_criterion(self, *, distributed_normalize: bool = True):
         matcher = HungarianMatcher(
             weight_dict={"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0},
             use_focal_loss=True,
             alpha=0.25,
             gamma=2.0,
         )
-        self.criterion = ECCriterion(
+        return ECCriterion(
             matcher=matcher,
             weight_dict={
                 "loss_mal": 1.0,
@@ -135,7 +138,15 @@ class ECTrainer(DFINETrainer):
             alpha=0.75,
             gamma=2.0,
             reg_max=32,
+            distributed_normalize=distributed_normalize,
         ).to(self.device)
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import ECValidationLoss
+
+        return ECValidationLoss(
+            model, self.build_criterion(distributed_normalize=False)
+        )
 
     def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
         """Same target-format translation as D-FINE; only the loss key names differ."""

@@ -19,6 +19,12 @@ import torch.nn as nn
 from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 
+from libreyolo.utils.amp import (
+    amp_uses_grad_scaler,
+    normalize_amp_dtype,
+    torch_amp_dtype,
+)
+
 from .artifacts import TrainingArtifactsCallback, TrainingStatusCallback
 from .callbacks import (
     TrainCallbackList,
@@ -56,6 +62,7 @@ from ..data import (
     load_data_config,
     resolve_default_coco_image_dir,
 )
+from ..utils.image_size import imgsz_to_hw
 from ..utils.serialization import (
     SCHEMA_VERSION,
     build_class_names,
@@ -66,6 +73,25 @@ from ..utils.serialization import (
 
 
 logger = logging.getLogger(__name__)
+
+# Families whose architecture supports rectangular (non-square) training input.
+# CNN-based detection families (YOLO variants, RTMDet, PicoDet) have no fixed
+# positional embeddings and adapt to any (H, W) divisible by their stride.
+# Transformer-based families (DETR variants, RF-DETR, D-FINE, etc.) use
+# positional embeddings tied to a square grid and must not receive rectangular
+# input. YOLO-NAS is excluded: its preprocessing resizes the longest side to a
+# fixed target, which cannot fill a rectangular canvas.
+# Values are the family's maximum feature stride; both imgsz dimensions must be
+# divisible by it.
+RECTANGULAR_TRAINING_FAMILIES = {
+    "yolo9": 32,
+    "yolo9_e2e": 32,
+    "yolo9_p2": 32,
+    "yolox": 32,
+    "yolo7": 32,
+    "rtmdet": 32,
+    "picodet": 64,
+}
 
 
 class BaseTrainer(ABC):
@@ -90,6 +116,19 @@ class BaseTrainer(ABC):
         **kwargs,
     ):
         self.config = self._config_class().from_kwargs(**kwargs)
+        self.config.amp_dtype = normalize_amp_dtype(
+            getattr(self.config, "amp_dtype", "float16")
+        )
+        self.config.max_det = int(getattr(self.config, "max_det", 300))
+        if self.config.max_det < 1:
+            raise ValueError(f"max_det must be >= 1, got {self.config.max_det}")
+        self.config.eval_max_det = getattr(self.config, "eval_max_det", None)
+        if self.config.eval_max_det is not None:
+            self.config.eval_max_det = int(self.config.eval_max_det)
+            if self.config.eval_max_det < 1:
+                raise ValueError(
+                    f"eval_max_det must be >= 1, got {self.config.eval_max_det}"
+                )
         self.model = model
         self.wrapper_model = wrapper_model
         self.callbacks = TrainCallbackList(callbacks)
@@ -158,6 +197,14 @@ class BaseTrainer(ABC):
         self._profiler = None
         self._stop_training = False
 
+        # CUDA graph capture of the training network (opt-in via
+        # config.cuda_graph). None = disabled, zero overhead. The family
+        # spec is resolved lazily on the first training batch so capture
+        # sees the fully-constructed model and criterion.
+        self._cuda_graph_manager = None
+        self._cuda_graph_spec = None
+        self._cuda_graph_spec_resolved = False
+
     # =========================================================================
     # Config
     # =========================================================================
@@ -204,7 +251,7 @@ class BaseTrainer(ABC):
 
     @property
     def input_size(self) -> Tuple[int, int]:
-        return (self.config.imgsz, self.config.imgsz)
+        return imgsz_to_hw(self.config.imgsz, name="imgsz")
 
     # =========================================================================
     # Hook methods — subclasses override these
@@ -236,6 +283,41 @@ class BaseTrainer(ABC):
 
     def on_setup(self):
         """Called after model is on device, before data setup (e.g. bias init)."""
+
+    def validate_validation_loss_config(self) -> None:
+        """Fail early when a family does not implement ``val_loss=True``."""
+        if getattr(self.config, "val_loss", False):
+            raise ValueError(
+                f"val_loss=True is not supported by {self.get_model_family()} training"
+            )
+
+    def build_validation_loss_adapter(self, model: nn.Module):
+        """Build the family adapter used by rank-0 training validation."""
+        raise NotImplementedError
+
+    def _validation_loss_kwargs(self, eval_pytorch_model: nn.Module) -> Dict[str, Any]:
+        """Build the validator's ``loss_adapter`` kwarg when ``val_loss`` is on.
+
+        No task check here: ``validate_validation_loss_config`` runs for every
+        family at setup, so a run that reaches this point has already been
+        cleared by its own family's gate. A failure to construct the adapter
+        costs the run its validation loss, never its accuracy metrics.
+        """
+        if not getattr(self.config, "val_loss", False):
+            return {}
+        try:
+            return {
+                "loss_adapter": self.build_validation_loss_adapter(eval_pytorch_model)
+            }
+        except Exception as exc:
+            logger.warning(
+                "Validation loss could not be initialized; %s metrics will "
+                "continue without it: %s",
+                getattr(getattr(self, "wrapper_model", None), "task", "detect"),
+                exc,
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+            return {}
 
     def get_freeze_groups(self) -> List[FreezeGroup]:
         """Return integer-addressable freeze groups for this family."""
@@ -274,6 +356,62 @@ class BaseTrainer(ABC):
         instance. Detection-only trainers may ignore ``polygons``.
         """
         return self.model(imgs, targets)
+
+    def cuda_graph_train_spec(self):
+        """Family hook: describe how to capture this family's training step.
+
+        Return a :class:`~libreyolo.training.cuda_graph.CudaGraphTrainSpec`
+        splitting the step into a static-shaped network (captured) and an
+        eager loss (``assemble``), or ``None`` when the family, task or
+        current configuration does not support capture. Called once, on the
+        first training batch, only when ``config.cuda_graph`` is enabled.
+        """
+        return None
+
+    def _forward_train(
+        self,
+        imgs: torch.Tensor,
+        targets: torch.Tensor,
+        polygons: Optional[List] = None,
+    ) -> Dict:
+        """``on_forward`` with optional CUDA-graph capture of the network.
+
+        Routing keeps a hard equivalence contract: any batch that cannot go
+        through a captured graph (no family spec, shape mismatch, capture
+        disabled) takes the exact ``on_forward`` path instead, so enabling
+        ``cuda_graph`` never changes training numerics.
+        """
+        # getattr defaults keep partially-constructed trainers (test
+        # doubles, exotic subclasses skipping BaseTrainer.__init__) on the
+        # plain eager path.
+        manager = getattr(self, "_cuda_graph_manager", None)
+        if manager is not None and not manager.disabled:
+            if not getattr(self, "_cuda_graph_spec_resolved", False):
+                self._cuda_graph_spec_resolved = True
+                try:
+                    self._cuda_graph_spec = self.cuda_graph_train_spec()
+                except Exception as exc:
+                    self._cuda_graph_spec = None
+                    manager.disabled = True
+                    logger.warning(
+                        "cuda_graph=True ignored (family spec failed: %r); "
+                        "training runs eager.",
+                        exc,
+                    )
+                if self._cuda_graph_spec is None and not manager.disabled:
+                    manager.disabled = True
+                    logger.warning(
+                        "cuda_graph=True ignored (%s does not support "
+                        "training capture for this task); training runs "
+                        "eager.",
+                        type(self).__name__,
+                    )
+            spec = getattr(self, "_cuda_graph_spec", None)
+            if spec is not None:
+                flat = manager.run(spec, imgs)
+                if flat is not None:
+                    return spec.assemble(flat, imgs, targets, polygons)
+        return self.on_forward(imgs, targets, polygons=polygons)
 
     # =========================================================================
     # Shared infrastructure
@@ -1280,6 +1418,31 @@ class BaseTrainer(ABC):
                 "(e.g. RF-DETR, D-FINE, DEIM)."
             )
 
+        # Validate rectangular imgsz for the selected family and task.
+        imgsz = self.config.imgsz
+        if isinstance(imgsz, (list, tuple)) and int(imgsz[0]) != int(imgsz[1]):
+            family = self.get_model_family() if hasattr(self, "get_model_family") else ""
+            if family and family.lower() not in RECTANGULAR_TRAINING_FAMILIES:
+                raise ValueError(
+                    f"Rectangular imgsz={tuple(imgsz)} is not supported for {family}. "
+                    f"Only CNN-based detection families support rectangular training "
+                    f"input. Supported families: {sorted(RECTANGULAR_TRAINING_FAMILIES)}."
+                )
+            task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+            if task != "detect":
+                raise ValueError(
+                    f"Rectangular imgsz={tuple(imgsz)} is only supported for the "
+                    f"detect task, got task='{task}'."
+                )
+            stride = RECTANGULAR_TRAINING_FAMILIES.get(family.lower(), 32)
+            h, w = int(imgsz[0]), int(imgsz[1])
+            if h % stride != 0 or w % stride != 0:
+                raise ValueError(
+                    f"imgsz=({h}, {w}): both height and width must be divisible by "
+                    f"{stride} (the {family} maximum feature stride), got remainders "
+                    f"({h % stride}, {w % stride})."
+                )
+
         if is_main_process():
             logger.info("Setting up training...")
         self.model.to(self.device)
@@ -1295,6 +1458,7 @@ class BaseTrainer(ABC):
             if is_main_process():
                 logger.info("Converted BatchNorm to SyncBatchNorm")
 
+        self.validate_validation_loss_config()
         self.on_setup()
 
         if getattr(self.config, "batch", 16) == -1:
@@ -1304,6 +1468,7 @@ class BaseTrainer(ABC):
                 self.model,
                 imgsz=self.config.imgsz,
                 amp=self.config.amp,
+                amp_dtype=self.config.amp_dtype,
                 world_size=self.world_size,
                 nbs=getattr(self.config, "nbs", None),
                 fraction=getattr(self.wrapper_model, "autobatch_fraction", _DEFAULT_FRACTION),
@@ -1403,9 +1568,25 @@ class BaseTrainer(ABC):
                 )
 
         if self.config.amp and self.device.type == "cuda":
-            self.scaler = GradScaler("cuda")
+            amp_torch_dtype = torch_amp_dtype(self.config.amp_dtype)
+            if (
+                amp_torch_dtype == torch.bfloat16
+                and torch.cuda.is_available()
+                and not torch.cuda.is_bf16_supported()
+            ):
+                raise RuntimeError(
+                    "amp_dtype='bfloat16' requires a CUDA device with BF16 support"
+                )
+            # FP16 needs loss scaling. BF16's wider exponent range does not,
+            # but a disabled scaler keeps the optimizer path shared.
+            self.scaler = GradScaler(
+                "cuda", enabled=amp_uses_grad_scaler(self.config.amp_dtype)
+            )
             if is_main_process():
-                logger.info("Using mixed precision training (AMP)")
+                logger.info(
+                    "Using mixed precision training (AMP, dtype=%s)",
+                    self.config.amp_dtype,
+                )
         else:
             self.scaler = None
 
@@ -1485,9 +1666,33 @@ class BaseTrainer(ABC):
                         "batch": self.config.batch,
                         "imgsz": self.config.imgsz,
                         "amp": bool(self.config.amp),
+                        "amp_dtype": self.config.amp_dtype,
                         "workers": self.config.workers,
                     },
                 )
+
+        # CUDA graph training capture (opt-in). Constructed last so capture
+        # can only ever see the fully-built model, optimizer and criterion.
+        # Unsupported run shapes downgrade to eager with one clear warning
+        # instead of failing the run.
+        if getattr(self.config, "cuda_graph", False):
+            reason = None
+            if self.device.type != "cuda":
+                reason = "device is not CUDA"
+            elif self.is_distributed:
+                reason = "distributed training is not supported yet"
+            elif self.distiller is not None:
+                reason = "distillation runs are not supported"
+            if reason is not None:
+                if is_main_process():
+                    logger.warning(
+                        "cuda_graph=True ignored (%s); training runs eager.",
+                        reason,
+                    )
+            else:
+                from libreyolo.training.cuda_graph import TrainGraphManager
+
+                self._cuda_graph_manager = TrainGraphManager()
 
         self._is_setup = True
 
@@ -1499,6 +1704,19 @@ class BaseTrainer(ABC):
         params un-grad'd on some batches.
         """
         return False
+
+    def _autocast_context(self):
+        """Create a CUDA autocast context using the configured dtype.
+
+        With CUDA graph training capture active, autocast's weight-cast
+        cache must be disabled: the capture recipe requires cache_enabled
+        =False so warm-up, capture and replay all see the same cast ops.
+        """
+        return autocast(
+            "cuda",
+            dtype=torch_amp_dtype(getattr(self.config, "amp_dtype", "float16")),
+            cache_enabled=getattr(self, "_cuda_graph_manager", None) is None,
+        )
 
     def _ddp_static_graph(self) -> bool:
         """Whether to pass ``static_graph=True`` to DDP.
@@ -1541,6 +1759,7 @@ class BaseTrainer(ABC):
                 logger.info(f"Starting training for {self.config.epochs} epochs")
                 logger.info(f"Model: {self.get_model_tag()}")
                 logger.info(f"Batch size: {self.config.batch}")
+                logger.info(f"Input size: {self.input_size}")
                 logger.info(f"Learning rate: {self.effective_lr}")
 
             start_event = self._build_train_start_event()
@@ -2042,7 +2261,7 @@ class BaseTrainer(ABC):
             # the frozen teacher doesn't pay full-precision compute each step.
             if distiller is not None:
                 if self.scaler is not None:
-                    with autocast("cuda"):
+                    with self._autocast_context():
                         distiller.teacher_forward(imgs)
                 else:
                     distiller.teacher_forward(imgs)
@@ -2055,8 +2274,8 @@ class BaseTrainer(ABC):
             # _sync_distiller_grads, keeping student and distiller consistent.
             if self.scaler is not None:
                 with self._prof_phase("forward"):
-                    with autocast("cuda"):
-                        outputs = self.on_forward(imgs, targets, polygons=polygons)
+                    with self._autocast_context():
+                        outputs = self._forward_train(imgs, targets, polygons)
                         total_loss_raw = outputs["total_loss"]
                         if distiller is not None:
                             distill_loss = distiller.compute_loss()
@@ -2075,7 +2294,7 @@ class BaseTrainer(ABC):
                     self.scaler.update()
             else:
                 with self._prof_phase("forward"):
-                    outputs = self.on_forward(imgs, targets, polygons=polygons)
+                    outputs = self._forward_train(imgs, targets, polygons)
                     total_loss_raw = outputs["total_loss"]
                     if distiller is not None:
                         distill_loss = distiller.compute_loss()
@@ -2108,7 +2327,12 @@ class BaseTrainer(ABC):
             for name, value in loss_components.items():
                 loss_component_sums[name] = loss_component_sums.get(name, 0.0) + value
 
-            del outputs, loss
+            # total_loss_raw is included so no reference to this step's
+            # autograd graph outlives the iteration: a live graph pins
+            # AccumulateGrad nodes to the default stream, which invalidates
+            # CUDA graph capture on a later batch (and idly retains memory
+            # otherwise).
+            del outputs, loss, total_loss_raw
 
             # LR update
             lr = self.lr_scheduler.update_lr(self.current_iter + 1)
@@ -2224,7 +2448,7 @@ class BaseTrainer(ABC):
             # the frozen teacher doesn't pay full-precision compute each step.
             if distiller is not None:
                 if self.scaler is not None:
-                    with autocast("cuda"):
+                    with self._autocast_context():
                         distiller.teacher_forward(imgs)
                 else:
                     distiller.teacher_forward(imgs)
@@ -2237,8 +2461,8 @@ class BaseTrainer(ABC):
             # gradient averaging is already correct — see scale_loss_for_ddp).
             if self.scaler is not None:
                 with self._prof_phase("forward"):
-                    with autocast("cuda"):
-                        outputs = self.on_forward(imgs, targets, polygons=polygons)
+                    with self._autocast_context():
+                        outputs = self._forward_train(imgs, targets, polygons)
                         total_loss_raw = outputs["total_loss"]
                         if distiller is not None:
                             distill_loss = distiller.compute_loss()
@@ -2258,7 +2482,7 @@ class BaseTrainer(ABC):
                         self.scaler.update()
             else:
                 with self._prof_phase("forward"):
-                    outputs = self.on_forward(imgs, targets, polygons=polygons)
+                    outputs = self._forward_train(imgs, targets, polygons)
                     total_loss_raw = outputs["total_loss"]
                     if distiller is not None:
                         distill_loss = distiller.compute_loss()
@@ -2295,7 +2519,9 @@ class BaseTrainer(ABC):
             for name, value in loss_components.items():
                 loss_component_sums[name] = loss_component_sums.get(name, 0.0) + value
 
-            del outputs, loss
+            # See the matching del in _train_epoch: total_loss_raw must not
+            # keep the autograd graph alive across iterations.
+            del outputs, loss, total_loss_raw
 
             # Progress bar
             postfix = {"loss": f"{loss_val:.4f}", "lr": f"{lr:.6f}"}
@@ -2391,6 +2617,7 @@ class BaseTrainer(ABC):
                 SegmentationValidator,
                 ValidationConfig,
             )
+            from libreyolo.validation.loss import ValidationLossMixin
 
             logger.info(f"Running validation for epoch {epoch + 1}")
 
@@ -2411,12 +2638,31 @@ class BaseTrainer(ABC):
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
+                max_det=getattr(self.config, "max_det", 300),
+                eval_max_det=getattr(self.config, "eval_max_det", None),
+                faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=getattr(self.config, "amp_dtype", "float16"),
                 verbose=False,
                 num_workers=self.config.workers,
                 save_plots=val_save_plots,
                 save_dir=val_save_dir,
+                # One knob for both loops: a run that opts into image caching
+                # for training gets the same for its (deterministic) validation.
+                cache=getattr(self.config, "cache", False),
+                # Same principle for graph replay, gated on the inference-side
+                # capability: training capture (CudaGraphTrainSpec) and forward
+                # capture (SUPPORTS_CUDA_GRAPH) are separate opt-ins, and a
+                # family with only the former must validate eagerly rather
+                # than fail. Replay is bit-identical, so this is an execution
+                # detail, not a protocol change.
+                cuda_graph=(
+                    bool(getattr(self.config, "cuda_graph", False))
+                    and bool(
+                        getattr(self.wrapper_model, "SUPPORTS_CUDA_GRAPH", False)
+                    )
+                ),
             )
 
             if self.wrapper_model is None:
@@ -2441,7 +2687,33 @@ class BaseTrainer(ABC):
                     validator_cls = PointValidator
                 else:
                     validator_cls = DetectionValidator
-                validator = validator_cls(model=self.wrapper_model, config=val_config)
+                # One validator instance for the whole run, so the dataset,
+                # dataloader workers, pinned buffers and parsed ground truth
+                # survive between epochs instead of being rebuilt ~100 times.
+                # The per-epoch config is still honored: only save_plots and
+                # save_dir ever differ between the configs this loop builds,
+                # and neither is baked into the reused state.
+                validator = getattr(self, "_epoch_validator", None)
+                if validator is None or type(validator) is not validator_cls:
+                    # The adapter is built once with the cached validator: the
+                    # EMA/eval module object is stable across epochs, and
+                    # _init_metrics() re-arms the adapter every run. OBB and
+                    # point validators do not take a loss_adapter, so the
+                    # mixin check keeps a family that opts in for a task this
+                    # branch cannot serve from breaking its own validation.
+                    validator_kwargs = (
+                        self._validation_loss_kwargs(eval_pytorch_model)
+                        if issubclass(validator_cls, ValidationLossMixin)
+                        else {}
+                    )
+                    validator = validator_cls(
+                        model=self.wrapper_model,
+                        config=val_config,
+                        **validator_kwargs,
+                    )
+                    self._epoch_validator = validator
+                else:
+                    validator.config = val_config
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model
@@ -2503,6 +2775,7 @@ class BaseTrainer(ABC):
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 split="val",
@@ -2514,7 +2787,12 @@ class BaseTrainer(ABC):
             original_model = self.wrapper_model.model
             self.wrapper_model.model = eval_pytorch_model
             try:
-                validator = ClassifyValidator(model=self.wrapper_model, config=val_config)
+                validator = ClassifyValidator(
+                    model=self.wrapper_model,
+                    config=val_config,
+                    **self._validation_loss_kwargs(eval_pytorch_model),
+                )
+
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model
@@ -2555,6 +2833,7 @@ class BaseTrainer(ABC):
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 split="val",
@@ -2566,7 +2845,11 @@ class BaseTrainer(ABC):
             original_model = self.wrapper_model.model
             self.wrapper_model.model = eval_pytorch_model
             try:
-                validator = SemanticValidator(model=self.wrapper_model, config=val_config)
+                validator = SemanticValidator(
+                    model=self.wrapper_model,
+                    config=val_config,
+                    **self._validation_loss_kwargs(eval_pytorch_model),
+                )
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model
@@ -2607,6 +2890,7 @@ class BaseTrainer(ABC):
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 split="val",
@@ -2660,6 +2944,7 @@ class BaseTrainer(ABC):
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 split="val",
@@ -2672,7 +2957,11 @@ class BaseTrainer(ABC):
             original_model = self.wrapper_model.model
             self.wrapper_model.model = eval_pytorch_model
             try:
-                validator = RestoreValidator(model=self.wrapper_model, config=val_config)
+                validator = RestoreValidator(
+                    model=self.wrapper_model,
+                    config=val_config,
+                    **self._validation_loss_kwargs(eval_pytorch_model),
+                )
                 results = validator.run()
             finally:
                 self.wrapper_model.model = original_model
@@ -2744,6 +3033,20 @@ class BaseTrainer(ABC):
                 "imgsz=640; set config.imgsz to avoid this compatibility fallback."
             )
 
+        # Handle rectangular imgsz: checkpoint schema stores a scalar imgsz
+        # (legacy), while imgsz_h/imgsz_w store the actual dimensions.
+        if isinstance(checkpoint_imgsz, (list, tuple)):
+            cp_h, cp_w = int(checkpoint_imgsz[0]), int(checkpoint_imgsz[1])
+            cp_imgsz_scalar = max(cp_h, cp_w)
+        else:
+            cp_imgsz_scalar = int(checkpoint_imgsz)
+            cp_h = cp_w = cp_imgsz_scalar
+
+        extra_checkpoint_meta = {}
+        if cp_h != cp_w:
+            extra_checkpoint_meta["imgsz_h"] = cp_h
+            extra_checkpoint_meta["imgsz_w"] = cp_w
+
         checkpoint = wrap_libreyolo_checkpoint(
             model_to_save.state_dict(),
             model_family=self.get_model_family(),
@@ -2751,7 +3054,7 @@ class BaseTrainer(ABC):
             task=getattr(getattr(self, "wrapper_model", None), "task", "detect"),
             nc=checkpoint_nc,
             names=names,
-            imgsz=int(checkpoint_imgsz),
+            imgsz=cp_imgsz_scalar,
             epoch=epoch,
             optimizer=self.optimizer.state_dict(),
             config=self.config.to_dict(),
@@ -2762,6 +3065,7 @@ class BaseTrainer(ABC):
             best_metric_value=self.best_mAP50_95,
             best_epoch=self.best_epoch,
             is_ema_weights=self.ema_model is not None,
+            **extra_checkpoint_meta,
         )
         checkpoint.update(self._checkpoint_extra_metadata())
         quant_manifest = getattr(self.wrapper_model, "_quant_manifest", None)

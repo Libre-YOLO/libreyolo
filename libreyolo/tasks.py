@@ -18,9 +18,13 @@ TaskType = Literal[
     "obb",
     "point",
     "depth",
+    "edge",
+    "normal",
     "restore",
     "matte",
     "ocr",
+    "embed",
+    "mesh",
 ]
 TASKS = (
     "detect",
@@ -33,9 +37,13 @@ TASKS = (
     "obb",
     "point",
     "depth",
+    "edge",
+    "normal",
     "restore",
     "matte",
     "ocr",
+    "embed",
+    "mesh",
 )
 
 TASK_ALIASES = {
@@ -72,6 +80,18 @@ TASK_ALIASES = {
     "depth_estimation": "depth",
     "monodepth": "depth",
     "monocular-depth": "depth",
+    "edge": "edge",
+    "edges": "edge",
+    "boundary": "edge",
+    "boundaries": "edge",
+    "edge-detection": "edge",
+    "edge_detection": "edge",
+    "normal": "normal",
+    "normals": "normal",
+    "surface-normal": "normal",
+    "surface_normal": "normal",
+    "surface-normals": "normal",
+    "surface_normals": "normal",
     "restore": "restore",
     "restoration": "restore",
     "deblur": "restore",
@@ -91,6 +111,25 @@ TASK_ALIASES = {
     "text": "ocr",
     "text-recognition": "ocr",
     "text_recognition": "ocr",
+    # Generic image/region embedding. Face recognition and re-identification
+    # remain aliases of the shared vector primitive.
+    "embed": "embed",
+    "embedding": "embed",
+    "embeddings": "embed",
+    "facial-recognition": "embed",
+    "facial_recognition": "embed",
+    "face-recognition": "embed",
+    "face_recognition": "embed",
+    "recognition": "embed",
+    "face": "embed",
+    "faceid": "embed",
+    "reid": "embed",
+    "mesh": "mesh",
+    "body-mesh": "mesh",
+    "body_mesh": "mesh",
+    "hmr": "mesh",
+    "human-mesh-recovery": "mesh",
+    "human_mesh_recovery": "mesh",
 }
 
 TASK_TO_SUFFIX = {
@@ -103,9 +142,13 @@ TASK_TO_SUFFIX = {
     "obb": "obb",
     "point": "point",
     "depth": "depth",
+    "edge": "edge",
+    "normal": "normal",
     "restore": "restore",
     "matte": "matte",
     "ocr": "ocr",
+    "embed": "embed",
+    "mesh": "mesh",
 }
 
 SUFFIX_TO_TASK = {v: k for k, v in TASK_TO_SUFFIX.items()}
@@ -164,7 +207,9 @@ def task_suffix_pattern(
     supported_tasks: Iterable[str] | str | None = None,
 ) -> str:
     """Regex fragment matching supported task suffixes."""
-    tasks = TASKS if supported_tasks is None else normalize_supported_tasks(supported_tasks)
+    tasks = (
+        TASKS if supported_tasks is None else normalize_supported_tasks(supported_tasks)
+    )
     suffixes = sorted(
         (TASK_TO_SUFFIX[task] for task in tasks if task in TASK_TO_SUFFIX),
         key=len,

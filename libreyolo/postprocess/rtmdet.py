@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import contextlib
 import math
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 import torch
 import torch.nn.functional as F
 import torchvision.ops
 
-from .common import postprocess_detections
+from .common import _input_size_hw, postprocess_detections
 
 
 def _make_grid_priors(feats: List[torch.Tensor], strides: List[int]) -> torch.Tensor:
@@ -149,8 +149,9 @@ def postprocess(
     # dimension is already 640, leaving boxes that overflow the canvas (e.g.
     # y2=643 for a 640x586 image). Larger boxes inflate the union for COCO
     # IoU and cost ~1 mAP at conf=0.001.
-    boxes[:, [0, 2]] = torch.clamp(boxes[:, [0, 2]], 0, input_size)
-    boxes[:, [1, 3]] = torch.clamp(boxes[:, [1, 3]], 0, input_size)
+    input_h, input_w = _input_size_hw(input_size)
+    boxes[:, [0, 2]] = torch.clamp(boxes[:, [0, 2]], 0, input_w)
+    boxes[:, [1, 3]] = torch.clamp(boxes[:, [1, 3]], 0, input_h)
 
     if original_size is not None:
         boxes = boxes / ratio
@@ -182,10 +183,11 @@ def postprocess(
 
 def _empty_segment_result(
     original_size: Tuple[int, int] | None,
-    input_size: int,
+    input_size: Union[int, Tuple[int, int]],
 ) -> dict:
     if original_size is None:
-        h = w = input_size
+        input_h, input_w = _input_size_hw(input_size)
+        h, w = input_h, input_w
     else:
         w, h = original_size
     return {
@@ -321,8 +323,9 @@ def _postprocess_segment(
     boxes = _distance2bbox(priors[:, :2], distances)
     # Basic slicing (a view) so the in-place clamp reaches ``boxes``; list
     # indexing would clamp a copy and silently leave boxes unclamped.
-    boxes[:, 0::2].clamp_(0, input_size)
-    boxes[:, 1::2].clamp_(0, input_size)
+    seg_input_h, seg_input_w = _input_size_hw(input_size)
+    boxes[:, 0::2].clamp_(0, seg_input_w)
+    boxes[:, 1::2].clamp_(0, seg_input_h)
 
     finite = (
         torch.isfinite(boxes).all(dim=1)
@@ -361,10 +364,14 @@ def _postprocess_segment(
     )
     if original_size is not None:
         orig_w, orig_h = original_size
-        resized = math.ceil(mask_logits.shape[-1] / ratio)
+        # Resize each axis independently; with a rectangular canvas the mask
+        # tensor is non-square, so a single width-derived size would distort
+        # masks and blow up memory at wide aspect ratios.
+        resized_h = math.ceil(mask_logits.shape[-2] / ratio)
+        resized_w = math.ceil(mask_logits.shape[-1] / ratio)
         mask_logits = F.interpolate(
             mask_logits,
-            size=(resized, resized),
+            size=(resized_h, resized_w),
             mode="bilinear",
             align_corners=False,
         )[..., :orig_h, :orig_w]

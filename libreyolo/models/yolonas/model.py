@@ -474,7 +474,7 @@ class LibreYOLONAS(BaseModel):
                 if ckpt_names is not None:
                     self.names = self._sanitize_names(ckpt_names, effective_nc)
 
-            self.model.load_state_dict(state_dict, strict=self._strict_loading())
+            self._load_state_dict_logged(state_dict, source=str(model_path))
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load YOLO-NAS weights from {model_path}: {e}"

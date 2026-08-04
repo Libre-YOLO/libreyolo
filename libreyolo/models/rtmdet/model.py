@@ -217,7 +217,11 @@ class LibreRTMDet(BaseModel):
         # Validation path passes ratio=1.0; recompute from original_size if so.
         if ratio == 1.0 and original_size is not None:
             orig_w, orig_h = original_size
-            ratio = min(actual_input_size / orig_h, actual_input_size / orig_w)
+            if isinstance(actual_input_size, (list, tuple)):
+                actual_h, actual_w = int(actual_input_size[0]), int(actual_input_size[1])
+            else:
+                actual_h = actual_w = int(actual_input_size)
+            ratio = min(actual_w / orig_w, actual_h / orig_h)
 
         return _postprocess(
             output,

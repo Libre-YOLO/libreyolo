@@ -23,6 +23,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from torch.nn.init import constant_, xavier_uniform_
 
+from ...kernels.attention.ms_deform_attn import maybe_ms_deform_attn
 from .keypoints import KEYPOINT_PRED_DIM, ConditionalQueryInitializer
 from .tensors import _bilinear_grid_sample
 
@@ -154,7 +155,14 @@ def ms_deform_attn_core_pytorch(
     attention_weights: torch.Tensor,
     value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
 ) -> torch.Tensor:
-    """Pure-PyTorch fallback for the deformable-attention core."""
+    """Portable deformable-attention core, used on every device/backend.
+
+    This is the upstream-parity ``grid_sample`` port and the only path
+    exports ever see. The accelerated ``ms_deform_attn`` kernel slot is
+    consulted in :meth:`MSDeformAttn.forward` *before* the layout transpose
+    that produces this function's ``(bs, heads, c, Len_in)`` value tensor,
+    so the fast path pays no extra copies.
+    """
     batch_size, n_heads, head_dim, _ = value.shape
     _, len_query, n_heads, num_levels, num_points, _ = sampling_locations.shape
     # Use Python int pairs when available (required for torch.export compatibility,
@@ -272,15 +280,39 @@ class MSDeformAttn(nn.Module):
         """
         batch_size, len_query, _ = query.shape
         batch_size, len_input, _ = input_flatten.shape
-        expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
         error_msg = "input_spatial_shapes must match the flattened input length"
-        if self._export:
-            torch._assert(expected_len_in == len_input, error_msg)
-        elif not (torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()):
-            # Comparing a device tensor against a Python int syncs the stream,
-            # which CUDA graph capture forbids. A captured graph is keyed to one
-            # input shape, so the check has already run eagerly before capture.
+        # torch.export captures torch._assert on a tensor comparison as an
+        # aten.item call, which produces an unbacked symbol and makes the
+        # graph unguardable ("Could not guard on data-dependent expression
+        # Eq(u0, 1)"). The check is a developer sanity check over spatial
+        # shapes that are constant for a fixed export canvas, so evaluate it
+        # in Python when the shapes are concrete and skip the tensor path.
+        if self._export and input_spatial_shapes_hw is not None:
+            # Export callers already carry the fixed canvas geometry as Python
+            # integer pairs. Validate against those values instead of reading
+            # back from input_spatial_shapes, which creates an unbacked symbol
+            # under strict torch.export capture.
+            expected_len_in = sum(h * w for h, w in input_spatial_shapes_hw)
             assert expected_len_in == len_input, error_msg
+        # The int() readback below is a host sync, which CUDA graph capture
+        # forbids; the same values were already validated during the graph
+        # warm-up iterations, so the check is skipped only while capturing.
+        elif (
+            not torch.jit.is_tracing()
+            and not isinstance(input_spatial_shapes, torch.fx.Proxy)
+            and not (
+                input_spatial_shapes.is_cuda
+                and torch.cuda.is_current_stream_capturing()
+            )
+        ):
+            try:
+                expected_len_in = int(
+                    (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
+                )
+            except Exception:  # noqa: BLE001 - symbolic shapes under export
+                expected_len_in = None
+            if expected_len_in is not None and not isinstance(len_input, torch.Tensor):
+                assert expected_len_in == len_input, error_msg
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:
@@ -309,6 +341,23 @@ class MSDeformAttn(nn.Module):
                 "Last dim of reference_points must be 2 or 4, but get {} instead.".format(reference_points.shape[-1])
             )
         attention_weights = F.softmax(attention_weights, -1)
+
+        if not self._export:
+            # Consult the accelerated slot with the classic Deformable-DETR
+            # layout while ``value`` is still (bs, Len_in, d_model): one
+            # zero-copy view away from the slot's (bs, Len_in, heads, c).
+            # Export mode always takes the portable core below, whose
+            # ``value_spatial_shapes_hw`` int pairs keep it traceable.
+            accelerated = maybe_ms_deform_attn(
+                value.view(
+                    batch_size, len_input, self.n_heads, self.d_model // self.n_heads
+                ),
+                input_spatial_shapes,
+                sampling_locations,
+                attention_weights.unflatten(-1, (self.n_levels, self.n_points)),
+            )
+            if accelerated is not None:
+                return self.output_proj(accelerated)
 
         value = (
             value.transpose(1, 2).contiguous().view(batch_size, self.n_heads, self.d_model // self.n_heads, len_input)
@@ -465,43 +514,48 @@ class Transformer(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
+    def _cached_spatial_shapes(
+        self, spatial_shapes_hw: "list[tuple[int, int]]", device
+    ) -> torch.Tensor:
+        """Constant (n_levels, 2) level-shape tensor, cached per shape set.
+
+        Writing Python ints element-wise into a CUDA tensor issues one tiny
+        unpinned host-to-device copy per level on every forward, which is
+        wasted work eagerly and illegal inside CUDA graph capture. The
+        values only depend on the input resolution, so build the tensor
+        once per (shapes, device) and reuse it; the cached tensor is
+        read-only downstream.
+        """
+        key = (tuple(spatial_shapes_hw), str(device))
+        cached = getattr(self, "_spatial_shapes_cache", None)
+        if cached is None or cached[0] != key:
+            tensor = torch.tensor(
+                spatial_shapes_hw, device=device, dtype=torch.long
+            )
+            self._spatial_shapes_cache = (key, tensor)
+        return self._spatial_shapes_cache[1]
+
     def forward(self, srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None):
         src_flatten = []
         mask_flatten = [] if masks is not None else None
         lvl_pos_embed_flatten = []
-        # Build spatial_shapes as a tensor directly so that the ONNX tracer
-        # can track h/w symbolically instead of baking them in as constants.
-        # Writing Python ints into a CUDA tensor is a host-to-device copy, which
-        # CUDA graph capture rejects, so outside tracing the tensor is memoised
-        # per (shape, device): the copy then happens on the eager warmup call and
-        # capture only reads it back.
+        # Under tracing, build spatial_shapes as a tensor directly so that
+        # the ONNX tracer can track h/w symbolically instead of baking them
+        # in as constants. Outside tracing the tensor is a per-resolution
+        # constant and comes from _cached_spatial_shapes after the loop.
         tracing = torch.jit.is_tracing()
+        if tracing:
+            spatial_shapes = torch.empty((len(srcs), 2), device=srcs[0].device, dtype=torch.long)
         # Keep Python int pairs for gen_encoder_output_proposals — its loop uses h/w
         # as slice indices and linspace steps, which require Python ints, not tensors.
-        spatial_shapes_hw: list[tuple[int, int]] = [
-            (int(src.shape[2]), int(src.shape[3])) for src in srcs
-        ]
-        if tracing:
-            spatial_shapes = torch.empty(
-                (len(srcs), 2), device=srcs[0].device, dtype=torch.long
-            )
-        else:
-            cache = getattr(self, "_spatial_shapes_cache", None)
-            if cache is None:
-                cache = self._spatial_shapes_cache = {}
-            cache_key = (tuple(spatial_shapes_hw), srcs[0].device)
-            spatial_shapes = cache.get(cache_key)
-            if spatial_shapes is None:
-                spatial_shapes = torch.tensor(
-                    spatial_shapes_hw, device=srcs[0].device, dtype=torch.long
-                )
-                cache[cache_key] = spatial_shapes
+        spatial_shapes_hw: list[tuple[int, int]] = []
         valid_ratios = [] if masks is not None else None
         for lvl, (src, pos_embed) in enumerate(zip(srcs, pos_embeds)):
             _, c, h, w = src.shape
             if tracing:
                 spatial_shapes[lvl, 0] = h
                 spatial_shapes[lvl, 1] = w
+            spatial_shapes_hw.append((h, w))
 
             src = src.flatten(2).transpose(1, 2)  # bs, hw, c
             pos_embed = pos_embed.flatten(2).transpose(1, 2)  # bs, hw, c
@@ -510,6 +564,10 @@ class Transformer(nn.Module):
             if masks is not None:
                 mask = masks[lvl].flatten(1)  # bs, hw
                 mask_flatten.append(mask)
+        if not tracing:
+            spatial_shapes = self._cached_spatial_shapes(
+                spatial_shapes_hw, srcs[0].device
+            )
         memory = torch.cat(src_flatten, 1)  # bs, \sum{hxw}, c
         if masks is not None:
             mask_flatten = torch.cat(mask_flatten, 1)  # bs, \sum{hxw}

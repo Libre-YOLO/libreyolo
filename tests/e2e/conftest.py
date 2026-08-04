@@ -473,6 +473,43 @@ MODEL_CATALOG = [
     ("deimv2", "m", "LibreDEIMv2m.pt"),
     ("deimv2", "l", "LibreDEIMv2l.pt"),
     ("deimv2", "x", "LibreDEIMv2x.pt"),
+    ("detr", "r50", "LibreDETRr50.pt"),
+    ("detr", "r50dc5", "LibreDETRr50dc5.pt"),
+    ("detr", "r101", "LibreDETRr101.pt"),
+    ("detr", "r101dc5", "LibreDETRr101dc5.pt"),
+    ("lwdetr", "t", "LibreLWDETRt.pt"),
+    ("lwdetr", "s", "LibreLWDETRs.pt"),
+    ("lwdetr", "m", "LibreLWDETRm.pt"),
+    ("lwdetr", "l", "LibreLWDETRl.pt"),
+    ("lwdetr", "x", "LibreLWDETRx.pt"),
+    ("faster_rcnn", "n", "LibreFasterRCNNn.pt"),
+    ("faster_rcnn", "s", "LibreFasterRCNNs.pt"),
+    ("faster_rcnn", "m", "LibreFasterRCNNm.pt"),
+    ("faster_rcnn", "l", "LibreFasterRCNNl.pt"),
+    ("retinanet", "r50", "LibreRetinaNetr50.pt"),
+    ("retinanet", "r50v2", "LibreRetinaNetr50v2.pt"),
+    ("ssd", "300", "LibreSSD300.pt"),
+    ("mask_rcnn", "r50", "LibreMaskRCNNr50.pt"),
+    ("centernet", "resdcn18", "LibreCenterNetresdcn18.pt"),
+    ("centernet", "dla34", "LibreCenterNetdla34.pt"),
+    ("fcos", "r50", "LibreFCOSr50.pt"),
+    ("efficientdet", "d0", "LibreEfficientDetd0.pt"),
+    ("efficientdet", "d1", "LibreEfficientDetd1.pt"),
+    ("efficientdet", "d2", "LibreEfficientDetd2.pt"),
+    ("efficientdet", "d3", "LibreEfficientDetd3.pt"),
+    ("efficientdet", "d4", "LibreEfficientDetd4.pt"),
+    ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
+    ("deformable_detr", "r50ssdc5", "LibreDeformableDETRr50ssdc5.pt"),
+    ("deformable_detr", "r50", "LibreDeformableDETRr50.pt"),
+    ("deformable_detr", "r50refine", "LibreDeformableDETRr50refine.pt"),
+    (
+        "deformable_detr",
+        "r50twostage",
+        "LibreDeformableDETRr50twostage.pt",
+    ),
+    ("dinodetr", "r50", "LibreDINODETRr50.pt"),
+    ("dinodetr", "r50s5", "LibreDINODETRr50s5.pt"),
+    ("dinodetr", "swinl", "LibreDINODETRswinl.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("ec", "m", "LibreECm.pt"),
     ("ec", "l", "LibreECl.pt"),
@@ -487,6 +524,10 @@ MODEL_CATALOG = [
     ("picodet", "s", "LibrePICODETs.pt"),
     ("picodet", "m", "LibrePICODETm.pt"),
     ("picodet", "l", "LibrePICODETl.pt"),
+    ("vit", "ti", "LibreViTti-cls.pt"),
+    ("vit", "s", "LibreViTs-cls.pt"),
+    ("vit", "b", "LibreViTb-cls.pt"),
+    ("vit", "l", "LibreViTl-cls.pt"),
 ]
 
 FLAGSHIP_FAMILIES = {"yolo9", "rfdetr"}
@@ -501,6 +542,7 @@ FLAGSHIP_FAMILIES = {"yolo9", "rfdetr"}
 # it has no plain-HTTP route, so a skip-means-failure gate cannot provision it.
 # Gaze inference stays covered by the non-gated per-family L2CS suite.
 GENERAL_NIGHTLY_INFERENCE_MODELS = [
+    ("alexnet", "b", "LibreAlexNetb-cls.pt"),
     ("yolox", "n", "LibreYOLOXn.pt"),
     ("yolo9", "t", "LibreYOLO9t.pt"),
     ("yolo9_e2e", "t", "LibreYOLO9E2Et.pt"),
@@ -509,12 +551,45 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("dfine", "n", "LibreDFINEn.pt"),
     ("deim", "n", "weights/LibreDEIMn.pt"),
     ("deimv2", "atto", "LibreDEIMv2atto.pt"),
+    ("detr", "r50", "LibreDETRr50.pt"),
+    ("deit", "t", "LibreDeiTt-cls.pt"),
+    ("faster_rcnn", "n", "LibreFasterRCNNn.pt"),
+    ("retinanet", "r50", "LibreRetinaNetr50.pt"),
+    ("ssd", "300", "LibreSSD300.pt"),
+    ("mask_rcnn", "r50", "LibreMaskRCNNr50.pt"),
+    ("fcos", "r50", "LibreFCOSr50.pt"),
+    ("efficientdet", "d0", "LibreEfficientDetd0.pt"),
+    ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
+    ("dinodetr", "r50", "LibreDINODETRr50.pt"),
+    ("centernet", "resdcn18", "LibreCenterNetresdcn18.pt"),
+    ("hrnet", "w32", "LibreHRNetw32-pose.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("rtdetr", "r18", "LibreRTDETRr18.pt"),
     ("rtdetrv2", "r18", "weights/LibreRTDETRv2r18.pt"),
     ("rtdetrv4", "s", "weights/LibreRTDETRv4s.pt"),
     ("picodet", "s", "LibrePICODETs.pt"),
     ("rtmdet", "t", "LibreRTMDett.pt"),
+    ("vit", "ti", "LibreViTti-cls.pt"),
+    ("vgg", "16", "LibreVGG16-cls.pt"),
+    ("swin", "t", "LibreSwint-cls.pt"),
+]
+
+# Non-detect families use task-specific nightly assertions instead of the
+# detection-only stability matrix above. Keep their public model cases here so
+# provisioning, family marks, and nightly enrollment remain centralized.
+FCN_SEMANTIC_NIGHTLY_MODELS = [
+    ("fcn", "r50", "LibreFCNr50.pt"),
+]
+
+# Semantic families do not belong in MODEL_CATALOG: that catalog feeds the
+# COCO detection mAP gate. Keep task-appropriate public checkpoints separate.
+DEEPLABV3_SEMANTIC_MODELS = [
+    ("deeplabv3", "r50", "LibreDeepLabv3r50-sem.pt"),
+    ("deeplabv3", "r101", "LibreDeepLabv3r101-sem.pt"),
+    ("deeplabv3", "mv3", "LibreDeepLabv3mv3-sem.pt"),
+]
+GENERAL_NIGHTLY_SEMANTIC_MODELS = [
+    ("deeplabv3", "mv3", "LibreDeepLabv3mv3-sem.pt"),
 ]
 
 # Derived lists (no manual maintenance)
@@ -526,11 +601,21 @@ RFDETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rfdetr"]
 DFINE_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "dfine"]
 DEIM_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deim"]
 DEIMV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deimv2"]
+DETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "detr"]
+DEFORMABLE_DETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deformable_detr"]
+DINODETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "dinodetr"]
 EC_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "ec"]
 RTDETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 RTDETRV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv2"]
 RTDETRV4_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv4"]
 PICODET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "picodet"]
+FASTER_RCNN_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "faster_rcnn"]
+RETINANET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "retinanet"]
+SSD_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "ssd"]
+MASK_RCNN_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "mask_rcnn"]
+CENTERNET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "centernet"]
+FCOS_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "fcos"]
+EFFICIENTDET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "efficientdet"]
 
 ALL_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG]
 ALL_MODELS_WITH_WEIGHTS = MODEL_CATALOG
@@ -539,8 +624,26 @@ NON_RFDETR_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f != "rfdetr"]
 # Quick test set (for CI — smallest auto-available models only)
 QUICK_TEST_MODELS = [("yolox", "n"), ("yolo9", "t"), ("rtdetr", "r18")]
 
-# Full test set (all non-RF-DETR models)
-FULL_TEST_MODELS = NON_RFDETR_MODELS
+# Full legacy export test set. Museum families with narrow, family-specific
+# export contracts (Faster R-CNN, RetinaNet, SSD, Mask R-CNN, CenterNet, FCOS,
+# EfficientDet) have dedicated runtime parity gates, so blocked formats must
+# not attempt to export them merely because their public weights are in the
+# catalog.
+FULL_TEST_MODELS = [
+    (family, size)
+    for family, size in NON_RFDETR_MODELS
+    if family
+    not in {
+        "faster_rcnn",
+        "vit",
+        "retinanet",
+        "ssd",
+        "mask_rcnn",
+        "centernet",
+        "fcos",
+        "efficientdet",
+    }
+]
 
 # RF-DETR test set (separate due to dependency)
 RFDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rfdetr"]
@@ -549,12 +652,28 @@ RFDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rfdetr"]
 RTDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 
 FAMILY_MARKERS = {
+    "alexnet": pytest.mark.alexnet,
     "yolox": pytest.mark.yolox,
     "yolo7": pytest.mark.yolo7,
     "yolo9": pytest.mark.yolo9,
     "yolo9_e2e": pytest.mark.yolo9_e2e,
     "yolonas": pytest.mark.yolonas,
     "rfdetr": pytest.mark.rfdetr,
+    "detr": pytest.mark.detr,
+    "deit": pytest.mark.deit,
+    "deeplabv3": pytest.mark.deeplabv3,
+    "lwdetr": pytest.mark.lwdetr,
+    "faster_rcnn": pytest.mark.faster_rcnn,
+    "retinanet": pytest.mark.retinanet,
+    "ssd": pytest.mark.ssd,
+    "mask_rcnn": pytest.mark.mask_rcnn,
+    "fcn": pytest.mark.fcn,
+    "centernet": pytest.mark.centernet,
+    "fcos": pytest.mark.fcos,
+    "efficientdet": pytest.mark.efficientdet,
+    "deformable_detr": pytest.mark.deformable_detr,
+    "dinodetr": pytest.mark.dinodetr,
+    "hrnet": pytest.mark.hrnet,
     "dfine": pytest.mark.dfine,
     "deim": pytest.mark.deim,
     "deimv2": pytest.mark.deimv2,
@@ -566,6 +685,9 @@ FAMILY_MARKERS = {
     "rtmdet": pytest.mark.rtmdet,
     "l2cs": pytest.mark.l2cs,
     "fomo": pytest.mark.fomo,
+    "vit": pytest.mark.vit,
+    "vgg": pytest.mark.vgg,
+    "swin": pytest.mark.swin,
 }
 
 
@@ -630,6 +752,20 @@ ALL_MODEL_WEIGHT_PARAMS = model_cases(
 )
 GENERAL_NIGHTLY_INFERENCE_PARAMS = model_cases(
     GENERAL_NIGHTLY_INFERENCE_MODELS,
+    with_weights=True,
+    marks_resolver=general_nightly_marks,
+)
+FCN_SEMANTIC_NIGHTLY_PARAMS = model_cases(
+    FCN_SEMANTIC_NIGHTLY_MODELS,
+    with_weights=True,
+    marks_resolver=general_nightly_marks,
+)
+DEEPLABV3_SEMANTIC_PARAMS = model_cases(
+    DEEPLABV3_SEMANTIC_MODELS,
+    with_weights=True,
+)
+GENERAL_NIGHTLY_SEMANTIC_PARAMS = model_cases(
+    GENERAL_NIGHTLY_SEMANTIC_MODELS,
     with_weights=True,
     marks_resolver=general_nightly_marks,
 )

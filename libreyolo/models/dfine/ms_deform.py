@@ -10,6 +10,7 @@ keeps ONNX export portable (opset >= 16).
 """
 
 import math
+from contextvars import ContextVar
 from typing import List
 
 import torch
@@ -50,6 +51,20 @@ def get_activation(act, inpace: bool = True):
     if hasattr(m, "inplace"):
         m.inplace = inpace
     return m
+
+
+# Set by the Core AI exporter for the duration of graph capture. A ContextVar
+# keeps nested or concurrent exports from resetting another export's state.
+# That converter has no lowering for aten.grid_sampler_2d, and the
+# manual gather-based path below emits no GridSample op, so it is the
+# same escape hatch the ONNX path already uses.
+_FORCE_MANUAL_GRID_SAMPLE: ContextVar[bool] = ContextVar(
+    "_FORCE_MANUAL_GRID_SAMPLE", default=False
+)
+# Strict torch.export capture cannot trace ContextVar.get(). Exporters that
+# require this decomposition temporarily set this plain module flag before
+# capture and restore it afterwards.
+_FORCE_MANUAL_GRID_SAMPLE_EXPORT = False
 
 
 def _grid_sample_bilinear_manual(feat, grid, padding_mode="zeros", align_corners=False):
@@ -148,7 +163,11 @@ def deformable_attention_core_func_v2(
         sampling_grid_l = sampling_locations_list[level]
 
         if method == "default":
-            if torch.onnx.is_in_onnx_export():
+            if (
+                torch.onnx.is_in_onnx_export()
+                or _FORCE_MANUAL_GRID_SAMPLE_EXPORT
+                or _FORCE_MANUAL_GRID_SAMPLE.get()
+            ):
                 sampling_value_l = _grid_sample_bilinear_manual(
                     value_l, sampling_grid_l, padding_mode="zeros", align_corners=False
                 )

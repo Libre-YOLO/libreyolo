@@ -16,6 +16,12 @@ OPTIONAL_MODELS = (
     ("libreyolo.models.sam.sam3", "LibreSAM3", "sam", "transformers"),
     ("libreyolo.models.mobilesam.model", "LibreMobileSAM", "sam", None),
     ("libreyolo.models.picosam3.model", "LibrePicoSAM3", "sam", None),
+    (
+        "libreyolo.models.sam3dbody.model",
+        "LibreSAM3DBody",
+        None,
+        "sam_3d_body",
+    ),
     ("libreyolo.models.vlm.florence2", "LibreFlorence2", "vlm", "transformers"),
     ("libreyolo.models.vlm.kosmos2", "LibreKosmos2", "vlm", "transformers"),
     ("libreyolo.models.vlm.internvl3", "LibreInternVL3", "vlm", "transformers"),
@@ -48,6 +54,13 @@ OPTIONAL_MODELS = (
         "huggingface_hub",
     ),
 )
+
+
+def _jsonable_imgsz(value: int | tuple[int, int] | list[int]) -> int | list[int]:
+    """Return image-size metadata that survives a JSON round trip unchanged."""
+    if isinstance(value, (tuple, list)):
+        return [int(dimension) for dimension in value]
+    return int(value)
 
 
 def _export_override(cls, base_cls) -> str:
@@ -88,8 +101,9 @@ def collect_model_inventory() -> dict[str, dict]:
     """Return eager and lazy family metadata without constructing models."""
     from libreyolo.models import try_ensure_rfdetr
     from libreyolo.models.base.model import BaseModel
+    from libreyolo.models.registry import group_of
 
-    optional: dict[str, tuple[str, bool]] = {}
+    optional: dict[str, tuple[str | None, bool]] = {}
     try_ensure_rfdetr()
     classes = list(BaseModel._registry)
     if any(cls.FAMILY == "rfdetr" for cls in BaseModel._registry):
@@ -114,8 +128,13 @@ def collect_model_inventory() -> dict[str, dict]:
         if not family:
             continue
         extra, available = optional.get(family, (None, True))
-        task_sizes = {task: dict(sizes) for task, sizes in cls.TASK_INPUT_SIZES.items()}
-        all_sizes = dict(cls.INPUT_SIZES)
+        task_sizes = {
+            task: {size: _jsonable_imgsz(imgsz) for size, imgsz in sizes.items()}
+            for task, sizes in cls.TASK_INPUT_SIZES.items()
+        }
+        all_sizes = {
+            size: _jsonable_imgsz(imgsz) for size, imgsz in cls.INPUT_SIZES.items()
+        }
         for sizes in task_sizes.values():
             all_sizes.update(sizes)
         inventory[family] = {
@@ -123,11 +142,15 @@ def collect_model_inventory() -> dict[str, dict]:
             "tasks": list(cls.SUPPORTED_TASKS),
             "default_task": cls.DEFAULT_TASK,
             "sizes": all_sizes,
-            "default_imgsz": dict(cls.INPUT_SIZES),
+            "default_imgsz": {
+                size: _jsonable_imgsz(imgsz)
+                for size, imgsz in cls.INPUT_SIZES.items()
+            },
             "task_sizes": task_sizes,
             "export_override": _export_override(cls, BaseModel),
             "optional_extra": extra,
             "available": available,
+            "group": group_of(family),
         }
     return dict(sorted(inventory.items()))
 

@@ -13,6 +13,7 @@ from ..command_utils import (
     get_user_provided_params,
     help_json_callback,
     load_model_or_exit,
+    parse_imgsz_str,
     resolve_model_or_exit,
 )
 from ..config import (
@@ -245,7 +246,7 @@ def train_cmd(
     # Training
     epochs: int = typer.Option(300, help="Training epochs"),
     batch: int = typer.Option(16, help="Batch size per device"),
-    imgsz: int = typer.Option(640, help="Training image size"),
+    imgsz: str = typer.Option("640", help="Training image size: 640 (square) or 480x640 (HxW)"),
     device: str = typer.Option("auto", help="Device: 0, cpu, mps, auto"),
     workers: int = typer.Option(4, help="Dataloader workers"),
     cache: str = typer.Option(
@@ -254,6 +255,17 @@ def train_cmd(
     seed: int = typer.Option(0, help="Random seed"),
     resume: str = typer.Option("", help="Resume training: true, or path to checkpoint"),
     amp: bool = typer.Option(True, help="Automatic Mixed Precision"),
+    amp_dtype: str = typer.Option(
+        "float16", help="CUDA AMP dtype: float16 or bfloat16"
+    ),
+    cuda_graph: bool = typer.Option(
+        False,
+        "--cuda-graph",
+        help=(
+            "Capture the training forward/backward into CUDA graphs "
+            "(single-GPU, supported families only; others run eager)"
+        ),
+    ),
     pretrained: bool = typer.Option(True, help="Use pretrained weights"),
     lora: bool = typer.Option(
         False,
@@ -310,6 +322,19 @@ def train_cmd(
     # Validation
     val: bool = typer.Option(True, help="Validate during training"),
     eval_interval: int = typer.Option(10, help="Validate every N epochs"),
+    max_det: int = typer.Option(
+        300, help="Maximum predictions per image after validation NMS"
+    ),
+    eval_max_det: Optional[int] = typer.Option(
+        None,
+        help="COCO evaluator cap (default: pycocotools AP@100)",
+    ),
+    faster_coco_eval: bool = typer.Option(
+        True,
+        "--faster-coco-eval/--no-faster-coco-eval",
+        help="Use the faster-coco-eval C++ backend for validation COCO metrics "
+        "(default: on when installed; falls back to pycocotools)",
+    ),
     save_plots: bool = typer.Option(
         False, help="Save final validation plots during training"
     ),
@@ -354,6 +379,15 @@ def train_cmd(
 
     # Parse tuple/list strings
     try:
+        from libreyolo.utils.amp import normalize_amp_dtype
+
+        amp_dtype = normalize_amp_dtype(amp_dtype)
+        if max_det < 1:
+            raise ValueError(f"max_det must be >= 1, got {max_det}")
+        if eval_max_det is not None and eval_max_det < 1:
+            raise ValueError(
+                f"eval_max_det must be >= 1, got {eval_max_det}"
+            )
         mosaic_scale_val = (
             ast.literal_eval(mosaic_scale)
             if isinstance(mosaic_scale, str)
@@ -459,16 +493,23 @@ def train_cmd(
 
     # All training params in CLI-facing names (single source of truth).
     # build_train_kwargs() maps these to TrainConfig field names automatically.
+    try:
+        parsed_imgsz = parse_imgsz_str(imgsz)
+    except ValueError as exc:
+        exit_with_error(out, "invalid_imgsz", str(exc))
+
     params = {
         "epochs": epochs,
         "batch": batch,
-        "imgsz": imgsz,
+        "imgsz": parsed_imgsz,
         "device": device,
         "workers": workers,
         "cache": cache_val,
         "seed": seed,
         "resume": resume_val,
         "amp": amp,
+        "amp_dtype": amp_dtype,
+        "cuda_graph": cuda_graph,
         "lora": lora,
         "freeze": freeze_val,
         "optimizer": optimizer,
@@ -497,6 +538,9 @@ def train_cmd(
         "ema": ema,
         "ema_decay": ema_decay,
         "eval_interval": eval_interval,
+        "max_det": max_det,
+        "eval_max_det": eval_max_det,
+        "faster_coco_eval": faster_coco_eval,
         "save_plots": save_plots,
         "patience": patience,
         "project": project,
@@ -550,6 +594,9 @@ def train_cmd(
             "lr0": params["lr0"],
             "momentum": params["momentum"],
             "scheduler": params["scheduler"],
+            "amp": params["amp"],
+            "amp_dtype": params["amp_dtype"],
+            "max_det": params["max_det"],
         }
         if params.get("freeze") is not None:
             resolved_config["freeze"] = params["freeze"]
@@ -576,6 +623,9 @@ def train_cmd(
                 "lr_drop": params["lr_drop"],
                 "ema": params["ema"],
                 "ema_decay": params["ema_decay"],
+                "amp": params["amp"],
+                "amp_dtype": params["amp_dtype"],
+                "max_det": params["max_det"],
                 "save_period": params["save_period"],
                 "lora": params["lora"],
             }
@@ -583,6 +633,8 @@ def train_cmd(
                 resolved_config["freeze"] = params["freeze"]
             if normalized_task is not None:
                 resolved_config["task"] = normalized_task
+        if params["eval_max_det"] is not None:
+            resolved_config["eval_max_det"] = params["eval_max_det"]
 
         data_out = {
             "valid": True,

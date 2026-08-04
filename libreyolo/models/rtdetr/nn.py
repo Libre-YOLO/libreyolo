@@ -663,6 +663,10 @@ class TransformerDecoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.eval_idx = eval_idx if eval_idx >= 0 else num_layers + eval_idx
+        # Set by ``emit_loss_outputs`` while training-time validation computes
+        # the criterion: eval otherwise scores only the ``eval_idx`` layer,
+        # which is not enough for the auxiliary-decoder loss terms.
+        self.emit_loss_outputs = False
 
     def forward(
         self,
@@ -702,7 +706,10 @@ class TransformerDecoder(nn.Module):
                 bbox_head[i](output) + inverse_sigmoid(ref_points_detach)
             )
 
-            if self.training:
+            # ``ref_points`` and ``ref_points_detach`` hold the same values, so
+            # the two appends below agree numerically; they differ only in the
+            # autograd graph, which validation does not build.
+            if self.training or self.emit_loss_outputs:
                 dec_out_logits.append(score_head[i](output))
                 if i == 0:
                     dec_out_bboxes.append(inter_ref_bbox)
@@ -789,6 +796,10 @@ class RTDETRTransformer(nn.Module):
         self.decoder = TransformerDecoder(
             hidden_dim, decoder_layer, num_decoder_layers, eval_idx
         )
+
+        # See ``TransformerDecoder.emit_loss_outputs``: eval assembles a
+        # two-key inference dict, and the criterion needs the aux entries.
+        self.emit_loss_outputs = False
 
         # Denoising
         self.num_denoising = num_denoising
@@ -1066,7 +1077,7 @@ class RTDETRTransformer(nn.Module):
 
         out = {"pred_logits": out_logits[-1], "pred_boxes": out_bboxes[-1]}
 
-        if self.training and self.aux_loss:
+        if (self.training or self.emit_loss_outputs) and self.aux_loss:
             out["aux_outputs"] = self._set_aux_loss(out_logits[:-1], out_bboxes[:-1])
             out["aux_outputs"].extend(
                 self._set_aux_loss([enc_topk_logits], [enc_topk_bboxes])

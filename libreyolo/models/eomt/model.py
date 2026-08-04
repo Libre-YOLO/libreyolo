@@ -20,6 +20,7 @@ from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional as TVF
 
 from ...tasks import normalize_task
+from ...utils.amp import normalize_amp_dtype, torch_amp_dtype
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.serialization import load_untrusted_torch_file
 from ..base.model import BaseModel
@@ -1155,8 +1156,10 @@ class LibreEoMT(BaseModel):
         save_plots: bool = False,
         save_dir: str | None = None,
         half: bool = False,
+        amp_dtype: str = "float16",
         **kwargs,
     ):
+        amp_dtype = normalize_amp_dtype(amp_dtype)
         if self.task in ("segment", "panoptic"):
             # segment scores mask mAP (SegmentationValidator); panoptic scores
             # Panoptic Quality (PanopticValidator). Both use the base dispatch;
@@ -1178,6 +1181,7 @@ class LibreEoMT(BaseModel):
                 save_plots=save_plots,
                 save_dir=save_dir,
                 half=half,
+                amp_dtype=amp_dtype,
                 **kwargs,
             )
 
@@ -1193,6 +1197,7 @@ class LibreEoMT(BaseModel):
             )
         data_dir = kwargs.pop("data_dir", None)
         max_det = kwargs.pop("max_det", 300)
+        eval_max_det = kwargs.pop("eval_max_det", None)
         iou_thresholds = kwargs.pop("iou_thresholds", None)
         if kwargs:
             names = ", ".join(sorted(kwargs))
@@ -1206,6 +1211,11 @@ class LibreEoMT(BaseModel):
             )
         if max_det != 300:
             logger.warning("LibreEoMT semantic validation ignores max_det=%s.", max_det)
+        if eval_max_det is not None:
+            logger.warning(
+                "LibreEoMT semantic validation ignores eval_max_det=%s.",
+                eval_max_det,
+            )
         if iou_thresholds is not None:
             logger.warning("LibreEoMT semantic validation ignores iou_thresholds.")
         if int(batch) != 1:
@@ -1351,7 +1361,9 @@ class LibreEoMT(BaseModel):
 
                 t2 = time.time()
                 if half and self.device.type == "cuda":
-                    with torch.amp.autocast("cuda"):
+                    with torch.amp.autocast(
+                        "cuda", dtype=torch_amp_dtype(amp_dtype)
+                    ):
                         output = self._forward(tensor.to(self.device))
                 else:
                     output = self._forward(tensor.to(self.device))
@@ -1377,7 +1389,9 @@ class LibreEoMT(BaseModel):
 
                     t2f = time.time()
                     if half and self.device.type == "cuda":
-                        with torch.amp.autocast("cuda"):
+                        with torch.amp.autocast(
+                            "cuda", dtype=torch_amp_dtype(amp_dtype)
+                        ):
                             flip_output = self._forward(flip_tensor.to(self.device))
                     else:
                         flip_output = self._forward(flip_tensor.to(self.device))
@@ -1463,6 +1477,7 @@ class LibreEoMT(BaseModel):
                 "save_json": bool(save_json),
                 "save_plots": bool(save_plots),
                 "half": bool(half),
+                "amp_dtype": amp_dtype,
             }
             with open(save_path / "config.yaml", "w") as handle:
                 yaml.safe_dump(config, handle, sort_keys=False)

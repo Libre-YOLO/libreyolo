@@ -64,6 +64,82 @@ start. A backend failure mid-run (server down, auth expired) disables
 the logger with a warning; training is never interrupted. A missing
 backend package raises at construction with the install command.
 
+### Validation loss
+
+Every trainable family (`g0`, `g1` and `g2` in the model registry) can opt in
+to a validation loss reported alongside its accuracy metric:
+
+```python
+model.train(data="coco8.yaml", val_loss=True)
+```
+
+Supported families and the components each reports, all prefixed `val/loss/`:
+
+| Task | Family | Components |
+| --- | --- | --- |
+| detect | `yolo9`, `yolo9_p2` | `box`, `cls`, `dfl` |
+| detect | `yolo9_e2e` | `box`, `cls`, `dfl` (one-to-many plus one-to-one) |
+| detect | `yolonas` | `cls`, `iou`, `dfl` |
+| detect | `rfdetr` | `ce`, `bbox`, `giou` |
+| detect | `rtdetr`, `rtdetrv2` | `vfl`, `bbox`, `giou` |
+| detect | `dfine` | `vfl`, `bbox`, `giou`, `fgl`, `ddf` |
+| detect | `deim`, `deimv2`, `rtdetrv4`, `ec` | `mal`, `bbox`, `giou`, `fgl`, `ddf` |
+| detect | `rtmdet` | `cls`, `bbox` |
+| detect | `picodet` | `cls`, `bbox`, `dfl` |
+| detect | `yolox` | `iou`, `obj`, `cls`, `l1` |
+| detect | `yolo7` | `iou`, `obj`, `cls` |
+| point | `fomo` | `ce` |
+| classify | `resnet`, `convnext`, `mobilenetv4`, `efficientnetv2` | `ce` |
+| semantic | `segformer`, `lingbotvision`, `dinov2` | `sem` |
+| restore | `nafnet` | `restore` |
+
+Components are weighted exactly as training weights them, so they sum to the
+reported `val/loss`. The always-on artifact names are the corresponding
+`metrics/loss...` keys, and `libreyolo monitor` overlays `metrics/loss` with
+`train/loss`.
+
+The validator reuses the model output already produced for the accuracy
+metric; it does not run a second network forward. Most families need nothing
+beyond that output. Three need a little more, still without re-running the
+backbone:
+
+- The DETR-line decoders score only their evaluation layer and return a
+  two-key dict in eval. For the duration of the validation pass they also
+  emit the auxiliary-decoder, encoder and pre-decoder outputs their criterion
+  consumes. The predictions the metrics use are unchanged, and the extra work
+  is per-layer prediction heads, not extra decoder layers.
+- YOLO9-E2E infers through its one-to-one branch only, so the one-to-many
+  branch is rebuilt from the neck features the eval forward already published.
+- YOLOX's eval branch sigmoids obj/cls and skips the grid bookkeeping its
+  criterion needs. Inside the validation pass its head assembles a second,
+  training-shaped set of tensors from the same convolution outputs. The
+  returned inference tensor is untouched, so predictions and mAP are
+  unchanged.
+
+The reported total covers the same terms as training, with two documented
+exceptions:
+
+- Contrastive-denoising groups need the ground truth at forward time, and
+  validation forwards without it, so `dn_*` terms are never included. RF-DETR
+  is the analogous case with `group_detr` collapsing to 1 in eval.
+- The number is computed on the evaluation/EMA model, exactly like the
+  accuracy metric. Where a family's train and eval forwards genuinely differ
+  (BatchNorm running statistics, stochastic depth), the validation loss
+  reflects the eval-mode model. That is the intended comparison, not a
+  discrepancy.
+
+FOMO is the one family where `val_loss=True` changes nothing: its validator
+has always computed this loss unconditionally. It is now published under the
+shared `metrics/loss` keys as well as the older `metrics/val_loss`, so the
+monitor overlays it like every other family.
+
+This option is off by default because target assignment adds work and memory
+to validation. It runs under `torch.no_grad()` with the evaluation/EMA model,
+and distributed training computes it locally on rank 0 without collectives.
+Best-checkpoint selection remains based on the configured accuracy metric.
+Augmented validation, a task a family has not implemented it for, and
+inference-only (`g3`/`g4`) families all raise a clear configuration error.
+
 ### TensorBoard
 
 ```

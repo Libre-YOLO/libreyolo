@@ -236,7 +236,9 @@ class Masks:
                 mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
             if contours:
-                contour = max(contours, key=cv2.contourArea).squeeze(1).astype(np.float64)
+                contour = (
+                    max(contours, key=cv2.contourArea).squeeze(1).astype(np.float64)
+                )
                 if normalize:
                     contour[:, 0] /= w
                     contour[:, 1] /= h
@@ -334,7 +336,9 @@ class Keypoints(_TensorPayload):
         conf = self.conf
         if conf is None:
             if isinstance(self.data, torch.Tensor):
-                return torch.ones(self.data.shape[:-1], dtype=torch.bool, device=self.data.device)
+                return torch.ones(
+                    self.data.shape[:-1], dtype=torch.bool, device=self.data.device
+                )
             return np.ones(self.data.shape[:-1], dtype=bool)
         return conf > 0
 
@@ -527,7 +531,9 @@ class PanopticSegmentation(_TensorPayload):
     # rebuild via ``self.__class__(data, orig_shape)``) would drop it. Override
     # the move/slice methods to carry it through.
     def to(self, *args, **kwargs):
-        return self.__class__(_move(self.data, *args, **kwargs), self.segments_info, self.orig_shape)
+        return self.__class__(
+            _move(self.data, *args, **kwargs), self.segments_info, self.orig_shape
+        )
 
     def cpu(self):
         return self.__class__(_cpu(self.data), self.segments_info, self.orig_shape)
@@ -594,7 +600,9 @@ class DepthMap(_TensorPayload):
             return data * 0
         normalized = (data - lo) / (hi - lo)
         if isinstance(normalized, torch.Tensor):
-            return torch.where(torch.isfinite(normalized), normalized, torch.zeros_like(normalized))
+            return torch.where(
+                torch.isfinite(normalized), normalized, torch.zeros_like(normalized)
+            )
         return np.where(np.isfinite(normalized), normalized, np.zeros_like(normalized))
 
     def __getitem__(self, idx):
@@ -607,6 +615,157 @@ class DepthMap(_TensorPayload):
             f"DepthMap(shape={tuple(self.data.shape)}, "
             f"range=({self.min:.4g}, {self.max:.4g}), "
             f"orig_shape={self.orig_shape})"
+        )
+
+
+class EdgeMap(_TensorPayload):
+    """Dense edge-probability map for a single image.
+
+    Data is float32 ``(H, W)`` on the original image canvas. ``0`` means
+    non-edge and ``1`` means edge. The continuous map is retained so callers
+    can choose a threshold appropriate to their dataset or application.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if not isinstance(data, (torch.Tensor, np.ndarray)):
+            raise TypeError("edge-map data must be a torch.Tensor or numpy.ndarray")
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (H, W) edge map but got shape {tuple(data.shape)}"
+            )
+        if int(data.shape[0]) <= 0 or int(data.shape[1]) <= 0:
+            raise ValueError("edge-map height and width must be positive")
+
+        if isinstance(data, torch.Tensor):
+            data = data.to(dtype=torch.float32)
+            if not bool(torch.isfinite(data).all()):
+                raise ValueError("edge map contains non-finite values")
+            if bool(((data < 0.0) | (data > 1.0)).any()):
+                raise ValueError("edge-map values must be in [0, 1]")
+        else:
+            data = np.asarray(data, dtype=np.float32)
+            if not bool(np.isfinite(data).all()):
+                raise ValueError("edge map contains non-finite values")
+            if bool(np.any((data < 0.0) | (data > 1.0))):
+                raise ValueError("edge-map values must be in [0, 1]")
+
+        data_shape = (int(data.shape[0]), int(data.shape[1]))
+        if orig_shape is None:
+            orig_shape = data_shape
+        else:
+            orig_shape = (int(orig_shape[0]), int(orig_shape[1]))
+            if orig_shape != data_shape:
+                raise ValueError(
+                    f"edge map shape {data_shape} does not match original "
+                    f"image shape {orig_shape}"
+                )
+        super().__init__(data, orig_shape)
+
+    def binary(self, threshold: float = 0.5) -> TensorLike:
+        """Return a boolean edge mask at ``threshold``."""
+        threshold = float(threshold)
+        if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+            raise ValueError(
+                f"edge threshold must be finite and in [0, 1], got {threshold}"
+            )
+        return self.data >= threshold
+
+    @property
+    def array(self) -> np.ndarray:
+        """Return the map as an ``(H, W)`` float32 NumPy array."""
+        return np.asarray(_numpy(self.data), dtype=np.float32)
+
+    def __getitem__(self, idx):
+        # A dense edge map is whole-image data, not an instance collection.
+        return self.__class__(self.data, self.orig_shape)
+
+    def __len__(self) -> int:
+        return 1
+
+    def __repr__(self) -> str:
+        return (
+            f"EdgeMap(shape={tuple(self.data.shape)}, "
+            f"range=({float(self.data.min()):.4g}, "
+            f"{float(self.data.max()):.4g}), orig_shape={self.orig_shape})"
+        )
+
+
+class NormalMap(_TensorPayload):
+    """Dense surface-normal field for a single image.
+
+    Data is float32 ``(H, W, 3)`` on the original image canvas in the OpenCV
+    camera frame: ``+x`` right, ``+y`` down, and ``+z`` into the scene.
+    Normals face the camera, so a fronto-parallel surface is ``(0, 0, -1)``.
+    Producers must emit a unit vector at every pixel.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if not isinstance(data, (torch.Tensor, np.ndarray)):
+            raise TypeError("normal-map data must be a torch.Tensor or numpy.ndarray")
+        if data.ndim != 3 or data.shape[-1] != 3:
+            raise ValueError(
+                f"expected (H, W, 3) normal map but got shape {tuple(data.shape)}"
+            )
+        if int(data.shape[0]) <= 0 or int(data.shape[1]) <= 0:
+            raise ValueError("normal-map height and width must be positive")
+
+        if isinstance(data, torch.Tensor):
+            data = data.to(dtype=torch.float32)
+        else:
+            data = np.asarray(data, dtype=np.float32)
+
+        data_shape = (int(data.shape[0]), int(data.shape[1]))
+        if orig_shape is None:
+            orig_shape = data_shape
+        else:
+            orig_shape = (int(orig_shape[0]), int(orig_shape[1]))
+            if orig_shape != data_shape:
+                raise ValueError(
+                    f"normal map shape {data_shape} does not match original "
+                    f"image shape {orig_shape}"
+                )
+        super().__init__(data, orig_shape)
+
+    def assert_normalized(self, atol: float = 1e-4) -> None:
+        """Assert that every pixel is finite and unit length within ``atol``."""
+        if atol < 0:
+            raise ValueError(f"atol must be non-negative, got {atol}")
+
+        if isinstance(self.data, torch.Tensor):
+            finite = torch.isfinite(self.data).all(dim=-1)
+            if not bool(finite.all()):
+                invalid = int((~finite).sum().item())
+                raise AssertionError(
+                    f"normal map contains {invalid} non-finite pixel(s)"
+                )
+            norms = torch.linalg.vector_norm(self.data, dim=-1)
+            max_error = float((norms - 1.0).abs().max().item())
+        else:
+            finite = np.isfinite(self.data).all(axis=-1)
+            if not bool(finite.all()):
+                invalid = int((~finite).sum())
+                raise AssertionError(
+                    f"normal map contains {invalid} non-finite pixel(s)"
+                )
+            norms = np.linalg.norm(self.data, axis=-1)
+            max_error = float(np.max(np.abs(norms - 1.0)))
+
+        if max_error > atol:
+            raise AssertionError(
+                f"normal map is not unit-normalized: maximum norm error "
+                f"{max_error:.6g} exceeds atol={atol:.6g}"
+            )
+
+    def __getitem__(self, idx):
+        # A dense normal field is whole-image data, not an instance collection.
+        return self.__class__(self.data, self.orig_shape)
+
+    def __len__(self) -> int:
+        return 1
+
+    def __repr__(self) -> str:
+        return (
+            f"NormalMap(shape={tuple(self.data.shape)}, orig_shape={self.orig_shape})"
         )
 
 
@@ -692,10 +851,7 @@ class Matte(_TensorPayload):
         return 1
 
     def __repr__(self) -> str:
-        return (
-            f"Matte(shape={tuple(self.data.shape)}, "
-            f"orig_shape={self.orig_shape})"
-        )
+        return f"Matte(shape={tuple(self.data.shape)}, orig_shape={self.orig_shape})"
 
 
 class OCRRegions(_TensorPayload):
@@ -807,17 +963,29 @@ class OCRRegions(_TensorPayload):
 
     def cpu(self):
         return self.__class__(
-            _cpu(self.data), self.texts, _cpu(self._conf), _cpu(self._det_conf), self.orig_shape
+            _cpu(self.data),
+            self.texts,
+            _cpu(self._conf),
+            _cpu(self._det_conf),
+            self.orig_shape,
         )
 
     def cuda(self):
         return self.__class__(
-            _cuda(self.data), self.texts, _cuda(self._conf), _cuda(self._det_conf), self.orig_shape
+            _cuda(self.data),
+            self.texts,
+            _cuda(self._conf),
+            _cuda(self._det_conf),
+            self.orig_shape,
         )
 
     def numpy(self):
         return self.__class__(
-            _numpy(self.data), self.texts, _numpy(self._conf), _numpy(self._det_conf), self.orig_shape
+            _numpy(self.data),
+            self.texts,
+            _numpy(self._conf),
+            _numpy(self._det_conf),
+            self.orig_shape,
         )
 
     def __getitem__(self, idx):
@@ -946,10 +1114,17 @@ class OBB(_TensorPayload):
         y = corners[..., 1]
         if isinstance(corners, torch.Tensor):
             return torch.stack(
-                [x.min(dim=1).values, y.min(dim=1).values, x.max(dim=1).values, y.max(dim=1).values],
+                [
+                    x.min(dim=1).values,
+                    y.min(dim=1).values,
+                    x.max(dim=1).values,
+                    y.max(dim=1).values,
+                ],
                 dim=1,
             )
-        return np.stack([x.min(axis=1), y.min(axis=1), x.max(axis=1), y.max(axis=1)], axis=1)
+        return np.stack(
+            [x.min(axis=1), y.min(axis=1), x.max(axis=1), y.max(axis=1)], axis=1
+        )
 
 
 class Gaze(_TensorPayload):
@@ -1012,6 +1187,312 @@ class Gaze(_TensorPayload):
         )
 
 
+class Embeddings(_TensorPayload):
+    """L2-normalized vectors produced by the generic ``embed`` task.
+
+    Data always has shape ``(N, D)``. A whole-image result carries one row and
+    no boxes; region embeddings are row-aligned with ``Results.boxes``. Each
+    row is float32 and L2-normalized by its inference path, so cosine
+    similarity is a dot product.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if data.ndim == 1:
+            if isinstance(data, torch.Tensor):
+                data = data.unsqueeze(0)
+            else:
+                data = data[None, :]
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (N, D) embeddings, got shape {tuple(data.shape)}"
+            )
+        super().__init__(data, orig_shape)
+
+    @property
+    def dim(self) -> int:
+        return int(self.data.shape[-1])
+
+    @property
+    def normalized(self) -> TensorLike:
+        """Defensive re-L2-normalization of each row."""
+        d = self.data
+        if isinstance(d, torch.Tensor):
+            return d / d.norm(dim=-1, keepdim=True).clamp_min(1e-10)
+        norm = np.linalg.norm(d, axis=-1, keepdims=True)
+        return d / np.clip(norm, 1e-10, None)
+
+    def similarity(self, other: "Embeddings | TensorLike") -> TensorLike:
+        """Cosine similarity of these rows against ``other``.
+
+        Returns ``(N, M)`` for an ``(M, D)`` gallery (or another Embeddings),
+        or ``(N,)`` for a single ``(D,)`` vector.
+        """
+        a = self.normalized
+        b = other.normalized if isinstance(other, Embeddings) else other
+        single = getattr(b, "ndim", 2) == 1
+        if isinstance(a, torch.Tensor):
+            b = (
+                b
+                if isinstance(b, torch.Tensor)
+                else torch.as_tensor(b, dtype=a.dtype, device=a.device)
+            )
+            b = b.reshape(1, -1) if single else b
+            b = b / b.norm(dim=-1, keepdim=True).clamp_min(1e-10)
+            sim = a @ b.T
+        else:
+            b = b if isinstance(b, np.ndarray) else _numpy(b)
+            b = b.reshape(1, -1) if single else b
+            b = b / np.clip(np.linalg.norm(b, axis=-1, keepdims=True), 1e-10, None)
+            sim = a @ b.T
+        return sim[:, 0] if single else sim
+
+    def verify(self, i: int, j: int, threshold: float = 0.4) -> bool:
+        """Whether rows ``i`` and ``j`` meet a cosine-similarity threshold."""
+        sim = self.similarity(self.data[j])
+        return bool(float(sim[i]) >= threshold)
+
+    def __repr__(self) -> str:
+        return (
+            f"Embeddings(n={len(self)}, dim={self.dim}, shape={tuple(self.data.shape)})"
+        )
+
+
+class Identities:
+    """Named gallery matches row-aligned with ``Results.embeddings``.
+
+    Produced by the ``embed`` task when a ``Gallery`` is supplied. ``name`` is
+    ``None`` below the match threshold (*unknown*); the nearest below-threshold
+    name is never guessed.
+    """
+
+    def __init__(
+        self,
+        names: List[Optional[str]],
+        scores: TensorLike,
+    ):
+        self._names = list(names)
+        self._scores = np.asarray(_numpy(scores), dtype=np.float32).reshape(-1)
+        if len(self._names) != self._scores.shape[0]:
+            raise ValueError(
+                f"names ({len(self._names)}) and scores "
+                f"({self._scores.shape[0]}) must be row-aligned"
+            )
+
+    @property
+    def name(self) -> List[Optional[str]]:
+        """Matched name per embedding row, ``None`` for unknown."""
+        return list(self._names)
+
+    @property
+    def score(self) -> np.ndarray:
+        """Best gallery cosine similarity per embedding row."""
+        return self._scores
+
+    @property
+    def data(self) -> List[Tuple[Optional[str], float]]:
+        return [(n, float(s)) for n, s in zip(self._names, self._scores)]
+
+    # Container protocol used by Results._apply — identity labels are
+    # device-less, so tensor movement is a no-op.
+    def to(self, *args, **kwargs) -> "Identities":
+        return self
+
+    def cpu(self) -> "Identities":
+        return self
+
+    def cuda(self) -> "Identities":
+        return self
+
+    def numpy(self) -> "Identities":
+        return self
+
+    def __getitem__(self, idx) -> "Identities":
+        if isinstance(idx, (int, np.integer)):
+            return Identities([self._names[idx]], self._scores[idx : idx + 1])
+        if isinstance(idx, slice):
+            return Identities(self._names[idx], self._scores[idx])
+        idx = np.asarray(idx)
+        if idx.dtype == bool:
+            idx = np.flatnonzero(idx)
+        return Identities([self._names[i] for i in idx], self._scores[idx])
+
+    def __len__(self) -> int:
+        return len(self._names)
+
+    def __repr__(self) -> str:
+        known = sum(1 for n in self._names if n is not None)
+        return f"Identities(n={len(self)}, known={known})"
+
+
+class Meshes:
+    """Parametric human body meshes for a single image.
+
+    Rows are aligned with the parent ``Results.boxes`` (person boxes), the same
+    contract ``Keypoints`` follows for the pose task: row ``i`` of every tensor
+    here describes the person in box ``i``.
+
+    Everything is expressed in the camera frame of the original image.
+    ``transl`` is metric (meters) with +z pointing away from the camera;
+    ``vertices`` and ``joints3d`` are metric and already include ``transl``;
+    ``joints2d`` is in pixels on the original image canvas, not on the crop the
+    network actually saw. A world/gravity frame is deliberately absent in this
+    version, so no field here silently means "world".
+
+    Parameter layouts differ between body models, so nothing about the shapes
+    is hard-coded: ``body_model`` names the parameterization and the counts are
+    read back from the tensors. For ``"mhr"`` (Momentum Human Rig), rotations
+    are Euler angles in radians rather than axis-angle, ``body_pose`` is a flat
+    per-joint parameter vector rather than one triplet per joint (rig joints
+    carry different degrees of freedom), and ``betas`` are identity blendshape
+    coefficients. Model-specific extras such as skeleton scale, hand pose and
+    facial expression live in ``extras``.
+    """
+
+    def __init__(
+        self,
+        global_orient: TensorLike,
+        body_pose: TensorLike,
+        betas: TensorLike,
+        transl: TensorLike,
+        *,
+        body_model: str,
+        vertices: TensorLike | None = None,
+        faces: TensorLike | None = None,
+        joints3d: TensorLike | None = None,
+        joints2d: TensorLike | None = None,
+        conf: TensorLike | None = None,
+        focal_length: TensorLike | None = None,
+        extras: Optional[Dict[str, TensorLike]] = None,
+        orig_shape: Tuple[int, int] | None = None,
+    ):
+        self.global_orient = global_orient
+        self.body_pose = body_pose
+        self.betas = betas
+        self.transl = transl
+        self.body_model = str(body_model)
+        self.vertices = vertices
+        # Topology is shared by every person in the image, so it is stored once
+        # and never sliced per row.
+        self.faces = faces
+        self.joints3d = joints3d
+        self.joints2d = joints2d
+        self.conf = conf
+        self.focal_length = focal_length
+        self.extras = dict(extras) if extras else {}
+        self.orig_shape = orig_shape
+
+    # Per-row tensors, in the order they are rebuilt by _rebuild().
+    _ROW_FIELDS = (
+        "global_orient",
+        "body_pose",
+        "betas",
+        "transl",
+        "vertices",
+        "joints3d",
+        "joints2d",
+        "conf",
+        "focal_length",
+    )
+
+    def _rebuild(self, fn, shared_fn=None) -> "Meshes":
+        """Rebuild with ``fn`` over per-row tensors.
+
+        ``shared_fn`` handles the shared face topology; it follows ``fn`` for
+        device and dtype moves but is the identity for row slicing, where
+        selecting a person must not touch the mesh connectivity.
+        """
+        if shared_fn is None:
+            shared_fn = fn
+        values = {name: fn(getattr(self, name)) for name in self._ROW_FIELDS}
+        return Meshes(
+            values.pop("global_orient"),
+            values.pop("body_pose"),
+            values.pop("betas"),
+            values.pop("transl"),
+            body_model=self.body_model,
+            faces=shared_fn(self.faces),
+            extras={k: fn(v) for k, v in self.extras.items()},
+            orig_shape=self.orig_shape,
+            **values,
+        )
+
+    @property
+    def num_vertices(self) -> int:
+        return 0 if self.vertices is None else int(self.vertices.shape[1])
+
+    @property
+    def num_joints(self) -> int:
+        return 0 if self.joints3d is None else int(self.joints3d.shape[1])
+
+    @property
+    def num_betas(self) -> int:
+        return int(self.betas.shape[-1])
+
+    @property
+    def has_vertices(self) -> bool:
+        return self.vertices is not None
+
+    @property
+    def params(self) -> Dict[str, TensorLike]:
+        """The parametric core, shaped to splat into a body-model forward."""
+        core = {
+            "global_orient": self.global_orient,
+            "body_pose": self.body_pose,
+            "betas": self.betas,
+            "transl": self.transl,
+        }
+        core.update(self.extras)
+        return core
+
+    def save_obj(self, path: str | Path, index: int = 0) -> None:
+        """Write one person's mesh to a Wavefront OBJ file."""
+        if self.vertices is None or self.faces is None:
+            raise ValueError(
+                "This result carries no mesh geometry, only parameters, so it "
+                "cannot be written as OBJ."
+            )
+        if not 0 <= index < len(self):
+            raise IndexError(f"index {index} is out of range for {len(self)} mesh(es)")
+        verts = np.asarray(_numpy(self.vertices))[index]
+        faces = np.asarray(_numpy(self.faces))
+
+        path = Path(path)
+        if path.parent and path.parent != Path("."):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(f"# LibreYOLO body mesh ({self.body_model})\n")
+            for v in verts:
+                fh.write(f"v {float(v[0]):.6f} {float(v[1]):.6f} {float(v[2]):.6f}\n")
+            # OBJ vertex indices are 1-based.
+            for f in faces:
+                fh.write(f"f {int(f[0]) + 1} {int(f[1]) + 1} {int(f[2]) + 1}\n")
+
+    def to(self, *args, **kwargs) -> "Meshes":
+        return self._rebuild(lambda d: _move(d, *args, **kwargs))
+
+    def cpu(self) -> "Meshes":
+        return self._rebuild(_cpu)
+
+    def cuda(self) -> "Meshes":
+        return self._rebuild(_cuda)
+
+    def numpy(self) -> "Meshes":
+        return self._rebuild(_numpy)
+
+    def __getitem__(self, idx) -> "Meshes":
+        return self._rebuild(lambda d: _slice_first(d, idx), shared_fn=lambda d: d)
+
+    def __len__(self) -> int:
+        return int(self.global_orient.shape[0])
+
+    def __repr__(self) -> str:
+        return (
+            f"Meshes(n={len(self)}, body_model='{self.body_model}', "
+            f"betas={self.num_betas}, vertices={self.num_vertices}, "
+            f"joints={self.num_joints}, orig_shape={self.orig_shape})"
+        )
+
+
 class Results:
     """Single-image result with flat detection/segmentation slots."""
 
@@ -1026,9 +1507,14 @@ class Results:
         "semantic_mask",
         "panoptic",
         "depth_map",
+        "normal_map",
+        "edges",
         "restored",
         "matte",
         "ocr",
+        "embeddings",
+        "identities",
+        "meshes",
     )
 
     def __init__(
@@ -1055,6 +1541,11 @@ class Results:
         matte: Optional[Matte] = None,
         ocr: Optional[OCRRegions] = None,
         restore_scale: int = 1,
+        embeddings: Optional[Embeddings] = None,
+        identities: Optional[Identities] = None,
+        meshes: Optional[Meshes] = None,
+        normal_map: Optional[NormalMap] = None,
+        edges: Optional[EdgeMap] = None,
     ):
         if boxes is not None and boxes.orig_shape is None:
             boxes = boxes.with_orig_shape(orig_shape)
@@ -1064,6 +1555,10 @@ class Results:
             points = Points(points.data, orig_shape)
         if depth_map is not None and depth_map.orig_shape is None:
             depth_map = DepthMap(depth_map.data, orig_shape)
+        if normal_map is not None and normal_map.orig_shape != tuple(orig_shape):
+            normal_map = NormalMap(normal_map.data, orig_shape)
+        if edges is not None and edges.orig_shape != tuple(orig_shape):
+            edges = EdgeMap(edges.data, orig_shape)
         if restored is not None and restored.orig_shape is None:
             restored = RestoredImage(restored.data, orig_shape)
         if matte is not None and matte.orig_shape is None:
@@ -1081,18 +1576,25 @@ class Results:
         self.semantic_mask = semantic_mask
         self.panoptic = panoptic
         self.depth_map = depth_map
+        self.normal_map = normal_map
+        self.edges = edges
         self.restored = restored
         self.matte = matte
         self.ocr = ocr
+        self.meshes = meshes
         # Integer upscale factor of a restore/super-resolution result: the
         # restored canvas is ``restore_scale`` times the input. 1 for
         # deblur/denoise and every non-restore task.
         self.restore_scale = int(restore_scale) if restore_scale else 1
+        self.embeddings = embeddings
+        self.identities = identities
         self.orig_shape = orig_shape
         self.path = path
         self.names = names or {}
         self.speed = speed or {}
-        self.track_id = track_id if track_id is not None else (boxes.id if boxes else None)
+        self.track_id = (
+            track_id if track_id is not None else (boxes.id if boxes else None)
+        )
         self.frame_idx = frame_idx
 
     def _new(self, **overrides) -> "Results":
@@ -1110,10 +1612,15 @@ class Results:
             "semantic_mask": self.semantic_mask,
             "panoptic": self.panoptic,
             "depth_map": self.depth_map,
+            "normal_map": self.normal_map,
+            "edges": self.edges,
             "restored": self.restored,
             "matte": self.matte,
             "ocr": self.ocr,
+            "meshes": self.meshes,
             "restore_scale": self.restore_scale,
+            "embeddings": self.embeddings,
+            "identities": self.identities,
             "speed": dict(self.speed),
             "track_id": self.track_id,
             "frame_idx": self.frame_idx,
@@ -1137,7 +1644,9 @@ class Results:
         overrides = {}
         for key in self._keys:
             value = getattr(self, key)
-            overrides[key] = getattr(value, method)(*args, **kwargs) if value is not None else None
+            overrides[key] = (
+                getattr(value, method)(*args, **kwargs) if value is not None else None
+            )
 
         if method == "cpu":
             overrides["track_id"] = _cpu(self.track_id)
@@ -1175,6 +1684,11 @@ class Results:
         matte: Optional[Matte] = None,
         ocr: Optional[OCRRegions] = None,
         restore_scale: Optional[int] = None,
+        embeddings: Optional[Embeddings] = None,
+        identities: Optional[Identities] = None,
+        meshes: Optional[Meshes] = None,
+        normal_map: Optional[NormalMap] = None,
+        edges: Optional[EdgeMap] = None,
     ) -> "Results":
         if boxes is not None:
             self.boxes = boxes.with_orig_shape(self.orig_shape)
@@ -1189,30 +1703,87 @@ class Results:
         if gaze is not None:
             self.gaze = gaze
         if points is not None:
-            self.points = points if points.orig_shape is not None else Points(points.data, self.orig_shape)
+            self.points = (
+                points
+                if points.orig_shape is not None
+                else Points(points.data, self.orig_shape)
+            )
         if semantic_mask is not None:
             self.semantic_mask = semantic_mask
         if panoptic is not None:
             self.panoptic = panoptic
         if depth_map is not None:
             self.depth_map = depth_map
+        if normal_map is not None:
+            self.normal_map = (
+                normal_map
+                if normal_map.orig_shape == tuple(self.orig_shape)
+                else NormalMap(normal_map.data, self.orig_shape)
+            )
+        if edges is not None:
+            self.edges = (
+                edges
+                if edges.orig_shape == tuple(self.orig_shape)
+                else EdgeMap(edges.data, self.orig_shape)
+            )
         if restored is not None:
             self.restored = restored
+        if meshes is not None:
+            self.meshes = meshes
         if matte is not None:
-            self.matte = matte if matte.orig_shape is not None else Matte(matte.data, self.orig_shape)
+            self.matte = (
+                matte
+                if matte.orig_shape is not None
+                else Matte(matte.data, self.orig_shape)
+            )
         if ocr is not None:
             self.ocr = (
                 ocr
                 if ocr.orig_shape is not None
-                else OCRRegions(ocr.data, ocr.texts, ocr.conf, ocr.det_conf, self.orig_shape)
+                else OCRRegions(
+                    ocr.data, ocr.texts, ocr.conf, ocr.det_conf, self.orig_shape
+                )
             )
         if restore_scale is not None:
             self.restore_scale = int(restore_scale) if restore_scale else 1
+        if embeddings is not None:
+            self.embeddings = embeddings
+        if identities is not None:
+            self.identities = identities
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
                 self.boxes = self.boxes.with_id(track_id)
         return self
+
+    @property
+    def normals(self) -> Optional[NormalMap]:
+        """Alias for :attr:`normal_map`, matching the plural dense-task API."""
+        return self.normal_map
+
+    @normals.setter
+    def normals(self, value: Optional[NormalMap]) -> None:
+        self.normal_map = value
+
+    def plot(self):
+        """Render a dense normal or edge result in its canonical visualization."""
+        if self.normal_map is None and self.edges is None:
+            raise NotImplementedError(
+                "Results.plot() is currently defined for normal and edge results only."
+            )
+
+        from PIL import Image
+
+        h, w = self.orig_shape
+        if self.edges is not None:
+            from .drawing import draw_edge_map
+
+            return draw_edge_map(Image.new("RGB", (w, h)), self.edges.array)
+
+        from .drawing import draw_normal_map
+
+        canvas = Image.new("RGB", (w, h))
+        return draw_normal_map(canvas, _numpy(self.normal_map.data))
 
     def cutout(self, image: Any = None) -> np.ndarray:
         """Return an RGBA ``(H, W, 4)`` uint8 cutout: source RGB + matte alpha.
@@ -1222,7 +1793,9 @@ class Results:
         reloaded from ``self.path``. Only valid for matte results.
         """
         if self.matte is None:
-            raise ValueError("cutout() is only defined for matte results (Results.matte is None).")
+            raise ValueError(
+                "cutout() is only defined for matte results (Results.matte is None)."
+            )
         alpha = self.matte.array  # (H, W) float32 in [0, 1]
         h, w = alpha.shape
         rgb = self._source_rgb(image, (h, w))
@@ -1250,7 +1823,9 @@ class Results:
             if rgb.shape[-1] == 4:
                 rgb = rgb[..., :3]
         if rgb.shape[:2] != (h, w):
-            rgb = np.asarray(Image.fromarray(rgb.astype(np.uint8)).resize((w, h), Image.BILINEAR))
+            rgb = np.asarray(
+                Image.fromarray(rgb.astype(np.uint8)).resize((w, h), Image.BILINEAR)
+            )
         return rgb.astype(np.uint8)
 
     def save(self, path: str, image: Any = None) -> str:
@@ -1273,8 +1848,33 @@ class Results:
         Image.fromarray(rgba, mode="RGBA").save(out)
         return str(out)
 
-    def summary(self, normalize: bool = False, decimals: int = 5) -> List[Dict[str, Any]]:
+    def summary(
+        self,
+        normalize: bool = False,
+        decimals: int = 5,
+        embeddings: bool = False,
+    ) -> List[Dict[str, Any]]:
         if self.boxes is None:
+            if self.embeddings is not None:
+                emb = (
+                    self.embeddings.numpy()
+                    if isinstance(self.embeddings.data, torch.Tensor)
+                    else self.embeddings
+                )
+                rows = []
+                for i in range(len(emb)):
+                    row = {"embedding_dim": int(emb.dim)}
+                    if embeddings:
+                        row["embedding"] = [
+                            round(float(value), decimals) for value in emb.data[i]
+                        ]
+                    if self.identities is not None and i < len(self.identities):
+                        row["identity"] = self.identities.name[i]
+                        row["identity_score"] = round(
+                            float(self.identities.score[i]), decimals
+                        )
+                    rows.append(row)
+                return rows
             if self.ocr is not None:
                 ocr_np = self.ocr.numpy()
                 h, w = self.orig_shape
@@ -1288,7 +1888,9 @@ class Results:
                             "name": "text",
                             "text": ocr_np.texts[i],
                             "confidence": round(float(ocr_np.conf[i]), decimals),
-                            "det_confidence": round(float(ocr_np.det_conf[i]), decimals),
+                            "det_confidence": round(
+                                float(ocr_np.det_conf[i]), decimals
+                            ),
                             "polygon": {
                                 "x": [round(float(x), decimals) for x in polygon[:, 0]],
                                 "y": [round(float(y), decimals) for y in polygon[:, 1]],
@@ -1357,6 +1959,28 @@ class Results:
                         "mean": round(self.depth_map.mean, decimals),
                     }
                 ]
+            if self.normal_map is not None:
+                h, w = self.normal_map.orig_shape
+                return [
+                    {
+                        "name": "normal_map",
+                        "shape": [int(h), int(w), 3],
+                        "frame": "opencv",
+                        "orientation": "camera-facing",
+                    }
+                ]
+            if self.edges is not None:
+                h, w = self.edges.orig_shape
+                edge_values = self.edges.array
+                return [
+                    {
+                        "name": "edges",
+                        "shape": [int(h), int(w)],
+                        "min": round(float(edge_values.min()), decimals),
+                        "max": round(float(edge_values.max()), decimals),
+                        "mean": round(float(edge_values.mean()), decimals),
+                    }
+                ]
             if self.restored is not None:
                 h, w = self.restored.array.shape[:2]
                 return [
@@ -1394,7 +2018,14 @@ class Results:
         boxes_np = self.boxes.numpy()
         obb_np = None
         if self.obb is not None:
-            obb_np = self.obb.numpy() if isinstance(self.obb.data, torch.Tensor) else self.obb
+            obb_np = (
+                self.obb.numpy()
+                if isinstance(self.obb.data, torch.Tensor)
+                else self.obb
+            )
+        # Converted once rather than per row: mesh payloads carry vertex arrays
+        # large enough that repeating the conversion per person is wasteful.
+        meshes_np = self.meshes.numpy() if self.meshes is not None else None
         track_ids = _numpy(self.track_id)
         rows = []
         for i in range(len(boxes_np)):
@@ -1441,13 +2072,65 @@ class Results:
                     "y": [round(float(y), decimals) for y in segment[:, 1]],
                 }
             if self.gaze is not None and i < len(self.gaze):
-                gaze_np = self.gaze.numpy() if isinstance(self.gaze.data, torch.Tensor) else self.gaze
+                gaze_np = (
+                    self.gaze.numpy()
+                    if isinstance(self.gaze.data, torch.Tensor)
+                    else self.gaze
+                )
                 row["gaze"] = {
                     "pitch_rad": round(float(gaze_np.data[i, 0]), decimals),
                     "yaw_rad": round(float(gaze_np.data[i, 1]), decimals),
-                    "pitch_deg": round(float(gaze_np.data[i, 0]) * 180.0 / math.pi, decimals),
-                    "yaw_deg": round(float(gaze_np.data[i, 1]) * 180.0 / math.pi, decimals),
+                    "pitch_deg": round(
+                        float(gaze_np.data[i, 0]) * 180.0 / math.pi, decimals
+                    ),
+                    "yaw_deg": round(
+                        float(gaze_np.data[i, 1]) * 180.0 / math.pi, decimals
+                    ),
                 }
+            if self.embeddings is not None and i < len(self.embeddings):
+                emb = (
+                    self.embeddings.numpy()
+                    if isinstance(self.embeddings.data, torch.Tensor)
+                    else self.embeddings
+                )
+                # A 512-float vector is ~2 KB/face — omit it from summaries by
+                # default and surface only its dimension; opt in with embeddings=True.
+                row["embedding_dim"] = int(emb.dim)
+                if embeddings:
+                    row["embedding"] = [round(float(v), decimals) for v in emb.data[i]]
+            if self.identities is not None and i < len(self.identities):
+                row["identity"] = self.identities.name[i]
+                row["identity_score"] = round(float(self.identities.score[i]), decimals)
+            if meshes_np is not None and i < len(meshes_np):
+                # Vertices are deliberately omitted: tens of thousands of
+                # coordinates per person is not something to hand back as JSON.
+                # Use ``result.meshes.vertices`` or ``save_obj`` for geometry.
+                mesh_row = {
+                    "body_model": meshes_np.body_model,
+                    "global_orient": [
+                        round(float(v), decimals) for v in meshes_np.global_orient[i]
+                    ],
+                    "transl": [round(float(v), decimals) for v in meshes_np.transl[i]],
+                    "betas": [round(float(v), decimals) for v in meshes_np.betas[i]],
+                    "num_vertices": meshes_np.num_vertices,
+                }
+                if meshes_np.conf is not None:
+                    mesh_row["confidence"] = round(float(meshes_np.conf[i]), decimals)
+                if meshes_np.focal_length is not None:
+                    mesh_row["focal_length"] = round(
+                        float(np.asarray(meshes_np.focal_length[i]).reshape(-1)[0]),
+                        decimals,
+                    )
+                if meshes_np.joints2d is not None:
+                    joints2d = meshes_np.joints2d[i]
+                    if normalize:
+                        h, w = self.orig_shape
+                        joints2d = joints2d / np.array([w, h], dtype=float)
+                    mesh_row["joints2d"] = {
+                        "x": [round(float(x), decimals) for x in joints2d[:, 0]],
+                        "y": [round(float(y), decimals) for y in joints2d[:, 1]],
+                    }
+                row["mesh"] = mesh_row
             if track_ids is not None:
                 row["track_id"] = int(track_ids[i])
             rows.append(row)
@@ -1461,6 +2144,8 @@ class Results:
             return len(self.boxes)
         if self.points is not None:
             return len(self.points)
+        if self.embeddings is not None:
+            return len(self.embeddings)
         if self.probs is not None:
             return 1
         if self.semantic_mask is not None:
@@ -1469,12 +2154,18 @@ class Results:
             return 1
         if self.depth_map is not None:
             return 1
+        if self.normal_map is not None:
+            return 1
+        if self.edges is not None:
+            return 1
         if self.restored is not None:
             return 1
         if self.matte is not None:
             return 1
         if self.ocr is not None:
             return len(self.ocr)
+        if self.meshes is not None:
+            return len(self.meshes)
         return 0
 
     def __repr__(self) -> str:
@@ -1493,6 +2184,10 @@ class Results:
             parts.append(f"panoptic={self.panoptic}")
         if self.depth_map is not None:
             parts.append(f"depth_map={self.depth_map}")
+        if self.normal_map is not None:
+            parts.append(f"normal_map={self.normal_map}")
+        if self.edges is not None:
+            parts.append(f"edges={self.edges}")
         if self.restored is not None:
             parts.append(f"restored={self.restored}")
             if self.restore_scale != 1:
@@ -1501,8 +2196,66 @@ class Results:
             parts.append(f"matte={self.matte}")
         if self.ocr is not None:
             parts.append(f"ocr={self.ocr}")
+        if self.meshes is not None:
+            parts.append(f"meshes={self.meshes}")
         if self.track_id is not None:
             parts.append(f"track_ids={len(self.track_id)}")
         if self.frame_idx is not None:
             parts.append(f"frame_idx={self.frame_idx}")
         return f"Results({', '.join(parts)})"
+
+
+def stack_result_embeddings(prediction: Any) -> torch.Tensor:
+    """Stack every ``Results.embeddings`` row into one CPU float32 tensor."""
+    payloads: List[torch.Tensor] = []
+
+    def collect(value: Any) -> None:
+        if isinstance(value, Results):
+            if value.embeddings is None:
+                raise RuntimeError(
+                    "Prediction did not produce embeddings. Load the model with "
+                    "task='embed' before calling embed()."
+                )
+            data = value.embeddings.data
+            tensor = (
+                data.detach().to(device="cpu", dtype=torch.float32)
+                if isinstance(data, torch.Tensor)
+                else torch.as_tensor(data, dtype=torch.float32)
+            )
+            if tensor.ndim == 1:
+                tensor = tensor.unsqueeze(0)
+            if tensor.ndim != 2:
+                raise RuntimeError(
+                    f"Expected (N, D) embeddings, got shape {tuple(tensor.shape)}."
+                )
+            payloads.append(tensor)
+            return
+        if isinstance(value, (str, bytes, np.ndarray)):
+            raise RuntimeError(
+                "Prediction did not return Results objects with embeddings."
+            )
+        try:
+            iterator = iter(value)
+        except TypeError as exc:
+            raise RuntimeError(
+                "Prediction did not return Results objects with embeddings."
+            ) from exc
+        for item in iterator:
+            collect(item)
+
+    collect(prediction)
+    if not payloads:
+        return torch.empty((0, 0), dtype=torch.float32)
+    # Zero-row payloads (e.g. a face-less image whose embedder had not yet
+    # resolved its dimension) contribute no rows and must not fail or skew the
+    # dimension-consistency check.
+    non_empty = [tensor for tensor in payloads if tensor.shape[0] > 0]
+    if not non_empty:
+        width = max(int(tensor.shape[1]) for tensor in payloads)
+        return torch.empty((0, width), dtype=torch.float32)
+    dimensions = {int(tensor.shape[1]) for tensor in non_empty}
+    if len(dimensions) != 1:
+        raise RuntimeError(
+            f"Cannot stack embeddings with different dimensions: {sorted(dimensions)}."
+        )
+    return torch.cat(non_empty, dim=0)

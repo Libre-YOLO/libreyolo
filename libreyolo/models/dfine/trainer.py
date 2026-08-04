@@ -36,7 +36,6 @@ from typing import Dict, Optional, Tuple, Type
 import logging
 
 import torch
-from torch.amp import autocast
 from tqdm import tqdm
 
 from ...data import (
@@ -47,7 +46,11 @@ from ...data import (
     load_data_config,
 )
 from ...data.dataset import COCODataset, YOLODataset
-from ...training.config import DFINEConfig, TrainConfig
+from ...training.config import (
+    DFINEConfig,
+    TrainConfig,
+    resolve_dfine_base_size_repeat,
+)
 from ...training.scheduler import FlatCosineScheduler
 from ...training.trainer import BaseTrainer
 from .loss import DFINECriterion
@@ -182,6 +185,14 @@ class DFINETrainer(BaseTrainer):
 
             apply_lora_to_detr(self.model)
 
+        self.criterion = self.build_criterion()
+
+    def build_criterion(self, *, distributed_normalize: bool = True):
+        """Build the training criterion.
+
+        Validation loss builds a second one with ``distributed_normalize``
+        off, so both stay defined in exactly one place.
+        """
         matcher_weights = {"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0}
         loss_weights = {
             "loss_vfl": 1.0,
@@ -212,7 +223,7 @@ class DFINETrainer(BaseTrainer):
             alpha=0.25,
             gamma=2.0,
         )
-        self.criterion = DFINECriterion(
+        return DFINECriterion(
             matcher=matcher,
             weight_dict=loss_weights,
             losses=losses,
@@ -220,7 +231,26 @@ class DFINETrainer(BaseTrainer):
             gamma=2.0,
             num_classes=self.config.num_classes,
             reg_max=32,
+            distributed_normalize=distributed_normalize,
         ).to(self.device)
+
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            raise ValueError(
+                f"val_loss=True currently supports {self.get_model_family()} "
+                "detection only; segment and other tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import DFINEValidationLoss
+
+        return DFINEValidationLoss(
+            model, self.build_criterion(distributed_normalize=False)
+        )
 
     def on_mosaic_disable(self):
         super().on_mosaic_disable()
@@ -361,6 +391,13 @@ class DFINETrainer(BaseTrainer):
     # _setup_data override — wire DFINEMultiScaleCollate (when enabled)
     # =========================================================================
 
+    def _train_base_size_repeat(self) -> Optional[int]:
+        """Multi-scale repeat for this run: config override or per-size default."""
+        return resolve_dfine_base_size_repeat(
+            getattr(self.config, "size", ""),
+            getattr(self.config, "base_size_repeat", None),
+        )
+
     def _setup_data(self):
         """Mirror of ``BaseTrainer._setup_data`` but uses ``DFINEMultiScaleCollate``.
 
@@ -486,9 +523,13 @@ class DFINETrainer(BaseTrainer):
 
         # Multi-scale collate (or default yolox_collate_fn).
         if getattr(self.config, "multi_scale", False) and not load_segments:
+            # Upstream pins base_size_repeat per size (n disables multi-scale,
+            # s 20, m 6, l 4, x 3); this used to be hardcoded to 3, which only
+            # X actually wants. None makes the collate keep batches at
+            # base_size, which is exactly upstream's `~` for the N size.
             collate_fn = DFINEMultiScaleCollate(
                 base_size=self.config.imgsz,
-                base_size_repeat=3,
+                base_size_repeat=self._train_base_size_repeat(),
                 stop_epoch=stop_epoch,
             )
         else:
@@ -596,7 +637,7 @@ class DFINETrainer(BaseTrainer):
             targets = targets.to(self.device, non_blocking=True)
 
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._autocast_context():
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     loss = outputs["total_loss"]
                 self.optimizer.zero_grad()
@@ -715,7 +756,7 @@ class DFINETrainer(BaseTrainer):
                 actual_window = min(accum, len(self.train_loader) - batch_idx)
 
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._autocast_context():
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     loss = outputs["total_loss"] / actual_window
                 self.scaler.scale(loss).backward()

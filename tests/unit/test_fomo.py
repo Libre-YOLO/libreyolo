@@ -260,11 +260,13 @@ class TestLibreFOMORandomInit:
         model = _make_random_fomo()
         assert isinstance(model.model, torch.nn.Module)
 
-    @pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+    @pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino", "ncnn"])
     def test_exported_point_parity(self, tmp_path: Path, format: str) -> None:
         if format == "onnx":
             pytest.importorskip("onnx")
             pytest.importorskip("onnxruntime")
+        if format == "openvino":
+            pytest.importorskip("openvino")
         if format == "ncnn" and (
             importlib.util.find_spec("pnnx") is None
             or importlib.util.find_spec("ncnn") is None
@@ -278,11 +280,35 @@ class TestLibreFOMORandomInit:
         # this test depend on which tests ran (and drew randoms) before it.
         torch.manual_seed(0)
         model = _make_random_fomo(size="s", nc=2)
-        model.model.eval()
         image = np.random.default_rng(11).integers(
             0, 256, size=(72, 100, 3), dtype=np.uint8
         )
-        native = model.predict(image, imgsz=96, conf=0.0, max_det=25).points.data
+        if format == "openvino":
+            # Give the parity oracle non-degenerate peaks. Random-init FOMO
+            # logits are nearly uniform, so sub-1e-4 converter drift can
+            # legitimately change which tied cells enter the top-k set.
+            from libreyolo.models.fomo.utils import preprocess_image
+
+            training_image, *_ = preprocess_image(image, 96)
+            network = model.model.train()
+            optimizer = torch.optim.Adam(network.parameters(), lr=0.01)
+            targets = torch.zeros(1, 12, 12, dtype=torch.long)
+            targets[0, 2, 3] = 1
+            targets[0, 7, 8] = 2
+            targets[0, 4, 9] = 1
+            targets[0, 9, 2] = 2
+            class_weights = torch.tensor([0.02, 1.0, 1.0])
+            for _ in range(80):
+                logits = network(training_image)
+                loss = torch.nn.functional.cross_entropy(
+                    logits, targets, weight=class_weights
+                )
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
+        model.model.eval()
+        conf = 0.1 if format == "openvino" else 0.0
+        native = model.predict(image, imgsz=96, conf=conf, max_det=25).points.data
         suffix = f".{format}"
         artifact = tmp_path / f"fomo{suffix}"
         model.export(
@@ -293,7 +319,7 @@ class TestLibreFOMORandomInit:
             simplify=False,
         )
         exported = LibreYOLO(str(artifact), device="cpu").predict(
-            image, conf=0.0, max_det=25
+            image, conf=conf, max_det=25
         )
         torch.testing.assert_close(exported.points.data, native, atol=1e-5, rtol=1e-5)
 

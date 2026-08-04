@@ -57,6 +57,20 @@ def preprocess_numpy(
 ) -> Tuple[np.ndarray, float]:
     """Resize longest side to ``resize_size``, center-pad to ``input_size``."""
     orig_h, orig_w = img_rgb_hwc.shape[:2]
+    if isinstance(input_size, (list, tuple)):
+        input_h, input_w = int(input_size[0]), int(input_size[1])
+        if input_h != input_w:
+            # YOLO-NAS preprocessing resizes the longest side to a fixed
+            # ``resize_size`` before padding, so a rectangular canvas would
+            # either crop the image or leave most of it as padding. Reject
+            # until the resize recipe itself is made aspect-aware.
+            raise ValueError(
+                f"YOLO-NAS does not support rectangular input sizes, got "
+                f"({input_h}, {input_w}). Use a square imgsz."
+            )
+    else:
+        input_h = input_w = int(input_size)
+    resize_size = min(resize_size, input_h, input_w)
     ratio = min(resize_size / orig_h, resize_size / orig_w)
     new_w, new_h = int(round(orig_w * ratio)), int(round(orig_h * ratio))
 
@@ -65,14 +79,14 @@ def preprocess_numpy(
     )
 
     padded = Image.new(
-        "RGB", (input_size, input_size), (pad_value, pad_value, pad_value)
+        "RGB", (input_w, input_h), (pad_value, pad_value, pad_value)
     )
     if padding_mode == "bottom_right":
         offset_x = 0
         offset_y = 0
     else:
-        offset_x = (input_size - new_w) // 2
-        offset_y = (input_size - new_h) // 2
+        offset_x = (input_w - new_w) // 2
+        offset_y = (input_h - new_h) // 2
     padded.paste(img_resized, (offset_x, offset_y))
 
     arr = np.array(padded, dtype=np.float32) / 255.0

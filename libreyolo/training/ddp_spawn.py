@@ -211,8 +211,9 @@ def spawn_for_model(
             imgsz = train_kw.get("imgsz") or getattr(model_instance, "input_size", None) or 640
             resolved = resolve_auto_batch(
                 model_instance.model,
-                imgsz=int(imgsz),
+                imgsz=imgsz,
                 amp=bool(train_kw.get("amp", True)),
+                amp_dtype=str(train_kw.get("amp_dtype", "float16")),
                 world_size=nprocs,
                 nbs=nbs,
                 fraction=getattr(model_instance, "autobatch_fraction", _DEFAULT_FRACTION),

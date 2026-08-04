@@ -44,6 +44,11 @@ class LibreEC(BaseModel):
     POSE_NUM_KEYPOINTS = 17
     KEYPOINT_DIM = 3
     val_preprocessor_class = ECValPreprocessor
+    # EC shares the D-FINE decoder line (ECTrainer subclasses DFINETrainer)
+    # with an ECViT backbone; the eval forward is pure tensor work at a fixed
+    # eval_spatial_size. Captures and replays bit-identically
+    # (tests/unit/test_cuda_graph_detr_families.py).
+    SUPPORTS_CUDA_GRAPH = True
 
     _GH_RELEASE_BASE = (
         "https://github.com/capsule2077/edgecrafter/releases/download/edgecrafterv1"

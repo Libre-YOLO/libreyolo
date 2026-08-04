@@ -80,7 +80,7 @@ def _candidate_tensor_dicts(loaded: Any):
     if isinstance(ema_state, dict):
         # mmengine ExpMomentumEMA prefixes module params with "module.".
         yield {
-            k[len("module."):]: v
+            k[len("module.") :]: v
             for k, v in ema_state.items()
             if k.startswith("module.")
         } or ema_state
@@ -99,12 +99,12 @@ def _normalize_tensor_dict(candidate: dict) -> dict[str, torch.Tensor]:
     for prefix in ("module.", "_orig_mod."):
         if any(k.startswith(prefix) for k in state):
             state = {
-                (k[len(prefix):] if k.startswith(prefix) else k): v
+                (k[len(prefix) :] if k.startswith(prefix) else k): v
                 for k, v in state.items()
             }
     # Some redistributions nest weights under a ``model.model.`` prefix.
     if all(k.startswith("model.model.") for k in state):
-        state = {k[len("model.model."):]: v for k, v in state.items()}
+        state = {k[len("model.model.") :]: v for k, v in state.items()}
     return state
 
 
@@ -455,7 +455,11 @@ def _wrap_claim(
     source: Path,
 ) -> Optional[Tuple[dict, str, str, str, str]]:
     """Build ``(wrapped, family, prefix, size, task)`` for a resolved claim."""
-    size = cls.detect_size(converted) or cls.detect_size_from_filename(source.name)
+    # Some Hugging Face assets are generically named ``model.safetensors``;
+    # their repository/cache directory is the only variant discriminator.
+    # Family parsers therefore receive the complete source path while their
+    # canonical regexes continue to work by searching within that string.
+    size = cls.detect_size(converted) or cls.detect_size_from_filename(str(source))
     if size is None:
         logger.warning(
             "Upstream %s checkpoint recognized but its size could not be "
@@ -478,12 +482,19 @@ def _wrap_claim(
         )
     nc = detected_nc or 80
     names = _checkpoint_names(loaded, nc)
+    if names is None:
+        names = cls.default_checkpoint_names(nc)
     extra_metadata: dict[str, Any] = {}
     if task == "restore":
         # Restore checkpoints use a single schema placeholder, not a semantic
         # class label. Foreign restoration releases normally carry no names.
         nc = 1
         names = {0: "image"}
+    if task == "depth":
+        # Dense depth checkpoints use a schema-only class slot. Foreign depth
+        # releases normally carry no names, so never fabricate ``class_0``.
+        nc = 1
+        names = {0: "depth"}
     if task == "pose":
         num_keypoints = None
         detect_keypoints = getattr(cls, "detect_num_keypoints", None)
@@ -628,8 +639,11 @@ def _try_rfdetr(loaded: Any) -> Optional[Tuple[dict, str, str, str, str]]:
     # encoder/decoder-ish keys) are not misclaimed.
     keys_lower = [k.lower() for k in state]
     is_rfdetr = any(
-        "dinov2" in k or "query_embed" in k or "enc_out_class_embed" in k for k in keys_lower
-    ) or ("class_embed.bias" in state and any(k.startswith("backbone.0") for k in state))
+        "dinov2" in k or "query_embed" in k or "enc_out_class_embed" in k
+        for k in keys_lower
+    ) or (
+        "class_embed.bias" in state and any(k.startswith("backbone.0") for k in state)
+    )
     if not is_rfdetr:
         return None
 
@@ -641,7 +655,9 @@ def _try_rfdetr(loaded: Any) -> Optional[Tuple[dict, str, str, str, str]]:
         )
         return None
 
-    task = "segment" if any(k.startswith("segmentation_head") for k in state) else "detect"
+    task = (
+        "segment" if any(k.startswith("segmentation_head") for k in state) else "detect"
+    )
 
     raw_nc = rfdetr_cls.detect_nb_classes(state)
     nc, names = _rfdetr_class_metadata(loaded, raw_nc)
@@ -705,7 +721,9 @@ def autoconvert_upstream_checkpoint(
             return None
 
     # Already a complete LibreYOLO v1.0 checkpoint — nothing to convert.
-    if isinstance(loaded, dict) and not validate_checkpoint_metadata(loaded, strict=False):
+    if isinstance(loaded, dict) and not validate_checkpoint_metadata(
+        loaded, strict=False
+    ):
         return None
 
     result = None

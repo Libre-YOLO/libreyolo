@@ -27,6 +27,27 @@ class YOLOXTrainer(BaseTrainer):
     def get_model_tag(self) -> str:
         return f"YOLOX-{self.config.size}"
 
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            raise ValueError(
+                f"val_loss=True currently supports {self.get_model_family()} "
+                "detection only; other tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import YOLOXValidationLoss
+
+        head = getattr(getattr(model, "head", None), "num_classes", None)
+        return YOLOXValidationLoss(
+            model,
+            num_classes=head if head is not None else self.config.num_classes,
+            device=self.device,
+            family=self.get_model_family(),
+        )
+
     def create_transforms(self):
         preproc = TrainTransform(
             max_labels=50,

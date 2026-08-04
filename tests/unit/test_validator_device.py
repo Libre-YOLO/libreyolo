@@ -30,9 +30,11 @@ def _setup_device(device: str) -> "torch.device":
     return v._setup_device()
 
 
-def _stub_validator(*, half: bool, device: str):
+def _stub_validator(*, half: bool, device: str, amp_dtype: str = "float16"):
     validator = object.__new__(_StubValidator)
-    validator.config = ValidationConfig(data="x.yaml", device=device, half=half)
+    validator.config = ValidationConfig(
+        data="x.yaml", device=device, half=half, amp_dtype=amp_dtype
+    )
     validator.device = torch.device(device)
     return validator
 
@@ -64,8 +66,8 @@ def test_half_validation_uses_cuda_autocast_only(monkeypatch, device, expected_c
     calls = []
 
     @contextmanager
-    def fake_autocast(device_type):
-        calls.append(device_type)
+    def fake_autocast(device_type, *, dtype):
+        calls.append((device_type, dtype))
         yield
 
     monkeypatch.setattr("libreyolo.validation.base.torch.amp.autocast", fake_autocast)
@@ -75,4 +77,22 @@ def test_half_validation_uses_cuda_autocast_only(monkeypatch, device, expected_c
     with validator._autocast_context():
         pass
 
-    assert calls == expected_calls
+    expected = [(device_type, torch.float16) for device_type in expected_calls]
+    assert calls == expected
+
+
+def test_bfloat16_validation_uses_explicit_cuda_autocast_dtype(monkeypatch):
+    calls = []
+
+    @contextmanager
+    def fake_autocast(device_type, *, dtype):
+        calls.append((device_type, dtype))
+        yield
+
+    monkeypatch.setattr("libreyolo.validation.base.torch.amp.autocast", fake_autocast)
+    validator = _stub_validator(half=True, device="cuda", amp_dtype="bf16")
+
+    with validator._autocast_context():
+        pass
+
+    assert calls == [("cuda", torch.bfloat16)]

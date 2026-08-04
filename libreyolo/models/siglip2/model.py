@@ -1,4 +1,4 @@
-"""LibreSigLIP2 - native SigLIP 2 zero-shot (open-vocabulary) classification.
+"""LibreSigLIP2 - zero-shot classification and image/text embedding.
 
 LibreSigLIP2 is a drop-in upgrade tier next to LibreCLIP: a classifier that
 needs **no training and no fixed label set**::
@@ -29,6 +29,10 @@ converted with ``weights/convert_siglip2_weights.py``.
 
 Zero-shot only: ``train()`` raises. ONNX export bakes the *current* label set
 into a fixed ``[B, K]`` classifier graph (see :meth:`export`).
+
+With ``task="embed"``, image prediction returns one normalized vector and
+``embed_text`` returns normalized text rows in the same space. The default task
+remains ``classify``.
 """
 
 from __future__ import annotations
@@ -46,7 +50,12 @@ from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.serialization import load_trusted_torch_file
 from ..base.model import BaseModel
-from .labels import DEFAULT_TEMPLATES, humanize_labels, imagenet1k_classnames, openai_imagenet_templates
+from .labels import (
+    DEFAULT_TEMPLATES,
+    humanize_labels,
+    imagenet1k_classnames,
+    openai_imagenet_templates,
+)
 from .nn import SIGLIP2_CONFIGS, build_siglip2_model
 
 logger = logging.getLogger(__name__)
@@ -69,9 +78,13 @@ def siglip2_logits(
     L2-normalized class matrix ``[K, D]``. Returns ``[B, K]`` logits.
     """
     image_features = F.normalize(image_features, dim=-1)
-    scale = logit_scale.exp().to(device=image_features.device, dtype=image_features.dtype)
+    scale = logit_scale.exp().to(
+        device=image_features.device, dtype=image_features.dtype
+    )
     bias = logit_bias.to(device=image_features.device, dtype=image_features.dtype)
-    text_embeds = text_embeds.to(device=image_features.device, dtype=image_features.dtype)
+    text_embeds = text_embeds.to(
+        device=image_features.device, dtype=image_features.dtype
+    )
     return scale * (image_features @ text_embeds.t()) + bias
 
 
@@ -93,7 +106,7 @@ def siglip2_probs(logits: torch.Tensor, multi_label: bool) -> torch.Tensor:
 
 
 class LibreSigLIP2(BaseModel):
-    """Open-vocabulary zero-shot image classifier, SigLIP 2 (inference only)."""
+    """Dual-tower zero-shot classifier and image/text embedder."""
 
     FAMILY: ClassVar[str] = "siglip2"
     FILENAME_PREFIX: ClassVar[str] = "LibreSigLIP2"
@@ -105,7 +118,8 @@ class LibreSigLIP2(BaseModel):
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         size: cfg.image_size for size, cfg in SIGLIP2_CONFIGS.items()
     }
-    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("classify",)
+    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("classify", "embed")
+    WEIGHT_TASKS: ClassVar[Tuple[str, ...]] = ("classify",)
     DEFAULT_TASK: ClassVar[str] = "classify"
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
     TRAIN_CONFIG = None
@@ -113,7 +127,9 @@ class LibreSigLIP2(BaseModel):
     # Attention pooling + fixed square resize make multi-scale TTA meaningless.
     TTA_ENABLED: ClassVar[bool] = False
 
-    validator_class: ClassVar[Optional[type]] = None  # set lazily (see _resolve_validator)
+    validator_class: ClassVar[Optional[type]] = (
+        None  # set lazily (see _resolve_validator)
+    )
 
     # =========================================================================
     # Registry classmethods
@@ -167,8 +183,11 @@ class LibreSigLIP2(BaseModel):
         **kwargs,
     ) -> None:
         resolved_task = normalize_task(task) if task is not None else "classify"
-        if resolved_task != "classify":
-            raise ValueError(f"LibreSigLIP2 only supports task='classify'; got {task!r}.")
+        if resolved_task not in self.SUPPORTED_TASKS:
+            raise ValueError(
+                "LibreSigLIP2 supports task in ('classify', 'embed'); "
+                f"got {task!r}."
+            )
 
         if isinstance(model_path, dict):
             weight_source: str | dict = model_path
@@ -180,10 +199,14 @@ class LibreSigLIP2(BaseModel):
                 size = self.detect_size_from_filename(model_path)
         else:
             size = size or "b16"
-            weight_source = self._resolve_weights_path(f"{self.FILENAME_PREFIX}{size}-cls.pt")
+            weight_source = self._resolve_weights_path(
+                f"{self.FILENAME_PREFIX}{size}-cls.pt"
+            )
         size = size or "b16"
 
-        self._default_templates = list(templates) if templates else list(DEFAULT_TEMPLATES)
+        self._default_templates = (
+            list(templates) if templates else list(DEFAULT_TEMPLATES)
+        )
         self._multi_label = bool(multi_label)
         self._text_embeds: Optional[torch.Tensor] = None
         self.tokenizer = None  # built after super().__init__
@@ -198,16 +221,23 @@ class LibreSigLIP2(BaseModel):
         )
 
         self._load_weights(weight_source)
+        if isinstance(weight_source, str) and Path(weight_source).is_file():
+            self.model_path = str(weight_source)
         self.model.eval()
 
         from .tokenizer import SigLIP2Tokenizer
 
         self.tokenizer = SigLIP2Tokenizer(context_length=self.model.context_length)
 
-        if classes is not None:
-            self.set_classes(list(classes), templates=self._default_templates)
+        if self.task == "classify":
+            if classes is not None:
+                self.set_classes(list(classes), templates=self._default_templates)
+            else:
+                self.set_classes(
+                    imagenet1k_classnames(), templates=self._default_templates
+                )
         else:
-            self.set_classes(imagenet1k_classnames(), templates=self._default_templates)
+            self.names = {}
 
     @staticmethod
     def _extract_state(ckpt: dict) -> dict:
@@ -230,6 +260,17 @@ class LibreSigLIP2(BaseModel):
             feats = self.model.encode_text(tokens)
             out.append(F.normalize(feats, dim=-1))
         return torch.cat(out, dim=0)
+
+    def embed_text(self, texts: str | Sequence[str]) -> torch.Tensor:
+        """Embed text rows in the same vector space as image embeddings."""
+        items = [texts] if isinstance(texts, str) else list(texts)
+        if any(not isinstance(text, str) for text in items):
+            raise TypeError("embed_text() expects a string or a sequence of strings.")
+        if not items:
+            return torch.empty(
+                (0, self.model.config.projection_size), dtype=torch.float32
+            )
+        return self._encode_texts(items).float().cpu()
 
     def set_classes(
         self,
@@ -299,8 +340,9 @@ class LibreSigLIP2(BaseModel):
         }
 
     def _build_transform(self, imgsz: int):
-        from ...data.classify_dataset import build_classify_transforms
         from torchvision.transforms import InterpolationMode
+
+        from ...data.classify_dataset import build_classify_transforms
 
         return build_classify_transforms(
             imgsz,
@@ -314,15 +356,21 @@ class LibreSigLIP2(BaseModel):
 
     @staticmethod
     def _get_preprocess_numpy():
-        from ...data.classify_dataset import build_classify_transforms
-        from torchvision.transforms import InterpolationMode
         import numpy as _np
+        from torchvision.transforms import InterpolationMode
+
+        from ...data.classify_dataset import build_classify_transforms
 
         def _preprocess_numpy(img_rgb_hwc, input_size=224):
             res = input_size if isinstance(input_size, int) else input_size[0]
             transform = build_classify_transforms(
-                res, augment=False, mean=SIGLIP_MEAN, std=SIGLIP_STD,
-                interpolation=InterpolationMode.BILINEAR, crop_pct=1.0, square_resize=True,
+                res,
+                augment=False,
+                mean=SIGLIP_MEAN,
+                std=SIGLIP_STD,
+                interpolation=InterpolationMode.BILINEAR,
+                crop_pct=1.0,
+                square_resize=True,
             )
             pil = Image.fromarray(_np.asarray(img_rgb_hwc).astype("uint8"))
             return transform(pil).numpy(), 1.0
@@ -342,9 +390,11 @@ class LibreSigLIP2(BaseModel):
         return transform(img).unsqueeze(0), img, (orig_w, orig_h), 1.0
 
     def _forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
+        image_features = self.model.encode_image(input_tensor.to(self.device))
+        if self.task == "embed":
+            return F.normalize(image_features.float(), dim=-1)
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() first.")
-        image_features = self.model.encode_image(input_tensor.to(self.device))
         return siglip2_logits(
             image_features,
             self._text_embeds,
@@ -361,6 +411,12 @@ class LibreSigLIP2(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> Dict:
+        if self.task == "embed":
+            return self._postprocess_embeddings(
+                output,
+                gallery=kwargs.get("gallery"),
+                threshold=kwargs.get("threshold"),
+            )
         logits = output[0] if isinstance(output, (list, tuple)) else output
         probs = siglip2_probs(logits, self._multi_label)[0]
         return {"probs": probs.cpu()}
@@ -395,13 +451,20 @@ class LibreSigLIP2(BaseModel):
                 f"being loaded into '{self.FAMILY}'."
             )
         ckpt_task = loaded.get("task")
-        if isinstance(ckpt_task, str) and normalize_task(ckpt_task) != "classify":
+        if (
+            isinstance(ckpt_task, str)
+            and normalize_task(ckpt_task) not in ("classify", "embed")
+        ):
             raise RuntimeError(
-                f"Checkpoint task={normalize_task(ckpt_task)!r} is not 'classify'."
+                f"Checkpoint task={normalize_task(ckpt_task)!r} is not compatible "
+                "with LibreSigLIP2."
             )
 
         state = self._extract_state(loaded)
-        if "logit_bias" not in state or "vision_model.embeddings.patch_embedding.weight" not in state:
+        if (
+            "logit_bias" not in state
+            or "vision_model.embeddings.patch_embedding.weight" not in state
+        ):
             raise RuntimeError(
                 "Checkpoint does not look like a LibreSigLIP2 model (missing "
                 "'logit_bias'/'vision_model.embeddings.patch_embedding.weight')."
@@ -425,6 +488,11 @@ class LibreSigLIP2(BaseModel):
         labels, calls :meth:`set_classes`, then runs the SigLIP-preprocessing
         validator. Zero-shot accuracy depends on the label *wording*.
         """
+        if self.task != "classify":
+            raise NotImplementedError(
+                "LibreSigLIP2 retrieval validation is not implemented; load "
+                "task='classify' for zero-shot classification validation."
+            )
         from ...data.classify_dataset import get_class_names, resolve_classify_data
 
         if data is None:
@@ -451,24 +519,91 @@ class LibreSigLIP2(BaseModel):
     # =========================================================================
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        """Export a **frozen-class** ONNX classifier for the current labels.
+        """Export image embeddings or a frozen-class ONNX classifier.
 
-        The current ``set_classes`` text embeddings are baked into a final linear
-        (``weight = logit_scale.exp() * text_embeds``, ``bias = logit_bias``),
-        giving a standard ``[B, K]`` image-classifier graph (no text tower /
-        tokenizer at inference). The exported logits match native; apply softmax
-        (single-label) or sigmoid (multi-label) downstream. The ONNX is fixed to
-        the labels and input resolution set at export time; re-export to change
-        either.
+        ``task='embed'`` traces the normalized image tower through the shared
+        exporters. For ``task='classify'``, the current ``set_classes`` text
+        embeddings are baked into a final linear projection with the learned
+        scale and bias, giving a standard ``[B, K]`` classifier graph without
+        the text tower or tokenizer.
         """
-        if format.lower() != "onnx":
+        if self.task == "embed":
+            if format.lower() in {
+                "onnx",
+                "torchscript",
+                "executorch",
+                "tensorrt",
+                "openvino",
+                "tflite",
+            }:
+                kwargs.setdefault("opset", 17)
+                return super().export(format=format, **kwargs)
             raise NotImplementedError(
-                f"LibreSigLIP2 export to {format!r} is not implemented; only 'onnx' "
-                "(frozen-class) is supported. Open-vocabulary export (two towers "
-                "+ tokenizer) is out of scope for v1."
+                "LibreSigLIP2 task='embed' export currently supports ONNX, "
+                "TorchScript, ExecuTorch, TensorRT, OpenVINO, and TFLite only."
+            )
+        if format.lower() in {
+            "torchscript",
+            "executorch",
+            "tensorrt",
+            "openvino",
+            "tflite",
+        }:
+            if self._text_embeds is None:
+                raise RuntimeError(
+                    "No classes set; call set_classes() before export()."
+                )
+            if self._multi_label:
+                raise NotImplementedError(
+                    "LibreSigLIP2 multi-label exported-backend prediction is "
+                    "not implemented; set multi_label=False before export()."
+                )
+            kwargs.setdefault("opset", 17)
+            return super().export(format=format, **kwargs)
+        if format.lower() not in {"onnx", "coreai"}:
+            raise NotImplementedError(
+                f"LibreSigLIP2 export to {format!r} is not implemented. "
+                "Open-vocabulary export (two towers + tokenizer) is out of "
+                "scope for v1."
             )
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() before export().")
+
+        if format.lower() == "coreai":
+            # LibreSigLIP2 is a two-tower module with no single forward(x),
+            # which is why the ONNX path builds its graph by hand. Reuse that
+            # same frozen-class module rather than duplicating it, then hand
+            # it to the shared Core AI converter. The logit_bias matters here:
+            # without it the exported logits do not match native.
+            import torch as _torch
+
+            from ...export.coreai import (
+                export_coreai,
+                prepare_frozen_classifier_export,
+            )
+            from .export import _FrozenSigLIP2Classifier
+
+            size, output_path, metadata = prepare_frozen_classifier_export(
+                self, kwargs, default_output="siglip2_coreai"
+            )
+            scale = float(self.model.logit_scale.exp().detach().cpu())
+            weight = (scale * self._text_embeds).detach().cpu()
+            bias = self.model.logit_bias.detach().to("cpu", _torch.float32).reshape(())
+            device = next(self.model.vision_model.parameters()).device
+            was_training = self.model.vision_model.training
+            vision = self.model.vision_model.to("cpu").eval()
+            try:
+                frozen = _FrozenSigLIP2Classifier(vision, weight, bias).eval()
+                dummy = _torch.randn(1, 3, size, size)
+                return export_coreai(
+                    frozen,
+                    dummy,
+                    output_path=output_path,
+                    metadata=metadata,
+                    model_family="siglip2",
+                )
+            finally:
+                self.model.vision_model.to(device).train(was_training)
 
         from .export import export_frozen_onnx
 

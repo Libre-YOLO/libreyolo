@@ -1,0 +1,27 @@
+LibreDETR third-party attribution
+=================================
+
+The architecture in ``nn.py`` is ported from:
+
+    Repository: https://github.com/facebookresearch/detr
+    Commit:     29901c51d7fe8712168b8d0d64351170bc0f83e0
+    Files:      models/detr.py
+                models/backbone.py
+                models/position_encoding.py
+                models/transformer.py
+                util/misc.py (NestedTensor only)
+    License:    Apache License 2.0
+    Copyright:  Copyright (c) Facebook, Inc. and its affiliates.
+
+LibreYOLO combines those inference modules into one native file, disables the
+otherwise wasted ImageNet backbone download, accepts a fixed same-sized tensor
+batch with an all-false padding mask, and adds a tuple export wrapper. Module
+names mirror upstream so the four official COCO state dictionaries load with
+``strict=True`` and unchanged learned parameters.
+
+Upstream ``models/transformer.py`` identifies its transformer as a modified
+copy of ``torch.nn.Transformer``. PyTorch is distributed under BSD-3-Clause:
+https://github.com/pytorch/pytorch. That inherited attribution is retained
+here; LibreYOLO makes no separate derivation from another implementation.
+
+The Apache-2.0 license text is at ``licenses/Apache-2.0.txt``.

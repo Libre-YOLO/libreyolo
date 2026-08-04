@@ -54,6 +54,34 @@ from .deimv2.model import LibreDEIMv2  # noqa: E402
 from .rtdetrv4.model import LibreRTDETRv4  # noqa: E402  (must precede LibreDFINE — sibling arch, more-specific can_load)
 from .dfine.model import LibreDFINE  # noqa: E402
 from .deim.model import LibreDEIM  # noqa: E402
+
+# Vanilla DETR uses a unique top-level query embedding plus packed PyTorch
+# cross-attention weights. Register it before descendants with broader DETR
+# vocabulary checks (notably the optional RF-DETR family).
+from .detr.model import LibreDETR  # noqa: E402
+
+# Original Deformable DETR is a core, dependency-free family. Register its
+# precise ResNet/deformable-attention fingerprint before descendants whose lazy
+# discriminators intentionally accept broad transformer key patterns.
+from .deformable_detr.model import LibreDeformableDETR  # noqa: E402
+
+# DINO-DETR has a strict 900-query + denoising-label signature. Register it
+# beside its Deformable DETR ancestor and before broader descendant checks.
+from .dinodetr.model import LibreDINODETR  # noqa: E402
+
+# LW-DETR is RF-DETR's ancestor and shares its decoder/projector key names, so
+# it registers eagerly and ahead of the lazy RF-DETR import; its plain-ViT
+# encoder keys (patch_embed.proj + CAE q_bias) are the discriminator.
+from .lwdetr.model import LibreLWDETR  # noqa: E402
+# Mask R-CNN shares the Faster R-CNN box graph, so its distinctive mask-head
+# discriminator must register first.
+from .mask_rcnn.model import LibreMaskRCNN  # noqa: E402
+from .fcos.model import LibreFCOS  # noqa: E402  (unique centerness + P6/P7 fingerprint)
+from .faster_rcnn.model import LibreFasterRCNN  # noqa: E402
+from .retinanet.model import LibreRetinaNet  # noqa: E402
+from .ssd.model import LibreSSD  # noqa: E402  (VGG extras + paired MultiBox heads are unique)
+from .centernet.model import LibreCenterNet  # noqa: E402
+from .efficientdet.model import LibreEfficientDet  # noqa: E402  (BiFPN keys are unique; inference-only)
 from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
@@ -66,27 +94,40 @@ from .yolo4.model import LibreYOLO4  # noqa: E402
 from .yolo2.model import LibreYOLO2  # noqa: E402
 from .yolo1.model import LibreYOLO1  # noqa: E402  (VOC museum; can_load keyed on unique yolo1. FC head)
 from .yolo7.model import LibreYOLO7  # noqa: E402  (can_load keyed on unique implicit_a.implicit)
+from .hrnet.model import LibreHRNet  # noqa: E402,F401  (top-down pose; unique stage-fusion fingerprint)
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
 from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
+from .midas.model import LibreMiDaS  # noqa: E402,F401  (depth-only MiDaS museum family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnythingV2,
 )
 from .zipdepth.model import LibreZipDepth  # noqa: E402,F401  (depth-only; can_load keyed on encoder.stem_half + decoder.convex_up)
+from .moge2.model import LibreMoGe2  # noqa: E402,F401  (normal-only; official Microsoft MIT checkpoint)
+from .teed.model import LibreTEED  # noqa: E402,F401  (edge-only; MIT source)
+from .dexined.model import LibreDexiNed  # noqa: E402,F401  (edge-only; MIT source)
 from .depth_anything3.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnything3,
 )
 from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
 from .birefnet.model import LibreBiRefNet  # noqa: E402,F401  (matte-only; can_load keyed on squeeze_module+gdt_convs_attn+ipt_blk)
+from .feynobg.model import LibreFeyNobg  # noqa: E402,F401  (matte-only; BiRefNet keys + 24-block stage-3 marker, disjoint from birefnet)
 from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
 from .swinir.model import LibreSwinIR  # noqa: E402,F401  (restore/super-resolution; RSTB keys are unique)
+from .fcn.model import LibreFCN  # noqa: E402,F401  (semantic-only; FCN head + embedded ResNet fingerprint)
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
+from .deeplabv3.model import LibreDeepLabv3  # noqa: E402,F401  (semantic-only; ASPP branch/project keys are unique)
 from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
 from .segformer.model import LibreSegformer  # noqa: E402,F401  (semantic-only; can_load uses decode_head/encoder.stages keys, unique to this family)
 from .lingbotvision.model import LibreLingBotVision  # noqa: E402,F401  (semantic-only; can_load keyed on backbone.rope_embed.periods + storage_tokens + predict head)
+from .vit.model import LibreViT  # noqa: E402  (classify-only; top-level classic-ViT signature)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
+from .deit.model import LibreDeiT  # noqa: E402  (classify-only museum family; exact ViT geometry)
+from .swin.model import LibreSwin  # noqa: E402  (classify-only; V1 window-bias signature rejects SwinV2/backbone-only checkpoints)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
+from .vgg.model import LibreVGG  # noqa: E402  (classify-only; exact 3x3 stem + FC shape signature)
 from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
+from .alexnet.model import LibreAlexNet  # noqa: E402  (classify-only; unique 11x11 stem + 3-layer classifier)
 
 # Native CLIP zero-shot classifier: pure-torch towers (no open_clip at runtime),
 # so it registers eagerly. can_load is uniquely keyed on logit_scale +
@@ -99,6 +140,7 @@ from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
 # vision_model.embeddings.patch_embedding + text_model.head, so order does not
 # matter. NB: SigLIP carries logit_bias, which CLIP lacks.
 from .siglip2.model import LibreSigLIP2  # noqa: E402,F401  (import registers family)
+
 # PP-OCRv5 text detection + recognition pipeline. can_load is uniquely keyed
 # on the composite det.*/rec.* checkpoint layout, so order does not matter.
 from .ppocr.model import LibrePPOCR  # noqa: E402,F401  (import registers family)
@@ -183,6 +225,16 @@ def _needs_rfdetr_registration(weights_dict: dict) -> bool:
     if LibreRTDETR.can_load(weights_dict):
         return False
 
+    if LibreDeformableDETR.can_load(weights_dict):
+        return False
+
+    # LW-DETR carries enc_out_class_embed / enc_out_bbox_embed (RF-DETR forked
+    # them from it), but is a core family with no transformers dependency.
+    # Without this guard, loading LW-DETR weights would import RF-DETR and hard
+    # fail whenever the optional ``rfdetr`` extra is not installed.
+    if LibreDETR.can_load(weights_dict) or LibreLWDETR.can_load(weights_dict):
+        return False
+
     if "linear.weight" in weights_dict and any(
         k.startswith("backbone.") for k in weights_dict
     ):
@@ -239,8 +291,8 @@ def LibreYOLO(
     the appropriate model instance.
 
     Args:
-        model_path: Path to weights (.pt), ONNX (.onnx), TensorRT (.engine),
-                    or OpenVINO/ncnn directory.
+        model_path: Path to weights (.pt), ONNX (.onnx), ExecuTorch (.pte),
+                    TensorRT (.engine), or OpenVINO/ncnn directory.
         size: Model size variant (auto-detected from weights if omitted).
         reg_max: Regression max for DFL (YOLOv9 only, default: 16).
         nb_classes: Number of classes (auto-detected if omitted).
@@ -256,8 +308,33 @@ def LibreYOLO(
     ensure_default_logging()
     model_path = _resolve_weights_path(model_path)
 
+    # librefacerec-* names route to the face-embedding family regardless of
+    # extension: the family is ONNX-only, auto-downloads from the LibreYOLO
+    # HF org, and infers task=embed from the name.
+    if Path(model_path).name.lower().startswith("librefacerec-"):
+        from ..tasks import normalize_task
+
+        if task is not None and normalize_task(task) != "embed":
+            raise ValueError(
+                f"librefacerec weights only support the 'embed' "
+                f"(facial-recognition) task, got task={task!r}."
+            )
+        from .facerec import LibreFaceEmbedder
+
+        return LibreFaceEmbedder(model_path, device=device)
+
     # Non-PyTorch formats: delegate to inference backends
     if model_path.endswith(".onnx"):
+        # Face embedding (facial-recognition) is an inference-only, two-stage
+        # ONNX task with no detection-shaped output, so it routes to its own
+        # runner rather than the detection ONNX backend.
+        from ..tasks import normalize_task
+
+        if task is not None and normalize_task(task) == "embed":
+            from .facerec import LibreFaceEmbedder
+
+            return LibreFaceEmbedder(model_path, device=device)
+
         from ..backends.onnx import OnnxBackend
 
         return OnnxBackend(
@@ -268,6 +345,13 @@ def LibreYOLO(
         from ..backends.torchscript import TorchScriptBackend
 
         return TorchScriptBackend(
+            model_path, nb_classes=nb_classes, device=device, task=task
+        )
+
+    if model_path.endswith(".pte"):
+        from ..backends.executorch import ExecuTorchBackend
+
+        return ExecuTorchBackend(
             model_path, nb_classes=nb_classes, device=device, task=task
         )
 
@@ -672,7 +756,17 @@ __all__ = [
     "LibreYOLONAS",
     "LibreDFINE",
     "LibreDEIM",
+    "LibreDETR",
     "LibreDEIMv2",
+    "LibreMaskRCNN",
+    "LibreFCOS",
+    "LibreFasterRCNN",
+    "LibreRetinaNet",
+    "LibreSSD",
+    "LibreCenterNet",
+    "LibreEfficientDet",
+    "LibreDeformableDETR",
+    "LibreDINODETR",
     "LibreEC",
     "LibrePICODET",
     "LibreRTMDet",
@@ -681,26 +775,49 @@ __all__ = [
     "LibreYOLO2",
     "LibreYOLO1",
     "LibreYOLO7",
+    "LibreHRNet",
     "LibreRTDETR",
     "LibreRTDETRv2",
     "LibreRTDETRv4",
     "LibreFOMO",
+    "LibreMiDaS",
     "LibreDepthAnythingV2",
+    "LibreMoGe2",
+    "LibreTEED",
+    "LibreDexiNed",
     "LibreDepthAnything3",
     "LibreNAFNet",
     "LibreBiRefNet",
+    "LibreFeyNobg",
     "LibreRealESRGAN",
     "LibreSwinIR",
+    "LibreFCN",
     "LibreEoMT",
+    "LibreDeepLabv3",
     "LibrePIDNet",
     "LibreSegformer",
     "LibreLingBotVision",
+    "LibreViT",
     "LibreMobileNetV4",
     "LibreConvNeXt",
+    "LibreSwin",
     "LibreEfficientNetV2",
+    "LibreVGG",
     "LibreResNet",
+    "LibreAlexNet",
     "LibreCLIP",
     "LibreSigLIP2",
     "LibrePPOCR",
+    "LibreFaceEmbedder",
     "try_ensure_rfdetr",
 ]
+
+
+def __getattr__(name):
+    # Lazy export so importing the face-embedding family (and its optional
+    # onnxruntime dependency) only happens on first use.
+    if name == "LibreFaceEmbedder":
+        from .facerec import LibreFaceEmbedder
+
+        return LibreFaceEmbedder
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

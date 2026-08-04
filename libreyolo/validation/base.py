@@ -13,6 +13,8 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from libreyolo.utils.amp import torch_amp_dtype
+
 from .config import ValidationConfig
 
 logger = logging.getLogger(__name__)
@@ -58,9 +60,50 @@ class BaseValidator(ABC):
 
     def run(self, **kwargs) -> Dict[str, float]:
         """Main validation entry point (template method)."""
+        # Local import: models.base imports validation.preprocessors, so a
+        # module-level import here would be circular.
+        from libreyolo.models.base.cuda_graph import normalize_cuda_graph_mode
+
         self._setup(**kwargs)
-        self._run_validation()
+        requested = getattr(self.config, "cuda_graph", False)
+        # The loss scope wraps graph capture too, so a captured graph carries
+        # whatever extra outputs the family criterion needs.
+        with self._validation_loss_scope():
+            if normalize_cuda_graph_mode(requested) is None:
+                self._run_validation()
+            else:
+                # Same contract as predict(..., cuda_graph=...): unsupported
+                # families fail loudly up front. Uncapturable situations (CPU
+                # device, capture failure) run the whole pass eagerly.
+                self.model._require_cuda_graph_support()
+                if self._capture_val_graph():
+                    runner = self.model._get_graph_runner()
+                    previous = runner.capture_on_miss
+                    # Replay-only inside the loop. The loader's pin-memory
+                    # threads call cudaHostAlloc while batches are in flight,
+                    # and any synchronous CUDA allocation invalidates a capture
+                    # in progress, so capture happens only at the controlled
+                    # point in _capture_val_graph. A shape miss inside the loop
+                    # (the final partial batch) runs eager.
+                    runner.capture_on_miss = False
+                    try:
+                        with self.model.cuda_graph_scope(requested):
+                            self._run_validation()
+                    finally:
+                        runner.capture_on_miss = previous
+                else:
+                    self._run_validation()
         return self._finalize()
+
+    def _validation_loss_scope(self):
+        """Enter the active loss adapter's forward scope, if it has one.
+
+        Families whose eval forward already carries everything the criterion
+        needs (YOLO9, RF-DETR) do not define one, so this is a no-op for them.
+        """
+        adapter = getattr(self, "_active_loss_adapter", None)
+        scope = getattr(adapter, "forward_scope", None)
+        return nullcontext() if scope is None else scope()
 
     def _setup_device(self) -> torch.device:
         if self.config.device == "auto":
@@ -87,7 +130,18 @@ class BaseValidator(ABC):
 
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        self.dataloader = self._setup_dataloader()
+        # The dataset, the dataloader (worker spawn, pinned-buffer allocation)
+        # and the model warmup are per-instance costs, not per-run costs:
+        # nothing they depend on can change between two runs of one validator.
+        # Reusing them is what makes calling a single validator every training
+        # epoch cheap — a measured 4.6 s of cudaHostAlloc alone per rebuild.
+        # A fresh instance still builds everything, so standalone .val() calls
+        # behave exactly as before.
+        if self.dataloader is None:
+            self.dataloader = self._setup_dataloader()
+            warmup_needed = True
+        else:
+            warmup_needed = False
 
         self.seen = 0
         self.speed = {
@@ -98,7 +152,8 @@ class BaseValidator(ABC):
         }
 
         self._init_metrics()
-        self._warmup_model()
+        if warmup_needed:
+            self._warmup_model()
 
         if self.config.verbose:
             logger.info("Validating on %d images...", len(self.dataloader.dataset))
@@ -131,6 +186,11 @@ class BaseValidator(ABC):
                 t2 = time.time()
                 preds = self._inference(images)
                 self.speed["inference"] += time.time() - t2
+
+                # Optional family-specific metrics (for example validation
+                # loss) consume the raw forward output before postprocessing
+                # mutates or discards model-specific tensors.
+                self._update_batch_metrics(preds, images, targets)
 
                 t3 = time.time()
                 detections = self._postprocess_predictions(preds, batch)
@@ -175,15 +235,60 @@ class BaseValidator(ABC):
 
     def _inference(self, images: torch.Tensor) -> Any:
         """Run model inference on a batch of images (B, C, H, W)."""
+        from libreyolo.models.base.cuda_graph import forward_maybe_graphed
+
         use_non_blocking = self.device.type == "cuda"
         images = images.to(self.device, non_blocking=use_non_blocking)
         with self._autocast_context():
-            return self.model._forward(images)
+            # Replays a captured CUDA graph when run() opened a graph scope;
+            # exactly model._forward(images) otherwise, including for the
+            # duck-typed model doubles in the test suite.
+            return forward_maybe_graphed(self.model, images)
 
     def _autocast_context(self):
         if self.config.half and self.device.type == "cuda":
-            return torch.amp.autocast("cuda")
+            return torch.amp.autocast(
+                "cuda", dtype=torch_amp_dtype(self.config.amp_dtype)
+            )
         return nullcontext()
+
+    def _capture_val_graph(self) -> bool:
+        """Capture the full-batch forward before the loop; True on success.
+
+        Capture must not happen inside the batch loop: the DataLoader's
+        pin-memory threads call cudaHostAlloc while batches are in flight, and
+        a synchronous CUDA allocation invalidates a capture in progress
+        (cudaErrorStreamCaptureInvalidated) -- observed to then poison every
+        later capture attempt in the process, while the epoch whose capture
+        failed lost its validation entirely. Here, before iteration starts,
+        the loader threads are quiet and warmup just synchronized the device.
+        No-op when the shape is already captured, so the validator the trainer
+        reuses across epochs pays this once per run.
+        """
+        from libreyolo.models.base.cuda_graph import CudaGraphUnavailable
+
+        imgsz = self.config.imgsz
+        if isinstance(imgsz, (list, tuple)):
+            imgsz_h, imgsz_w = int(imgsz[0]), int(imgsz[1])
+        else:
+            imgsz_h = imgsz_w = int(imgsz)
+        dummy = torch.zeros(
+            (self.config.batch_size, 3, imgsz_h, imgsz_w),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        model_module = getattr(self.model, "model", None)
+        if hasattr(model_module, "eval"):
+            model_module.eval()
+        try:
+            with torch.no_grad(), self._autocast_context():
+                self.model._get_graph_runner().capture(dummy)
+        except CudaGraphUnavailable as exc:
+            if not getattr(self, "_warned_eager_val", False):
+                self._warned_eager_val = True
+                logger.warning("cuda_graph: validation runs eager (%s)", exc)
+            return False
+        return True
 
     def _warmup_model(self, n_warmup: int = 3) -> None:
         """Run dummy inference passes to trigger JIT compilation and CUDA kernel caching."""
@@ -193,15 +298,20 @@ class BaseValidator(ABC):
         imgsz = self.config.imgsz
         batch_size = min(self.config.batch_size, 4)
 
+        if isinstance(imgsz, (list, tuple)):
+            imgsz_h, imgsz_w = int(imgsz[0]), int(imgsz[1])
+        else:
+            imgsz_h = imgsz_w = int(imgsz)
+
         dummy_input = torch.zeros(
-            (batch_size, 3, imgsz, imgsz),
+            (batch_size, 3, imgsz_h, imgsz_w),
             dtype=torch.float32,
             device=self.device,
         )
 
         # Prevent NoneType errors during warmup forward pass
         if hasattr(self.model, "_original_size"):
-            self.model._original_size = (imgsz, imgsz)
+            self.model._original_size = (imgsz_h, imgsz_w)
 
         self.model.model.eval()
         with torch.no_grad():
@@ -222,6 +332,14 @@ class BaseValidator(ABC):
 
     def _save_plots(self, metrics: Dict[str, float]) -> None:
         """Override in subclasses to save validation plots."""
+
+    def _update_batch_metrics(
+        self,
+        predictions: Any,
+        images: torch.Tensor,
+        targets: Any,
+    ) -> None:
+        """Update optional metrics that consume raw per-batch predictions."""
 
     def _print_results(self, metrics: Dict[str, float]) -> None:
         logger.info("=" * 50)

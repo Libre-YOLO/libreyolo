@@ -58,6 +58,96 @@ def test_yolo_annotation_loading_preserves_order_and_shape(tmp_path, monkeypatch
         assert file_name == f"sample_{index}.jpg"
 
 
+@pytest.mark.parametrize(
+    ("img_size", "expected"),
+    [
+        (64, (64, 64)),
+        ((32, 96), (32, 96)),
+        ([32, 96], (32, 96)),
+    ],
+)
+def test_yolo_dataset_normalizes_scalar_and_pair_img_size(
+    tmp_path, img_size, expected
+):
+    image_path = tmp_path / "sample.jpg"
+    label_path = tmp_path / "sample.txt"
+    Image.new("RGB", (100, 50), color="white").save(image_path)
+    label_path.write_text("0 0.5 0.5 0.25 0.5\n")
+
+    dataset = YOLODataset(
+        img_files=[image_path],
+        label_files=[label_path],
+        img_size=img_size,
+    )
+
+    assert dataset.img_size == expected
+    assert dataset.input_dim == expected
+    resized = dataset.load_resized_img(0)
+    assert resized.shape[0] <= expected[0]
+    assert resized.shape[1] <= expected[1]
+
+
+@pytest.mark.parametrize(
+    "img_size",
+    [0, -1, True, (32, 0), (32.5, 96), (32, 96, 128)],
+)
+def test_yolo_dataset_rejects_invalid_img_size_before_loading(tmp_path, img_size):
+    with pytest.raises((TypeError, ValueError)):
+        YOLODataset(
+            img_files=[tmp_path / "missing.jpg"],
+            label_files=[tmp_path / "missing.txt"],
+            img_size=img_size,
+        )
+
+
+def test_coco_dataset_normalizes_scalar_img_size(tmp_path):
+    pytest.importorskip("pycocotools")
+
+    image_dir = tmp_path / "train2017"
+    annotation_dir = tmp_path / "annotations"
+    image_dir.mkdir()
+    annotation_dir.mkdir()
+    Image.new("RGB", (100, 50), color="white").save(image_dir / "sample.jpg")
+    (annotation_dir / "instances_train2017.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "id": 1,
+                        "file_name": "sample.jpg",
+                        "width": 100,
+                        "height": 50,
+                    }
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [25, 10, 50, 30],
+                        "area": 1500,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 1, "name": "target"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    dataset = COCODataset(
+        data_dir=str(tmp_path),
+        json_file="instances_train2017.json",
+        name="train2017",
+        img_size=64,
+    )
+
+    assert dataset.img_size == (64, 64)
+    assert dataset.input_dim == (64, 64)
+    resized = dataset.load_resized_img(0)
+    assert resized.shape[:2] == (32, 64)
+
+
 def test_yolo_dataset_loads_obb_rows_as_proxy_box_and_angle(tmp_path):
     image_dir = tmp_path / "images"
     label_dir = tmp_path / "labels"

@@ -127,6 +127,34 @@ class RFDETRTrainer(BaseTrainer):
     def get_model_tag(self) -> str:
         return f"LibreRFDETR-{self.config.size}"
 
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+
+        from .nn import LibreRFDETRModel
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        standard_model = type(self.model) is LibreRFDETRModel and not any(
+            bool(getattr(self.model, name, False))
+            for name in (
+                "segmentation",
+                "pose",
+                "obb",
+                "classification",
+                "semantic",
+            )
+        )
+        if task != "detect" or not standard_model:
+            raise ValueError(
+                "val_loss=True currently supports RF-DETR detection only; "
+                "segment, pose, OBB, classify, and semantic tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import RFDETRValidationLoss
+
+        return RFDETRValidationLoss(model)
+
     def preserve_freeze_param(self, name: str, param: torch.nn.Parameter) -> bool:
         if not getattr(self.config, "lora", False):
             return False
@@ -896,6 +924,59 @@ class RFDETRTrainer(BaseTrainer):
         result.update(loss_dict)
         return result
 
+    def cuda_graph_train_spec(self):
+        """Capture spec: graph the DETR network, keep the criterion eager.
+
+        The detect-task LWDETR forward never reads targets (group-DETR
+        queries are a fixed ``num_queries * group_detr`` block in training
+        mode), so the whole network is static-shaped and capturable; the
+        Hungarian criterion is host-side by nature and stays eager,
+        mirroring ``on_forward``'s detect tail exactly. Seg/pose/obb/
+        classification/semantic variants route targets or masks through
+        the forward and run eager.
+        """
+        from libreyolo.training.cuda_graph import (
+            CudaGraphTrainSpec,
+            GraphableNetwork,
+        )
+        from .nn import LibreRFDETRModel
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            return None
+        model = self.model
+        if not isinstance(model, LibreRFDETRModel):
+            return None
+        if any(
+            getattr(model, attr, False)
+            for attr in ("segmentation", "pose", "obb", "classification", "semantic")
+        ):
+            return None
+        if getattr(self, "criterion", None) is None:
+            return None
+
+        network = GraphableNetwork(model)
+
+        def assemble(flat, imgs, targets, polygons=None):
+            outputs = network.rebuild(flat)
+            target_list = self._targets_to_rfdetr_list(
+                targets,
+                height=imgs.shape[-2],
+                width=imgs.shape[-1],
+            )
+            loss_dict = self.criterion(outputs, target_list)
+            weight_dict = self.criterion.weight_dict
+            total = sum(
+                loss_dict[key] * weight_dict[key]
+                for key in loss_dict
+                if key in weight_dict
+            )
+            result = {"total_loss": total}
+            result.update(loss_dict)
+            return result
+
+        return CudaGraphTrainSpec(network=network, assemble=assemble)
+
     def get_loss_components(self, outputs: Dict) -> Dict[str, float]:
         loss_task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
         if loss_task == "classify":
@@ -1038,8 +1119,11 @@ class RFDETRTrainer(BaseTrainer):
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
+                max_det=self.config.max_det,
+                eval_max_det=self.config.eval_max_det,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 allow_download_scripts=self.config.allow_download_scripts,

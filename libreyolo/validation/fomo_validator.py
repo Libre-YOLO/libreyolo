@@ -217,7 +217,15 @@ class FOMOValidator(PointValidator):
                 if best_grid_res is None or f1 > best_grid_res["f1"]:
                     best_grid_res = result
 
+        # FOMO computed a validation loss long before val_loss=True existed,
+        # under a key nothing else uses. Publish the shared names too, so
+        # `libreyolo monitor` overlays it against train/loss like every other
+        # family; metrics/val_loss stays for anything already reading it.
+        # There is no adapter here on purpose: the loss is already computed
+        # above, unconditionally, and a second path would just recompute it.
         metrics["metrics/val_loss"] = avg_val_loss
+        metrics["metrics/loss"] = avg_val_loss
+        metrics["metrics/loss/ce"] = avg_val_loss
         if best_grid_res is not None:
             metrics.update({
                 "metrics/grid_F1": best_grid_res["f1"],

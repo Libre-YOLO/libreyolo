@@ -47,13 +47,17 @@ def preprocess_numpy(
         (CHW float32 normalized, scale_ratio).
     """
     orig_h, orig_w = img_rgb_hwc.shape[:2]
-    ratio = min(input_size / orig_h, input_size / orig_w)
+    if isinstance(input_size, (list, tuple)):
+        input_h, input_w = int(input_size[0]), int(input_size[1])
+    else:
+        input_h = input_w = int(input_size)
+    ratio = min(input_w / orig_w, input_h / orig_h)
     new_w, new_h = int(orig_w * ratio), int(orig_h * ratio)
 
     img_resized = Image.fromarray(img_rgb_hwc).resize(
         (new_w, new_h), Image.Resampling.BILINEAR
     )
-    padded = Image.new("RGB", (input_size, input_size), (_RTMDET_PAD_VALUE,) * 3)
+    padded = Image.new("RGB", (input_w, input_h), (_RTMDET_PAD_VALUE,) * 3)
     padded.paste(img_resized, (0, 0))
 
     # RGB -> BGR; mean/std applied in BGR space (mmdet config has bgr_to_rgb=False).
