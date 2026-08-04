@@ -209,6 +209,9 @@ def test_rknn_exporter_verify_writes_parity_report(monkeypatch, tmp_path):
     def fake_export_with_simulator(**kwargs):
         captured["export"] = kwargs
         Path(kwargs["output_path"]).write_bytes(b"rknn")
+        Path(f"{kwargs['output_path']}.metadata.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
         captured["verify_input"] = kwargs["simulator_inputs"]
         return kwargs["output_path"], [np.zeros((1, 2), dtype=np.float32)]
 
@@ -368,6 +371,42 @@ def test_export_rknn_float_writes_artifact_and_metadata(monkeypatch, tmp_path):
         {"do_quantization": False, "auto_hybrid_cos_thresh": 0.99},
     )
     assert instance.released is True
+
+
+def test_rknn_bundle_publication_rolls_back_sidecar_failure(monkeypatch, tmp_path):
+    destination = tmp_path / "model.rknn"
+    destination_metadata = Path(f"{destination}.metadata.json")
+    destination_report = Path(f"{destination}.parity.json")
+    destination.write_bytes(b"previous-model")
+    destination_metadata.write_text("previous-metadata\n", encoding="utf-8")
+    destination_report.write_text("previous-report\n", encoding="utf-8")
+
+    staged_model = tmp_path / "staged.rknn"
+    staged_metadata = Path(f"{staged_model}.metadata.json")
+    staged_report = Path(f"{staged_model}.parity.json")
+    staged_model.write_bytes(b"new-model")
+    staged_metadata.write_text("new-metadata\n", encoding="utf-8")
+    staged_report.write_text("new-report\n", encoding="utf-8")
+
+    original_replace = Path.replace
+
+    def fail_metadata_replace(self, target):
+        if self == staged_metadata and Path(target) == destination_metadata:
+            raise OSError("injected sidecar failure")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_metadata_replace)
+    with pytest.raises(OSError, match="injected sidecar failure"):
+        rknn_module._publish_rknn_artifacts(
+            staged_model=staged_model,
+            staged_metadata=staged_metadata,
+            staged_report=staged_report,
+            destination=destination,
+        )
+
+    assert destination.read_bytes() == b"previous-model"
+    assert destination_metadata.read_text(encoding="utf-8") == "previous-metadata\n"
+    assert destination_report.read_text(encoding="utf-8") == "previous-report\n"
 
 
 def test_export_rknn_int8_materializes_nchw_calibration(monkeypatch, tmp_path):

@@ -1916,6 +1916,7 @@ class RknnExporter(BaseExporter):
     ):
         from .rknn import (
             _run_onnx_reference,
+            _publish_rknn_artifacts,
             compare_rknn_outputs,
             evaluate_rknn_metrics,
             export_rknn,
@@ -2031,11 +2032,13 @@ class RknnExporter(BaseExporter):
                 )
 
             staged_metadata = Path(f"{staging_path}.metadata.json")
-            Path(result).replace(destination)
-            if staged_metadata.is_file():
-                staged_metadata.replace(Path(f"{destination}.metadata.json"))
             report_path = Path(f"{destination}.parity.json")
-            staged_report.replace(report_path)
+            _publish_rknn_artifacts(
+                staged_model=Path(result),
+                staged_metadata=staged_metadata,
+                staged_report=staged_report,
+                destination=destination,
+            )
             Path(f"{destination}.failed.parity.json").unlink(missing_ok=True)
         finally:
             # Verification publishes the staged files only after all parity

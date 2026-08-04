@@ -218,6 +218,61 @@ def _write_metadata_sidecar(output_path: Path, metadata: Mapping[str, Any]) -> N
     temporary.replace(sidecar)
 
 
+def _unique_sibling(path: Path, label: str) -> Path:
+    """Reserve and release a unique sibling path for an atomic move."""
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{path.name}.{label}.",
+        suffix=".tmp",
+        dir=path.parent,
+        delete=False,
+    ) as handle:
+        reserved = Path(handle.name)
+    reserved.unlink()
+    return reserved
+
+
+def _publish_rknn_artifacts(
+    *,
+    staged_model: Path,
+    staged_metadata: Path,
+    staged_report: Path,
+    destination: Path,
+) -> None:
+    """Publish the model and sidecars together, restoring any prior bundle."""
+    pairs = (
+        (Path(staged_model), Path(destination)),
+        (Path(staged_metadata), Path(f"{destination}.metadata.json")),
+        (Path(staged_report), Path(f"{destination}.parity.json")),
+    )
+    for source, _ in pairs:
+        if not source.is_file():
+            raise FileNotFoundError(f"Staged RKNN artifact is missing: {source}")
+
+    backups: list[tuple[Path, Path]] = []
+    installed: list[Path] = []
+    committed = False
+    try:
+        for _, target in pairs:
+            if target.exists():
+                backup = _unique_sibling(target, "backup")
+                target.replace(backup)
+                backups.append((target, backup))
+        for source, target in pairs:
+            source.replace(target)
+            installed.append(target)
+        committed = True
+    finally:
+        if committed:
+            for _, backup in backups:
+                backup.unlink(missing_ok=True)
+        else:
+            for target in reversed(installed):
+                target.unlink(missing_ok=True)
+            for target, backup in reversed(backups):
+                if backup.exists():
+                    backup.replace(target)
+
+
 def _compile_rknn(
     *,
     onnx_path: str,
