@@ -206,6 +206,7 @@ def test_backend_reports_optional_dependency_install_hint(tmp_path, monkeypatch)
         ("model_family", "yolox", "G0/G1 detection"),
         ("task", "segment", "Supported tasks: detect"),
         ("mnn_backend", "opencl", "mnn_backend='cpu'"),
+        ("names", {"1": "a", "2": "b"}, "keys must cover the range"),
         ("mnn_input_shape", [1, 3, -1, 8], "fixed positive NCHW"),
         ("mnn_batch", 1, "does not match"),
     ],

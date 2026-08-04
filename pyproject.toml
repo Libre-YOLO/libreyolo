@@ -52,6 +52,10 @@ onnx = [
     "onnxsim>=0.4.0",
     "onnxruntime>=1.16.0",
 ]
+triton = [
+    # HTTP/HTTPS V2 inference only. gRPC and shared-memory extras are excluded.
+    "tritonclient[http]>=2.40.0",
+]
 executorch = [
     # Fixed-shape FP32 .pte export and Python runtime validation. Kept out of
     # aggregate extras because ExecuTorch constrains the compatible Torch pair.
@@ -246,6 +250,7 @@ dvc = [
 all = [
     "libreyolo[stream]",
     "libreyolo[onnx]",
+    "libreyolo[triton]",
     "libreyolo[rfdetr]",
     "libreyolo[eomt]",
     "libreyolo[midas]",
@@ -421,6 +426,7 @@ markers = [
     "supported_backend: tests covering a release-blocking supported backend",
     "experimental_backend: tests covering an experimental backend",
     "onnx: tests covering ONNX export or inference",
+    "triton: tests covering NVIDIA Triton HTTP inference",
     "torchscript: tests covering TorchScript export or inference",
     "executorch: tests requiring the optional ExecuTorch exporter/runtime",
     "smoke: fast end-to-end pipeline checks on tiny synthetic data (CPU, <60s)",

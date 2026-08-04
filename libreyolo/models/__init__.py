@@ -292,7 +292,8 @@ def LibreYOLO(
 
     Args:
         model_path: Path to weights (.pt), ONNX (.onnx), ExecuTorch (.pte),
-                    MNN (.mnn), TensorRT (.engine), or OpenVINO/ncnn directory.
+                    MNN (.mnn), TensorRT (.engine), OpenVINO/ncnn directory,
+                    or a Triton HTTP(S) model URL.
         size: Model size variant (auto-detected from weights if omitted).
         reg_max: Regression max for DFL (YOLOv9 only, default: 16).
         nb_classes: Number of classes (auto-detected if omitted).
@@ -306,6 +307,17 @@ def LibreYOLO(
         Model instance (LibreYOLOX, LibreYOLO9, LibreRFDETR, or inference backend).
     """
     ensure_default_logging()
+
+    # Remote model references must route before local path normalization. A URL
+    # has no meaningful local suffix and must never enter download/checkpoint
+    # inspection paths.
+    from ..backends.triton import is_triton_model_url
+
+    if is_triton_model_url(model_path):
+        from ..backends.triton import TritonBackend
+
+        return TritonBackend(model_path, device=device, task=task)
+
     model_path = _resolve_weights_path(model_path)
 
     # librefacerec-* names route to the face-embedding family regardless of

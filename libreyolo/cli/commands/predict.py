@@ -60,7 +60,7 @@ def _build_predict_kwargs(
     overlap_ratio: float,
     output_file_format: Optional[str],
 ) -> dict:
-    """Build inference kwargs without sending native-only options to backends."""
+    """Build inference kwargs without sending unsupported options to backends."""
     kwargs = {
         "conf": conf,
         "iou": iou,
@@ -81,11 +81,7 @@ def _build_predict_kwargs(
     }
 
     call = loaded_model.__call__
-    unsupported = {
-        name
-        for name in _NATIVE_ONLY_PREDICT_KWARGS
-        if not _call_accepts_kwarg(call, name)
-    }
+    unsupported = {name for name in kwargs if not _call_accepts_kwarg(call, name)}
     if hasattr(loaded_model, "_run_inference"):
         unsupported.update(_NATIVE_ONLY_PREDICT_KWARGS)
 

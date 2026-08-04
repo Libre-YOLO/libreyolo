@@ -140,11 +140,17 @@ def get_loaded_model_input_size(
 
 def resolve_model_or_exit(out: OutputHandler, model: str) -> str:
     """Resolve a model reference or fail with a consistent CLI error."""
+    from libreyolo.backends.triton import is_triton_model_url
     from .config import get_all_cli_names, is_known_weight_filename, resolve_model_name
     from .errors import suggest_key
 
     model_path = resolve_model_name(model)
-    if model_path != model or Path(model).exists() or is_known_weight_filename(model):
+    if (
+        is_triton_model_url(model)
+        or model_path != model
+        or Path(model).exists()
+        or is_known_weight_filename(model)
+    ):
         return model_path
 
     all_names = get_all_cli_names()

@@ -181,10 +181,11 @@ class MNNBackend(BaseBackend):
             raise ValueError("MNN metadata must declare the exported class names.")
         names = {int(key): str(value) for key, value in names_raw.items()}
         metadata_nc = int(metadata.get("nc", metadata.get("nb_classes", len(names))))
-        if len(names) != metadata_nc:
+        expected_name_keys = set(range(metadata_nc))
+        if set(names) != expected_name_keys:
             raise ValueError(
-                "MNN class-name metadata does not match nc: "
-                f"{len(names)} names for nc={metadata_nc}."
+                "MNN class-name metadata keys must cover the range 0..nc-1: "
+                f"got keys={sorted(names)} for nc={metadata_nc}."
             )
         if nb_classes is not None and int(nb_classes) != metadata_nc:
             raise ValueError(

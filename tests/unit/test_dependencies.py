@@ -20,6 +20,12 @@ def test_rfdetr_extra_uses_native_dependencies():
     assert all(not dep.startswith("rfdetr") for dep in deps)
 
 
+def test_all_extra_includes_triton_serving_dependencies():
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+    all_deps = pyproject["project"]["optional-dependencies"]["all"]
+    assert "libreyolo[triton]" in all_deps
+
+
 def test_core_dependencies_include_import_chain_requirements():
     pyproject = tomllib.loads(Path("pyproject.toml").read_text())
     deps = pyproject["project"]["dependencies"]
