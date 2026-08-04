@@ -19,12 +19,15 @@ from ...training.config import LingBotVisionConfig, TrainConfig
 from ...training.distributed import is_main_process, unwrap_model
 from ...training.scheduler import FlatCosineScheduler, LinearLRScheduler
 from ...training.trainer import BaseTrainer
+from ..base.semantic_cuda_graph import SemanticLogitsCudaGraphMixin
 from ..base.semantic_validation_loss import SemanticValidationLossMixin
 
 logger = logging.getLogger(__name__)
 
 
-class LingBotVisionTrainer(SemanticValidationLossMixin, BaseTrainer):
+class LingBotVisionTrainer(
+    SemanticLogitsCudaGraphMixin, SemanticValidationLossMixin, BaseTrainer
+):
     """Trainer for the LibreLingBotVision semantic-segmentation family."""
 
     best_metric_key: str = "metrics/mIoU"

@@ -14,7 +14,7 @@ from tests.e2e.nightly_contract import nightly_summary_line
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FAIL_ON_NIGHTLY_SKIP_ENV = "LIBREYOLO_FAIL_ON_NIGHTLY_SKIP"
-_NIGHTLY_MARKERS = ("general_nightly", "flagship_nightly")
+_NIGHTLY_MARKERS = ("general_nightly", "flagship_nightly", "training_nightly")
 
 
 def _repo_python_env() -> dict[str, str]:

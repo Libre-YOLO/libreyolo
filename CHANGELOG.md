@@ -9,6 +9,29 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- CUDA graph capture of the **training** step (`train(..., cuda_graph=True)`
+  / `--cuda-graph`) extended from 2 families to **24**, across five tasks:
+  detect (`yolo9`, `yolo9_p2`, `yolo9_e2e`, `yolox`, `yolo7`, `yolonas`,
+  `picodet`, `rtmdet`, `rfdetr`, `dfine`, `deim`, `deimv2`, `rtdetr`,
+  `rtdetrv2`, `rtdetrv4`, `ec`), classify (`resnet`, `convnext`,
+  `mobilenetv4`, `efficientnetv2`), semantic (`segformer`,
+  `lingbotvision`), point (`fomo`) and restore (`nafnet`). Measured on an
+  RTX 5070 Ti under AMP: 3.63x (FOMO), 2.74x (MobileNetV4), 1.99x (YOLO9-t),
+  1.04-1.26x for the rest; the win tracks how much of a step is network
+  rather than loss, and is largest at small batch sizes. End to end on a real
+  20-epoch YOLO9-t fine-tune (406 images, dataloader and validation
+  included): 428 s to 368 s, 1.16x, with identical mAP50-95 and per-epoch
+  losses. The encoder-decoder
+  detectors capture backbone plus encoder only, because their decoder sizes
+  its denoising queries from the batch's ground-truth count, so its token
+  count is not static. Most families are bit-identical to eager; the three
+  documented exceptions (families whose own eager training is not
+  reproducible, RTMDet's cross-level shared head convolutions, and networks
+  with stochastic depth inside the captured region) are measured and
+  tolerance-gated per family in
+  `tests/e2e/test_cuda_graph_training_families.py`. See
+  `docs/training_cuda_graphs.md`.
+
 - CUDA graph capture (`predict(..., cuda_graph=True)`) extended from the
   initial 8 families to **39**, spanning detect, segment, pose, point,
   classify, semantic, depth, restore, matte and OCR. Every enabled family is
@@ -57,6 +80,13 @@ before 1.4.0 are documented in the
   OWLv2 vision attention. See `docs/kernels.md`.
 
 ### Fixed
+
+- `train(..., cuda_graph=True)` was a silent no-op for D-FINE, DEIM, DEIMv2,
+  RT-DETRv4 and EC. Those trainers override `_train_epoch` with a copy of the
+  base loop that called `on_forward` (the eager path) instead of
+  `_forward_train` (the routed one), so capture never engaged and the flag
+  did nothing. The e2e suite now asserts capture actually engages per family
+  rather than only that the run completes.
 
 - `LibreViT` and `LibreDeiT` now honor their `fused_attn` attribute. It was a
   timm-compatibility vestige that nothing read, so
