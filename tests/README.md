@@ -18,6 +18,7 @@ tests/
     ├── conftest.py                      # Fixtures, helpers, RF5 infra, export helpers
     ├── configs/                         # Training config YAMLs (yolox, yolo9, rfdetr)
     ├── test_ncnn.py                     # ncnn export + inference
+    ├── test_mnn.py                      # MNN flagship export + inference
     ├── test_onnx.py                     # ONNX export + inference
     ├── test_openvino.py                 # OpenVINO export + inference
     ├── test_rf1_training.py             # All-models training test (marbles dataset)
@@ -87,7 +88,7 @@ python -m tests.e2e.test_rf5_training --list-configs
 ### Useful Markers
 
 - Support tiers: `supported_backend`, `experimental_backend`, `export_backend`
-- Backends: `onnx`, `torchscript`, `tensorrt`, `trt`, `openvino`, `ncnn`
+- Backends: `onnx`, `torchscript`, `tensorrt`, `trt`, `openvino`, `mnn`, `ncnn`
 - Model families: `yolox`, `yolo9`, `yolonas`, `rfdetr`, `dfine`, `rtdetr`
 - Suites: `rf1`, `rf5`, `slow`
 
@@ -99,6 +100,7 @@ python -m tests.e2e.test_rf5_training --list-configs
 | TorchScript | Experimental | `experimental_backend`, `torchscript` | Optional release coverage. |
 | TensorRT | Experimental | `experimental_backend`, `tensorrt`, `trt` | Optional release coverage. |
 | OpenVINO | Experimental | `experimental_backend`, `openvino` | Optional release coverage. |
+| MNN | Supported | `supported_backend`, `mnn` | Flagship CPU parity coverage. |
 | NCNN | Experimental | `experimental_backend`, `ncnn` | Exclude by default if turnaround matters. |
 
 If you want "everything except experimental export backends", run:
