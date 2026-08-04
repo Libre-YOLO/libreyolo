@@ -5,16 +5,15 @@ from pathlib import Path
 
 import numpy as np
 
-from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
-from ..utils.general import COCO_CLASSES
+from ..tasks import resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
 from .base import (
     BaseBackend,
     ImageSize,
     MetadataImageSizeError,
-    _read_metadata_imgsz,
     _read_pose_metadata,
 )
+from .metadata import parse_export_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +123,7 @@ class OnnxBackend(BaseBackend):
         # Record dynamic H/W separately from dynamic batch so the shared
         # backend can pass original-resolution pixels through unchanged.
         self._dynamic_spatial_axes = len(input_shape) == 4 and (
-            not isinstance(input_shape[2], int)
-            or not isinstance(input_shape[3], int)
+            not isinstance(input_shape[2], int) or not isinstance(input_shape[3], int)
         )
         static_imgsz = self._read_static_input_imgsz(input_shape)
         if static_imgsz is not None:
@@ -197,14 +195,6 @@ class OnnxBackend(BaseBackend):
             Tuple of (model_family, model_size, task, supported_tasks,
             default_task, names, embedded_nms, imgsz).
         """
-        model_family = None
-        model_size = None
-        task = "detect"
-        default_task = "detect"
-        supported_tasks = ("detect",)
-        names = None
-        imgsz = None
-        embedded_nms = False
         try:
             meta = dict(runtime_metadata or {})
             if not meta:
@@ -217,55 +207,37 @@ class OnnxBackend(BaseBackend):
                 artifact=f"ONNX metadata for {onnx_path}",
                 logger=logger,
             )
-
-            if "model_family" in meta:
-                model_family = meta["model_family"]
-            if "model_size" in meta or "size" in meta:
-                model_size = meta.get("model_size") or meta.get("size")
-            imgsz = _read_metadata_imgsz(
+            parsed = parse_export_metadata(
                 meta,
-                model_family,
                 artifact=f"ONNX metadata for {onnx_path}",
+                default_nb_classes=default_nb_classes,
             )
-            if "default_task" in meta:
-                default_task = normalize_task(meta["default_task"], default="detect")
-            if "task" in meta:
-                task = normalize_task(meta["task"], default=default_task)
-            elif meta.get("segmentation") == "true":
-                task = "segment"
-            if "supported_tasks" in meta:
-                supported_tasks = normalize_supported_tasks(meta["supported_tasks"])
-            else:
-                supported_tasks = normalize_supported_tasks((task,))
-
-            if "names" in meta:
-                import json
-
-                names_raw = json.loads(meta["names"])
-                names = {int(k): v for k, v in names_raw.items()}
-
-            if ("nb_classes" in meta or "nc" in meta) and names is None:
-                nc = int(meta.get("nb_classes", meta.get("nc")))
-                if nc == 80:
-                    names = {i: n for i, n in enumerate(COCO_CLASSES)}
-                else:
-                    names = {i: f"class_{i}" for i in range(nc)}
-
-            embedded_nms = str(meta.get("nms", "")).lower() == "true"
         except (NotImplementedError, MetadataImageSizeError):
             raise
         except Exception as e:
             logger.warning("Failed to read ONNX metadata from %s: %s", onnx_path, e)
+            return (
+                None,
+                None,
+                "detect",
+                ("detect",),
+                "detect",
+                None,
+                False,
+                None,
+            )
 
         return (
-            model_family,
-            model_size,
-            task,
-            supported_tasks,
-            default_task,
-            names,
-            embedded_nms,
-            imgsz,
+            parsed.model_family,
+            parsed.model_size,
+            parsed.task,
+            parsed.supported_tasks,
+            parsed.default_task,
+            parsed.names
+            if "names" in meta or "nc" in meta or "nb_classes" in meta
+            else None,
+            parsed.embedded_nms,
+            parsed.imgsz,
         )
 
     @staticmethod
