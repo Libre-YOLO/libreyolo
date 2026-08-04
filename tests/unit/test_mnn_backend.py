@@ -13,6 +13,7 @@ import pytest
 
 from libreyolo.backends.mnn import MNNBackend
 from libreyolo.models import LibreYOLO
+from libreyolo.models.registry import families_in
 
 pytestmark = pytest.mark.unit
 
@@ -163,6 +164,16 @@ def test_backend_routes_rfdetr_outputs_through_shared_parser(tmp_path, monkeypat
     assert masks is None
 
 
+@pytest.mark.parametrize("family", families_in("g0") + families_in("g1"))
+def test_backend_accepts_every_g0_g1_detection_family(tmp_path, monkeypatch, family):
+    _install_fake_mnn(monkeypatch, (np.zeros((1, 1, 6), dtype=np.float32),))
+
+    backend = MNNBackend(str(_write_artifact(tmp_path, family=family, batch=1)))
+
+    assert backend.model_family == family
+    assert backend.task == "detect"
+
+
 def test_backend_requires_sidecar(tmp_path, monkeypatch):
     _install_fake_mnn(monkeypatch, ())
     path = tmp_path / "missing-sidecar.mnn"
@@ -192,7 +203,7 @@ def test_backend_reports_optional_dependency_install_hint(tmp_path, monkeypatch)
     [
         ("dynamic", True, "dynamic=false"),
         ("precision", "fp16", "precision='fp32'"),
-        ("model_family", "yolox", "YOLO9 and RF-DETR"),
+        ("model_family", "yolox", "G0/G1 detection"),
         ("task", "segment", "Supported tasks: detect"),
         ("mnn_backend", "opencl", "mnn_backend='cpu'"),
         ("mnn_input_shape", [1, 3, -1, 8], "fixed positive NCHW"),

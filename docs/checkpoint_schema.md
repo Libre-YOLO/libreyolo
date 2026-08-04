@@ -220,7 +220,7 @@ checkpoint.
 
 MNN exports write the flat metadata to a required `<model>.mnn.json` sidecar.
 The v1 contract is CPU, FP32, detection-only, and a fixed NCHW input shape for
-YOLO9 and RF-DETR. It additionally requires:
+all G0 and G1 model families. It additionally requires:
 
 - `mnn_version`: installed MNN package version used to export.
 - `mnn_backend`: `"cpu"`.
@@ -230,9 +230,12 @@ YOLO9 and RF-DETR. It additionally requires:
   order.
 - `mnn_batch`: fixed artifact batch, equal to `mnn_input_shape[0]`.
 
-The loader rejects dynamic, non-FP32, non-detection, unsupported-family, or
+The loader rejects dynamic, non-FP32, non-detection, non-G0/G1-family, or
 inconsistent shape metadata. A `.mnn` artifact is backend-specific and is not
-a native PyTorch checkpoint.
+a native PyTorch checkpoint. DEIMv2 remains experimental because its shared
+ONNX intermediate has incomplete query-level score parity; its trained atto
+checkpoint nevertheless converts, reloads, runs, and preserves public
+post-NMS detections in the MNN end-to-end test.
 
 For ONNX YOLO9 detection exports with `nms=true`, output `0` / `output` is the
 standalone post-NMS tensor using the export-time `nms_conf`, `nms_iou`, and

@@ -147,6 +147,54 @@ _add(
 _add(
     "validated",
     (
+        "yolo9_e2e",
+        "ec",
+        "rtdetr",
+        "rtdetrv2",
+        "rtdetrv4",
+        "dfine",
+        "deim",
+        "yolonas",
+    ),
+    ("detect",),
+    ("mnn",),
+    reason=(
+        "Trained-checkpoint conversion, fresh artifact reload, MNN CPU "
+        "execution, metadata, and matched post-NMS detection parity are "
+        "covered in tests/e2e/test_mnn.py."
+    ),
+    since="1.6",
+    constraint="MNN 3.6.1, CPU, FP32, batch 1, fixed NCHW input shape",
+)
+_add(
+    "validated",
+    ("yolo9_p2",),
+    ("detect",),
+    ("mnn",),
+    reason=(
+        "Conversion, fresh artifact reload, MNN CPU execution, metadata, and "
+        "one-to-one public detection parity are covered with a deterministic "
+        "strengthened-head fixture in tests/e2e/test_mnn.py."
+    ),
+    since="1.6",
+    constraint="MNN 3.6.1, CPU, FP32, batch 1, fixed NCHW input shape",
+)
+_add(
+    "experimental",
+    ("deimv2",),
+    ("detect",),
+    ("mnn",),
+    reason=(
+        "The trained atto checkpoint converts, reloads, executes on MNN CPU, "
+        "and preserves post-NMS detections, but the intermediate ONNX route "
+        "remains experimental because query-level score parity is incomplete."
+    ),
+    since="1.6",
+    constraint="MNN 3.6.1, CPU, FP32, batch 1, fixed NCHW input shape",
+)
+_add(
+    "validated",
+    (
         "ec",
         "picodet",
         "rtdetr",
@@ -3396,7 +3444,7 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
     if fmt == "mnn":
         return SupportEntry(
             "blocked",
-            "MNN v1 supports YOLO9 and RF-DETR detection exports only.",
+            "MNN v1 supports G0/G1 detection exports only.",
         )
     if fmt in {"tensorrt", "openvino"}:
         runtime = "TensorRT" if fmt == "tensorrt" else "OpenVINO"

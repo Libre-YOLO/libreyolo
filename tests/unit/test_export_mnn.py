@@ -13,6 +13,7 @@ import torch
 import libreyolo.export.mnn as mnn_export
 from libreyolo.export.exporter import BaseExporter, MNNExporter
 from libreyolo.export.support import EXPORT_FORMATS, get_support
+from libreyolo.models.registry import families_in
 
 pytestmark = pytest.mark.unit
 
@@ -40,7 +41,21 @@ def test_mnn_registry_and_support_contract():
     assert MNNExporter.supports_int8 is False
     assert get_support("yolo9", "detect", "mnn").tier == "validated"
     assert get_support("rfdetr", "detect", "mnn").tier == "validated"
+    assert get_support("deimv2", "detect", "mnn").tier == "experimental"
     assert get_support("yolox", "detect", "mnn").tier == "blocked"
+
+
+def test_mnn_covers_every_g0_g1_detection_family():
+    expected = set(families_in("g0") + families_in("g1"))
+    covered = {
+        family
+        for family in expected
+        if get_support(family, "detect", "mnn").tier != "blocked"
+    }
+
+    assert covered == expected
+    assert get_support("ec", "pose", "mnn").tier == "blocked"
+    assert get_support("rfdetr", "segment", "mnn").tier == "blocked"
 
 
 def test_mnn_rejects_dynamic_before_base_export(monkeypatch):
@@ -193,8 +208,12 @@ def test_export_mnn_failure_preserves_previous_pair(tmp_path, monkeypatch):
     assert sidecar.read_text(encoding="utf-8") == '{"old": true}'
 
 
+@pytest.mark.parametrize(
+    "returncode",
+    [3221225477, -1073741819, 3221226505, -1073740791],
+)
 def test_windows_teardown_failure_requires_independent_artifact_validation(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, returncode
 ):
     source = tmp_path / "intermediate.onnx"
     source.write_bytes(b"onnx")
@@ -220,7 +239,7 @@ def test_windows_teardown_failure_requires_independent_artifact_validation(
         output = Path(command[command.index("--MNNModel") + 1])
         output.write_bytes(b"mnn-model")
         return subprocess.CompletedProcess(
-            command, 3221225477, "Converted Success!", ""
+            command, returncode, "Converted Success!", ""
         )
 
     monkeypatch.setattr(mnn_export.subprocess, "run", fake_run)

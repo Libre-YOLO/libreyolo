@@ -19,7 +19,15 @@ from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
-_WINDOWS_ACCESS_VIOLATION_CODES = {3221225477, -1073741819}
+# MNN 3.6.1 can finish conversion and then terminate during Windows process
+# teardown with either STATUS_ACCESS_VIOLATION (0xC0000005) or the fail-fast
+# status 0xC0000409. Keep both unsigned and signed subprocess representations.
+_WINDOWS_POST_SUCCESS_EXIT_CODES = {
+    3221225477,
+    -1073741819,
+    3221226505,
+    -1073740791,
+}
 
 
 def _find_mnnconvert() -> Path:
@@ -122,11 +130,11 @@ def _validate_mnn_artifact(
 def _can_recover_windows_converter_teardown(
     result: subprocess.CompletedProcess[str], staged_model: Path
 ) -> bool:
-    """Recognize MNN 3.6.1's post-success Windows teardown access violation."""
+    """Recognize MNN 3.6.1's known post-success Windows teardown exits."""
     diagnostics = f"{result.stdout or ''}\n{result.stderr or ''}"
     return (
         os.name == "nt"
-        and result.returncode in _WINDOWS_ACCESS_VIOLATION_CODES
+        and result.returncode in _WINDOWS_POST_SUCCESS_EXIT_CODES
         and staged_model.is_file()
         and staged_model.stat().st_size > 0
         and "Converted Success!" in diagnostics

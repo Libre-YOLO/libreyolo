@@ -20,7 +20,20 @@ from .base import BaseBackend, ImageSize, _read_metadata_imgsz
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_FAMILIES = {"yolo9", "rfdetr"}
+_SUPPORTED_FAMILIES = {
+    "yolo9",
+    "rfdetr",
+    "yolo9_e2e",
+    "yolo9_p2",
+    "ec",
+    "rtdetr",
+    "rtdetrv2",
+    "rtdetrv4",
+    "dfine",
+    "deim",
+    "deimv2",
+    "yolonas",
+}
 
 
 def _load_sidecar(model_path: Path) -> dict:
@@ -98,7 +111,7 @@ class MNNBackend(BaseBackend):
         model_family = str(metadata.get("model_family", "")).lower()
         if model_family not in _SUPPORTED_FAMILIES:
             raise ValueError(
-                "MNN v1 supports YOLO9 and RF-DETR detection exports only; "
+                "MNN v1 supports G0/G1 detection exports only; "
                 f"got model_family={model_family or 'missing'!r}."
             )
         model_size = metadata.get("model_size") or metadata.get("size")
