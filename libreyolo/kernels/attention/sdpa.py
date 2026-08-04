@@ -23,9 +23,44 @@ attention class, next to the parity bar it has to meet.
 
 from __future__ import annotations
 
+import torch
 from torch import nn
 
-__all__ = ["fused_attention_modules", "set_fused_attention"]
+__all__ = [
+    "fused_attention_modules",
+    "manual_attention_required",
+    "set_fused_attention",
+]
+
+
+def manual_attention_required() -> bool:
+    """Whether a graph capture in progress must see the primitive-op equation.
+
+    Two capture kinds need it:
+
+    - **ONNX export.** LibreYOLO defaults to opset 13, which has no symbolic
+      for fused SDPA.
+    - **``torch.jit.trace``**, which is how the TorchScript, CoreML and NCNN
+      exporters capture. Their artifacts were validated on primitive-op
+      graphs, and a traced ``aten::scaled_dot_product_attention`` is a
+      different graph for every downstream converter to handle.
+
+    Two capture kinds are deliberately *excluded*:
+
+    - **``torch.compile``** lowers SDPA better than the manual equation, so
+      forcing primitives there would deoptimize compiled inference.
+      ``torch.compiler.is_compiling()`` cannot distinguish it from
+      ``torch.export``, so neither is gated here.
+    - **``torch.export``** (ExecuTorch, Core AI) decomposes SDPA to core ATen
+      in ``run_decompositions()`` before the converter sees it.
+
+    The ``ms_deform_attn`` slot uses a stricter rule (it also refuses under
+    ``torch.compiler.is_compiling()``) because it dispatches to a
+    runtime-fetched compiled kernel that must never be captured at all. This
+    one is stock torch either way, so only the capture formats that care
+    about the op spelling are covered.
+    """
+    return torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
 
 
 def _as_module(model) -> nn.Module:

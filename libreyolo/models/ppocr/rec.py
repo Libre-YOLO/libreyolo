@@ -21,6 +21,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .backbones import PPHGNetV2B4, PPLCNetV3
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 class ConvBNLayer(nn.Module):
@@ -83,9 +84,10 @@ class Attention(nn.Module):
             .permute(2, 0, 3, 1, 4)
         )
         q, k, v = qkv[0], qkv[1], qkv[2]
-        if torch.onnx.is_in_onnx_export():
-            # LibreYOLO defaults to ONNX opset 13, which has no symbolic for
-            # fused SDPA: keep the exact primitive-op equation while tracing.
+        if manual_attention_required():
+            # Graph capture (ONNX, and the jit.trace-based TorchScript /
+            # CoreML / NCNN exporters) must see the primitive-op equation;
+            # eager inference keeps the fused kernels below.
             attn = (q * self.scale).matmul(k.transpose(-2, -1)).softmax(dim=-1)
             x = attn.matmul(v)
         else:

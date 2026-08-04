@@ -14,6 +14,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from ..deformable_detr.common import NestedTensor
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 def _to_2tuple(value: int) -> tuple[int, int]:
@@ -142,7 +143,7 @@ class WindowAttention(nn.Module):
             -1,
         )
         relative_bias = relative_bias.permute(2, 0, 1).contiguous()
-        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+        if self.fused_attn and not manual_attention_required():
             # SDPA takes one additive float mask, so the relative position bias
             # and the shifted-window mask are summed into it. The window mask is
             # (num_windows, tokens, tokens) and the batch is laid out as

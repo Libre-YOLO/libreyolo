@@ -12,6 +12,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 class BertEmbeddings(nn.Module):
@@ -52,9 +53,10 @@ class BertSelfAttention(nn.Module):
 
     def forward(self, x, attn_mask):
         q, k, v = self._shape(self.query(x)), self._shape(self.key(x)), self._shape(self.value(x))
-        if torch.onnx.is_in_onnx_export():
-            # LibreYOLO defaults to ONNX opset 13, which has no symbolic for
-            # fused SDPA: keep the exact primitive-op equation while tracing.
+        if manual_attention_required():
+            # Graph capture (ONNX, and the jit.trace-based TorchScript /
+            # CoreML / NCNN exporters) must see the primitive-op equation;
+            # eager inference keeps the fused kernels below.
             scores = (q @ k.transpose(-1, -2)) / math.sqrt(self.head_dim)
             if attn_mask is not None:
                 scores = scores + attn_mask

@@ -30,6 +30,7 @@ from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ...kernels.attention.sdpa import manual_attention_required
 
 # Upstream MODEL_CONFIGS. Only 'base' has released checkpoints today; the other
 # entries are kept so future upstream releases map onto new size codes without
@@ -231,7 +232,7 @@ class EfficientGlobalAttention(nn.Module):
             .expand(B, -1, -1, -1)
         )
 
-        fused = self.fused_attn and not torch.onnx.is_in_onnx_export()
+        fused = self.fused_attn and not manual_attention_required()
         if fused:
             tokens_updated = F.scaled_dot_product_attention(
                 q_tok, k_sp, v_sp, attn_mask=None, dropout_p=0.0,

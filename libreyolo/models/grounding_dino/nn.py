@@ -25,6 +25,7 @@ from ...kernels.attention.ms_deform_attn import (
 )
 from ..bert.nn import BertModel
 from ..swin.nn import SwinBackbone, SwinDims
+from ...kernels.attention.sdpa import manual_attention_required
 
 SPECIAL_TOKENS = [101, 102, 1012, 1029]  # BERT [CLS], [SEP], '.', '?'
 
@@ -121,9 +122,10 @@ class GDMultiheadAttention(nn.Module):
         def shape(t, lin):
             return lin(t).view(b, -1, self.num_heads, self.head_size).transpose(1, 2)
         ql, kl, vl = shape(q, self.query), shape(k, self.key), shape(v, self.value)
-        if torch.onnx.is_in_onnx_export():
-            # LibreYOLO defaults to ONNX opset 13, which has no symbolic for
-            # fused SDPA: keep the exact primitive-op equation while tracing.
+        if manual_attention_required():
+            # Graph capture (ONNX, and the jit.trace-based TorchScript /
+            # CoreML / NCNN exporters) must see the primitive-op equation;
+            # eager inference keeps the fused kernels below.
             scores = (ql @ kl.transpose(-1, -2)) / math.sqrt(self.head_size)
             if attention_mask is not None:
                 scores = scores + attention_mask

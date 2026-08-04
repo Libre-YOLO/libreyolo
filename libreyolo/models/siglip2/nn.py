@@ -36,6 +36,7 @@ from typing import Dict, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +130,7 @@ class SiglipAttention(nn.Module):
         k = self.k_proj(x).view(hidden_shape).transpose(1, 2)
         v = self.v_proj(x).view(hidden_shape).transpose(1, 2)
 
-        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+        if self.fused_attn and not manual_attention_required():
             # attn_mask is already additive float when present.
             attn_output = F.scaled_dot_product_attention(
                 q, k, v, attn_mask=attn_mask, dropout_p=0.0, is_causal=False,

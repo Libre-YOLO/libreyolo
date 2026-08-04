@@ -23,6 +23,7 @@ import pytest
 import torch
 
 from libreyolo.kernels.attention import fused_attention_modules, set_fused_attention
+from libreyolo.kernels.attention.sdpa import manual_attention_required
 
 pytestmark = pytest.mark.unit
 
@@ -297,6 +298,82 @@ def test_bool_mask_keeps_the_additive_bert_semantics():
 
 def test_set_fused_attention_reports_zero_on_a_model_without_the_flag():
     assert set_fused_attention(torch.nn.Linear(4, 4)) == 0
+
+
+# --- capture gating -------------------------------------------------------
+
+
+@pytest.mark.parametrize("case", sorted({**DEFAULT_ON, **OPT_IN}))
+def test_jit_trace_captures_the_primitive_op_equation(case):
+    """TorchScript / CoreML / NCNN capture with jit.trace, which sets no ONNX flag.
+
+    Their artifacts were validated on primitive-op graphs, so a traced graph
+    must not contain aten::scaled_dot_product_attention even when the family
+    runs SDPA eagerly.
+    """
+    module, call = {**DEFAULT_ON, **OPT_IN}[case]()
+    set_fused_attention(module, True)
+
+    class Traceable(torch.nn.Module):
+        """Wrapper so masks and None arguments stay inside the traced region.
+
+        jit.trace only accepts tensors as example inputs; several of these
+        modules take an optional mask. The inputs are built inside forward and
+        become trace constants, which is fine - the assertion is about which
+        ops the graph contains, not about re-running it.
+        """
+
+        def __init__(self):
+            super().__init__()
+            self.inner = module
+
+        def forward(self, unused):
+            return call(self.inner)
+
+    with torch.no_grad():
+        traced = torch.jit.trace(Traceable(), torch.zeros(1), check_trace=False)
+    assert "scaled_dot_product_attention" not in str(traced.inlined_graph), case
+
+
+def test_manual_attention_required_covers_onnx_and_trace(monkeypatch):
+    assert not manual_attention_required()
+    monkeypatch.setattr(torch.onnx, "is_in_onnx_export", lambda: True)
+    assert manual_attention_required()
+    monkeypatch.undo()
+    monkeypatch.setattr(torch.jit, "is_tracing", lambda: True)
+    assert manual_attention_required()
+
+
+def test_manual_attention_required_leaves_torch_compile_alone(monkeypatch):
+    """torch.compile lowers SDPA better than the manual equation."""
+    monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True)
+    assert not manual_attention_required()
+
+
+# --- the timm-compat flags that used to be vestigial ----------------------
+
+
+@pytest.mark.parametrize("family", ["vit", "deit"])
+def test_timm_compat_fused_attn_flag_is_honored(family):
+    """set_fused_attention must not report switching a flag nothing reads."""
+    if family == "vit":
+        from libreyolo.models.vit.nn import Attention
+    else:
+        from libreyolo.models.deit.nn import Attention
+
+    module = Attention(DIM, HEADS).eval()
+    assert module.fused_attn is True, "these two default to SDPA, unlike the campaign families"
+    x = _seeded(BATCH, TOKENS, DIM)
+    with torch.no_grad():
+        fused = module(x)
+        assert set_fused_attention(module, False) == 1
+        manual = module(x)
+    # Same equation, so the outputs still agree - but the flag must actually
+    # have selected a different code path.
+    torch.testing.assert_close(fused, manual, rtol=1e-5, atol=ATOL)
+    assert not torch.equal(fused, manual), (
+        f"{family}: set_fused_attention reported a switch that changed nothing"
+    )
 
 
 def test_set_fused_attention_accepts_a_task_wrapper():

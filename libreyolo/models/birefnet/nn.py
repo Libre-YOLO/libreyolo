@@ -30,6 +30,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.ops import deform_conv2d
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 # ======================================================================
@@ -119,7 +120,7 @@ class WindowAttention(nn.Module):
             .unsqueeze(0)
             .to(dtype=q.dtype, device=q.device)
         )
-        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+        if self.fused_attn and not manual_attention_required():
             # SDPA takes one additive float mask, so the relative position bias
             # and the shifted-window mask are summed into it. The window mask is
             # (nW, N, N) and the batch is laid out as (batch, nW) flattened, so

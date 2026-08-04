@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from typing import Tuple
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 def to_2tuple(x):
@@ -336,7 +337,7 @@ class Attention(torch.nn.Module):
             if self.training
             else self.ab
         )
-        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+        if self.fused_attn and not manual_attention_required():
             # The learned attention bias is already an additive (heads, N, N)
             # term and broadcasts over the batch.
             x = F.scaled_dot_product_attention(

@@ -10,10 +10,10 @@
 
 import logging
 
-import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torch import nn
+from libreyolo.kernels.attention.sdpa import manual_attention_required
 
 
 logger = logging.getLogger("dinov2")
@@ -53,9 +53,10 @@ class Attention(nn.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
 
         q, k, v = qkv[0], qkv[1], qkv[2]
-        if torch.onnx.is_in_onnx_export():
-            # LibreYOLO defaults to ONNX opset 13, which has no symbolic for
-            # fused SDPA: keep the exact primitive-op equation while tracing.
+        if manual_attention_required():
+            # Graph capture (ONNX, and the jit.trace-based TorchScript /
+            # CoreML / NCNN exporters) must see the primitive-op equation;
+            # eager inference keeps the fused kernels below.
             attn = (q * self.scale) @ k.transpose(-2, -1)
             attn = self.attn_drop(attn.softmax(dim=-1))
             x = attn @ v

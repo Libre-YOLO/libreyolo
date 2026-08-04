@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 def window_partition(x: torch.Tensor, ws: int) -> torch.Tensor:
@@ -80,7 +81,7 @@ class WindowAttention(nn.Module):
         b_, n, c = x.shape
         qkv = self.qkv(x).reshape(b_, n, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
-        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+        if self.fused_attn and not manual_attention_required():
             # SDPA takes one additive float mask, so the relative position bias
             # and the shifted-window mask are summed into it. The window mask is
             # (num_win, n, n) and the batch is laid out as (batch, num_win)

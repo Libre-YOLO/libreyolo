@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 @dataclass
@@ -104,7 +105,7 @@ class Owlv2Attention(nn.Module):
         q = self.q_proj(x).view(*shape).transpose(1, 2)
         k = self.k_proj(x).view(*shape).transpose(1, 2)
         v = self.v_proj(x).view(*shape).transpose(1, 2)
-        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+        if self.fused_attn and not manual_attention_required():
             # attn_mask is already the additive float causal+padding mask.
             out = F.scaled_dot_product_attention(
                 q, k, v, attn_mask=attn_mask, dropout_p=0.0, is_causal=False,

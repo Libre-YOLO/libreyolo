@@ -11,6 +11,7 @@ import math
 from typing import Tuple, Type
 
 from ._common import MLPBlock
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 class TwoWayTransformer(nn.Module):
@@ -235,7 +236,7 @@ class Attention(nn.Module):
 
         # Attention
         _, _, _, c_per_head = q.shape
-        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+        if self.fused_attn and not manual_attention_required():
             out = torch.nn.functional.scaled_dot_product_attention(
                 q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False,
                 scale=1.0 / math.sqrt(c_per_head),

@@ -37,6 +37,7 @@ from ...kernels.attention.ms_deform_attn import (
     ms_deform_attn_available,
     spatial_shapes_tensor,
 )
+from ...kernels.attention.sdpa import manual_attention_required
 
 __all__ = ["LWDETR_CONFIGS", "LWDETRExportWrapper", "LibreLWDETRModel"]
 
@@ -289,7 +290,7 @@ class Attention(nn.Module):
             batch, num_tokens, 3, self.num_heads, self.head_dim
         ).permute(2, 0, 3, 1, 4)
         query, key, value = qkv.unbind(0)
-        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+        if self.fused_attn and not manual_attention_required():
             x = F.scaled_dot_product_attention(
                 query, key, value, attn_mask=None, dropout_p=0.0,
                 is_causal=False, scale=self.scale,
@@ -1032,7 +1033,7 @@ class MultiheadAttention(nn.Module):
 
         q, k, v = _split_heads(q), _split_heads(k), _split_heads(v)
 
-        if self.fused_attn and not torch.onnx.is_in_onnx_export():
+        if self.fused_attn and not manual_attention_required():
             attn_output = F.scaled_dot_product_attention(
                 q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False,
                 scale=1.0 / math.sqrt(self.head_dim),

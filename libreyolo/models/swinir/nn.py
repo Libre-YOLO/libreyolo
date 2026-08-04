@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils import checkpoint
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 def _to_2tuple(value: int | Sequence[int]) -> tuple[int, int]:
@@ -149,9 +150,10 @@ class WindowAttention(nn.Module):
             -1,
         )
         bias = relative_bias.permute(2, 0, 1).unsqueeze(0)
-        if torch.onnx.is_in_onnx_export():
-            # LibreYOLO defaults to ONNX opset 13, which has no symbolic for
-            # fused SDPA: keep the exact primitive-op equation while tracing.
+        if manual_attention_required():
+            # Graph capture (ONNX, and the jit.trace-based TorchScript /
+            # CoreML / NCNN exporters) must see the primitive-op equation;
+            # eager inference keeps the fused kernels below.
             attention = (q * self.scale) @ k.transpose(-2, -1)
             attention = attention + bias
             if mask is not None:
