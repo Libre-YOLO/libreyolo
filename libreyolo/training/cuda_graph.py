@@ -23,9 +23,8 @@ Shape handling is dispatch-based, not constraint-based: a graph is valid
 for exactly the input shape it was captured with, so the manager counts
 shapes and captures one graph once a shape has repeated
 ``warmup_threshold`` times. Batches at any other shape (multi-scale
-batches, the last partial batch of an epoch) run eager, unchanged. This
-keeps training numerics and behavior identical whether the flag is on or
-off, which the parity tests gate.
+batches, the last partial batch of an epoch) run eager, unchanged, so a
+shape the graph does not cover costs speed and nothing else.
 
 Capture-time contracts (enforced by the trainer, documented here):
 
@@ -36,20 +35,33 @@ Capture-time contracts (enforced by the trainer, documented here):
   reads, ``load_state_dict``) are safe because replay reads the same
   addresses.
 - ``make_graphed_callables`` warm-up runs a few forward/backward passes on
-  the capture batch. Gradients produced by that warm-up are garbage and are
-  cleared by the train loop's own ``zero_grad`` before the first real
-  backward; stateful buffers (BatchNorm running stats) are snapshotted
-  before capture and restored in place afterwards, so the buffer
-  trajectory matches eager training exactly.
+  the capture batch. Its backward goes through ``torch.autograd.grad`` with
+  ``only_inputs=True``, so it never writes ``.grad`` and cannot pollute an
+  accumulation window (which zeroes only at the window's start, not per
+  micro-batch). Stateful buffers (BatchNorm running stats) *are* advanced by
+  those extra forwards, so they are snapshotted before capture and restored
+  in place afterwards and the buffer trajectory matches eager exactly.
 - Under AMP, capture and replay must run with autocast caching disabled;
   the trainer's autocast context handles this when a manager is active.
-- Distributed training, distillation and non-detect tasks are not captured
-  in this version; the trainer falls back to eager for those runs.
+- Distributed training and distillation are not captured in this version;
+  the trainer falls back to eager for those runs.
+- A family whose captured region stops matching what the loss needs partway
+  through a run (YOLOX adds its L1 branch at mosaic close) calls
+  ``BaseTrainer.invalidate_cuda_graph``; the manager drops the graph,
+  restores the eager forward and re-captures once a shape settles again.
 
 Any failure to capture, at any point, permanently falls back to eager
-training for the rest of the run with a single warning. Capture never
-changes numerics; ``tests/unit/test_cuda_graph_training.py`` gates the loss
-trajectory as identical between eager and graphed runs.
+training for the rest of the run with a single warning.
+
+Capture is bit-identical for most families. Three documented exceptions,
+all inherent rather than defects: families whose own eager training is not
+reproducible (deformable-attention atomics, TF32 reduction order) stay
+inside that spread; RTMDet's cross-level shared head convolutions sum their
+three gradient contributions in a different order; and a network with
+dropout or stochastic depth inside the captured region draws its own random
+stream on replay (the manager logs this at capture time). See
+``docs/training_cuda_graphs.md`` for the per-family table, and
+``tests/e2e/test_cuda_graph_training_families.py`` for the gates.
 """
 
 from __future__ import annotations
@@ -263,6 +275,12 @@ class TrainGraphManager:
         self._graph_key: Optional[GraphKey] = None
         self._shape_counts: Dict[GraphKey, int] = {}
         self._eager_after_capture = 0
+        # ``make_graphed_callables`` rebinds the module's forward in place.
+        # Kept so a later invalidate() can put the eager forward back before
+        # re-capturing; without it the next capture's warm-up would call the
+        # previous graph and die replaying inside an active capture.
+        self._captured_network: Optional[nn.Module] = None
+        self._forward_before_capture: Optional[Tuple[bool, Any]] = None
 
     @property
     def captured(self) -> bool:
@@ -275,10 +293,55 @@ class TrainGraphManager:
     def _disable(self, reason: str) -> None:
         self.disabled = True
         self._graphed = None
+        self._restore_eager_forward()
         logger.warning(
             "cuda_graph training capture disabled, falling back to eager: %s",
             reason,
         )
+
+    def _restore_eager_forward(self) -> None:
+        """Undo ``make_graphed_callables``' in-place forward rebind.
+
+        It replaces ``module.forward`` with a closure that replays the graph.
+        Leaving that in place after dropping a graph is unsafe twice over: a
+        re-capture's warm-up would replay the dead graph inside the new
+        capture (``Cannot prepare for replay during capturing stage``), and
+        the eager fallback would silently keep replaying it.
+        """
+        network = self._captured_network
+        if network is None:
+            return
+        had_own, original = self._forward_before_capture or (False, None)
+        if had_own and original is not None:
+            network.forward = original
+        else:
+            network.__dict__.pop("forward", None)
+        self._captured_network = None
+        self._forward_before_capture = None
+
+    def invalidate(self, reason: str) -> None:
+        """Drop the captured graph and re-capture on a later batch.
+
+        A graph is only valid while the captured region's op sequence is
+        fixed. Some families change that sequence *during* a run: YOLOX
+        turns on its L1 branch when mosaic closes, which adds tensors to
+        the network's output. Replaying the old graph past such a switch
+        would silently keep training the pre-switch network, so the family
+        trainer calls this at the switch and the manager re-captures once
+        the new shape has settled.
+
+        Shape counts are reset too, so the warm-up threshold applies again
+        and a switch that lands on the last few batches of a run never pays
+        for a capture it cannot amortise.
+        """
+        if self.disabled or self._graphed is None:
+            self._shape_counts.clear()
+            return
+        self._graphed = None
+        self._graph_key = None
+        self._shape_counts.clear()
+        self._restore_eager_forward()
+        logger.info("cuda_graph: capture invalidated (%s); will re-capture", reason)
 
     def run(
         self, spec: CudaGraphTrainSpec, imgs: torch.Tensor
@@ -314,6 +377,43 @@ class TrainGraphManager:
         return self._capture_and_run(spec, imgs)
 
     @staticmethod
+    def _stochastic_layers(network: nn.Module) -> List[str]:
+        """Names of active randomness-drawing layers inside the capture.
+
+        Capture does not break these: PyTorch registers the generator with
+        the graph and advances its offset per replay, so dropout keeps
+        dropping and stochastic depth keeps dropping paths. What changes is
+        *which* elements: a replayed graph consumes the generator on its own
+        schedule, so it does not reproduce the sequence an eager run of the
+        same step would draw.
+
+        The consequence is worth stating out loud rather than discovering
+        from a diff: for a network with these layers, a graphed run is
+        statistically equivalent to the eager run, and equivalent to
+        changing the seed, but its loss trajectory is not the eager one.
+        Every family without them stays bit-identical.
+        """
+        stochastic = []
+        for name, module in network.named_modules():
+            if isinstance(module, nn.modules.dropout._DropoutNd):
+                if float(getattr(module, "p", 0.0)) > 0.0:
+                    stochastic.append(name)
+                continue
+            # Stochastic depth ships under several names across families
+            # (DropPath, StochasticDepth, TimmDropPath); they share the
+            # drop-probability attribute rather than a base class.
+            for attr in ("drop_prob", "p"):
+                value = getattr(module, attr, None)
+                if (
+                    isinstance(value, float)
+                    and value > 0.0
+                    and "drop" in type(module).__name__.lower()
+                ):
+                    stochastic.append(name)
+                    break
+        return stochastic
+
+    @staticmethod
     def _snapshot_buffers(
         network: nn.Module,
     ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
@@ -341,8 +441,21 @@ class TrainGraphManager:
     def _capture_and_run(
         self, spec: CudaGraphTrainSpec, imgs: torch.Tensor
     ) -> Optional[Tuple[torch.Tensor, ...]]:
-        buffer_snapshot = self._snapshot_buffers(spec.network)
+        forward_before = (
+            "forward" in spec.network.__dict__,
+            spec.network.__dict__.get("forward"),
+        )
+        # Empty until the snapshot succeeds, so the handler below can restore
+        # unconditionally: restoring nothing is a no-op.
+        buffer_snapshot: List[Tuple[torch.Tensor, torch.Tensor]] = []
         try:
+            # Inside the guard on purpose. Cloning every buffer is a real
+            # allocation on the device, and it happens at the moment memory
+            # is tightest: right before capture reserves static input, output
+            # and workspace buffers for a whole forward and backward. An OOM
+            # here used to escape and kill the run, which is the one outcome
+            # an opt-in speed flag must never produce.
+            buffer_snapshot = self._snapshot_buffers(spec.network)
             # The sample clone becomes the graph's static input buffer; the
             # live batch tensor must stay caller-owned. allow_unused_input
             # mirrors eager autograd: parameters a family's training forward
@@ -366,6 +479,10 @@ class TrainGraphManager:
                         num_warmup_iters=self.num_warmup_iters,
                     )
         except Exception as exc:
+            # A partially-applied capture can leave the rebound forward
+            # behind; put the eager one back before giving up.
+            self._captured_network = spec.network
+            self._forward_before_capture = forward_before
             self._disable(f"graph capture failed: {exc!r}")
             # A failed capture can leave asynchronous stream-capture errors
             # queued; drain them here so they surface inside this handler
@@ -383,6 +500,8 @@ class TrainGraphManager:
         # as the eager step would have.
         self._restore_buffers(buffer_snapshot)
 
+        self._captured_network = spec.network
+        self._forward_before_capture = forward_before
         self._graphed = graphed
         self._graph_key = self._key_for(imgs)
         shape = tuple(imgs.shape)
@@ -390,6 +509,16 @@ class TrainGraphManager:
             "cuda_graph: captured training forward/backward at input shape %s",
             (shape,),
         )
+        stochastic = self._stochastic_layers(spec.network)
+        if stochastic:
+            logger.info(
+                "cuda_graph: the captured network has %d randomness-drawing "
+                "layers (e.g. %s); replay draws its own random stream, so "
+                "this run is statistically equivalent to the eager one but "
+                "will not reproduce its exact loss trajectory",
+                len(stochastic),
+                ", ".join(stochastic[:3]),
+            )
         try:
             return self._graphed(imgs)
         except Exception as exc:

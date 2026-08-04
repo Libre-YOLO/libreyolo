@@ -62,11 +62,12 @@ from .transforms import (
     DFINEPassThroughDataset,
     DFINETrainTransform,
 )
+from ..base.detr_cuda_graph import DETREncoderCudaGraphMixin
 
 logger = logging.getLogger(__name__)
 
 
-class DFINETrainer(BaseTrainer):
+class DFINETrainer(DETREncoderCudaGraphMixin, BaseTrainer):
     # D-FINE pairs a CNN (HGNetv2) backbone with a transformer encoder/decoder
     # whose projections are nn.Linear layers. lora=True freezes the backbone
     # and the transformer base weights and trains LoRA adapters on the
@@ -638,7 +639,7 @@ class DFINETrainer(BaseTrainer):
 
             if self.scaler is not None:
                 with self._autocast_context():
-                    outputs = self.on_forward(imgs, targets, polygons=polygons)
+                    outputs = self._forward_train(imgs, targets, polygons)
                     loss = outputs["total_loss"]
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
@@ -650,7 +651,7 @@ class DFINETrainer(BaseTrainer):
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                outputs = self.on_forward(imgs, targets, polygons=polygons)
+                outputs = self._forward_train(imgs, targets, polygons)
                 loss = outputs["total_loss"]
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -757,7 +758,7 @@ class DFINETrainer(BaseTrainer):
 
             if self.scaler is not None:
                 with self._autocast_context():
-                    outputs = self.on_forward(imgs, targets, polygons=polygons)
+                    outputs = self._forward_train(imgs, targets, polygons)
                     loss = outputs["total_loss"] / actual_window
                 self.scaler.scale(loss).backward()
                 if is_opt_step:
@@ -769,7 +770,7 @@ class DFINETrainer(BaseTrainer):
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
             else:
-                outputs = self.on_forward(imgs, targets, polygons=polygons)
+                outputs = self._forward_train(imgs, targets, polygons)
                 loss = outputs["total_loss"] / actual_window
                 loss.backward()
                 if is_opt_step:
