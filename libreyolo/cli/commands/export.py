@@ -22,8 +22,8 @@ def export_cmd(
         "onnx",
         help=(
             "Export format: onnx, torchscript, executorch, tensorrt, openvino, "
-            "mnn, rknn, ncnn, tflite (alias: litert), coreml, "
-            "coreai (Apple, macOS only)"
+            "paddle, mnn, rknn, ncnn, tflite (alias: litert), coreml, coreai "
+            "(Apple, macOS only)"
         ),
     ),
     name: Optional[str] = typer.Option(

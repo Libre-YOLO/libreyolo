@@ -15,6 +15,7 @@ EXPORT_FORMATS = (
     "executorch",
     "tensorrt",
     "openvino",
+    "paddle",
     "mnn",
     "rknn",
     "ncnn",
@@ -71,6 +72,117 @@ _add(
     ("detect",),
     ("onnx", "torchscript", "tflite"),
     since="1.3",
+)
+_add(
+    "validated",
+    ("yolo9",),
+    ("detect",),
+    ("paddle",),
+    reason=(
+        "The trained LibreYOLO9t checkpoint is covered by raw-output, "
+        "metadata, factory reload, and public detection parity in "
+        "tests/e2e/test_paddle.py."
+    ),
+    since="1.6",
+    constraint=(
+        "X2Paddle 1.6.0, PaddlePaddle 2.6.2 CPU, ONNX 1.17/opset 15, FP32, "
+        "batch 1, fixed square input; WSL2 Ubuntu 22.04"
+    ),
+)
+_add(
+    "blocked",
+    ("rfdetr",),
+    ("detect", "segment", "pose", "obb"),
+    ("paddle",),
+    reason=(
+        "RF-DETR requires ONNX opset 17 and GridSample, while X2Paddle 1.6.0 "
+        "accepts opset 15 or lower and has no GridSample mapper."
+    ),
+)
+_add(
+    "validated",
+    ("yolo9_e2e", "ec", "rtdetrv4", "dfine", "deim", "deimv2"),
+    ("detect",),
+    ("paddle",),
+    reason=(
+        "Representative trained checkpoints have Paddle conversion, CPU "
+        "runtime reload, raw-output parity, and matched public detection "
+        "parity in tests/e2e/test_paddle.py."
+    ),
+    since="1.6",
+    constraint=(
+        "X2Paddle 1.6.0, PaddlePaddle 2.6.2 CPU, ONNX 1.17/opset 15, FP32, "
+        "batch 1, fixed square input; WSL2 Ubuntu 22.04"
+    ),
+)
+_add(
+    "validated",
+    ("yolo9_p2",),
+    ("detect",),
+    ("paddle",),
+    reason=(
+        "A YOLO9-P2-T conversion initialized from the SHA-256-pinned trained "
+        "LibreYOLO9t checkpoint has raw-output and public detection parity; "
+        "tests/e2e/test_paddle.py validates conversion, not P2 task accuracy."
+    ),
+    since="1.6",
+    constraint=(
+        "X2Paddle 1.6.0, PaddlePaddle 2.6.2 CPU, ONNX 1.17/opset 15, FP32, "
+        "batch 1, fixed square input; WSL2 Ubuntu 22.04"
+    ),
+)
+_add(
+    "validated",
+    ("ec",),
+    ("pose", "segment"),
+    ("paddle",),
+    reason=(
+        "Trained LibreECs pose and segmentation checkpoints have Paddle CPU "
+        "raw-output parity plus task-aware public keypoint or mask parity in "
+        "tests/e2e/test_paddle.py."
+    ),
+    since="1.6",
+    constraint=(
+        "X2Paddle 1.6.0, PaddlePaddle 2.6.2 CPU, ONNX 1.17/opset 15, FP32, "
+        "batch 1, fixed square input; WSL2 Ubuntu 22.04"
+    ),
+)
+_add(
+    "validated",
+    ("yolonas",),
+    ("detect", "pose"),
+    ("paddle",),
+    reason=(
+        "Paddle CPU conversion, multi-output raw parity, and task-aware "
+        "public detection/keypoint parity are covered in "
+        "tests/e2e/test_paddle.py."
+    ),
+    since="1.6",
+    constraint=(
+        "X2Paddle 1.6.0, PaddlePaddle 2.6.2 CPU, ONNX 1.17/opset 15, FP32, "
+        "batch 1, fixed square input; WSL2 Ubuntu 22.04"
+    ),
+)
+_add(
+    "blocked",
+    ("rtdetr", "rtdetrv2"),
+    ("detect",),
+    ("paddle",),
+    reason=(
+        "The trained graphs require ONNX GridSample at opset 16 or newer, "
+        "while X2Paddle 1.6.0 accepts opset 15 or lower."
+    ),
+)
+_add(
+    "blocked",
+    ("dfine",),
+    ("segment",),
+    ("paddle",),
+    reason=(
+        "The trained LibreDFINEn segmentation graph converts and reloads, "
+        "but mask-logit relative RMS error is 3.52% and minimum matched-mask "
+        "IoU is only 0.582."
+    ),
 )
 _add(
     "validated",
@@ -3481,6 +3593,12 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
         return SupportEntry(
             "blocked",
             "This family and task have not been validated through the ONNX-to-TFLite path.",
+        )
+    if fmt == "paddle":
+        return SupportEntry(
+            "blocked",
+            "This family and task have not been validated through the "
+            "ONNX-to-Paddle conversion path.",
         )
     if fmt == "coreai":
         return SupportEntry(
