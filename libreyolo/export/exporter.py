@@ -1763,6 +1763,58 @@ class OpenVINOExporter(BaseExporter):
         )
 
 
+class MNNExporter(BaseExporter):
+    """Export a fixed-shape FP32 MNN artifact through ONNX."""
+
+    format_name = "mnn"
+    suffix = ".mnn"
+    requires_onnx = True
+    supports_int8 = False
+    supports_fp16 = False
+    apply_model_half = False
+
+    def __call__(self, *args, dynamic: bool = False, **kwargs) -> str:
+        if dynamic:
+            raise ValueError("MNN v1 export requires dynamic=False.")
+        return super().__call__(*args, dynamic=False, **kwargs)
+
+    def _preflight(self, **kwargs):
+        super()._preflight(**kwargs)
+        from .mnn import check_mnn_available
+
+        check_mnn_available()
+
+    def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
+        meta = super()._build_metadata(precision, dynamic, onnx_path, imgsz=imgsz)
+        meta["dynamic"] = False
+        return meta
+
+    def _export(
+        self,
+        nn_model,
+        dummy,
+        *,
+        output_path,
+        metadata,
+        onnx_path,
+        dynamic,
+        verbose,
+        **kwargs,
+    ):
+        if dynamic:
+            raise ValueError("MNN v1 export requires dynamic=False.")
+        from .mnn import export_mnn
+
+        logger.info("Step 2/2: Converting to MNN")
+        return export_mnn(
+            onnx_path,
+            output_path,
+            metadata=metadata,
+            batch=int(dummy.shape[0]),
+            verbose=verbose,
+        )
+
+
 class NcnnExporter(BaseExporter):
     format_name = "ncnn"
     suffix = "_ncnn"

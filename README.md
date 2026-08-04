@@ -41,7 +41,7 @@ Comma-separate to combine, e.g. `pip install "libreyolo[rfdetr,onnx]"`:
 
 | Group | Extras |
 | --- | --- |
-| Export | `onnx`, `tensorrt`, `openvino`, `ncnn`, `tflite` (alias: `litert`), `coreml` |
+| Export | `onnx`, `tensorrt`, `openvino`, `mnn`, `ncnn`, `tflite` (alias: `litert`), `coreml` |
 | Models | `rfdetr`, `vlm`, `sam`, `openvocab`, `clip`, `gaze` |
 | Training | `lora`, `plots`, `tensorboard`, `mlflow`, `wandb` |
 | Everything | `pip install "libreyolo[all]"` |

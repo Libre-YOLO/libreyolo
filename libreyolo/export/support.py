@@ -15,6 +15,7 @@ EXPORT_FORMATS = (
     "executorch",
     "tensorrt",
     "openvino",
+    "mnn",
     "ncnn",
     "tflite",
     "coreml",
@@ -129,6 +130,19 @@ _add(
     constraint=(
         "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
     ),
+)
+_add(
+    "validated",
+    ("yolo9", "rfdetr"),
+    ("detect",),
+    ("mnn",),
+    reason=(
+        "Trained-checkpoint conversion, fresh artifact reload, MNN CPU "
+        "execution, metadata, and matched post-NMS detection parity are "
+        "covered in tests/e2e/test_mnn.py."
+    ),
+    since="1.6",
+    constraint="MNN 3.6.1, CPU, FP32, batch 1, fixed NCHW input shape",
 )
 _add(
     "validated",
@@ -3378,6 +3392,11 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
             f"NCNN export is not supported for {label}: the model requires decoder "
             "or sampling operations unavailable in NCNN. "
             "Use ONNX, OpenVINO, TorchScript, or TensorRT instead.",
+        )
+    if fmt == "mnn":
+        return SupportEntry(
+            "blocked",
+            "MNN v1 supports YOLO9 and RF-DETR detection exports only.",
         )
     if fmt in {"tensorrt", "openvino"}:
         runtime = "TensorRT" if fmt == "tensorrt" else "OpenVINO"

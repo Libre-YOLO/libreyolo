@@ -292,7 +292,7 @@ def LibreYOLO(
 
     Args:
         model_path: Path to weights (.pt), ONNX (.onnx), ExecuTorch (.pte),
-                    TensorRT (.engine), or OpenVINO/ncnn directory.
+                    MNN (.mnn), TensorRT (.engine), or OpenVINO/ncnn directory.
         size: Model size variant (auto-detected from weights if omitted).
         reg_max: Regression max for DFL (YOLOv9 only, default: 16).
         nb_classes: Number of classes (auto-detected if omitted).
@@ -359,6 +359,13 @@ def LibreYOLO(
         from ..backends.tflite import TFLiteBackend
 
         return TFLiteBackend(
+            model_path, nb_classes=nb_classes, device=device, task=task
+        )
+
+    if model_path.endswith(".mnn"):
+        from ..backends.mnn import MNNBackend
+
+        return MNNBackend(
             model_path, nb_classes=nb_classes, device=device, task=task
         )
 

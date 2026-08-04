@@ -218,6 +218,22 @@ The loader rejects a sidecar that claims another delegate, dynamic shapes, or
 non-FP32 precision. A `.pte` is backend-specific and is not a native PyTorch
 checkpoint.
 
+MNN exports write the flat metadata to a required `<model>.mnn.json` sidecar.
+The v1 contract is CPU, FP32, detection-only, and a fixed NCHW input shape for
+YOLO9 and RF-DETR. It additionally requires:
+
+- `mnn_version`: installed MNN package version used to export.
+- `mnn_backend`: `"cpu"`.
+- `mnn_input_names`: ordered non-empty input-name list (one image input in v1).
+- `mnn_output_names`: ordered non-empty output-name list.
+- `mnn_input_shape`: four positive integers in `[batch, channels, height, width]`
+  order.
+- `mnn_batch`: fixed artifact batch, equal to `mnn_input_shape[0]`.
+
+The loader rejects dynamic, non-FP32, non-detection, unsupported-family, or
+inconsistent shape metadata. A `.mnn` artifact is backend-specific and is not
+a native PyTorch checkpoint.
+
 For ONNX YOLO9 detection exports with `nms=true`, output `0` / `output` is the
 standalone post-NMS tensor using the export-time `nms_conf`, `nms_iou`, and
 `max_det` values. When `nms_raw_output=true`, output `1` / `raw` is reserved for

@@ -156,6 +156,10 @@ tensorrt = [
 openvino = [
     "openvino>=2024.0.0",
 ]
+mnn = [
+    "libreyolo[onnx]",
+    "MNN>=3.6.1",
+]
 ncnn = [
     "pnnx",
     "ncnn",
@@ -250,6 +254,7 @@ all = [
     "libreyolo[tensorrt]",
     "libreyolo[tflite]",
     "libreyolo[openvino]",
+    "libreyolo[mnn]",
     "libreyolo[ncnn]",
     "libreyolo[tracking]",
     "libreyolo[rtdetr]",
@@ -422,6 +427,7 @@ markers = [
     "tensorrt: tests requiring TensorRT",
     "trt: alias for TensorRT tests requiring TensorRT",
     "openvino: tests requiring OpenVINO",
+    "mnn: tests requiring MNN",
     "ncnn: tests requiring ncnn",
     "tflite: tests requiring TensorFlow Lite export",
     "coreml: tests requiring CoreML (macOS only)",
