@@ -395,9 +395,12 @@ class LibreEnsemble:
                     iou_l,
                     imgsz_l,
                     device_l,
+                    source_label=(
+                        None if isinstance(item, (str, Path)) else f"image{idx}"
+                    ),
                     **predict_kwargs,
                 )
-                for item in sources
+                for idx, item in enumerate(sources)
             ]
 
         if stream:
@@ -435,8 +438,17 @@ class LibreEnsemble:
         **kwargs,
     ) -> Generator[Results, None, None]:
         """Lazily fuse a finite image sequence."""
-        for source in sources:
-            yield self._predict_one(source, conf_l, iou_l, imgsz_l, device_l, **kwargs)
+        for idx, source in enumerate(sources):
+            source_label = None if isinstance(source, (str, Path)) else f"image{idx}"
+            yield self._predict_one(
+                source,
+                conf_l,
+                iou_l,
+                imgsz_l,
+                device_l,
+                source_label=source_label,
+                **kwargs,
+            )
 
     def _predict_frames(
         self,

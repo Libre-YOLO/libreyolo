@@ -415,6 +415,26 @@ class TestPredict:
 
         assert Path(result.saved_path).exists()
 
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_in_memory_sequence_save_uses_indexed_names(self, tmp_path, image, stream):
+        from pathlib import Path
+
+        out_dir = tmp_path / "out"
+        results = LibreEnsemble(list(_pair_members()))(
+            [image, image],
+            save=True,
+            stream=stream,
+            output_path=str(out_dir),
+        )
+        if stream:
+            results = list(results)
+
+        assert [Path(result.saved_path).name for result in results] == [
+            "image0.jpg",
+            "image1.jpg",
+        ]
+        assert all(Path(result.saved_path).exists() for result in results)
+
     def test_val_and_export_raise(self):
         ens = LibreEnsemble(list(_pair_members()))
         with pytest.raises(NotImplementedError):
