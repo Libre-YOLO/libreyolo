@@ -76,8 +76,9 @@ def test_dead_pin_is_logged_as_an_error(monkeypatch, caplog):
     assert module._hub_failure_kind == "unresolvable"
     errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert errors, "an unusable revision pin must be logged at ERROR"
-    assert module._HUB_REVISION in errors[0].getMessage()
-    assert "packaging bug" in errors[0].getMessage()
+    message = errors[0].getMessage()
+    assert module._HUB_REVISION in message, "the error must name the unusable pin"
+    assert "hub-kernels" in message, "the error must point at the version cap to check"
 
 
 def test_missing_build_variant_is_not_an_error(monkeypatch, caplog):
@@ -103,17 +104,17 @@ def test_a_failed_load_never_raises_into_inference(monkeypatch):
 
 
 @pytest.mark.network
-def test_pinned_revision_is_fetchable():
-    """The pin must resolve on the endpoint the ``kernels`` client actually uses.
+def test_pinned_revision_exists_in_the_repo():
+    """The pinned commit must still exist upstream, with build variants on it.
 
-    Deliberately plain HTTP against ``/api/kernels/...`` rather than going
-    through the ``kernels`` package: this has to run wherever there is a
-    network, with no optional dependency, no GPU and no compiled build for
-    the runner's platform. Resolution happens before variant matching, so a
-    runner with no build for its own OS still catches a dead pin.
+    Plain HTTP against the models API, which does accept commit SHAs, so this
+    runs with no optional dependency, no GPU and no compiled build for the
+    runner's platform. It catches a pin that was rewritten or force-pushed
+    away; it deliberately does *not* go through ``/api/kernels/``, which
+    rejects SHAs outright and would fail even when the pin is perfectly good.
     """
     url = (
-        f"https://huggingface.co/api/kernels/{module._HUB_REPO}"
+        f"https://huggingface.co/api/models/{module._HUB_REPO}"
         f"/tree/{module._HUB_REVISION}/build"
     )
     try:
@@ -121,25 +122,38 @@ def test_pinned_revision_is_fetchable():
             payload = json.loads(response.read())
     except urllib.error.HTTPError as exc:
         pytest.fail(
-            f"Pinned revision {module._HUB_REVISION} of {module._HUB_REPO} is not "
-            f"fetchable ({exc.code} {exc.reason}) from {url}. The accelerated "
-            "ms_deform_attn path is dead on every platform until the pin is fixed."
+            f"Pinned revision {module._HUB_REVISION} of {module._HUB_REPO} no "
+            f"longer exists upstream ({exc.code} {exc.reason}) at {url}."
         )
     except urllib.error.URLError as exc:  # offline runner, not a pin problem
         pytest.skip(f"no network: {exc}")
-    assert payload, "the pinned revision resolved but exposes no build variants"
+    assert payload, "the pinned revision exists but exposes no build variants"
 
 
 @pytest.mark.network
-def test_hub_load_failure_is_never_a_dead_pin():
-    """End-to-end canary through the real loader, where the package is present.
+def test_installed_kernels_client_can_resolve_the_pin():
+    """The canary that matters: the *installed* client must accept the pin.
 
-    Skips when ``kernels`` is not installed. A machine with no compiled build
-    is fine and expected; an unresolvable pin is not.
+    ``kernels`` 0.14 moved revision resolution to an endpoint that rejects
+    commit SHAs, which silently removed the accelerated path everywhere. The
+    ``hub-kernels`` extra caps the client below that, and this asserts the cap
+    is still doing its job. A runner with no compiled build for its platform
+    is fine and expected -- that is a different failure kind.
     """
-    pytest.importorskip("kernels")
+    client = pytest.importorskip("kernels")
+    # This directory is itself named `kernels`. If the test tree ever ends up
+    # on sys.path as a top-level package again it shadows the real client, and
+    # every hub test degrades to a silent skip -- which is exactly how the
+    # provider's GPU parity test sat dead for its whole life.
+    assert hasattr(client, "get_kernel"), (
+        f"`import kernels` resolved to {getattr(client, '__file__', client)!r} "
+        "instead of the Hub client. Something (a missing __init__.py in a "
+        "parent test package) is shadowing it, and the hub tests below are "
+        "not testing what they claim to."
+    )
     module._load_hub_kernel()
     assert module._hub_failure_kind != "unresolvable", (
-        f"{module._HUB_REPO} pinned at {module._HUB_REVISION} could not be "
-        "resolved by the kernels client"
+        f"the installed kernels client cannot resolve {module._HUB_REPO} at "
+        f"{module._HUB_REVISION}. Check the version cap on the hub-kernels "
+        "extra in pyproject.toml."
     )

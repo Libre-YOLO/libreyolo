@@ -119,8 +119,11 @@ def _load_hub_kernel():
             logger.error(
                 "Hub kernel %s cannot be resolved at the pinned revision %s, so "
                 "the accelerated path is unavailable on every platform. This is "
-                "a LibreYOLO packaging bug, not a problem with your machine: "
-                "%s. Falling back to the portable implementation.",
+                "a LibreYOLO packaging problem, not a problem with your machine; "
+                "the usual cause is a `kernels` client outside the range pinned "
+                "by the libreyolo[hub-kernels] extra, since newer clients reject "
+                "commit-SHA revisions. Falling back to the portable "
+                "implementation. Underlying error: %s",
                 _HUB_REPO,
                 _HUB_REVISION,
                 exc,

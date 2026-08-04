@@ -106,7 +106,16 @@ hub-kernels = [
     # Optional runtime loader for compiled Hub kernels (e.g. the
     # ms_deform_attn slot). Installing this extra is the opt-in; disable
     # with LIBREYOLO_HUB_KERNELS=0. See docs/kernels.md.
-    "kernels>=0.6.0",
+    #
+    # Capped below 0.14: providers pin their artifact to an audited commit
+    # SHA, and 0.14 moved resolution to an /api/kernels/ endpoint that only
+    # accepts branch and tag names, so every SHA-pinned load fails with
+    # RevisionNotFoundError and the accelerated path silently disappears.
+    # Bisected against the real kernel on an RTX 5070 Ti: 0.11.7, 0.12.3 and
+    # 0.13.0 load and run it; 0.14.1, 0.15.2 and 0.16.0 cannot resolve the
+    # pin at all. Lift the cap once the pins can be expressed in a form the
+    # newer client accepts without giving up the immutability a SHA buys.
+    "kernels>=0.6.0,<0.14",
 ]
 openvocab = [
     # Discriminative open-vocabulary detectors load through transformers

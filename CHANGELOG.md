@@ -58,15 +58,33 @@ before 1.4.0 are documented in the
 
 ### Fixed
 
-- A Hub kernel whose pinned revision cannot be fetched is now reported as the
-  packaging bug it is (ERROR, naming the pin) instead of blending into the
-  routine "no build for this platform" fallback, which is now INFO. A new
-  non-blocking `hub-kernel-pins` CI job resolves the live pins so an unusable
-  pin cannot ship unnoticed. **The current `ms_deform_attn` pin is unusable**:
-  it is a raw commit SHA and the `kernels` client rejects commit SHAs on its
-  `/api/kernels/` endpoint, so the accelerated path never engages on any
-  platform. Results are unaffected (every family falls back to its portable
-  path); the speedup is simply not there until the pin is re-expressed.
+- The `ms_deform_attn` Hub kernel never actually loaded. The `hub-kernels`
+  extra allowed any `kernels>=0.6.0`, but 0.14 moved revision resolution to an
+  endpoint that rejects the commit SHAs the providers pin to, so a fresh
+  install silently lost the accelerated path on every platform (results were
+  unaffected — every family fell back to its portable `grid_sample` path).
+  The extra now caps the client at `<0.14`, bisected against the real kernel:
+  0.11.7/0.12.3/0.13.0 load and run it, 0.14.1/0.15.2/0.16.0 cannot resolve
+  the pin.
+
+  With the kernel actually running, forward output matches the portable path
+  to 1.1e-06 relative and the autograd bridge's gradients to 4.8e-07; speedups
+  at 640px DETR decoder shapes on an RTX 5070 Ti range from 1.06x (DEIM) to
+  2.42x (Grounding DINO). See `docs/kernels.md`.
+
+  A pin that cannot be fetched is now logged at ERROR naming the revision,
+  instead of blending into the routine "no compiled build for this platform"
+  fallback, which is now INFO. A new non-blocking `hub-kernel-pins` CI job
+  resolves the live pins so this cannot ship unnoticed again.
+
+- `tests/unit/__init__.py` was missing while `tests/` and `tests/unit/kernels/`
+  both had one, so pytest put `tests/unit` on `sys.path` and imported the test
+  directory `tests/unit/kernels` as the top-level `kernels` package. That
+  shadowed the Hub client inside the test suite: `from kernels import
+  get_kernel` raised `ImportError`, and the provider's GPU parity test
+  (`test_hub_matches_portable_on_cuda`) skipped itself as "hub kernel
+  unavailable" on every machine, including ones where the kernel works. It
+  now runs, and passes on an RTX 5070 Ti.
 
 - `LibreViT` and `LibreDeiT` now honor their `fused_attn` attribute. It was a
   timm-compatibility vestige that nothing read, so

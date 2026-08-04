@@ -65,12 +65,14 @@ only one of them is your machine's business:
   gate, and a failure there means "open a PR bumping the pin", not "this pull
   request is broken".
 
-> **Known issue.** The current `ms_deform_attn` pin is a raw commit SHA, and
-> the `kernels` client rejects commit SHAs on its `/api/kernels/` endpoint
-> (`RevisionNotFoundError: Invalid rev id`) — verified against `kernels`
-> 0.16.0, which `kernels>=0.6.0` allows. Until the pin is expressed in a form
-> that client accepts, the accelerated path never engages on any platform.
-> Results are unaffected: every family falls back to its portable path.
+The pins are commit SHAs, and `kernels` 0.14 moved revision resolution to an
+endpoint that only accepts branch and tag names — a SHA-pinned load fails
+there with `RevisionNotFoundError` and the acceleration silently disappears.
+The `hub-kernels` extra therefore caps the client at `<0.14`. Bisected against
+the real kernel: 0.11.7, 0.12.3 and 0.13.0 load and run it; 0.14.1, 0.15.2 and
+0.16.0 cannot resolve the pin. Lift the cap only when the pins can be
+expressed in a form the newer client accepts without giving up the
+immutability a SHA buys.
 
 Current hub-backed slot:
 
@@ -80,6 +82,28 @@ Current hub-backed slot:
   eager mode. Training is accelerated too (the compiled backward registers
   through an autograd bridge). Active whenever the `kernels` package is
   installed, unless `LIBREYOLO_HUB_KERNELS=0`.
+
+  Measured on an RTX 5070 Ti against the portable path, at D-FINE/RT-DETR
+  640px decoder shapes (levels 80/40/20/10, batch 2, 300 queries, 8 heads x
+  32ch, 4 points), forward only:
+
+  | Family | Speedup |
+  | --- | --- |
+  | Grounding DINO | 2.42x |
+  | RT-DETR | 2.14x |
+  | RT-DETRv2 | 1.47x |
+  | LW-DETR | 1.31x |
+  | OV-DEIM | 1.20x |
+  | EC | 1.11x |
+  | D-FINE | 1.07x |
+  | DEIM | 1.06x |
+
+  Outputs match the portable path to 1.1e-06 relative, and the autograd
+  bridge's gradients match to 4.8e-07 (`d/dvalue`; `d/dsampling_locations` and
+  `d/dattention_weights` are bit-identical). D-FINE, DEIM and EC sit at the
+  bottom because their decoders hand the core a *per-level* value list, so the
+  accelerated path pays one concat to rebuild the slot's layout; the families
+  that already hold a single value tensor keep the full win.
 
   Wired into every Deformable-DETR-lineage family: RF-DETR,
   LibreDeformableDETR, LibreDINO-DETR, LW-DETR, Grounding DINO, RT-DETR,

@@ -132,8 +132,10 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.10
 
+      # Installs the extra so the canary exercises the real client under the
+      # version cap, rather than skipping past the check it exists to make.
       - name: Install dependencies
-        run: uv pip install --no-sources --torch-backend cpu --group dev -e "."
+        run: uv pip install --no-sources --torch-backend cpu --group dev -e ".[hub-kernels]"
 
       - name: Resolve pinned Hub kernel revisions
         run: uv run --no-sync pytest tests/unit/kernels -m network --durations=10
