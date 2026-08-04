@@ -10,11 +10,15 @@ from pathlib import Path
 import pytest
 import torch
 
-from tests.e2e.nightly_contract import nightly_summary_line
+from tests.e2e.nightly_contract import (
+    NIGHTLY_E2E_MARKERS,
+    nightly_advanced_marker_conflicts,
+    nightly_summary_line,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FAIL_ON_NIGHTLY_SKIP_ENV = "LIBREYOLO_FAIL_ON_NIGHTLY_SKIP"
-_NIGHTLY_MARKERS = ("general_nightly", "flagship_nightly", "training_nightly")
+_NIGHTLY_MARKERS = NIGHTLY_E2E_MARKERS
 
 
 def _repo_python_env() -> dict[str, str]:
@@ -48,6 +52,19 @@ def _marker_expr_selects_nightly(marker_expr: str) -> bool:
         if token in _NIGHTLY_MARKERS and (index == 0 or tokens[index - 1] != "not"):
             return True
     return False
+
+
+def pytest_itemcollected(item):
+    """Reject advanced-feature tests accidentally enrolled in the default nightly."""
+    conflicts = nightly_advanced_marker_conflicts(
+        marker.name for marker in item.iter_markers()
+    )
+    if conflicts:
+        joined = ", ".join(conflicts)
+        raise pytest.UsageError(
+            f"{item.nodeid} combines a default-nightly marker with opt-in marker(s): "
+            f"{joined}"
+        )
 
 
 def pytest_report_header(config):
@@ -542,7 +559,6 @@ FLAGSHIP_FAMILIES = {"yolo9", "rfdetr"}
 # it has no plain-HTTP route, so a skip-means-failure gate cannot provision it.
 # Gaze inference stays covered by the non-gated per-family L2CS suite.
 GENERAL_NIGHTLY_INFERENCE_MODELS = [
-    ("alexnet", "b", "LibreAlexNetb-cls.pt"),
     ("yolox", "n", "LibreYOLOXn.pt"),
     ("yolo9", "t", "LibreYOLO9t.pt"),
     ("yolo9_e2e", "t", "LibreYOLO9E2Et.pt"),
@@ -551,33 +567,17 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("dfine", "n", "LibreDFINEn.pt"),
     ("deim", "n", "weights/LibreDEIMn.pt"),
     ("deimv2", "atto", "LibreDEIMv2atto.pt"),
-    ("detr", "r50", "LibreDETRr50.pt"),
-    ("deit", "t", "LibreDeiTt-cls.pt"),
-    ("faster_rcnn", "n", "LibreFasterRCNNn.pt"),
-    ("retinanet", "r50", "LibreRetinaNetr50.pt"),
-    ("ssd", "300", "LibreSSD300.pt"),
-    ("mask_rcnn", "r50", "LibreMaskRCNNr50.pt"),
-    ("fcos", "r50", "LibreFCOSr50.pt"),
-    ("efficientdet", "d0", "LibreEfficientDetd0.pt"),
-    ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
-    ("dinodetr", "r50", "LibreDINODETRr50.pt"),
-    ("centernet", "resdcn18", "LibreCenterNetresdcn18.pt"),
-    ("hrnet", "w32", "LibreHRNetw32-pose.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("rtdetr", "r18", "LibreRTDETRr18.pt"),
     ("rtdetrv2", "r18", "weights/LibreRTDETRv2r18.pt"),
     ("rtdetrv4", "s", "weights/LibreRTDETRv4s.pt"),
     ("picodet", "s", "LibrePICODETs.pt"),
     ("rtmdet", "t", "LibreRTMDett.pt"),
-    ("vit", "ti", "LibreViTti-cls.pt"),
-    ("vgg", "16", "LibreVGG16-cls.pt"),
-    ("swin", "t", "LibreSwint-cls.pt"),
 ]
 
-# Non-detect families use task-specific nightly assertions instead of the
-# detection-only stability matrix above. Keep their public model cases here so
-# provisioning, family marks, and nightly enrollment remain centralized.
-FCN_SEMANTIC_NIGHTLY_MODELS = [
+# Non-detect families keep task-specific opt-in checks outside the default
+# nightly budget.
+FCN_SEMANTIC_MODELS = [
     ("fcn", "r50", "LibreFCNr50.pt"),
 ]
 
@@ -588,7 +588,7 @@ DEEPLABV3_SEMANTIC_MODELS = [
     ("deeplabv3", "r101", "LibreDeepLabv3r101-sem.pt"),
     ("deeplabv3", "mv3", "LibreDeepLabv3mv3-sem.pt"),
 ]
-GENERAL_NIGHTLY_SEMANTIC_MODELS = [
+DEEPLABV3_SMOKE_MODELS = [
     ("deeplabv3", "mv3", "LibreDeepLabv3mv3-sem.pt"),
 ]
 
@@ -755,19 +755,17 @@ GENERAL_NIGHTLY_INFERENCE_PARAMS = model_cases(
     with_weights=True,
     marks_resolver=general_nightly_marks,
 )
-FCN_SEMANTIC_NIGHTLY_PARAMS = model_cases(
-    FCN_SEMANTIC_NIGHTLY_MODELS,
+FCN_SEMANTIC_PARAMS = model_cases(
+    FCN_SEMANTIC_MODELS,
     with_weights=True,
-    marks_resolver=general_nightly_marks,
 )
 DEEPLABV3_SEMANTIC_PARAMS = model_cases(
     DEEPLABV3_SEMANTIC_MODELS,
     with_weights=True,
 )
-GENERAL_NIGHTLY_SEMANTIC_PARAMS = model_cases(
-    GENERAL_NIGHTLY_SEMANTIC_MODELS,
+DEEPLABV3_SMOKE_PARAMS = model_cases(
+    DEEPLABV3_SMOKE_MODELS,
     with_weights=True,
-    marks_resolver=general_nightly_marks,
 )
 
 

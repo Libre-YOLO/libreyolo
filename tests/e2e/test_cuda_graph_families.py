@@ -25,7 +25,9 @@ from libreyolo.models.base.cuda_graph import forward_maybe_graphed
 
 # Not marked ``unit``: a few of these families pull a pretrained backbone when
 # constructed, so the module does not meet the "no external weights" contract.
-pytestmark = pytest.mark.general_nightly
+# The full CUDA graph matrix is opt-in because it is outside the default nightly
+# scope and cost budget.
+pytestmark = pytest.mark.cuda_graph
 
 requires_cuda = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="CUDA graph capture requires a CUDA device"

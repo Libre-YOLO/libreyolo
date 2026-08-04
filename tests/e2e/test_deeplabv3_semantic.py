@@ -14,7 +14,7 @@ from libreyolo import LibreYOLO
 
 from .conftest import (
     DEEPLABV3_SEMANTIC_PARAMS,
-    GENERAL_NIGHTLY_SEMANTIC_PARAMS,
+    DEEPLABV3_SMOKE_PARAMS,
     cuda_cleanup,
     require_test_weights,
 )
@@ -50,11 +50,9 @@ def test_public_checkpoint_predicts_semantic_mask(family, size, weights, sample_
 
 @pytest.mark.parametrize(
     "family,size,weights",
-    GENERAL_NIGHTLY_SEMANTIC_PARAMS,
+    DEEPLABV3_SMOKE_PARAMS,
 )
-def test_general_nightly_semantic_inference_is_stable(
-    family, size, weights, sample_image
-):
+def test_semantic_inference_is_stable(family, size, weights, sample_image):
     weights = require_test_weights(weights, expected_family=family)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = LibreYOLO(weights, device=device)

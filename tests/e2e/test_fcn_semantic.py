@@ -13,14 +13,13 @@ from libreyolo import LibreYOLO
 from libreyolo.ui.server import _UIState
 
 from .conftest import (
-    FCN_SEMANTIC_NIGHTLY_PARAMS,
+    FCN_SEMANTIC_PARAMS,
     cuda_cleanup,
     require_test_weights,
 )
 
 pytestmark = [
     pytest.mark.e2e,
-    pytest.mark.general_nightly,
     pytest.mark.external_data,
     pytest.mark.network,
     pytest.mark.fcn,
@@ -56,7 +55,7 @@ def _write_self_consistency_dataset(tmp_path, model, image_path, mask) -> str:
     return str(yaml_path)
 
 
-@pytest.mark.parametrize("family,size,weights", FCN_SEMANTIC_NIGHTLY_PARAMS)
+@pytest.mark.parametrize("family,size,weights", FCN_SEMANTIC_PARAMS)
 def test_fcn_real_checkpoint_predict_val_and_ui(family, size, weights, tmp_path):
     weights = require_test_weights(weights, expected_family=family)
     device = "cuda" if torch.cuda.is_available() else "cpu"
