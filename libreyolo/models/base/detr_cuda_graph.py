@@ -56,10 +56,10 @@ def _patched_forward(module: nn.Module, replacement) -> Iterator[None]:
     try:
         yield
     finally:
-        if had_own:
+        if had_own and original is not None:
             module.forward = original
         else:
-            del module.forward
+            module.__dict__.pop("forward", None)
 
 
 class _BackboneEncoder(nn.Module):

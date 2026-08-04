@@ -34,7 +34,12 @@ import torch
 import yaml
 from PIL import Image
 
-pytestmark = pytest.mark.general_nightly
+# Not ``general_nightly``: that marker has a documented contract as the broad
+# *inference* sweep with a fixed case count (docs/testing.md). These are
+# training runs, so they follow the house pattern for training e2e files
+# (test_training_regression.py, test_dfine_seg_training.py): plain ``e2e``,
+# plus ``slow`` because the full file trains 20-odd models twice over.
+pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
 requires_cuda = pytest.mark.skipif(
     not torch.cuda.is_available(),

@@ -313,7 +313,7 @@ class TrainGraphManager:
         if network is None:
             return
         had_own, original = self._forward_before_capture or (False, None)
-        if had_own:
+        if had_own and original is not None:
             network.forward = original
         else:
             network.__dict__.pop("forward", None)
