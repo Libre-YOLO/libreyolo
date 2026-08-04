@@ -13,7 +13,8 @@ them:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any
 
 from ..callbacks import (
     TrainEndEvent,
@@ -25,14 +26,14 @@ from ..callbacks import (
 logger = logging.getLogger("libreyolo")
 
 
-def epoch_metrics(event: TrainEpochEvent) -> Dict[str, float]:
+def epoch_metrics(event: TrainEpochEvent) -> dict[str, float]:
     """Flatten a :class:`TrainEpochEvent` into the canonical metric schema.
 
     The same names are used by every built-in logger so dashboards look
     identical across backends: ``train/loss``, ``train/loss/<component>``,
     ``lr/<group>``, ``val/<metric>`` and ``time/epoch_seconds``.
     """
-    metrics: Dict[str, float] = {"train/loss": event.train_loss}
+    metrics: dict[str, float] = {"train/loss": event.train_loss}
     for name, value in event.train_loss_items.items():
         metrics[f"train/loss/{name}"] = value
     for name, value in event.lr.items():
@@ -51,6 +52,21 @@ def run_name_for(event: Any) -> str:
     family = event.model_family or "model"
     size = event.model_size or ""
     return f"{family}{size}-{event.task}"
+
+
+def artifact_paths(
+    event: TrainEndEvent, *, log_checkpoints: bool = False
+) -> list[Path]:
+    """Return the standard, existing artifacts for a completed training run."""
+    save_dir = Path(event.save_dir)
+    candidates = [
+        save_dir / "results.csv",
+        save_dir / "train_config.yaml",
+        save_dir / "summary.json",
+    ]
+    if log_checkpoints:
+        candidates.append(save_dir / "weights" / "best.pt")
+    return [path for path in candidates if path.is_file()]
 
 
 class BaseLogger:
@@ -85,8 +101,7 @@ class BaseLogger:
         except Exception:
             self._disabled = True
             logger.exception(
-                "%s failed; disabling it for the rest of this run "
-                "(training continues)",
+                "%s failed; disabling it for the rest of this run (training continues)",
                 type(self).__name__,
             )
             # Best-effort teardown so an already-opened backend run/writer

@@ -1,4 +1,4 @@
-"""Built-in experiment loggers (TensorBoard, MLflow, Weights & Biases).
+"""Built-in experiment loggers layered on the public training hooks.
 
 Loggers are ordinary training callbacks consuming the public hook system
 (:mod:`libreyolo.training.callbacks`). Enable them by name::
@@ -13,39 +13,48 @@ or pass configured instances (mixing with names is fine)::
 
 from __future__ import annotations
 
-from typing import Any, Iterable, List
+from collections.abc import Iterable
+from typing import Any
 
 from .base import BaseLogger as BaseLogger
+from .clearml_logger import ClearMLLogger as ClearMLLogger
+from .comet_logger import CometLogger as CometLogger
+from .dvclive_logger import DVCLiveLogger as DVCLiveLogger
 from .mlflow_logger import MLflowLogger as MLflowLogger
+from .neptune_logger import NeptuneLogger as NeptuneLogger
 from .tensorboard_logger import TensorBoardLogger as TensorBoardLogger
 from .wandb_logger import WandbLogger as WandbLogger
 
 _LOGGER_FACTORIES = {
+    "clearml": ClearMLLogger,
+    "comet": CometLogger,
+    "dvc": DVCLiveLogger,
+    "dvclive": DVCLiveLogger,
+    "neptune": NeptuneLogger,
     "tensorboard": TensorBoardLogger,
     "mlflow": MLflowLogger,
     "wandb": WandbLogger,
 }
 
 
-def resolve_loggers(loggers: Any) -> List[Any]:
+def resolve_loggers(loggers: Any) -> list[Any]:
     """Resolve the ``loggers=`` train argument into callback instances.
 
-    Accepts ``None``, a logger name (``"tensorboard"``, ``"mlflow"``,
-    ``"wandb"``), a callback object, or an iterable mixing both.
+    Accepts ``None``, a registered logger name, a callback object, or an
+    iterable mixing both. ``"dvc"`` is an alias for ``"dvclive"``.
     """
     if loggers is None:
         return []
     if isinstance(loggers, str) or not isinstance(loggers, Iterable):
         loggers = [loggers]
 
-    resolved: List[Any] = []
+    resolved: list[Any] = []
     for item in loggers:
         if isinstance(item, str):
             key = item.strip().lower()
             if key not in _LOGGER_FACTORIES:
                 raise ValueError(
-                    f"Unknown logger {item!r}. "
-                    f"Valid names: {sorted(_LOGGER_FACTORIES)}"
+                    f"Unknown logger {item!r}. Valid names: {sorted(_LOGGER_FACTORIES)}"
                 )
             resolved.append(_LOGGER_FACTORIES[key]())
         else:

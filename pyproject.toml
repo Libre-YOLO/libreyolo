@@ -224,6 +224,21 @@ mlflow = [
 wandb = [
     "wandb>=0.16.0",
 ]
+comet = [
+    "comet-ml>=3.47.1",
+]
+clearml = [
+    "clearml>=1.17.0",
+]
+neptune = [
+    "neptune-scale>=0.30.0",
+]
+dvclive = [
+    "dvclive>=3.49.0",
+]
+dvc = [
+    "libreyolo[dvclive]",
+]
 all = [
     "libreyolo[stream]",
     "libreyolo[onnx]",
@@ -251,6 +266,11 @@ all = [
     "libreyolo[tensorboard]",
     "libreyolo[mlflow]",
     "libreyolo[wandb]",
+    "libreyolo[comet]",
+    "libreyolo[clearml]",
+    "libreyolo[dvclive]",
+    # Keep Neptune separate: stable neptune-scale requires protobuf<7 while
+    # the TFLite/onnx2tf extra included above requires protobuf 7.
 ]
 
 [project.scripts]
@@ -296,6 +316,13 @@ build-backend = "setuptools.build_meta"
 # `uv sync` produces a GPU-enabled environment by default. macOS keeps the
 # PyPI default (CPU/MPS wheel) since download.pytorch.org has no darwin builds.
 # Requires NVIDIA driver >= 555 (CUDA 12.8 runtime) on the host.
+[tool.uv]
+conflicts = [
+    [{ extra = "neptune" }, { extra = "tflite" }],
+    [{ extra = "neptune" }, { extra = "litert" }],
+    [{ extra = "neptune" }, { extra = "all" }],
+]
+
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cu128", marker = "sys_platform != 'darwin'" },

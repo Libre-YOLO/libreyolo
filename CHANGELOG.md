@@ -9,6 +9,10 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- Built-in Comet, ClearML, Neptune (`neptune-scale`) and DVC/DVCLive training
+  loggers, with the same canonical metrics and failure-isolation contract as
+  the existing TensorBoard, MLflow and Weights & Biases integrations.
+
 - CUDA graph capture of the **training** step (`train(..., cuda_graph=True)`
   / `--cuda-graph`) extended from 2 families to **24**, across five tasks:
   detect (`yolo9`, `yolo9_p2`, `yolo9_e2e`, `yolox`, `yolo7`, `yolonas`,
