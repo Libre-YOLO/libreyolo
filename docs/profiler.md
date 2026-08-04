@@ -34,6 +34,30 @@ the log says so instead of reporting a completed training.
 It is **zero overhead when off** (the default); the hot loop's hooks short
 -circuit to a no-op. Profiling is ignored under distributed (DDP) training.
 
+### Family coverage
+
+**Training** profiling is supported across every trainable family — all of
+**g0, g1 and g2** in `libreyolo/models/registry.py`, every task (detect,
+point, classify, semantic, restore). That includes the DFINE/DEIM-family
+trainers, whose copied training loops carry the same hooks as the base loop.
+`tests/e2e/test_profile_training_families.py` runs a real profiled training
+per family and is kept in lockstep with the registry, so a family cannot join
+a trainable group without profiler coverage. Families whose training is gated
+behind `allow_experimental=True` (ec, yolo7, rtmdet, picodet, fomo) need that
+flag alongside `profile=True` — or `--allow-experimental` on the CLI.
+
+**Inference** profiling (`libreyolo profile infer`) drives the shared
+predict-stage contract, verified per family for every g0/g1 family plus the
+g2 detect/point families (`tests/e2e/test_profile_inference_families.py`);
+g3 inference-only families use the same stage contract and work through the
+same path. Classify/semantic/restore predict paths are best-effort: the
+stage split still measures, but the "postprocess = NMS" verdict semantics
+are detection-specific.
+
+Out of scope: g4 (museum, frozen) and the s tier (SAM / open-vocab / VLM
+siblings), whose predict surfaces differ from the staged contract this tool
+measures.
+
 ### What it prints
 
 ```
@@ -111,7 +135,10 @@ libreyolo profile compare <before.json> <after.json>   # did it help? img/s + ms
 Every command takes either the **self-contained `profile.json`** (recommended — copy
 it freely) or a raw `profile_trace.json`. `get <file>` with no field lists every
 metric. `run` follows normal training defaults, including AMP on supported CUDA
-devices; pass `--no-amp` to force fp32. Use **`run --repeat N`** for mean±stdev
+devices; pass `--no-amp` to force fp32. For families whose training is gated as
+experimental (e.g. ec), pass **`--allow-experimental`**: a profile run trains a
+few steps and writes no checkpoint, so the unvalidated-convergence caveat
+behind the gate does not apply. Use **`run --repeat N`** for mean±stdev
 img/s — a single run *lies* when the step is launch-bound (the bottleneck itself
 makes the step time noisy). Repeated runs emit an aggregate `profile_repeat.json`
 for `compare`, plus per-trial `prof_*/profile.json` files for drill-down.

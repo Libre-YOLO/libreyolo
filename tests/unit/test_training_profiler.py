@@ -324,6 +324,100 @@ def test_profile_then_stop_truncates_without_validation(tmp_path):
     assert val_metrics is None
 
 
+# --- DETR-family trainers: the copied loops must keep the profiler hooks ----
+#
+# DFINETrainer/DEIMTrainer override _train_epoch/_train_epoch_accum with a
+# structural copy of the BaseTrainer loop. These tests pin the profiler hooks
+# into those copies: without them profile=True is a silent no-op for the whole
+# family (dfine, deim, deimv2, rtdetrv4, ec) — no report, no early stop.
+
+
+def _bare_detr_trainer(trainer_cls, tmp_path, *, num_batches, **config_overrides):
+    """Bare-bones DFINE/DEIM trainer (bypasses ``__init__``, mirroring
+    ``_build_profiled_trainer``) with a live CPU profiler whose window closes
+    after 3 steps (warmup 1 + measured 2, since active is clamped to >= 2)."""
+    trainer = trainer_cls.__new__(trainer_cls)
+    trainer.model = nn.Linear(1, 1, bias=False)
+    param = next(trainer.model.parameters())
+    trainer.train_loader = _Loader(num_batches)
+    trainer.config = SimpleNamespace(
+        epochs=1,
+        batch=1,
+        log_interval=999,
+        eval_interval=-1,
+        clip_max_norm=0.0,
+        **config_overrides,
+    )
+    trainer.device = torch.device("cpu")
+    trainer.optimizer = torch.optim.SGD([param], lr=0.1)
+    trainer.scaler = None
+    trainer.ema_model = None
+    trainer.lr_scheduler = SimpleNamespace(update_lr=lambda _: 0.1)
+    trainer.wrapper_model = SimpleNamespace(task="detect")
+    trainer._stop_training = False
+
+    forwards = []
+
+    def on_forward(imgs, targets, polygons=None):
+        forwards.append(1)
+        return {"total_loss": (param * 0).sum() + 1.0}
+
+    trainer.on_forward = on_forward
+    trainer.get_loss_components = lambda outputs: {}
+    trainer._profiler = TrainStepProfiler(
+        device=torch.device("cpu"), warmup=1, active=1, trace=False,
+        open_report=False, save_dir=tmp_path, meta={"model": "t", "batch": 1},
+    )
+    return trainer, forwards
+
+
+def _detr_trainer_classes():
+    from libreyolo.models.deim.trainer import DEIMTrainer
+    from libreyolo.models.dfine.trainer import DFINETrainer
+
+    return [DFINETrainer, DEIMTrainer]
+
+
+@pytest.mark.parametrize("trainer_idx", [0, 1], ids=["dfine", "deim"])
+@pytest.mark.parametrize("nbs", [None, 2], ids=["plain", "accum"])
+def test_detr_profile_window_close_keeps_training(trainer_idx, nbs, tmp_path):
+    """Default profile=True: the window closes and the epoch keeps training."""
+    trainer_cls = _detr_trainer_classes()[trainer_idx]
+    trainer, forwards = _bare_detr_trainer(
+        trainer_cls, tmp_path, num_batches=6, nbs=nbs
+    )
+
+    trainer_cls._train_epoch(trainer, 0)
+
+    assert trainer._profiler is None  # hooks dropped after the window
+    assert trainer._stop_training is False
+    assert len(forwards) == 6  # every batch still trained
+
+
+@pytest.mark.parametrize("trainer_idx", [0, 1], ids=["dfine", "deim"])
+@pytest.mark.parametrize("nbs", [None, 2], ids=["plain", "accum"])
+def test_detr_profile_then_stop_truncates_without_validation(
+    trainer_idx, nbs, tmp_path
+):
+    """profile_then_stop=True: stop right after the window; the partial epoch
+    must not be validated."""
+    trainer_cls = _detr_trainer_classes()[trainer_idx]
+    trainer, forwards = _bare_detr_trainer(
+        trainer_cls, tmp_path, num_batches=6, nbs=nbs, profile_then_stop=True
+    )
+    validated = []
+    trainer._validate_epoch = lambda epoch, **kw: validated.append(epoch)
+    trainer.config.eval_interval = 1  # would validate every epoch otherwise
+
+    _, val_metrics, _, _ = trainer_cls._train_epoch(trainer, 0)
+
+    assert trainer._stop_training is True
+    # Window only: warmup 1 + measured 2 (active is clamped to >= 2).
+    assert len(forwards) == 3
+    assert validated == []
+    assert val_metrics is None
+
+
 def test_memory_pressure_detected(tmp_path):
     ev = _trace_events()
     for i in range(20):
