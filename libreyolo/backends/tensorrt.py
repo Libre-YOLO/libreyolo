@@ -358,6 +358,7 @@ class TensorRTBackend(BaseBackend):
         classes: Optional[List[int]] = None,
         max_det: int = 300,
         color_format: str = "auto",
+        start_idx: int = 0,
     ) -> list:
         """Process multiple images with GPU batching when possible.
 
@@ -386,6 +387,7 @@ class TensorRTBackend(BaseBackend):
                 classes=classes,
                 max_det=max_det,
                 color_format=color_format,
+                start_idx=start_idx,
             )
 
         effective_imgsz = self._resolve_predict_imgsz(imgsz)
@@ -408,7 +410,9 @@ class TensorRTBackend(BaseBackend):
                 # use an indexed stem so save=True does not overwrite files.
                 image_path = image if isinstance(image, (str, Path)) else None
                 save_name = (
-                    image_path if image_path is not None else f"image{i + offset}"
+                    image_path
+                    if image_path is not None
+                    else f"image{start_idx + i + offset}"
                 )
                 preprocess_info.append(
                     (orig_img, orig_size, ratio, image_path, save_name)

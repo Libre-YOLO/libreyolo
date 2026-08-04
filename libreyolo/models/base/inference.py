@@ -69,7 +69,13 @@ from ...utils.results import (
     RestoredImage,
     SemanticMask,
 )
-from ...utils.video import collect_video_results, is_video_file, run_video_inference
+from ...utils.screen import ScreenSource, grab_screen
+from ...utils.source import SourceKind, build_stream_source, classify_source
+from ...utils.video import (
+    FrameSource,
+    collect_video_results,
+    run_video_inference,
+)
 from .cuda_graph import forward_maybe_graphed, with_cuda_graph_scope
 
 logger = logging.getLogger(__name__)
@@ -162,7 +168,11 @@ class InferenceRunner:
     @with_cuda_graph_scope
     def __call__(
         self,
-        source: ImageInput | list[ImageInput] | tuple[ImageInput, ...] | None = None,
+        source: ImageInput
+        | int
+        | list[ImageInput | int]
+        | tuple[ImageInput | int, ...]
+        | None = None,
         *,
         conf: float = 0.25,
         iou: float = 0.45,
@@ -175,6 +185,7 @@ class InferenceRunner:
         batch: int = 1,
         # video parameters
         stream: bool = False,
+        stream_buffer: bool = False,
         vid_stride: int = 1,
         show: bool = False,
         # libreyolo-specific
@@ -191,7 +202,9 @@ class InferenceRunner:
 
         Args:
             source: Input image, list/tuple of in-memory images, directory
-                path, or video file path.
+                path, video file path, or a screen-capture source such as
+                ``"screen"``, ``"screen 1"``, or ``"screen 1 100 200 512 256"``
+                (monitor index, then ``left top width height``).
             conf: Confidence threshold.
             iou: IoU threshold for NMS.
             imgsz: Input size override (None = model default).
@@ -202,12 +215,16 @@ class InferenceRunner:
                 With batch > 1, supported families run a single stacked
                 forward per chunk (true batched inference); batch=1 keeps
                 the sequential one-forward-per-image behavior.
-            stream: If True, return a generator yielding per-frame Results.
-                Recommended for video to avoid high memory usage. Applies to
-                video sources only; list and directory sources always return
-                a fully materialized list.
-            vid_stride: Process every N-th video frame (default: 1).
-            show: If True, display annotated frames in a window (video only).
+            stream: If True, return a generator yielding Results one at a time
+                instead of a materialized list. Recommended for video, screen
+                capture, and large directories to avoid high memory usage. A
+                single-image source yields exactly one Results.
+            stream_buffer: Keep every captured live frame instead of retaining
+                only the newest frame per camera. Buffering preserves frames but
+                can increase latency when inference is slower than capture.
+            vid_stride: Process every N-th video or screen frame (default: 1).
+            show: If True, display annotated frames in a window (video and
+                screen sources only).
             output_path: Optional output path.
             color_format: Color format hint.
             tiling: Enable tiled inference for large images.
@@ -225,7 +242,7 @@ class InferenceRunner:
             **kwargs: Additional arguments for postprocessing.
 
         Returns:
-            Results, list of Results, or generator of Results (video + stream).
+            Results, list of Results, or generator of Results (stream=True).
         """
         kwargs = normalize_predict_kwargs(
             kwargs, passthrough={"num_select", "gallery", "threshold"}
@@ -277,10 +294,12 @@ class InferenceRunner:
                 "Use augment=False for edge models."
             )
 
-        # Handle video input
-        if is_video_file(source):
+        source_spec = classify_source(source)
+
+        # Handle finite video input.
+        if source_spec.kind == SourceKind.VIDEO:
             gen = self._predict_video(
-                source,
+                source_spec.source,
                 conf=conf,
                 iou=iou,
                 imgsz=imgsz,
@@ -294,12 +313,66 @@ class InferenceRunner:
             )
             if stream:
                 return gen
-            return collect_video_results(gen, source, vid_stride)
+            return collect_video_results(gen, source_spec.source, vid_stride)
 
-        # Handle in-memory batch input (list/tuple of images)
-        if isinstance(source, (list, tuple)):
-            return self._process_in_batches(
-                list(source),
+        # Webcams and network streams are unbounded and always stay lazy.
+        if source_spec.live:
+            if not stream:
+                raise ValueError(
+                    "Live stream sources require stream=True so results are "
+                    "consumed incrementally."
+                )
+            frame_source = build_stream_source(
+                source_spec,
+                vid_stride=vid_stride,
+                stream_buffer=stream_buffer,
+            )
+            return self._predict_video(
+                frame_source,
+                source_label="stream",
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                max_det=max_det,
+                save=save,
+                show=show,
+                output_path=output_path,
+                **kwargs,
+            )
+
+        # Handle screen-capture input ("screen", "screen 1", "screen 1 x y w h")
+        if source_spec.kind == SourceKind.SCREEN:
+            return self._predict_screen(
+                source_spec.source,
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                max_det=max_det,
+                save=save,
+                show=show,
+                stream=stream,
+                vid_stride=vid_stride,
+                output_path=output_path,
+                output_file_format=output_file_format,
+                **kwargs,
+            )
+
+        # Handle in-memory batch input (list/tuple of images) and directories.
+        # Both collapse to a list of images run in batches.
+        images: Optional[List[ImageInput]] = None
+        if source_spec.kind == SourceKind.IMAGE_BATCH:
+            images = list(source_spec.items)
+        elif source_spec.kind == SourceKind.DIRECTORY:
+            images = ImageLoader.collect_images(source_spec.source)
+            if not images:
+                return iter(()) if stream else []
+
+        if images is not None or stream:
+            if images is None:
+                images = [source]
+            batch_kwargs = dict(
                 batch=batch,
                 save=save,
                 output_path=output_path,
@@ -315,29 +388,9 @@ class InferenceRunner:
                 augment=augment,
                 **kwargs,
             )
-
-        # Handle directory input
-        if isinstance(source, (str, Path)) and Path(source).is_dir():
-            image_paths = ImageLoader.collect_images(source)
-            if not image_paths:
-                return []
-            return self._process_in_batches(
-                image_paths,
-                batch=batch,
-                save=save,
-                output_path=output_path,
-                conf=conf,
-                iou=iou,
-                imgsz=imgsz,
-                classes=classes,
-                max_det=max_det,
-                color_format=color_format,
-                tiling=tiling,
-                overlap_ratio=overlap_ratio,
-                output_file_format=output_file_format,
-                augment=augment,
-                **kwargs,
-            )
+            if stream:
+                return self._stream_in_batches(images, **batch_kwargs)
+            return self._process_in_batches(images, **batch_kwargs)
 
         # Use tiled inference if enabled
         if tiling:
@@ -416,6 +469,28 @@ class InferenceRunner:
                 else:
                     self.model.model.to(target)
 
+    def _stream_in_batches(
+        self,
+        images: Sequence[ImageInput],
+        batch: int = 1,
+        **kwargs,
+    ) -> Generator[Results, None, None]:
+        """Yield Results for *images* one at a time, ``batch`` images per step.
+
+        Peak memory holds one chunk of Results rather than the whole source.
+        Each chunk still goes through ``_process_in_batches``, so family
+        overrides (batched forward passes, backend-specific batching) keep
+        applying.
+        """
+        step = max(1, int(batch))
+        for start in range(0, len(images), step):
+            yield from self._process_in_batches(
+                images[start : start + step],
+                batch=batch,
+                start_idx=start,
+                **kwargs,
+            )
+
     def _process_in_batches(
         self,
         images: Sequence[ImageInput],
@@ -432,6 +507,7 @@ class InferenceRunner:
         overlap_ratio: float = 0.2,
         output_file_format: Optional[str] = None,
         augment: bool = False,
+        start_idx: int = 0,
         **kwargs,
     ) -> List[Results]:
         """Process multiple images (file paths or in-memory).
@@ -440,6 +516,11 @@ class InferenceRunner:
         images runs as one stacked forward pass; the batched output is
         sliced back per image and fed to the family's existing batch-1
         postprocess. Otherwise images run sequentially, one forward each.
+
+        ``start_idx`` is the position of ``images[0]`` within the caller's full
+        source. It only affects the indexed filename stems given to in-memory
+        images, so streaming can hand over one chunk at a time without two
+        chunks both saving an ``image0``.
         """
         use_batched = (
             batch > 1
@@ -458,7 +539,7 @@ class InferenceRunner:
                 results.extend(
                     self._predict_batch(
                         images[start : start + batch],
-                        start_idx=start,
+                        start_idx=start_idx + start,
                         save=save,
                         output_path=output_path,
                         conf=conf,
@@ -477,7 +558,9 @@ class InferenceRunner:
         for idx, image in enumerate(images):
             # In-memory images have no filename to derive a save name from;
             # index them so save=True does not overwrite a single file.
-            save_stem = None if isinstance(image, (str, Path)) else f"image{idx}"
+            save_stem = (
+                None if isinstance(image, (str, Path)) else f"image{start_idx + idx}"
+            )
             if tiling:
                 results.append(
                     self._predict_tiled(
@@ -1241,7 +1324,7 @@ class InferenceRunner:
 
     def _predict_video(
         self,
-        source: Union[str, Path],
+        source: Union[str, Path, FrameSource],
         *,
         conf: float = 0.25,
         iou: float = 0.45,
@@ -1252,9 +1335,40 @@ class InferenceRunner:
         show: bool = False,
         vid_stride: int = 1,
         output_path: Optional[str] = None,
+        source_label: Optional[str] = None,
         **kwargs,
     ) -> Generator[Results, None, None]:
         """Run inference on a video file, yielding per-frame Results."""
+        source_label = str(source) if source_label is None else source_label
+        yield from run_video_inference(
+            source,
+            self._frame_predictor(
+                source_label,
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                max_det=max_det,
+                **kwargs,
+            ),
+            vid_stride=vid_stride,
+            save=save,
+            show=show,
+            output_path=output_path,
+        )
+
+    def _frame_predictor(
+        self,
+        source_label: str,
+        *,
+        conf: float = 0.25,
+        iou: float = 0.45,
+        imgsz: Optional[int] = None,
+        classes: Optional[List[int]] = None,
+        max_det: int = 300,
+        **kwargs,
+    ):
+        """Build the per-frame ``PIL image -> Results`` callable for a stream."""
         effective_imgsz = imgsz if imgsz is not None else self.model._get_input_size()
 
         # Pass "effective_imgsz" immediately to kwargs
@@ -1278,16 +1392,72 @@ class InferenceRunner:
                 classes=classes,
                 **kwargs,
             )
-            return self._wrap_results(detections, original_size, str(source), classes)
+            return self._wrap_results(detections, original_size, source_label, classes)
 
-        yield from run_video_inference(
-            source,
-            predict_frame,
-            vid_stride=vid_stride,
+        return predict_frame
+
+    def _predict_screen(
+        self,
+        source: Union[str, Path],
+        *,
+        conf: float = 0.25,
+        iou: float = 0.45,
+        imgsz: Optional[int] = None,
+        classes: Optional[List[int]] = None,
+        max_det: int = 300,
+        save: bool = False,
+        show: bool = False,
+        stream: bool = False,
+        vid_stride: int = 1,
+        output_path: Optional[str] = None,
+        output_file_format: Optional[str] = None,
+        **kwargs,
+    ) -> Union[Results, Generator[Results, None, None]]:
+        """Run inference on the screen.
+
+        Without ``stream=True`` this grabs one frame and returns a single
+        Results, the screenshot equivalent of predicting on an image file. With
+        ``stream=True`` it captures continuously and yields Results per frame,
+        which for a live screen never ends on its own: bound it with
+        ``itertools.islice`` or break out of the loop.
+        """
+        if stream:
+
+            def stream_results():
+                yield from run_video_inference(
+                    ScreenSource(source, vid_stride=vid_stride),
+                    self._frame_predictor(
+                        str(source),
+                        conf=conf,
+                        iou=iou,
+                        imgsz=imgsz,
+                        classes=classes,
+                        max_det=max_det,
+                        **kwargs,
+                    ),
+                    save=save,
+                    show=show,
+                    output_path=output_path,
+                )
+
+            return stream_results()
+
+        result = self._predict_single(
+            grab_screen(source),
             save=save,
-            show=show,
             output_path=output_path,
+            conf=conf,
+            iou=iou,
+            imgsz=imgsz,
+            classes=classes,
+            max_det=max_det,
+            color_format="rgb",
+            output_file_format=output_file_format,
+            save_stem="screen",
+            **kwargs,
         )
+        result.path = str(source)
+        return result
 
     def _merge_tile_detections(
         self,

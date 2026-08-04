@@ -61,7 +61,13 @@ from ..utils.results import (
     RestoredImage,
     SemanticMask,
 )
-from ..utils.video import collect_video_results, is_video_file, run_video_inference
+from ..utils.screen import ScreenSource, grab_screen
+from ..utils.source import SourceKind, build_stream_source, classify_source
+from ..utils.video import (
+    FrameSource,
+    collect_video_results,
+    run_video_inference,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -513,9 +519,7 @@ class BaseBackend(ABC):
             )
             return tensor, img, size, 1.0
         elif self.model_family in {"faster_rcnn", "mask_rcnn"}:
-            return self._preprocess_faster_rcnn(
-                image, effective_imgsz, color_format
-            )
+            return self._preprocess_faster_rcnn(image, effective_imgsz, color_format)
         elif self.model_family == "retinanet":
             from ..models.retinanet.utils import (
                 preprocess_image as retinanet_preprocess_image,
@@ -547,9 +551,7 @@ class BaseBackend(ABC):
             )
             return tensor, img, size, 1.0
         elif self.model_family == "centernet":
-            return self._preprocess_centernet(
-                image, effective_imgsz, color_format
-            )
+            return self._preprocess_centernet(image, effective_imgsz, color_format)
         elif self.model_family in ("dfine", "rtdetrv4"):
             tensor, img, size = self._preprocess_dfine(
                 image, effective_imgsz, color_format
@@ -993,9 +995,7 @@ class BaseBackend(ABC):
             raise NotImplementedError(
                 "CenterNet exported inference requires a square input canvas."
             )
-        return preprocess_image(
-            image, input_size=input_h, color_format=color_format
-        )
+        return preprocess_image(image, input_size=input_h, color_format=color_format)
 
     @staticmethod
     def _preprocess_detr(image, input_size, color_format):
@@ -1696,12 +1696,8 @@ class BaseBackend(ABC):
                 class_ids = class_ids[keep]
             order = np.argsort(-level_scores, kind="stable")
             level_boxes = boxes[anchor_ids[order]].copy()
-            level_boxes[:, [0, 2]] = np.clip(
-                level_boxes[:, [0, 2]], 0, resized_w
-            )
-            level_boxes[:, [1, 3]] = np.clip(
-                level_boxes[:, [1, 3]], 0, resized_h
-            )
+            level_boxes[:, [0, 2]] = np.clip(level_boxes[:, [0, 2]], 0, resized_w)
+            level_boxes[:, [1, 3]] = np.clip(level_boxes[:, [1, 3]], 0, resized_h)
             selected_boxes.append(level_boxes)
             selected_scores.append(level_scores[order])
             selected_classes.append(class_ids[order].astype(np.int64, copy=False))
@@ -1753,8 +1749,7 @@ class BaseBackend(ABC):
             packed = packed.T
         if packed.shape[0] != 8732 or packed.shape[1] != 4 + self.nb_classes:
             raise ValueError(
-                "SSD backend output must have shape "
-                f"(1, {4 + self.nb_classes}, 8732)"
+                f"SSD backend output must have shape (1, {4 + self.nb_classes}, 8732)"
             )
 
         boxes_all = packed[:, :4]
@@ -2211,7 +2206,9 @@ class BaseBackend(ABC):
         pred_logits = np.asarray(all_outputs[0][0], dtype=np.float32)
         pred_boxes = np.asarray(all_outputs[1][0], dtype=np.float32)
         if pred_logits.ndim != 2 or pred_boxes.ndim != 2:
-            raise ValueError("DETR backend expects (Q, classes) logits and (Q, 4) boxes")
+            raise ValueError(
+                "DETR backend expects (Q, classes) logits and (Q, 4) boxes"
+            )
         if pred_logits.shape[0] != pred_boxes.shape[0] or pred_boxes.shape[1] != 4:
             raise ValueError("DETR backend logits and boxes have incompatible shapes")
 
@@ -2316,7 +2313,9 @@ class BaseBackend(ABC):
         """Parse the export graph's baked top-100 CenterNet detections."""
         from ..postprocess.centernet import postprocess
 
-        decoded = all_outputs[0] if isinstance(all_outputs, (tuple, list)) else all_outputs
+        decoded = (
+            all_outputs[0] if isinstance(all_outputs, (tuple, list)) else all_outputs
+        )
         result = postprocess(
             decoded,
             conf_thres=conf,
@@ -3046,14 +3045,10 @@ class BaseBackend(ABC):
             far_depth = torch.quantile(non_sky_depth, 0.99)
             if corrected is depth:
                 corrected = depth.clone()
-            corrected[index] = torch.where(
-                non_sky, depth[index], far_depth
-            )
+            corrected[index] = torch.where(non_sky, depth[index], far_depth)
 
         inverse_depth = torch.reciprocal(corrected.clamp_min(1e-6))
-        return BaseBackend._parse_depth_output(
-            [inverse_depth.numpy()], original_size
-        )
+        return BaseBackend._parse_depth_output([inverse_depth.numpy()], original_size)
 
     def _parse_depth_outputs(
         self, all_outputs, original_size: Tuple[int, int]
@@ -4192,12 +4187,18 @@ class BaseBackend(ABC):
         classes: Optional[List[int]] = None,
         max_det: int = 300,
         color_format: str = "auto",
+        start_idx: int = 0,
     ) -> List[Results]:
         """Process multiple images (file paths or in-memory).
 
         When ``batch > 1`` and the runtime accepts stacked blobs, each chunk
         of ``batch`` images runs as a single forward pass; otherwise images
         run sequentially.
+
+        ``start_idx`` is the position of ``images[0]`` within the caller's full
+        source. It only affects the indexed filename stems given to in-memory
+        images, so streaming can hand over one chunk at a time without two
+        chunks both saving an ``image0``.
         """
         use_batched = (
             batch > 1
@@ -4212,7 +4213,7 @@ class BaseBackend(ABC):
                 results.extend(
                     self._predict_batch(
                         images[start : start + batch],
-                        start_idx=start,
+                        start_idx=start_idx + start,
                         save=save,
                         output_path=output_path,
                         conf=conf,
@@ -4239,11 +4240,34 @@ class BaseBackend(ABC):
                     max_det=max_det,
                     color_format=color_format,
                     save_stem=(
-                        None if isinstance(image, (str, Path)) else f"image{idx}"
+                        None
+                        if isinstance(image, (str, Path))
+                        else f"image{start_idx + idx}"
                     ),
                 )
             )
         return results
+
+    def _stream_in_batches(
+        self,
+        images: List,
+        batch: int = 1,
+        **kwargs,
+    ) -> Generator[Results, None, None]:
+        """Yield Results for *images* one at a time, ``batch`` images per step.
+
+        Peak memory holds one chunk of Results rather than the whole source.
+        Each chunk still goes through ``_process_in_batches``, so runtime
+        overrides (such as the TensorRT batching path) keep applying.
+        """
+        step = max(1, int(batch))
+        for start in range(0, len(images), step):
+            yield from self._process_in_batches(
+                images[start : start + step],
+                batch=batch,
+                start_idx=start,
+                **kwargs,
+            )
 
     def _predict_batch(
         self,
@@ -4449,7 +4473,9 @@ class BaseBackend(ABC):
 
     def __call__(
         self,
-        source: Union[str, Path, Image.Image, np.ndarray, list, tuple, None] = None,
+        source: Union[
+            str, Path, int, Image.Image, np.ndarray, list, tuple, None
+        ] = None,
         *,
         conf: float = 0.25,
         iou: float = 0.45,
@@ -4461,13 +4487,14 @@ class BaseBackend(ABC):
         batch: int = 1,
         # video parameters
         stream: bool = False,
+        stream_buffer: bool = False,
         vid_stride: int = 1,
         show: bool = False,
         output_path: str | None = None,
         color_format: str = "auto",
         **kwargs,
     ) -> Union[Results, List[Results], Generator[Results, None, None]]:
-        """Run inference on an image, list of images, directory, or video."""
+        """Run inference on images, directories, videos, or screen captures."""
         normalize_predict_kwargs(kwargs)
         if device not in (None, "", "auto", self.device):
             logger.warning(
@@ -4478,10 +4505,12 @@ class BaseBackend(ABC):
                 device,
             )
 
-        # Handle video input
-        if is_video_file(source):
+        source_spec = classify_source(source)
+
+        # Handle finite video input.
+        if source_spec.kind == SourceKind.VIDEO:
             gen = self._predict_video(
-                source,
+                source_spec.source,
                 conf=conf,
                 iou=iou,
                 imgsz=imgsz,
@@ -4494,12 +4523,62 @@ class BaseBackend(ABC):
             )
             if stream:
                 return gen
-            return collect_video_results(gen, source, vid_stride)
+            return collect_video_results(gen, source_spec.source, vid_stride)
 
-        # Handle in-memory batch input (list/tuple of images)
-        if isinstance(source, (list, tuple)):
-            return self._process_in_batches(
-                list(source),
+        if source_spec.live:
+            if not stream:
+                raise ValueError(
+                    "Live stream sources require stream=True so results are "
+                    "consumed incrementally."
+                )
+            frame_source = build_stream_source(
+                source_spec,
+                vid_stride=vid_stride,
+                stream_buffer=stream_buffer,
+            )
+            return self._predict_video(
+                frame_source,
+                source_label="stream",
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                max_det=max_det,
+                save=save,
+                show=show,
+                output_path=output_path,
+            )
+
+        # Handle screen-capture input ("screen", "screen 1", "screen 1 x y w h")
+        if source_spec.kind == SourceKind.SCREEN:
+            return self._predict_screen(
+                source_spec.source,
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                max_det=max_det,
+                save=save,
+                show=show,
+                stream=stream,
+                vid_stride=vid_stride,
+                output_path=output_path,
+            )
+
+        # Handle in-memory batch input (list/tuple of images) and directories.
+        # Both collapse to a list of images run in batches.
+        images = None
+        if source_spec.kind == SourceKind.IMAGE_BATCH:
+            images = list(source_spec.items)
+        elif source_spec.kind == SourceKind.DIRECTORY:
+            images = ImageLoader.collect_images(source_spec.source)
+            if not images:
+                return iter(()) if stream else []
+
+        if images is not None or stream:
+            if images is None:
+                images = [source]
+            batch_kwargs = dict(
                 batch=batch,
                 save=save,
                 output_path=output_path,
@@ -4510,23 +4589,9 @@ class BaseBackend(ABC):
                 max_det=max_det,
                 color_format=color_format,
             )
-
-        if isinstance(source, (str, Path)) and Path(source).is_dir():
-            image_paths = ImageLoader.collect_images(source)
-            if not image_paths:
-                return []
-            return self._process_in_batches(
-                image_paths,
-                batch=batch,
-                save=save,
-                output_path=output_path,
-                conf=conf,
-                iou=iou,
-                imgsz=imgsz,
-                classes=classes,
-                max_det=max_det,
-                color_format=color_format,
-            )
+            if stream:
+                return self._stream_in_batches(images, **batch_kwargs)
+            return self._process_in_batches(images, **batch_kwargs)
 
         return self._predict_single(
             source,
@@ -4548,7 +4613,7 @@ class BaseBackend(ABC):
 
     def _predict_video(
         self,
-        source: Union[str, Path],
+        source: Union[str, Path, FrameSource],
         *,
         conf: float = 0.25,
         iou: float = 0.45,
@@ -4559,8 +4624,10 @@ class BaseBackend(ABC):
         show: bool = False,
         vid_stride: int = 1,
         output_path: Optional[str] = None,
+        source_label: Optional[str] = None,
     ) -> Generator[Results, None, None]:
         """Run inference on a video file, yielding per-frame Results."""
+        source_label = str(source) if source_label is None else source_label
         effective_imgsz = self._resolve_predict_imgsz(imgsz)
 
         def predict_frame(pil_img):
@@ -4575,54 +4642,54 @@ class BaseBackend(ABC):
                 return self._build_classify_result(
                     all_outputs,
                     orig_shape=orig_shape,
-                    image_path=str(source),
+                    image_path=source_label,
                 )
             if self.task == "embed":
                 return self._build_embedding_result(
                     all_outputs,
                     orig_shape=orig_shape,
-                    image_path=str(source),
+                    image_path=source_label,
                 )
             if self.task == "restore":
                 return self._build_restore_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     original_size=original_size,
-                    image_path=str(source),
+                    image_path=source_label,
                 )
             if self.task == "depth":
                 return self._build_depth_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     original_size=original_size,
-                    image_path=str(source),
+                    image_path=source_label,
                 )
             if self.task == "normal":
                 return self._build_normal_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     original_size=original_size,
-                    image_path=str(source),
+                    image_path=source_label,
                 )
             if self.task == "edge":
                 return self._build_edge_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     original_size=original_size,
-                    image_path=str(source),
+                    image_path=source_label,
                 )
             if self.task == "matte":
                 return self._build_matte_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     original_size=original_size,
-                    image_path=str(source),
+                    image_path=source_label,
                 )
             if self.task == "gaze":
                 return self._build_gaze_result(
                     all_outputs,
                     orig_shape=orig_shape,
-                    image_path=str(source),
+                    image_path=source_label,
                 )
             if self.task == "semantic":
                 return self._build_semantic_result(
@@ -4631,7 +4698,7 @@ class BaseBackend(ABC):
                     original_size=original_size,
                     effective_imgsz=effective_imgsz,
                     ratio=float(ratio or 1.0),
-                    image_path=str(source),
+                    image_path=source_label,
                 )
             if self.task == "point":
                 return self._build_point_result(
@@ -4641,7 +4708,7 @@ class BaseBackend(ABC):
                     effective_imgsz=effective_imgsz,
                     conf=conf,
                     max_det=max_det,
-                    image_path=str(source),
+                    image_path=source_label,
                 )
             parsed = self._parse_outputs(
                 all_outputs,
@@ -4663,7 +4730,7 @@ class BaseBackend(ABC):
                 obb=obb,
                 keypoints=keypoints,
                 orig_shape=orig_shape,
-                image_path=str(source),
+                image_path=source_label,
                 iou=iou,
                 classes=classes,
                 max_det=max_det,
@@ -4677,3 +4744,52 @@ class BaseBackend(ABC):
             show=show,
             output_path=output_path,
         )
+
+    def _predict_screen(
+        self,
+        source: Union[str, Path],
+        *,
+        conf: float = 0.25,
+        iou: float = 0.45,
+        imgsz: Optional[ImageSize] = None,
+        classes: Optional[List[int]] = None,
+        max_det: int = 300,
+        save: bool = False,
+        show: bool = False,
+        stream: bool = False,
+        vid_stride: int = 1,
+        output_path: Optional[str] = None,
+    ) -> Union[Results, Generator[Results, None, None]]:
+        """Capture one screenshot, or continuously capture when streaming."""
+        if stream:
+
+            def stream_results():
+                yield from self._predict_video(
+                    ScreenSource(source, vid_stride=vid_stride),
+                    conf=conf,
+                    iou=iou,
+                    imgsz=imgsz,
+                    classes=classes,
+                    max_det=max_det,
+                    save=save,
+                    show=show,
+                    output_path=output_path,
+                    source_label=str(source),
+                )
+
+            return stream_results()
+
+        result = self._predict_single(
+            grab_screen(source),
+            save=save,
+            output_path=output_path,
+            conf=conf,
+            iou=iou,
+            imgsz=imgsz,
+            classes=classes,
+            max_det=max_det,
+            color_format="rgb",
+            save_stem="screen",
+        )
+        result.path = str(source)
+        return result

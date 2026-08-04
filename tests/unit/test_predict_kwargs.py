@@ -24,7 +24,6 @@ def test_noop_predict_kwargs_warn_and_are_removed():
         "retina_masks",
         "show_conf",
         "show_labels",
-        "stream_buffer",
         "verbose",
     ],
 )
@@ -50,6 +49,7 @@ def test_rejected_predict_kwargs_fail_clearly():
         ("max_det", 300),
         ("save", False),
         ("stream", False),
+        ("stream_buffer", False),
         ("vid_stride", 1),
     ],
 )
@@ -58,9 +58,9 @@ def test_supported_predict_kwargs_are_accepted(key, value):
 
 
 def test_native_passthrough_kwargs_are_forwarded_explicitly():
-    assert normalize_predict_kwargs({"num_select": 100}, passthrough={"num_select"}) == {
-        "num_select": 100
-    }
+    assert normalize_predict_kwargs(
+        {"num_select": 100}, passthrough={"num_select"}
+    ) == {"num_select": 100}
 
 
 def test_passthrough_kwargs_are_not_silently_accepted_by_default():

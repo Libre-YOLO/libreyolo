@@ -3,11 +3,13 @@
 import subprocess
 import sys
 
+import numpy as np
 import pytest
 import torch
 from PIL import Image
 
 from libreyolo.ensemble import ExternalDetector, LibreEnsemble
+from libreyolo.ensemble import model as ensemble_model
 from libreyolo.utils.results import Boxes, Results
 
 pytestmark = pytest.mark.unit
@@ -214,8 +216,10 @@ class TestPredict:
 
     def test_classes_filter_uses_union_ids(self, image):
         a = StubMember(
-            COCOISH, boxes=[[0, 0, 10, 10], [50, 50, 60, 60]],
-            scores=[0.9, 0.8], cls=[0, 1],
+            COCOISH,
+            boxes=[[0, 0, 10, 10], [50, 50, 60, 60]],
+            scores=[0.9, 0.8],
+            cls=[0, 1],
         )
         b = StubMember(COCOISH)
         result = LibreEnsemble([a, b])(image, classes=[1])
@@ -223,15 +227,15 @@ class TestPredict:
 
     def test_min_votes_consensus(self, image):
         a = StubMember(
-            COCOISH, boxes=[[0, 0, 10, 10], [50, 50, 60, 60]],
-            scores=[0.9, 0.95], cls=[0, 0],
+            COCOISH,
+            boxes=[[0, 0, 10, 10], [50, 50, 60, 60]],
+            scores=[0.9, 0.95],
+            cls=[0, 0],
         )
         b = StubMember(COCOISH, boxes=[[0, 0, 10, 12]], scores=[0.7], cls=[0])
         result = LibreEnsemble([a, b], min_votes=2)(image)
         assert len(result) == 1
-        assert torch.allclose(
-            result.boxes.xyxy[0, 3], torch.tensor(10.875), atol=1e-4
-        )
+        assert torch.allclose(result.boxes.xyxy[0, 3], torch.tensor(10.875), atol=1e-4)
 
     def test_speed_keys(self, image):
         result = LibreEnsemble(list(_pair_members()))(image)
@@ -251,8 +255,10 @@ class TestPredict:
 
     def test_nonfinite_member_rows_dropped(self, image):
         a = StubMember(
-            COCOISH, boxes=[[0, 0, 10, 10], [0, 0, float("nan"), 10]],
-            scores=[0.9, 0.8], cls=[0, 0],
+            COCOISH,
+            boxes=[[0, 0, 10, 10], [0, 0, float("nan"), 10]],
+            scores=[0.9, 0.8],
+            cls=[0, 0],
         )
         result = LibreEnsemble([a, StubMember(COCOISH)])(image)
         assert len(result) == 1
@@ -300,15 +306,90 @@ class TestPredict:
         with pytest.raises(ValueError, match="inconsistent shapes"):
             ens(image)
 
-    def test_video_raises(self):
-        ens = LibreEnsemble(list(_pair_members()))
-        with pytest.raises(NotImplementedError, match="video"):
-            ens("clip.mp4")
+    def test_single_image_stream_is_lazy(self, image):
+        a, b = _pair_members()
+        results = LibreEnsemble([a, b])(image, stream=True)
 
-    def test_stream_raises(self, image):
-        ens = LibreEnsemble(list(_pair_members()))
-        with pytest.raises(NotImplementedError):
-            ens(image, stream=True)
+        assert a.calls == [] and b.calls == []
+        result = next(results)
+        assert isinstance(result, Results)
+        assert len(a.calls) == 1 and len(b.calls) == 1
+        with pytest.raises(StopIteration):
+            next(results)
+
+    def test_list_stream_yields_fused_results(self, image):
+        a, b = _pair_members()
+        results = LibreEnsemble([a, b])([image, image], stream=True)
+
+        assert a.calls == [] and b.calls == []
+        assert len(list(results)) == 2
+        assert len(a.calls) == 2 and len(b.calls) == 2
+
+    def test_video_stream_uses_frame_loop(self, image, monkeypatch):
+        a, b = _pair_members()
+
+        def fake_run_video(source, predict_frame, **kwargs):
+            assert source == "clip.mp4"
+            yield predict_frame(image)
+            yield predict_frame(image)
+
+        monkeypatch.setattr(ensemble_model, "run_video_inference", fake_run_video)
+        results = LibreEnsemble([a, b])("clip.mp4", stream=True, vid_stride=2)
+
+        assert a.calls == [] and b.calls == []
+        streamed = list(results)
+        assert len(streamed) == 2
+        assert all(r.path == "clip.mp4" for r in streamed)
+
+    def test_video_without_stream_collects_results(self, image, monkeypatch):
+        def fake_run_video(source, predict_frame, **kwargs):
+            yield predict_frame(image)
+
+        monkeypatch.setattr(ensemble_model, "run_video_inference", fake_run_video)
+        monkeypatch.setattr(
+            ensemble_model,
+            "collect_video_results",
+            lambda gen, source, vid_stride: list(gen),
+        )
+
+        results = LibreEnsemble(list(_pair_members()))("clip.mp4")
+
+        assert isinstance(results, list) and len(results) == 1
+
+    def test_screen_source_grabs_rgb_frame(self, monkeypatch):
+        monkeypatch.setattr(
+            ensemble_model,
+            "grab_screen",
+            lambda source: np.zeros((8, 10, 3), dtype=np.uint8),
+        )
+
+        result = LibreEnsemble(list(_pair_members()))("screen 1")
+
+        assert result.orig_shape == (8, 10)
+        assert result.path == "screen 1"
+
+    def test_screen_stream_opens_capture_lazily(self, image, monkeypatch):
+        opened = []
+        marker = object()
+
+        def fake_screen_source(source, vid_stride):
+            opened.append((source, vid_stride))
+            return marker
+
+        def fake_run_video(source, predict_frame, **kwargs):
+            assert source is marker
+            yield predict_frame(image)
+
+        monkeypatch.setattr(ensemble_model, "ScreenSource", fake_screen_source)
+        monkeypatch.setattr(ensemble_model, "run_video_inference", fake_run_video)
+
+        results = LibreEnsemble(list(_pair_members()))(
+            "screen", stream=True, vid_stride=4
+        )
+
+        assert opened == []
+        assert len(list(results)) == 1
+        assert opened == [("screen", 4)]
 
     def test_unknown_predict_kwarg_raises(self, image):
         ens = LibreEnsemble(list(_pair_members()))
@@ -333,6 +414,26 @@ class TestPredict:
         from pathlib import Path
 
         assert Path(result.saved_path).exists()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_in_memory_sequence_save_uses_indexed_names(self, tmp_path, image, stream):
+        from pathlib import Path
+
+        out_dir = tmp_path / "out"
+        results = LibreEnsemble(list(_pair_members()))(
+            [image, image],
+            save=True,
+            stream=stream,
+            output_path=str(out_dir),
+        )
+        if stream:
+            results = list(results)
+
+        assert [Path(result.saved_path).name for result in results] == [
+            "image0.jpg",
+            "image1.jpg",
+        ]
+        assert all(Path(result.saved_path).exists() for result in results)
 
     def test_val_and_export_raise(self):
         ens = LibreEnsemble(list(_pair_members()))

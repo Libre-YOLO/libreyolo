@@ -23,6 +23,7 @@ dependencies = [
     "PyYAML>=6.0",
     "requests>=2.25.0",
     "opencv-python>=4.11.0.86",
+    "mss>=9.0.1",
     "tqdm>=4.65.0",
     "pycocotools>=2.0.0",
     "typer>=0.9.0",
@@ -41,6 +42,11 @@ dev = [
 ]
 
 [project.optional-dependencies]
+stream = [
+    # YouTube page URLs are resolved lazily to direct media URLs. Webcam,
+    # RTSP/RTMP/TCP/UDP, HLS, and local multi-stream inputs need no extra.
+    "yt-dlp",
+]
 onnx = [
     "onnx>=1.14.0",
     "onnxsim>=0.4.0",
@@ -219,6 +225,7 @@ wandb = [
     "wandb>=0.16.0",
 ]
 all = [
+    "libreyolo[stream]",
     "libreyolo[onnx]",
     "libreyolo[rfdetr]",
     "libreyolo[eomt]",

@@ -3,7 +3,7 @@
 import logging
 import warnings
 from pathlib import Path
-from typing import Callable, Generator, Iterator, Tuple, Union
+from typing import Any, Callable, Generator, Iterator, Protocol, Tuple, Union
 
 import numpy as np
 
@@ -30,6 +30,27 @@ VIDEO_EXTENSIONS = {
 }
 
 
+class FrameSource(Protocol):
+    """What ``run_video_inference`` needs from a frame source.
+
+    :class:`VideoSource` and :class:`~libreyolo.utils.screen.ScreenSource` both
+    satisfy it: a context manager that iterates ``(BGR frame, frame index)``
+    and reports the geometry needed to write an output video.
+    """
+
+    fps: float
+    total_frames: int
+    width: int
+    height: int
+    save_name: str
+
+    def __enter__(self) -> "FrameSource": ...
+
+    def __exit__(self, *exc) -> None: ...
+
+    def __iter__(self) -> Iterator[Any]: ...
+
+
 def is_video_file(source) -> bool:
     """Check whether *source* looks like a path to a video file."""
     if not isinstance(source, (str, Path)):
@@ -53,8 +74,11 @@ def resolve_video_save_path(
     """
     if output_path is not None:
         out = Path(output_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        return str(out)
+        if out.suffix:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            return str(out)
+        out.mkdir(parents=True, exist_ok=True)
+        return str(out / f"{Path(source).stem}.mp4")
 
     save_dir = Path("runs/detect") / "predict"
     save_dir = increment_path(save_dir, exist_ok=False, mkdir=True)
@@ -91,6 +115,7 @@ class VideoSource:
             )
 
         self._path = str(path)
+        self.save_name = self._path
         self._vid_stride = max(1, int(vid_stride))
 
         self._cap = cv2.VideoCapture(self._path)
@@ -272,7 +297,7 @@ def collect_video_results(
 
 
 def run_video_inference(
-    source: Union[str, Path],
+    source: Union[str, Path, "FrameSource"],
     predict_frame_fn: Callable,
     *,
     vid_stride: int = 1,
@@ -282,13 +307,17 @@ def run_video_inference(
     annotate_fn: Union[Callable, None] = None,
     progress: bool = True,
 ) -> Generator:
-    """Generic video inference loop shared by all backends.
+    """Generic frame-by-frame inference loop shared by all backends.
 
     Args:
-        source: Path to video file.
+        source: Path to a video file, or an already-built frame source such as
+            :class:`VideoSource` or
+            :class:`~libreyolo.utils.screen.ScreenSource`. A frame source
+            yields ``(BGR frame, frame index)`` and has already applied its own
+            ``vid_stride``, so *vid_stride* is ignored for that form.
         predict_frame_fn: Callable that takes a PIL RGB image and returns
             a ``Results`` object.
-        vid_stride: Process every N-th frame.
+        vid_stride: Process every N-th frame (file sources only).
         save: Write annotated output video.
         show: Display frames in a cv2 window.
         output_path: Output path for saved video.
@@ -317,26 +346,73 @@ def run_video_inference(
         draw_points,
     )
 
-    with VideoSource(source, vid_stride=vid_stride) as video_src:
-        writer = None
+    if isinstance(source, (str, Path)):
+        frame_source = VideoSource(source, vid_stride=vid_stride)
+        # VideoSource decodes every frame and this loop sees only the kept ones,
+        # so the frame count and output fps both scale down by the stride.
+        stride_divisor = max(1, vid_stride)
+        save_name = source
+        desc = Path(source).name
+    else:
+        # A pre-built frame source has already applied its own stride.
+        frame_source = source
+        stride_divisor = 1
+        save_name = getattr(source, "save_name", "stream")
+        desc = str(save_name)
+
+    with frame_source as video_src:
+        writers = {}
+        out_paths = {}
         out_path = None
         effective_fps = None
+        is_multi = int(getattr(video_src, "num_streams", 1)) > 1
+        multi_output_dir = None
+        multi_output_template = None
         if save:
-            out_path = resolve_video_save_path(source, output_path)
-            effective_fps = video_src.fps / max(1, vid_stride)
+            if is_multi:
+                if output_path is None:
+                    multi_output_dir = increment_path(
+                        Path("runs/detect") / "predict",
+                        exist_ok=False,
+                        mkdir=True,
+                    )
+                else:
+                    requested = Path(output_path)
+                    if requested.suffix:
+                        requested.parent.mkdir(parents=True, exist_ok=True)
+                        multi_output_dir = requested.parent
+                        multi_output_template = requested
+                    else:
+                        requested.mkdir(parents=True, exist_ok=True)
+                        multi_output_dir = requested
+            else:
+                out_path = resolve_video_save_path(save_name, output_path)
+            effective_fps = video_src.fps / stride_divisor
             # The writer is created lazily from the first output frame instead
             # of the source dimensions: restore/super-resolution results render
             # on a canvas ``restore_scale`` times the source frame.
 
-        total = video_src.total_frames // max(1, vid_stride) or None
+        total = video_src.total_frames // stride_divisor or None
         pbar = (
-            tqdm(total=total, desc=Path(source).name, unit="frame", dynamic_ncols=True)
+            tqdm(total=total, desc=desc, unit="frame", dynamic_ncols=True)
             if progress
             else None
         )
 
         try:
-            for frame_bgr, frame_idx in video_src:
+            for frame_item in video_src:
+                if hasattr(frame_item, "frame_bgr"):
+                    frame_bgr = frame_item.frame_bgr
+                    frame_idx = int(frame_item.frame_idx)
+                    source_index = int(frame_item.source_index)
+                    source_label = str(frame_item.source_label)
+                    frame_fps = float(frame_item.fps or effective_fps or 30.0)
+                else:
+                    frame_bgr, frame_idx = frame_item
+                    source_index = 0
+                    source_label = None
+                    frame_fps = float(effective_fps or 30.0)
+
                 # Convert BGR frame to PIL RGB for the model pipeline
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 pil_img = Image.fromarray(frame_rgb)
@@ -344,6 +420,8 @@ def run_video_inference(
                 # Run model-specific inference
                 result = predict_frame_fn(pil_img)
                 result.frame_idx = frame_idx
+                if source_label is not None:
+                    result.path = source_label
 
                 # Annotate frame for save/show
                 if save or show:
@@ -452,15 +530,41 @@ def run_video_inference(
                     )
 
                     if save:
+                        writer = writers.get(source_index)
                         if writer is None:
                             frame_h, frame_w = annotated_bgr.shape[:2]
+                            if is_multi:
+                                from .source import source_save_stem
+
+                                assert source_label is not None
+                                assert multi_output_dir is not None
+                                if multi_output_template is not None:
+                                    suffix = multi_output_template.suffix or ".mp4"
+                                    filename = (
+                                        f"{multi_output_template.stem}_{source_index}"
+                                        f"{suffix}"
+                                    )
+                                else:
+                                    stem = source_save_stem(source_label, source_index)
+                                    filename = f"{stem}_{source_index}.mp4"
+                                current_out_path = str(multi_output_dir / filename)
+                            else:
+                                current_out_path = out_path
+                            assert current_out_path is not None
                             writer = VideoWriter(
-                                out_path, effective_fps, frame_w, frame_h
+                                current_out_path, frame_fps, frame_w, frame_h
                             )
+                            writers[source_index] = writer
+                            out_paths[source_index] = current_out_path
                         writer.write_frame(annotated_bgr)
 
                     if show:
-                        cv2.imshow("LibreYOLO", annotated_bgr)
+                        window_name = (
+                            f"LibreYOLO: {source_label}"
+                            if is_multi and source_label is not None
+                            else "LibreYOLO"
+                        )
+                        cv2.imshow(window_name, annotated_bgr)
                         if cv2.waitKey(1) & 0xFF == ord("q"):
                             break
 
@@ -474,8 +578,8 @@ def run_video_inference(
         finally:
             if pbar is not None:
                 pbar.close()
-            if writer is not None:
+            for source_index, writer in writers.items():
                 writer.release()
-                logger.info("Video saved to %s", out_path)
+                logger.info("Video saved to %s", out_paths[source_index])
             if show:
                 cv2.destroyAllWindows()
