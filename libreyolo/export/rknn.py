@@ -408,10 +408,16 @@ def _compile_rknn(
     staged_metadata_tmp = Path(f"{staged_metadata}.tmp")
     try:
         pairs = [(temporary_output, output)]
+        remove_targets = [
+            Path(f"{output}.parity.json"),
+            Path(f"{output}.failed.parity.json"),
+        ]
         if metadata is not None:
             _write_metadata_sidecar(temporary_output, metadata)
             pairs.append((staged_metadata, Path(f"{output}.metadata.json")))
-        _publish_file_bundle(pairs)
+        else:
+            remove_targets.append(Path(f"{output}.metadata.json"))
+        _publish_file_bundle(pairs, remove_targets=remove_targets)
     finally:
         temporary_output.unlink(missing_ok=True)
         staged_metadata.unlink(missing_ok=True)

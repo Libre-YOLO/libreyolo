@@ -453,6 +453,30 @@ def test_export_rknn_metadata_failure_preserves_prior_bundle(monkeypatch, tmp_pa
     assert metadata_path.read_text(encoding="utf-8") == "previous-metadata\n"
 
 
+def test_unverified_export_removes_stale_sidecars(monkeypatch, tmp_path):
+    monkeypatch.setattr(rknn_module, "_load_rknn_class", lambda: _FakeRKNN)
+    onnx_path = tmp_path / "model.onnx"
+    onnx_path.write_bytes(b"onnx")
+    output_path = tmp_path / "model.rknn"
+    output_path.write_bytes(b"previous-model")
+    stale_sidecars = [
+        Path(f"{output_path}.metadata.json"),
+        Path(f"{output_path}.parity.json"),
+        Path(f"{output_path}.failed.parity.json"),
+    ]
+    for sidecar in stale_sidecars:
+        sidecar.write_text("stale\n", encoding="utf-8")
+
+    result = rknn_module.export_rknn(
+        onnx_path=str(onnx_path),
+        output_path=str(output_path),
+    )
+
+    assert result == str(output_path)
+    assert output_path.read_bytes() == b"rknn"
+    assert all(not sidecar.exists() for sidecar in stale_sidecars)
+
+
 def test_rknn_bundle_publication_rolls_back_sidecar_failure(monkeypatch, tmp_path):
     destination = tmp_path / "model.rknn"
     destination_metadata = Path(f"{destination}.metadata.json")
