@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -134,7 +135,12 @@ def test_backend_loads_cpu_module_and_preserves_output_order(tmp_path, monkeypat
     assert backend.names == {0: "a", 1: "b"}
     assert backend.input_names == ["images"]
     assert backend.output_names == ["boxes", "logits"]
-    assert calls["config"] == ({"backend": 0, "precision": 1, "numThread": 4},)
+    # The backend clamps threads to min(cpu_count, 4); CI runners can have
+    # fewer than 4 cores, so mirror the clamp instead of hardcoding 4.
+    expected_threads = min(max(os.cpu_count() or 1, 1), 4)
+    assert calls["config"] == (
+        {"backend": 0, "precision": 1, "numThread": expected_threads},
+    )
     assert calls["load"]["dynamic"] is False
     assert calls["load"]["shape_mutable"] is False
     assert fake_module.inputs[0].shape == (2, 3, 8, 8)
