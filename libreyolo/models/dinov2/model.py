@@ -780,6 +780,12 @@ class LibreDINOv2(BaseModel):
         if resolved_lr0 is None:
             resolved_lr0 = 1e-4
 
+        # A caller-supplied device must win over the wrapper's; passing both
+        # through to the trainer raised "multiple values for 'device'".
+        resolved_device = train_kwargs.pop("device", None)
+        if resolved_device is None:
+            resolved_device = str(self.device)
+
         trainer = DINOv2Trainer(
             model=self.model,
             wrapper_model=self,
@@ -794,7 +800,7 @@ class LibreDINOv2(BaseModel):
             name=str(name),
             exist_ok=exist_ok,
             resume=resume,
-            device=str(self.device),
+            device=resolved_device,
             callbacks=callbacks,
             **train_kwargs,
         )
