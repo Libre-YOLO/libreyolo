@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -238,7 +239,17 @@ def test_windows_teardown_failure_requires_independent_artifact_validation(
         "version",
         lambda package: "3.6.1",
     )
-    monkeypatch.setattr(mnn_export.os, "name", "nt")
+
+    class _WindowsOS:
+        # Patching os.name globally would make pathlib pick WindowsPath on
+        # POSIX and crash; swap a delegating fake into the module namespace
+        # so only mnn_export sees the Windows platform.
+        name = "nt"
+
+        def __getattr__(self, attribute):
+            return getattr(os, attribute)
+
+    monkeypatch.setattr(mnn_export, "os", _WindowsOS())
 
     def fake_run(command, **kwargs):
         output = Path(command[command.index("--MNNModel") + 1])
