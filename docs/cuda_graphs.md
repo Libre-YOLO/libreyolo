@@ -155,6 +155,20 @@ is simply wrong. That is precisely the silent-wrongness this gate exists to
 prevent, so the family stays off.
 
 
+## Interaction with hub MSDA kernels
+
+The DETR-lineage families route multi-scale deformable attention through the
+optional compiled Hub kernel when `libreyolo[hub-kernels]` is installed
+(Linux, CUDA fp32 eager; see `docs/kernels.md`). Capture then records whatever
+the slot resolves to: warmup and replay take the same path, so parity stays
+self-consistent either way, but the capture-safety of the compiled kernel
+itself has not been verified — the parity suite ran on a machine where the
+`kernels` package does not install, i.e. against the portable `grid_sample`
+path. The first person to run a DETR family with both `cuda_graph=True` and
+hub kernels active should confirm `graph_info()["graph_count"]` becomes
+non-zero and outputs match an eager run; `LIBREYOLO_HUB_KERNELS=0` isolates
+the kernel if capture fails or drifts.
+
 ## sensenova: vision tower graphed, generation eager
 
 Only the vision tower is graphable here. Generation is autoregressive over a
