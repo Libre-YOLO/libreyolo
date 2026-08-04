@@ -336,8 +336,9 @@ class DEIMCriterion(nn.Module):
             count_sort_indices = torch.argsort(counts, descending=True)
             unique_sorted = unique[count_sort_indices]
             column_to_row = {}
-            for idx in unique_sorted:
-                row_idx, col_idx = idx[0].item(), idx[1].item()
+            # One batched GPU->CPU transfer; upstream's per-element .item()
+            # loop costs two device syncs per unique pair (~1,200/step).
+            for row_idx, col_idx in unique_sorted.tolist():
                 if row_idx not in column_to_row:
                     column_to_row[row_idx] = col_idx
             final_rows = torch.tensor(list(column_to_row.keys()), device=ind.device)
