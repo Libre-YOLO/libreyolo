@@ -7,12 +7,20 @@ NIGHTLY_E2E_SUITE_CONTRACT = (
     "for YOLO-NAS); gaze (L2CS/Gaze360) is non-redistributable and runs only in "
     "the non-gated per-family suite, not the gated nightly; "
     "flagship=YOLO9/RF-DETR validation, video, tracking, CLI, and one RF1 "
-    "training/reload size per flagship family; export backends, ExecuTorch, "
-    "CUDA graphs, and extended task training remain opt-in"
+    "training/reload size per flagship family; training-time CUDA graphs, "
+    "inference CUDA graphs, export backends, ExecuTorch, and extended task "
+    "training remain opt-in"
 )
-NIGHTLY_E2E_MARKERS = frozenset({"general_nightly", "flagship_nightly"})
+DEFAULT_NIGHTLY_E2E_MARKERS = frozenset({"general_nightly", "flagship_nightly"})
+NIGHTLY_E2E_MARKERS = frozenset({*DEFAULT_NIGHTLY_E2E_MARKERS, "training_nightly"})
 NIGHTLY_E2E_ADVANCED_MARKERS = frozenset(
-    {"cuda_graph", "executorch", "export_backend", "extended_training"}
+    {
+        "cuda_graph",
+        "executorch",
+        "export_backend",
+        "extended_training",
+        "training_nightly",
+    }
 )
 NIGHTLY_E2E_SUITE_CHANGE_POLICY = (
     "Bump minor for meaningful coverage additions or threshold/runtime changes; "
@@ -41,6 +49,6 @@ def nightly_markdown_summary() -> str:
 def nightly_advanced_marker_conflicts(marker_names) -> tuple[str, ...]:
     """Return advanced markers that overlap with a default-nightly marker."""
     names = set(marker_names)
-    if not names.intersection(NIGHTLY_E2E_MARKERS):
+    if not names.intersection(DEFAULT_NIGHTLY_E2E_MARKERS):
         return ()
     return tuple(sorted(names.intersection(NIGHTLY_E2E_ADVANCED_MARKERS)))

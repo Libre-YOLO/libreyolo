@@ -377,6 +377,7 @@ markers = [
     "flagship_nightly: heavier nightly checks for flagship YOLO9/RF-DETR models",
     "cuda_graph: opt-in tests requiring CUDA graph capture and replay",
     "extended_training: opt-in multi-epoch or non-core task training tests",
+    "training_nightly: opt-in GPU checks for training-time CUDA graph capture",
     "export_backend: tests covering an export backend or serialized runtime format",
     "supported_backend: tests covering a release-blocking supported backend",
     "experimental_backend: tests covering an experimental backend",

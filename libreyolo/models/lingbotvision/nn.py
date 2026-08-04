@@ -298,27 +298,41 @@ class LingBotVisionSemanticSegmenter(nn.Module):
         if module.bias is not None:
             nn.init.zeros_(module.bias)
 
-    def forward(self, x: Tensor, targets: Optional[Tensor] = None):
+    def forward_logits(self, x: Tensor) -> Tensor:
+        """Normalise, encode and predict the patch-resolution logits.
+
+        The boundary the CUDA-graph training capture splits on: a pure
+        function of the input at a fixed input shape. Upsampling to the
+        label grid, the all-ignored check (a host sync) and cross-entropy
+        read the labels and stay eager.
+        """
         x = (x - self._mean.to(x.dtype)) / self._std.to(x.dtype)
         _, patch_tokens = self.backbone(x)
         B, N, D = patch_tokens.shape
         h = x.shape[-2] // self.backbone.patch_size
         w = x.shape[-1] // self.backbone.patch_size
         feat = patch_tokens.transpose(1, 2).reshape(B, D, h, w)
-        logits = self.predict(feat)
+        return self.predict(feat)
+
+    def loss_from_logits(self, logits: Tensor, targets: Tensor) -> dict:
+        """Cross-entropy at the label resolution, from patch-resolution logits."""
+        logits_full = F.interpolate(
+            logits.float(), size=targets.shape[-2:], mode="bilinear", align_corners=False
+        )
+        targets = targets.long()
+        if bool((targets != self.IGNORE_INDEX).any()):
+            loss = F.cross_entropy(logits_full, targets, ignore_index=self.IGNORE_INDEX)
+        else:
+            # cross_entropy returns NaN when every pixel is ignored; emit a
+            # finite zero that still carries a grad_fn.
+            loss = logits_full.sum() * 0.0
+        return {"total_loss": loss, "sem": loss}
+
+    def forward(self, x: Tensor, targets: Optional[Tensor] = None):
+        logits = self.forward_logits(x)
 
         if self.training and targets is not None:
-            logits_full = F.interpolate(
-                logits.float(), size=targets.shape[-2:], mode="bilinear", align_corners=False
-            )
-            targets = targets.long()
-            if bool((targets != self.IGNORE_INDEX).any()):
-                loss = F.cross_entropy(logits_full, targets, ignore_index=self.IGNORE_INDEX)
-            else:
-                # cross_entropy returns NaN when every pixel is ignored; emit a
-                # finite zero that still carries a grad_fn.
-                loss = logits_full.sum() * 0.0
-            return {"total_loss": loss, "sem": loss}
+            return self.loss_from_logits(logits, targets)
 
         return {"semantic_logits": logits}
 

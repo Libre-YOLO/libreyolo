@@ -228,6 +228,7 @@ Commands:
 ```bash
 make test_general_nightly
 make test_flagship_nightly
+make test_training_nightly
 make test_nightly
 make test_e2e E2E_TIMEOUT=1800
 ```
@@ -241,27 +242,33 @@ V3.0 contract:
   one RF1 training/reload size per flagship family; currently 44 tests. The full
   RF1 size matrix remains available under `-m rf1` for manual or future
   full-matrix runs.
+- `training_nightly`: opt-in training-time GPU coverage for CUDA graph capture.
+  It keeps 14 representative mechanism, lifecycle, and fallback cases available
+  through `make test_training_nightly`, but `make test_nightly` does not invoke
+  this advanced suite. The full per-family sweep stays under `-m e2e`.
 - L2CS gaze is non-redistributable (no public download route), so it runs as a
   non-gated per-family suite
   (`tests/e2e/test_l2cs_gaze.py`) that skips when the weight is not staged
   locally, rather than gating the nightly.
-- Export backends, ExecuTorch, CUDA graph matrices, and extended-task training
-  suites are opt-in and outside the default nightly. The Make targets exclude
-  their markers defensively, and collection rejects tests that combine those
-  opt-in markers with a default-nightly marker.
+- `training_nightly`, export backends, ExecuTorch, inference CUDA graph
+  matrices, and extended-task training suites are opt-in and outside the
+  default nightly. The Make targets exclude their markers defensively, and
+  collection rejects tests that combine those opt-in markers with a
+  default-nightly marker.
 - Nightly-selected skips are failures.
 
 Collect:
 
 ```bash
 uv pip install --group dev -e ".[rfdetr,onnx]"
-pytest tests/e2e --collect-only -q -m "general_nightly and not export_backend and not executorch and not cuda_graph and not extended_training"
-pytest tests/e2e --collect-only -q -m "flagship_nightly and not export_backend and not executorch and not cuda_graph and not extended_training"
+pytest tests/e2e --collect-only -q -m "general_nightly and not export_backend and not executorch and not cuda_graph and not extended_training and not training_nightly"
+pytest tests/e2e --collect-only -q -m "flagship_nightly and not export_backend and not executorch and not cuda_graph and not extended_training and not training_nightly"
 ```
 
 Advanced suites remain available explicitly, for example:
 
 ```bash
+make test_training_nightly
 pytest tests/e2e/test_cuda_graph_families.py -m cuda_graph
 pytest tests/e2e/test_executorch.py -m executorch
 ```

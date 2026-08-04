@@ -8,7 +8,14 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
-    "advanced", ["cuda_graph", "executorch", "export_backend", "extended_training"]
+    "advanced",
+    [
+        "cuda_graph",
+        "executorch",
+        "export_backend",
+        "extended_training",
+        "training_nightly",
+    ],
 )
 def test_advanced_features_cannot_overlap_default_nightly(advanced):
     assert nightly_advanced_marker_conflicts({"e2e", "general_nightly", advanced}) == (

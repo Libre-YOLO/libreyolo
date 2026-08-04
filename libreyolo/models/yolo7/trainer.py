@@ -79,10 +79,14 @@ class YOLOv7Trainer(YOLOXTrainer):
         # v7's net has no head.use_l1 stage (unlike YOLOX); just close mosaic.
         BaseTrainer.on_mosaic_disable(self)
 
-    def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
-        # YOLO9TrainTransform labels are [cls, x1, y1, x2, y2] normalized to
-        # [0, 1]; YOLOv7Loss wants [cls, cx, cy, w, h] in input pixels.
-        # Zero-padded rows stay all-zero through this conversion.
+    @staticmethod
+    def _to_pixel_cxcywh(imgs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """YOLO9TrainTransform labels -> the format YOLOv7Loss expects.
+
+        In: ``[cls, x1, y1, x2, y2]`` normalized to [0, 1].
+        Out: ``[cls, cx, cy, w, h]`` in input pixels.
+        Zero-padded rows stay all-zero through this conversion.
+        """
         h, w = imgs.shape[-2:]
         x1 = targets[..., 1] * w
         y1 = targets[..., 2] * h
@@ -91,5 +95,41 @@ class YOLOv7Trainer(YOLOXTrainer):
         converted = torch.stack(
             [(x1 + x2) / 2, (y1 + y2) / 2, x2 - x1, y2 - y1], dim=-1
         )
-        targets = torch.cat([targets[..., :1], converted], dim=-1)
-        return self.model(imgs, targets)
+        return torch.cat([targets[..., :1], converted], dim=-1)
+
+    def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
+        return self.model(imgs, self._to_pixel_cxcywh(imgs, targets))
+
+    def cuda_graph_train_spec(self):
+        """Capture spec: graph the network, keep the SimOTA loss eager.
+
+        ``YOLOv7Model.forward`` already splits at the right boundary — with
+        ``targets=None`` it returns the three raw head maps — so the graph
+        covers the whole net and ``assemble`` is the label conversion plus
+        ``compute_loss``, exactly what ``on_forward`` runs.
+
+        Overrides the YOLOX spec this class would otherwise inherit; v7's
+        net has no ``head.use_l1`` stage, so no capture invalidation is
+        needed at mosaic close.
+        """
+        from libreyolo.training.cuda_graph import (
+            CudaGraphTrainSpec,
+            GraphableNetwork,
+        )
+        from .net import YOLOv7Model
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            return None
+        raw = getattr(self.model, "module", self.model)
+        if not isinstance(raw, YOLOv7Model):
+            return None
+
+        network = GraphableNetwork(raw)
+
+        def assemble(flat, imgs, targets, polygons=None):
+            return raw.compute_loss(
+                network.rebuild(flat), self._to_pixel_cxcywh(imgs, targets)
+            )
+
+        return CudaGraphTrainSpec(network=network, assemble=assemble)
