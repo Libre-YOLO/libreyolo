@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import multiprocessing
+import queue
 import sys
 import types
 from pathlib import Path
@@ -14,6 +16,7 @@ import yaml
 from libreyolo.export.exporter import PaddleExporter
 
 pytestmark = pytest.mark.unit
+_PROCESS_SYNC_TIMEOUT = 10
 
 
 def _wrapper(family: str = "yolo9", task: str = "detect") -> MagicMock:
@@ -21,6 +24,14 @@ def _wrapper(family: str = "yolo9", task: str = "detect") -> MagicMock:
     model._get_model_name.return_value = family
     model.task = task
     return model
+
+
+def _hold_paddle_install_lock(output_path, entered, release):
+    from libreyolo.export.paddle import _paddle_install_lock
+
+    with _paddle_install_lock(Path(output_path)):
+        entered.put(True)
+        release.wait(timeout=_PROCESS_SYNC_TIMEOUT)
 
 
 def test_paddle_exporter_rejects_dynamic_batch_and_unsimplified_graph():
@@ -138,6 +149,44 @@ def test_export_paddle_restores_previous_artifact_when_install_fails(
 
     assert (output / "model.pdmodel").read_bytes() == b"old-model"
     assert not (tmp_path / ".model_paddle.previous").exists()
+
+
+def test_paddle_install_lock_serializes_processes(tmp_path):
+    ctx = multiprocessing.get_context("spawn")
+    entered = ctx.Queue()
+    release_first = ctx.Event()
+    release_second = ctx.Event()
+    output = tmp_path / "model_paddle"
+    first = ctx.Process(
+        target=_hold_paddle_install_lock,
+        args=(str(output), entered, release_first),
+    )
+    second = ctx.Process(
+        target=_hold_paddle_install_lock,
+        args=(str(output), entered, release_second),
+    )
+
+    try:
+        first.start()
+        entered.get(timeout=_PROCESS_SYNC_TIMEOUT)
+        second.start()
+        with pytest.raises(queue.Empty):
+            entered.get(timeout=0.3)
+
+        release_first.set()
+        entered.get(timeout=_PROCESS_SYNC_TIMEOUT)
+        release_second.set()
+        first.join(timeout=_PROCESS_SYNC_TIMEOUT)
+        second.join(timeout=_PROCESS_SYNC_TIMEOUT)
+        assert first.exitcode == 0
+        assert second.exitcode == 0
+    finally:
+        release_first.set()
+        release_second.set()
+        for process in (first, second):
+            if process.is_alive():
+                process.terminate()
+            process.join(timeout=_PROCESS_SYNC_TIMEOUT)
 
 
 def test_x2paddle_onnx_normalization_removes_only_default_dilation(tmp_path):

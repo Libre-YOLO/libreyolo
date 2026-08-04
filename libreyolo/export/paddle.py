@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -22,6 +23,8 @@ _SUPPORTED_X2PADDLE_VERSION = "1.6.0"
 _MAX_ONNX_VERSION = (1, 17)
 _MAX_ONNX_OPSET = 15
 _X2PADDLE_PATCH_LOCK = threading.Lock()
+_PADDLE_INSTALL_LOCK_TIMEOUT = 10 * 60
+_PADDLE_INSTALL_LOCK_POLL_SECONDS = 0.05
 
 
 def _package_version(distribution: str) -> str | None:
@@ -373,6 +376,57 @@ def _recover_interrupted_install(output_dir: Path, backup_dir: Path) -> None:
         os.replace(backup_dir, output_dir)
 
 
+def _try_lock_install_file(lock_file) -> None:
+    lock_file.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_install_file(lock_file) -> None:
+    lock_file.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _paddle_install_lock(output_dir: Path):
+    """Serialize recovery and replacement for one output across processes."""
+    lock_path = output_dir.with_name(f".{output_dir.name}.install.lock")
+    with lock_path.open("a+b") as lock_file:
+        if lock_file.seek(0, os.SEEK_END) == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+
+        deadline = time.monotonic() + _PADDLE_INSTALL_LOCK_TIMEOUT
+        while True:
+            try:
+                _try_lock_install_file(lock_file)
+                break
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Timed out waiting to install Paddle export: {output_dir}"
+                    ) from exc
+                time.sleep(_PADDLE_INSTALL_LOCK_POLL_SECONDS)
+
+        try:
+            yield
+        finally:
+            _unlock_install_file(lock_file)
+
+
 @contextmanager
 def _x2paddle_conversion_compatibility():
     """Apply narrow compatibility fixes to the pinned X2Paddle converter."""
@@ -437,7 +491,8 @@ def export_paddle(
     output_dir = Path(output_path)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     backup_dir = output_dir.with_name(f".{output_dir.name}.previous")
-    _recover_interrupted_install(output_dir, backup_dir)
+    with _paddle_install_lock(output_dir):
+        _recover_interrupted_install(output_dir, backup_dir)
     with tempfile.TemporaryDirectory(
         prefix=f".{output_dir.name}-", dir=str(output_dir.parent)
     ) as temporary:
@@ -470,18 +525,22 @@ def export_paddle(
             shutil.copy2(parameters_info, artifact_dir / parameters_info.name)
         _write_metadata(artifact_dir / "metadata.yaml", metadata or {})
 
-        if output_dir.exists() or output_dir.is_symlink():
-            os.replace(output_dir, backup_dir)
-        try:
-            os.replace(artifact_dir, output_dir)
-        except BaseException:
-            if backup_dir.exists() or backup_dir.is_symlink():
-                if output_dir.exists() or output_dir.is_symlink():
-                    _remove_path(output_dir)
-                os.replace(backup_dir, output_dir)
-            raise
-        else:
-            _remove_path(backup_dir)
+        with _paddle_install_lock(output_dir):
+            # Another process may have completed or interrupted an install
+            # while this conversion was running.
+            _recover_interrupted_install(output_dir, backup_dir)
+            if output_dir.exists() or output_dir.is_symlink():
+                os.replace(output_dir, backup_dir)
+            try:
+                os.replace(artifact_dir, output_dir)
+            except BaseException:
+                if backup_dir.exists() or backup_dir.is_symlink():
+                    if output_dir.exists() or output_dir.is_symlink():
+                        _remove_path(output_dir)
+                    os.replace(backup_dir, output_dir)
+                raise
+            else:
+                _remove_path(backup_dir)
 
     logger.info("Paddle export complete: %s", output_dir)
     return str(output_dir)
