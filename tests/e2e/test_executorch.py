@@ -12,7 +12,11 @@ import pytest
 import torch
 from scipy.optimize import linear_sum_assignment
 
-pytestmark = [pytest.mark.e2e, pytest.mark.executorch]
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.executorch,
+    pytest.mark.export_backend,
+]
 
 
 def _require_executorch(monkeypatch):
@@ -997,7 +1001,6 @@ def test_additional_task_raw_parity(tmp_path, monkeypatch, case, imgsz):
 
 
 @pytest.mark.external_data
-@pytest.mark.flagship_nightly
 @pytest.mark.parametrize(
     ("family", "weights_env", "imgsz"),
     [
@@ -1076,7 +1079,6 @@ def test_trained_detection_parity(
 
 
 @pytest.mark.external_data
-@pytest.mark.flagship_nightly
 @pytest.mark.parametrize(
     ("family", "weights_env"),
     [
@@ -1131,7 +1133,6 @@ def test_trained_classification_parity(
 
 
 @pytest.mark.external_data
-@pytest.mark.flagship_nightly
 @pytest.mark.parametrize(
     ("family", "weights_env", "imgsz"),
     [
@@ -1186,7 +1187,6 @@ def test_trained_semantic_parity(
 
 
 @pytest.mark.external_data
-@pytest.mark.flagship_nightly
 @pytest.mark.parametrize(
     ("family", "weights_env", "imgsz"),
     [
@@ -1236,7 +1236,6 @@ def test_trained_depth_parity(
 
 
 @pytest.mark.external_data
-@pytest.mark.flagship_nightly
 def test_trained_moge2_normal_parity(tmp_path, monkeypatch):
     """Match trained MoGe-2 surface normals on its fixed export canvas."""
     _require_executorch(monkeypatch)
@@ -1276,7 +1275,6 @@ def test_trained_moge2_normal_parity(tmp_path, monkeypatch):
 
 
 @pytest.mark.external_data
-@pytest.mark.flagship_nightly
 def test_trained_realesrgan_parity(tmp_path, monkeypatch):
     """Match trained x4 restoration and enforce the fixed-canvas contract."""
     _require_executorch(monkeypatch)
@@ -1316,7 +1314,6 @@ def test_trained_realesrgan_parity(tmp_path, monkeypatch):
 
 
 @pytest.mark.external_data
-@pytest.mark.flagship_nightly
 @pytest.mark.parametrize(
     ("family", "task", "weights_env", "imgsz"),
     [

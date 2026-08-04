@@ -24,7 +24,6 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
 pytestmark = [
-    pytest.mark.general_nightly,
     pytest.mark.export_backend,
     pytest.mark.supported_backend,
 ]

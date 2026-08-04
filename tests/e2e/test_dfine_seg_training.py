@@ -28,8 +28,8 @@ from .test_rfdetr_seg_training import download_fire_smoke_dataset, patch_data_ya
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.dfine,
+    pytest.mark.extended_training,
     pytest.mark.slow,
-    pytest.mark.flagship_nightly,
 ]
 
 

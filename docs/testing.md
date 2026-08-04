@@ -1,6 +1,6 @@
 # LibreYOLO Testing Strategy
 
-Version: 2.7
+Version: 3.0
 
 This is the CI/test contract for LibreYOLO. Times are UTC.
 
@@ -188,7 +188,6 @@ Files: `.github/workflows/e2e-nightly-release.yml`,
 `tools/ci/modal_nightly.py`,
 `tests/e2e/nightly_contract.py`, `tests/e2e/conftest.py`,
 `tests/e2e/test_deterministic_inference.py`,
-`tests/e2e/test_fcn_semantic.py`,
 `tests/e2e/test_rf1_training.py`, `Makefile`.
 
 Execution: scheduled nightly targets latest `dev` only; manual workflows can
@@ -233,39 +232,38 @@ make test_nightly
 make test_e2e E2E_TIMEOUT=1800
 ```
 
-V2.3 contract:
+V3.0 contract:
 
-- `general_nightly`: one smallest native inference case for every public model
-  family with a task-appropriate deterministic prediction path, including
-  inference-only museum, classification (such as the DeiT, AlexNet, VGG, and
-  Swin classifiers), and pose (HRNet) families, that has a public auto-download
-  route (LibreYOLO HF, or Deci's CDN for YOLO-NAS), plus batched/sequential
-  parity and selected open-vocabulary smoke cases. FCN adds one task-specific
-  real-checkpoint semantic predict, mIoU, and UI-render smoke, and DeepLabv3
-  adds a task-appropriate semantic stability case; currently 49 tests.
-- `flagship_nightly`: heavier YOLO9/RF-DETR native validation, video, tracking,
-  CLI, and one RF1 training/reload size per flagship family; currently 48 tests
-  with `not export_backend`. The full RF1 size matrix remains available under
-  `-m rf1` for manual or future full-matrix runs.
-- Detector families cover detection, classifier families cover normalized
-  probability plus top-1 stability, and DeepLabv3 covers dense semantic masks.
-  L2CS gaze is non-redistributable (no public download route), so it runs as a
+- `general_nightly`: a curated matrix of the smallest public checkpoint for 14
+  detector families. It checks stable native inference and batched/sequential
+  parity, plus two open-vocabulary smoke cases; currently 30 tests.
+- `flagship_nightly`: native YOLO9/RF-DETR validation, video, tracking, CLI, and
+  one RF1 training/reload size per flagship family; currently 44 tests. The full
+  RF1 size matrix remains available under `-m rf1` for manual or future
+  full-matrix runs.
+- L2CS gaze is non-redistributable (no public download route), so it runs as a
   non-gated per-family suite
   (`tests/e2e/test_l2cs_gaze.py`) that skips when the weight is not staged
   locally, rather than gating the nightly.
-- HRNet pose uses its smallest public W32 checkpoint in the general nightly.
-  The case verifies row-aligned person boxes and COCO-17 keypoints through the
-  default YOLO9 person-detector composition, including list-source parity and
-  its explicit sequential fallback for `batch > 1`.
-- Export backends are outside default nightly.
+- Export backends, ExecuTorch, CUDA graph matrices, and extended-task training
+  suites are opt-in and outside the default nightly. The Make targets exclude
+  their markers defensively, and collection rejects tests that combine those
+  opt-in markers with a default-nightly marker.
 - Nightly-selected skips are failures.
 
 Collect:
 
 ```bash
 uv pip install --group dev -e ".[rfdetr,onnx]"
-pytest tests/e2e --collect-only -q -m general_nightly
-pytest tests/e2e --collect-only -q -m "flagship_nightly and not export_backend"
+pytest tests/e2e --collect-only -q -m "general_nightly and not export_backend and not executorch and not cuda_graph and not extended_training"
+pytest tests/e2e --collect-only -q -m "flagship_nightly and not export_backend and not executorch and not cuda_graph and not extended_training"
+```
+
+Advanced suites remain available explicitly, for example:
+
+```bash
+pytest tests/e2e/test_cuda_graph_families.py -m cuda_graph
+pytest tests/e2e/test_executorch.py -m executorch
 ```
 
 Missing local weights before full green: `weights/LibreDEIM*.pt`,
