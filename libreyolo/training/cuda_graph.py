@@ -36,11 +36,12 @@ Capture-time contracts (enforced by the trainer, documented here):
   reads, ``load_state_dict``) are safe because replay reads the same
   addresses.
 - ``make_graphed_callables`` warm-up runs a few forward/backward passes on
-  the capture batch. Gradients produced by that warm-up are garbage and are
-  cleared by the train loop's own ``zero_grad`` before the first real
-  backward; stateful buffers (BatchNorm running stats) are snapshotted
-  before capture and restored in place afterwards, so the buffer
-  trajectory matches eager training exactly.
+  the capture batch. Its backward goes through ``torch.autograd.grad`` with
+  ``only_inputs=True``, so it never writes ``.grad`` and cannot pollute an
+  accumulation window (which zeroes only at the window's start, not per
+  micro-batch). Stateful buffers (BatchNorm running stats) *are* advanced by
+  those extra forwards, so they are snapshotted before capture and restored
+  in place afterwards and the buffer trajectory matches eager exactly.
 - Under AMP, capture and replay must run with autocast caching disabled;
   the trainer's autocast context handles this when a manager is active.
 - Distributed training and distillation are not captured in this version;

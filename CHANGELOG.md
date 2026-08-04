@@ -17,8 +17,11 @@ before 1.4.0 are documented in the
   `mobilenetv4`, `efficientnetv2`), semantic (`segformer`,
   `lingbotvision`), point (`fomo`) and restore (`nafnet`). Measured on an
   RTX 5070 Ti under AMP: 3.63x (FOMO), 2.74x (MobileNetV4), 1.99x (YOLO9-t),
-  1.04–1.26x for the rest; the win tracks how much of a step is network
-  rather than loss, and is largest at small batch sizes. The encoder-decoder
+  1.04-1.26x for the rest; the win tracks how much of a step is network
+  rather than loss, and is largest at small batch sizes. End to end on a real
+  20-epoch YOLO9-t fine-tune (406 images, dataloader and validation
+  included): 428 s to 368 s, 1.16x, with identical mAP50-95 and per-epoch
+  losses. The encoder-decoder
   detectors capture backbone plus encoder only, because their decoder sizes
   its denoising queries from the batch's ground-truth count, so its token
   count is not static. Most families are bit-identical to eager; the three

@@ -1,23 +1,24 @@
 """Per-family CUDA graph *training* capture, through the real train() API.
 
-The unit suite covers dispatch and gating with fakes; this file runs actual
+The unit suite covers dispatch and gating with fakes. This file runs actual
 training runs on a generated dataset and checks the two things a user cares
 about:
 
-* capture engages and stays engaged — no silent fallback to eager, which is
-  what every failure mode in this feature degrades to and is therefore
-  invisible without an explicit assertion;
+* capture engages and stays engaged. Every failure mode in this feature
+  degrades to eager, silently, so a run that merely completes proves
+  nothing; the capture log line has to be asserted. Five families shipped
+  with the flag doing literally nothing until this assertion was added.
 * enabling the flag does not move the loss trajectory.
 
-The second check is exact for families whose training step is deterministic
-on this hardware, and skipped for the rest. Deformable attention accumulates
-its backward with atomics and TF32 convolutions pick their reduction order
-per launch, so D-FINE, DEIM, RT-DETR and friends do not reproduce their own
-eager run either; asserting a band there would test the noise, not the
-capture. ``tests/unit/test_cuda_graph_training.py`` holds those families to
-step-0 gradient equivalence instead.
+The second check adapts to the family rather than assuming determinism: the
+eager arm runs twice to measure how far it moves on its own, and the graphed
+arm is held to that spread plus a documented per-family ``rel_tol``.
+Deformable attention accumulates its backward with atomics and TF32
+convolutions pick their reduction order per launch, so several families do
+not reproduce their own eager run either, and a fixed band would test that
+noise instead of the capture.
 
-No downloads: the dataset is generated, and every model is built with
+No downloads: the datasets are generated and every model is built with
 ``model_path=None``. Families that pull a pretrained backbone at
 construction are marked ``external_data``.
 """
@@ -458,6 +459,41 @@ def test_non_detect_loss_trajectory_stays_within_eager_noise(
         f"{noise:.3e} and the allowance is {rel_tol:.3g} x {scale:.3g}"
         f"\n  eager  {eager_a}\n  eager2 {eager_b}\n  graph  {graphed}"
     )
+
+
+@requires_cuda
+def test_gradient_accumulation_matches_eager(detect_dataset, tmp_path):
+    """Capture must be safe when ``zero_grad`` runs once per window.
+
+    The plain loop zeroes gradients after every forward, so capture warm-up
+    could not pollute them even if it wrote ``.grad``. The accumulation loop
+    zeroes only at the start of a window, so the safety here rests on
+    ``make_graphed_callables`` warming up through ``torch.autograd.grad``
+    (which returns gradients rather than accumulating them). This asserts
+    that rather than trusting it.
+    """
+    import libreyolo
+
+    def run(cuda_graph):
+        torch.manual_seed(0)
+        model = libreyolo.LibreYOLO9(None, "t")
+        return model.train(
+            data=str(detect_dataset),
+            epochs=2,
+            batch=4,
+            nbs=16,  # 4 micro-batches per optimizer step
+            imgsz=320,
+            device=0,
+            workers=0,
+            seed=0,
+            project=str(tmp_path),
+            name="graph" if cuda_graph else "eager",
+            exist_ok=True,
+            cuda_graph=cuda_graph,
+            eval_interval=100,
+        )["epoch_losses"]
+
+    assert run(False) == run(True)
 
 
 @requires_cuda

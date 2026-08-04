@@ -42,9 +42,11 @@ their bottleneck is the loss, not launches.
 
 ## Measured speedups
 
-RTX 5070 Ti, Windows, AMP, generated data (no dataloader bottleneck),
-fastest step of 24 after warm-up. Detection runs at 640 px, classification
-at 224 px.
+RTX 5070 Ti, Windows, AMP. Each arm runs in its own process from a shared
+saved state (identical weights, optimizer momentum, GradScaler scale and
+input batch), replaying one real batch so the dataloader is out of the loop
+and what is compared is the GPU step. Figures are the fastest of 24 steps
+after warm-up. Detection runs at 640 px, classification at 224 px.
 
 | Family | Size | Batch | Eager | Graphed | Speedup | Numerics |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -72,6 +74,21 @@ at 224 px.
 | rtmdet | t | 8 | 149.7 ms | 136.2 ms | 1.10x | float rounding |
 | yolo7 | b | 4 | 102.5 ms | 98.0 ms | 1.05x | exact |
 | lingbotvision | s | 8 | 34.4 ms | 33.1 ms | 1.04x | 1 ULP |
+
+### End to end
+
+The table above isolates the GPU step. A complete fine-tune also pays for
+the dataloader and for validation, so the wall-clock gain is smaller. YOLO9-t
+on a 406-image detection set, 20 epochs, batch 8, 640 px, 4 dataloader
+workers:
+
+| | Eager | Graphed |
+| --- | --- | --- |
+| Wall clock | 428.4 s | 367.7 s (**1.16x**) |
+| Mean epoch | 21.0 s | 18.1 s |
+| mAP50-95 | 0.6394 | 0.6394 |
+| mAP50 | 0.9403 | 0.9403 |
+| Per-epoch losses | | identical to eager |
 
 Three things move these numbers:
 
