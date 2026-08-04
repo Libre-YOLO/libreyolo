@@ -32,6 +32,9 @@ class LibreEC(BaseModel):
     POSE_INPUT_SIZES = {"s": 640, "m": 640, "l": 640, "x": 640}
     SEG_INPUT_SIZES = {"s": 640, "m": 640, "l": 640, "x": 640}
     SUPPORTED_TASKS = ("detect", "pose", "segment")
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "detect"
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,

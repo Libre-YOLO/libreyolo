@@ -45,6 +45,9 @@ class LibreEoMT(BaseModel):
 
     FAMILY: ClassVar[str] = "eomt"
     FILENAME_PREFIX: ClassVar[str] = "LibreEoMT"
+    # Capturable once the attention-mask schedule stays on the host; see
+    # LibreEoMTNet._apply.
+    SUPPORTS_CUDA_GRAPH = True
     WEIGHT_EXT: ClassVar[str] = ".pt"
 
     SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic", "segment", "panoptic")

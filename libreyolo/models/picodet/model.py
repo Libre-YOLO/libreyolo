@@ -37,6 +37,9 @@ class LibrePICODET(BaseModel):
 
     FAMILY = "picodet"
     FILENAME_PREFIX = "LibrePICODET"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES = {"s": 320, "m": 416, "l": 640}
     TRAIN_CONFIG = PICODETConfig
     val_preprocessor_class = PICODETValPreprocessor

@@ -38,6 +38,9 @@ class LibreMobileNetV4(BaseModel):
     FILENAME_PREFIX = "LibreMobileNetV4"
     INPUT_SIZES = {"s": 224, "m": 224, "l": 256}
     SUPPORTED_TASKS = ("classify",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "classify"
     REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreMobileNetV4<size>-cls.pt
     TRAIN_CONFIG = MobileNetV4Config

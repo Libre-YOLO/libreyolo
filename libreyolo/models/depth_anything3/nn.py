@@ -81,7 +81,15 @@ class LibreDepthAnything3Net(nn.Module):
             result[i] = torch.where(non_sky_mask, depth[i], far_depth)
         return result
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_network(self, x: torch.Tensor) -> tuple:
+        """Backbone and head only: raw depth, plus sky logits when predicted.
+
+        Split out from ``forward`` because everything here is pure tensor work
+        and captures cleanly, whereas the sky step that follows cannot (see
+        ``_apply_mono_sky``). Keeping them apart lets the network be replayed
+        from a graph while the sky step runs eagerly on the result, which
+        leaves the numbers untouched.
+        """
         if x.ndim != 4 or x.shape[1] != 3:
             raise ValueError(
                 "Depth Anything 3 expects input shaped (B, 3, H, W); "
@@ -97,13 +105,24 @@ class LibreDepthAnything3Net(nn.Module):
         features, _ = self.backbone(x.unsqueeze(1), export_feat_layers=[])
         output = self.head(features, height, width, patch_start_idx=0)
         depth = output["depth"]
+        sky = output.get("sky")
+        return (depth,) if sky is None else (depth, sky)
+
+    def finish_depth(self, depth: torch.Tensor, sky: torch.Tensor | None) -> torch.Tensor:
+        """Sky-to-far-depth step and inversion, run eagerly in every path."""
+        if sky is not None:
+            depth = self._apply_mono_sky(depth, sky)
+        inverse_depth = torch.reciprocal(depth.clamp_min(self.INVERSE_DEPTH_EPS))
+        return inverse_depth[:, 0].unsqueeze(1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        raw = self.forward_network(x)
+        depth = raw[0]
+        sky = raw[1] if len(raw) > 1 else None
         if getattr(self, "export", False):
             # The sky heuristic contains tensor-dependent branching and a
             # quantile. Export its two dense inputs and reproduce that exact
             # postprocess in the runtime backend instead of freezing one
             # example's branch into the graph.
-            return depth[:, 0].unsqueeze(1), output["sky"][:, 0].unsqueeze(1)
-        if "sky" in output:
-            depth = self._apply_mono_sky(depth, output["sky"])
-        inverse_depth = torch.reciprocal(depth.clamp_min(self.INVERSE_DEPTH_EPS))
-        return inverse_depth[:, 0].unsqueeze(1)
+            return depth[:, 0].unsqueeze(1), sky[:, 0].unsqueeze(1)
+        return self.finish_depth(depth, sky)

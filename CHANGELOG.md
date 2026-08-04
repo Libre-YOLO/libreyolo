@@ -9,6 +9,18 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- CUDA graph capture (`predict(..., cuda_graph=True)`) extended from the
+  initial 8 families to **39**, spanning detect, segment, pose, point,
+  classify, semantic, depth, restore, matte and OCR. Every enabled family is
+  verified to capture and replay bit-identically against two probe inputs
+  (`tests/e2e/test_cuda_graph_families.py`); families that cannot capture
+  whole split at a verified seam (Depth Anything 3's sky step, BiRefNet's
+  deformable decoder, PP-OCR's recognition stage, SAM's prompt path,
+  SenseNova's autoregressive generation) and the remainder runs eagerly with
+  identical numbers. See `docs/cuda_graphs.md` for the support matrix, the
+  verification protocol, and why unverified families raise instead of
+  falling back silently.
+
 - Library-wide kernel registry at `libreyolo/kernels/` (lifted from
   `libreyolo/quant/kernels/`), organized by purpose: `quant/simulate/`
   (fake-quant Triton, any device, STE backward), `quant/execute/`

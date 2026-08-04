@@ -50,6 +50,9 @@ class LibreDepthAnythingV2(BaseModel):
         "g": 518,
     }
     SUPPORTED_TASKS = ("depth",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "depth"
     REQUIRE_TASK_SUFFIX = True
 

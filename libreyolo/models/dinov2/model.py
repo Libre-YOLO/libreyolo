@@ -235,6 +235,9 @@ class LibreDINOv2(BaseModel):
 
     FAMILY: ClassVar[str] = "dinov2"
     FILENAME_PREFIX: ClassVar[str] = "LibreDINOv2"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     WEIGHT_EXT: ClassVar[str] = ".pt"
 
     # Semantic runs at the DINOv2-native 518 (37 × 14); classify runs at 224.

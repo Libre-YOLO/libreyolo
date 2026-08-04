@@ -110,6 +110,9 @@ class LibreSigLIP2(BaseModel):
 
     FAMILY: ClassVar[str] = "siglip2"
     FILENAME_PREFIX: ClassVar[str] = "LibreSigLIP2"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     WEIGHT_EXT: ClassVar[str] = ".pt"
 
     INPUT_SIZES: ClassVar[Dict[str, int]] = {

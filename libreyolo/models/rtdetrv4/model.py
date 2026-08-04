@@ -26,6 +26,9 @@ class LibreRTDETRv4(LibreDFINE):
     # D-FINE grew a segment task (D-FINE-seg mask head); RT-DETRv4 has no mask
     # head, so pin the inherited task surface back to detect-only.
     SUPPORTED_TASKS = ("detect",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     TASK_INPUT_SIZES = {}
     TRAIN_CONFIG = RTDETRv4Config
 

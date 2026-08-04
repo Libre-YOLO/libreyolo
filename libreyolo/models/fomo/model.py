@@ -37,6 +37,9 @@ class LibreFOMO(BaseModel):
     INPUT_SIZES: ClassVar[Dict[str, int]] = {k: int(v["imgsz"]) for k, v in CONFIGS.items()}
 
     SUPPORTED_TASKS = ("point",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "point"
     REQUIRE_TASK_SUFFIX = True
     TRAIN_CONFIG = FOMOConfig
