@@ -16,6 +16,7 @@ Rockchip's SDK license.  LibreYOLO does not bundle or redistribute it.
 from __future__ import annotations
 
 import json
+import logging
 import platform
 import sys
 import tempfile
@@ -24,6 +25,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_RKNN_TARGET = "rk3588"
 
@@ -231,9 +234,14 @@ def _unique_sibling(path: Path, label: str) -> Path:
     return reserved
 
 
-def _publish_file_bundle(pairs: Sequence[tuple[Path, Path]]) -> None:
+def _publish_file_bundle(
+    pairs: Sequence[tuple[Path, Path]],
+    *,
+    remove_targets: Sequence[Path] = (),
+) -> None:
     """Publish files together, restoring every prior destination on failure."""
     pairs = tuple((Path(source), Path(target)) for source, target in pairs)
+    remove_targets = tuple(Path(target) for target in remove_targets)
     for source, _ in pairs:
         if not source.is_file():
             raise FileNotFoundError(f"Staged artifact is missing: {source}")
@@ -241,8 +249,10 @@ def _publish_file_bundle(pairs: Sequence[tuple[Path, Path]]) -> None:
     backups: list[tuple[Path, Path]] = []
     installed: list[Path] = []
     committed = False
+    targets = [target for _, target in pairs]
+    targets.extend(remove_targets)
     try:
-        for _, target in pairs:
+        for target in targets:
             if target.exists():
                 backup = _unique_sibling(target, "backup")
                 target.replace(backup)
@@ -254,7 +264,14 @@ def _publish_file_bundle(pairs: Sequence[tuple[Path, Path]]) -> None:
     finally:
         if committed:
             for _, backup in backups:
-                backup.unlink(missing_ok=True)
+                try:
+                    backup.unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.warning(
+                        "Could not remove RKNN publication backup %s: %s",
+                        backup,
+                        exc,
+                    )
         else:
             for target in reversed(installed):
                 target.unlink(missing_ok=True)
@@ -269,6 +286,7 @@ def _publish_rknn_artifacts(
     staged_metadata: Path,
     staged_report: Path,
     destination: Path,
+    remove_artifacts: Sequence[Path] = (),
 ) -> None:
     """Publish the model and sidecars together, restoring any prior bundle."""
     _publish_file_bundle(
@@ -276,7 +294,8 @@ def _publish_rknn_artifacts(
             (Path(staged_model), Path(destination)),
             (Path(staged_metadata), Path(f"{destination}.metadata.json")),
             (Path(staged_report), Path(f"{destination}.parity.json")),
-        )
+        ),
+        remove_targets=remove_artifacts,
     )
 
 

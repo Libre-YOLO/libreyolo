@@ -1915,8 +1915,8 @@ class RknnExporter(BaseExporter):
         **kwargs,
     ):
         from .rknn import (
-            _run_onnx_reference,
             _publish_rknn_artifacts,
+            _run_onnx_reference,
             compare_rknn_outputs,
             evaluate_rknn_metrics,
             export_rknn,
@@ -2038,8 +2038,10 @@ class RknnExporter(BaseExporter):
                 staged_metadata=staged_metadata,
                 staged_report=staged_report,
                 destination=destination,
+                remove_artifacts=(
+                    Path(f"{destination}.failed.parity.json"),
+                ),
             )
-            Path(f"{destination}.failed.parity.json").unlink(missing_ok=True)
         finally:
             # Verification publishes the staged files only after all parity
             # gates pass. Any unsuccessful exit leaves a prior export intact.

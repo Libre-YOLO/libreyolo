@@ -254,6 +254,62 @@ def test_rknn_exporter_verify_writes_parity_report(monkeypatch, tmp_path):
     assert report["outputs"][0]["within_tolerance"] is True
 
 
+def test_rknn_exporter_cleanup_failure_keeps_success(
+    monkeypatch, tmp_path, caplog
+):
+    def fake_export_with_simulator(**kwargs):
+        Path(kwargs["output_path"]).write_bytes(b"new-rknn")
+        Path(f"{kwargs['output_path']}.metadata.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        return kwargs["output_path"], [np.zeros((1, 2), dtype=np.float32)]
+
+    monkeypatch.setattr(
+        rknn_module, "export_rknn_with_simulator", fake_export_with_simulator
+    )
+    monkeypatch.setattr(
+        rknn_module,
+        "_run_onnx_reference",
+        lambda onnx_path, input_data: [np.zeros((1, 2), dtype=np.float32)],
+    )
+    output_path = tmp_path / "model.rknn"
+    failed_report = Path(f"{output_path}.failed.parity.json")
+    failed_report.write_text("stale failure\n", encoding="utf-8")
+
+    original_unlink = Path.unlink
+
+    def fail_stale_backup_cleanup(self, *args, **kwargs):
+        if (
+            ".failed.parity.json.backup." in self.name
+            and self.is_file()
+            and self.read_text(encoding="utf-8") == "stale failure\n"
+        ):
+            raise OSError("injected cleanup failure")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_stale_backup_cleanup)
+    with caplog.at_level("WARNING", logger="libreyolo.export.rknn"):
+        result = RknnExporter(object())._export(
+            None,
+            torch.zeros((1, 3, 2, 2)),
+            output_path=str(output_path),
+            metadata={"model_family": "yolo9"},
+            calibration_data=None,
+            onnx_path=str(tmp_path / "model.onnx"),
+            int8=False,
+            opset=19,
+            verbose=False,
+            verify=True,
+        )
+
+    assert result == str(output_path)
+    assert output_path.read_bytes() == b"new-rknn"
+    assert Path(f"{output_path}.metadata.json").is_file()
+    assert Path(f"{output_path}.parity.json").is_file()
+    assert not failed_report.exists()
+    assert "Could not remove RKNN publication backup" in caplog.text
+
+
 def test_rknn_exporter_preserves_failed_parity_report(monkeypatch, tmp_path):
     def fake_export_with_simulator(**kwargs):
         Path(kwargs["output_path"]).write_bytes(b"rknn")
