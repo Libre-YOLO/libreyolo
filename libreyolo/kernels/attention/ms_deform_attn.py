@@ -92,13 +92,18 @@ def _classify_load_failure(exc: BaseException) -> str:
     silently costs every user the accelerated path -- so it must not look
     like routine fallback in the logs.
     """
-    if isinstance(exc, ImportError):
+    # FileNotFoundError is what the client raises for "no build variant for
+    # this system", and it quotes the revision it looked under -- so classify
+    # on the exception type before going anywhere near the message text.
+    if isinstance(exc, (ImportError, FileNotFoundError)):
         return "unsupported"
     name = type(exc).__name__
     if name in ("RevisionNotFoundError", "RepositoryNotFoundError", "EntryNotFoundError"):
         return "unresolvable"
+    # Narrow phrases only. A bare "revision" substring also appears in the
+    # perfectly normal "Cannot find a build variant ... (revision: <sha>)".
     text = str(exc).lower()
-    if "revision" in text or "rev id" in text:
+    if "invalid rev id" in text or "revision not found" in text:
         return "unresolvable"
     return "unsupported"
 

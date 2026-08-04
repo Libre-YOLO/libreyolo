@@ -52,6 +52,18 @@ class _RevisionNotFoundError(Exception):
         (FileNotFoundError("Cannot find a build variant for this system"), "unsupported"),
         (ImportError("No module named 'kernels'"), "unsupported"),
         (RuntimeError("CUDA driver version is insufficient"), "unsupported"),
+        # Verbatim from a CPU-only CI runner. It names the revision it looked
+        # under, which a loose substring match reads as a dead pin and then
+        # shouts about a packaging bug that does not exist.
+        (
+            FileNotFoundError(
+                "Cannot find a build variant for this system in "
+                "kernels-community/deformable-detr (revision: "
+                "4d2393e5d7879f7cf68db04cc7c9c7342272bc05). Available variants: "
+                "torch212-cxx11-cu130-x86_64-linux, torch211-cu128-x86_64-windows"
+            ),
+            "unsupported",
+        ),
     ],
 )
 def test_load_failures_are_classified(exc, expected):
