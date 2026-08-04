@@ -281,3 +281,80 @@ def test_hub_matches_portable_on_cuda():
     torch.testing.assert_close(hub_out, ref_out, rtol=1e-4, atol=1e-5)
     for hub_grad, ref_grad in zip(hub_grads, ref_grads):
         torch.testing.assert_close(hub_grad, ref_grad, rtol=1e-3, atol=1e-4)
+
+
+# =============================================================================
+# Pinned-snapshot fallback loader (the ``kernels``-resolver compatibility path)
+# =============================================================================
+
+
+def test_pinned_variant_name_maps_platform(monkeypatch):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.setattr(torch, "__version__", "2.11.0+cu128")
+    monkeypatch.setattr(torch.version, "cuda", "12.8")
+    monkeypatch.setattr(module._platform, "system", lambda: "Linux")
+    monkeypatch.setattr(module._platform, "machine", lambda: "x86_64")
+    assert module._pinned_variant_name() == "torch211-cxx11-cu128-x86_64-linux"
+
+    monkeypatch.setattr(module._platform, "system", lambda: "Windows")
+    monkeypatch.setattr(module._platform, "machine", lambda: "AMD64")
+    assert module._pinned_variant_name() == "torch211-cu128-x86_64-windows"
+
+    monkeypatch.setattr(module._platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(module._platform, "system", lambda: "Linux")
+    assert module._pinned_variant_name() == "torch211-cxx11-cu128-aarch64-linux"
+
+    # CPU-only torch has no CUDA build to match.
+    monkeypatch.setattr(torch.version, "cuda", None)
+    assert module._pinned_variant_name() is None
+
+
+def test_load_hub_kernel_falls_back_when_resolver_rejects_pin(monkeypatch):
+    """A ``kernels`` release that cannot resolve the SHA pin must not kill the
+    provider: the direct snapshot loader is tried before giving up."""
+    import sys
+    import types
+
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.setattr(module, "_hub_kernel", None)
+    monkeypatch.setattr(module, "_hub_failed", False)
+
+    fake_kernels = types.ModuleType("kernels")
+
+    def rejects_sha(*args, **kwargs):
+        raise ValueError("Invalid rev id")
+
+    fake_kernels.get_kernel = rejects_sha
+    monkeypatch.setitem(sys.modules, "kernels", fake_kernels)
+
+    sentinel = object()
+    monkeypatch.setattr(module, "_load_pinned_snapshot", lambda: sentinel)
+    assert module._load_hub_kernel() is sentinel
+    assert module._hub_failed is False
+
+
+def test_load_hub_kernel_disables_when_both_paths_fail(monkeypatch):
+    import sys
+    import types
+
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.setattr(module, "_hub_kernel", None)
+    monkeypatch.setattr(module, "_hub_failed", False)
+
+    fake_kernels = types.ModuleType("kernels")
+
+    def rejects_sha(*args, **kwargs):
+        raise ValueError("Invalid rev id")
+
+    fake_kernels.get_kernel = rejects_sha
+    monkeypatch.setitem(sys.modules, "kernels", fake_kernels)
+
+    def no_snapshot():
+        raise OSError("offline")
+
+    monkeypatch.setattr(module, "_load_pinned_snapshot", no_snapshot)
+    assert module._load_hub_kernel() is None
+    assert module._hub_failed is True

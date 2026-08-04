@@ -17,7 +17,11 @@ The in-tree provider loads the compiled CUDA kernel published at
 ``kernels-community/deformable-detr`` on the Hugging Face Hub (Apache-2.0)
 via the optional ``kernels`` package. Nothing is vendored: the artifact is
 fetched at runtime, pinned to the audited revision in ``_HUB_REVISION`` so
-a moved branch can never swap the binary that runs in-process. Installing
+a moved branch can never swap the binary that runs in-process. When the
+installed ``kernels`` release cannot resolve the pin (its resolver rejects
+commit SHAs and validates a newer metadata schema), the provider fetches
+the pinned snapshot directly and imports the matching build variant itself
+— same binary, same pin, no resolver in between. Installing
 the ``libreyolo[hub-kernels]`` extra is the opt-in; once the ``kernels``
 package is present the provider is on by default and
 ``LIBREYOLO_HUB_KERNELS=0`` disables it. The autograd bridge
@@ -32,6 +36,9 @@ import functools
 import importlib.util
 import logging
 import os
+import platform as _platform
+import sys
+from pathlib import Path
 from typing import Optional
 
 import torch
@@ -78,6 +85,73 @@ def _eligible() -> bool:
     )
 
 
+def _pinned_variant_name() -> Optional[str]:
+    """The build-variant directory the running torch/CUDA/OS maps to.
+
+    Mirrors the ``kernels`` package's naming (``torch<maj><min>-[cxx11-]
+    cu<ver>-<arch>-<os>``) strictly: an exact match or nothing, because a
+    compiled extension is only ABI-safe against the torch minor and CUDA
+    build it was compiled for.
+    """
+    cuda = torch.version.cuda
+    if not cuda:
+        return None
+    torch_tag = "".join(torch.__version__.split(".")[:2])
+    cuda_tag = cuda.replace(".", "")
+    os_name = _platform.system().lower()
+    machine = _platform.machine().lower()
+    machine = {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
+    if os_name == "windows":
+        return f"torch{torch_tag}-cu{cuda_tag}-{machine}-windows"
+    if os_name == "linux":
+        return f"torch{torch_tag}-cxx11-cu{cuda_tag}-{machine}-linux"
+    return None
+
+
+def _load_pinned_snapshot():
+    """Load the pinned revision without the ``kernels`` resolver.
+
+    Current ``kernels`` releases resolve revisions through the Hub's kernels
+    API, which rejects commit SHAs, and validate a metadata schema this
+    repo's artifacts predate — either one silently kills the provider even
+    though the pinned binaries themselves load and pass parity. The pin is
+    the contract, so fetch it directly (``huggingface_hub`` resolves SHA
+    revisions fine) and import the matching build variant ourselves.
+    """
+    variant = _pinned_variant_name()
+    if variant is None:
+        return None
+    from huggingface_hub import snapshot_download
+
+    root = Path(
+        snapshot_download(
+            _HUB_REPO,
+            revision=_HUB_REVISION,
+            allow_patterns=[f"build/{variant}/*"],
+        )
+    )
+    package = root / "build" / variant
+    if not (package / "__init__.py").exists():
+        logger.warning(
+            "Hub kernel %s has no build variant %s; using the portable path",
+            _HUB_REPO,
+            variant,
+        )
+        return None
+    module_name = f"_libreyolo_hub_{variant.replace('-', '_')}"
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        package / "__init__.py",
+        submodule_search_locations=[str(package)],
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load_hub_kernel():
     """Fetch and cache the Hub kernel; a failure disables the provider."""
     global _hub_kernel, _hub_failed
@@ -88,8 +162,16 @@ def _load_hub_kernel():
 
         _hub_kernel = get_kernel(_HUB_REPO, revision=_HUB_REVISION)
     except Exception as exc:
+        # ``get_kernel`` is version-sensitive (SHA pins and this repo's
+        # metadata schema stopped resolving in newer releases); the direct
+        # snapshot loader below is the compatibility path.
+        logger.debug("kernels.get_kernel could not load %s: %s", _HUB_REPO, exc)
+        try:
+            _hub_kernel = _load_pinned_snapshot()
+        except Exception as exc2:
+            logger.warning("Hub kernel %s unavailable: %s", _HUB_REPO, exc2)
+    if _hub_kernel is None:
         _hub_failed = True
-        logger.warning("Hub kernel %s unavailable: %s", _HUB_REPO, exc)
     return _hub_kernel
 
 
