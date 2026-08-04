@@ -22,7 +22,8 @@ def export_cmd(
         "onnx",
         help=(
             "Export format: onnx, torchscript, executorch, tensorrt, openvino, "
-            "mnn, ncnn, tflite (alias: litert), coreml, coreai (Apple, macOS only)"
+            "paddle, mnn, ncnn, tflite (alias: litert), coreml, coreai "
+            "(Apple, macOS only)"
         ),
     ),
     imgsz: Optional[str] = typer.Option(

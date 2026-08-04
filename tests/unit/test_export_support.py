@@ -217,6 +217,38 @@ def test_yolonas_detect_tflite_is_validated():
     assert get_support("yolonas", "detect", "tflite").tier == "validated"
 
 
+def test_paddle_support_matches_measured_g0_g1_matrix():
+    validated = {
+        ("yolo9", "detect"),
+        ("yolo9_e2e", "detect"),
+        ("yolo9_p2", "detect"),
+        ("ec", "detect"),
+        ("ec", "pose"),
+        ("ec", "segment"),
+        ("rtdetrv4", "detect"),
+        ("dfine", "detect"),
+        ("deim", "detect"),
+        ("deimv2", "detect"),
+        ("yolonas", "detect"),
+        ("yolonas", "pose"),
+    }
+    for family, task in validated:
+        entry = get_support(family, task, "paddle")
+        assert entry.tier == "validated"
+        assert "PaddlePaddle 2.6.2" in entry.constraint
+
+    for task in ("detect", "segment", "pose", "obb"):
+        rfdetr = get_support("rfdetr", task, "paddle")
+        assert rfdetr.tier == "blocked"
+        assert "GridSample" in rfdetr.reason
+    for family in ("rtdetr", "rtdetrv2"):
+        assert get_support(family, "detect", "paddle").tier == "blocked"
+    dfine_segment = get_support("dfine", "segment", "paddle")
+    assert dfine_segment.tier == "blocked"
+    assert "0.582" in dfine_segment.reason
+    assert get_support("yolox", "detect", "paddle").tier == "blocked"
+
+
 def test_fcn_semantic_export_support_matches_trained_checkpoint_evidence():
     for format in ("onnx", "torchscript", "openvino", "tensorrt"):
         entry = get_support("fcn", "semantic", format)

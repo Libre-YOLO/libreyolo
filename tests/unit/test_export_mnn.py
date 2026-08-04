@@ -187,6 +187,11 @@ def test_export_mnn_failure_preserves_previous_pair(tmp_path, monkeypatch):
         lambda path: (["images"], ["output"], [1, 3, 64, 64]),
     )
     monkeypatch.setattr(
+        mnn_export.importlib.metadata,
+        "version",
+        lambda package: "3.6.1",
+    )
+    monkeypatch.setattr(
         mnn_export.subprocess,
         "run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
