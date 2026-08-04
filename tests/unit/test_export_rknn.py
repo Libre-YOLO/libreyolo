@@ -240,6 +240,9 @@ def test_rknn_exporter_verify_writes_parity_report(monkeypatch, tmp_path):
 def test_rknn_exporter_preserves_failed_parity_report(monkeypatch, tmp_path):
     def fake_export_with_simulator(**kwargs):
         Path(kwargs["output_path"]).write_bytes(b"rknn")
+        Path(f"{kwargs['output_path']}.metadata.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
         return kwargs["output_path"], [np.ones((1, 2), dtype=np.float32)]
 
     monkeypatch.setattr(
@@ -271,6 +274,8 @@ def test_rknn_exporter_preserves_failed_parity_report(monkeypatch, tmp_path):
     )
     assert report["passed"] is False
     assert report["outputs"][0]["within_tolerance"] is False
+    assert not output_path.exists()
+    assert not Path(f"{output_path}.metadata.json").exists()
 
 
 def test_export_rknn_float_writes_artifact_and_metadata(monkeypatch, tmp_path):
@@ -446,4 +451,11 @@ def test_verify_rknn_parity_can_return_failed_diagnostics(monkeypatch):
 def test_rknn_dependency_error_points_windows_to_wsl(monkeypatch):
     monkeypatch.setattr(rknn_module.sys, "platform", "win32")
     with pytest.raises(ImportError, match="WSL2"):
+        rknn_module.check_rknn_available()
+
+
+def test_rknn_dependency_error_rejects_linux_arm64(monkeypatch):
+    monkeypatch.setattr(rknn_module.sys, "platform", "linux")
+    monkeypatch.setattr(rknn_module.platform, "machine", lambda: "aarch64")
+    with pytest.raises(ImportError, match="requires Linux x86_64"):
         rknn_module.check_rknn_available()

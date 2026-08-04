@@ -16,6 +16,7 @@ Rockchip's SDK license.  LibreYOLO does not bundle or redistribute it.
 from __future__ import annotations
 
 import json
+import platform
 import sys
 import tempfile
 from collections.abc import Iterable, Mapping, Sequence
@@ -110,11 +111,12 @@ def resolve_rknn_target(
 
 
 def _load_rknn_class():
-    if sys.platform != "linux":
+    machine = platform.machine().strip().lower()
+    if sys.platform != "linux" or machine not in {"amd64", "x86_64"}:
         raise ImportError(
-            "RKNN export requires Linux x86_64. On Windows, run LibreYOLO "
-            "inside WSL2 or a Linux Docker container with Rockchip's "
-            "rknn-toolkit2 wheel installed."
+            f"RKNN export requires Linux x86_64, got {sys.platform}/{machine or 'unknown'}. "
+            "On Windows, run LibreYOLO inside WSL2 or a Linux Docker container "
+            "with Rockchip's rknn-toolkit2 wheel installed."
         )
     try:
         from rknn.api import RKNN

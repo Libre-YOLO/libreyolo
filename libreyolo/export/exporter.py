@@ -1984,6 +1984,11 @@ class RknnExporter(BaseExporter):
         )
         temporary.replace(report_path)
         if not parity_passed:
+            # A failed verification must not leave a final-path artifact that
+            # automation could mistake for a deployable export. Keep only the
+            # parity report for diagnosis.
+            Path(result).unlink(missing_ok=True)
+            Path(f"{result}.metadata.json").unlink(missing_ok=True)
             failures = "; ".join(
                 f"output {item['index']}: max_abs={item['max_abs_error']:.6g}, "
                 f"cosine={item['cosine_similarity']:.6g}, "
