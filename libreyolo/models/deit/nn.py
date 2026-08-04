@@ -98,12 +98,24 @@ class Attention(nn.Module):
         )
         query, key, value = qkv.unbind(0)
         query, key = self.q_norm(query), self.k_norm(key)
-        x = F.scaled_dot_product_attention(
-            query,
-            key,
-            value,
-            dropout_p=self.attn_drop.p if self.training else 0.0,
-        )
+        # ``fused_attn`` was a timm-compat attribute that nothing read, so
+        # libreyolo.kernels.attention.set_fused_attention() reported switching
+        # it while SDPA kept running. Honoring it here makes that count true.
+        # Unlike every other family the gate carries no export condition, so
+        # the default (True) keeps today's behavior exactly: DeiT is the one
+        # family that traces SDPA into its ONNX graph on purpose, which is why
+        # ``export/onnx.py:47`` bumps it to opset 17.
+        if self.fused_attn:
+            x = F.scaled_dot_product_attention(
+                query,
+                key,
+                value,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+            )
+        else:
+            attention = (query * self.scale) @ key.transpose(-2, -1)
+            attention = self.attn_drop(attention.softmax(dim=-1))
+            x = attention @ value
         x = x.transpose(1, 2).reshape(batch, tokens, channels)
         x = self.norm(x)
         x = self.proj(x)
