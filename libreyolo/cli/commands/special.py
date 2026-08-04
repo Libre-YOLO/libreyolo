@@ -292,6 +292,8 @@ def checks_cmd(
         "onnxruntime",
         "tensorrt",
         "openvino",
+        "paddlepaddle",
+        "x2paddle",
         "ncnn",
         "onnx2tf",
         "ai-edge-litert",

@@ -134,6 +134,7 @@ def __getattr__(name):
         "ExternalDetector": (".ensemble", "ExternalDetector"),
         "OnnxBackend": (".backends.onnx", "OnnxBackend"),
         "OpenVINOBackend": (".backends.openvino", "OpenVINOBackend"),
+        "PaddleBackend": (".backends.paddle", "PaddleBackend"),
         "TensorRTBackend": (".backends.tensorrt", "TensorRTBackend"),
         "TritonBackend": (".backends.triton", "TritonBackend"),
         "create_triton_config": (".backends.triton", "create_triton_config"),
@@ -330,6 +331,7 @@ __all__ = [
     # Lazy-loaded
     "OnnxBackend",
     "OpenVINOBackend",
+    "PaddleBackend",
     "TensorRTBackend",
     "TritonBackend",
     "create_triton_config",

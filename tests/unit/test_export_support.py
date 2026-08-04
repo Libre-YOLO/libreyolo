@@ -217,6 +217,17 @@ def test_yolonas_detect_tflite_is_validated():
     assert get_support("yolonas", "detect", "tflite").tier == "validated"
 
 
+def test_paddle_support_is_scoped_to_measured_yolo9_detection():
+    yolo9 = get_support("yolo9", "detect", "paddle")
+    assert yolo9.tier == "validated"
+    assert "PaddlePaddle 2.6.2" in yolo9.constraint
+    for task in ("detect", "segment", "pose", "obb"):
+        rfdetr = get_support("rfdetr", task, "paddle")
+        assert rfdetr.tier == "blocked"
+        assert "GridSample" in rfdetr.reason
+    assert get_support("yolox", "detect", "paddle").tier == "blocked"
+
+
 def test_fcn_semantic_export_support_matches_trained_checkpoint_evidence():
     for format in ("onnx", "torchscript", "openvino", "tensorrt"):
         entry = get_support("fcn", "semantic", format)

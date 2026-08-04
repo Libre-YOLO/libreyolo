@@ -292,8 +292,8 @@ def LibreYOLO(
 
     Args:
         model_path: Path to weights (.pt), ONNX (.onnx), ExecuTorch (.pte),
-                    TensorRT (.engine), OpenVINO/ncnn directory, or a Triton
-                    HTTP(S) model URL.
+                    TensorRT (.engine), OpenVINO/Paddle/ncnn directory, or a
+                    Triton HTTP(S) model URL.
         size: Model size variant (auto-detected from weights if omitted).
         reg_max: Regression max for DFL (YOLOv9 only, default: 16).
         nb_classes: Number of classes (auto-detected if omitted).
@@ -385,6 +385,16 @@ def LibreYOLO(
         from ..backends.openvino import OpenVINOBackend
 
         return OpenVINOBackend(
+            model_path, nb_classes=nb_classes, device=device, task=task
+        )
+
+    if Path(model_path).is_dir() and all(
+        (Path(model_path) / filename).exists()
+        for filename in ("model.pdmodel", "model.pdiparams")
+    ):
+        from ..backends.paddle import PaddleBackend
+
+        return PaddleBackend(
             model_path, nb_classes=nb_classes, device=device, task=task
         )
 

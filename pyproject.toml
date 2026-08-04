@@ -160,6 +160,17 @@ tensorrt = [
 openvino = [
     "openvino>=2024.0.0",
 ]
+paddle = [
+    "libreyolo[onnx]",
+    # X2Paddle 1.6.0 imports onnx.mapping, removed after ONNX 1.17.
+    "onnx>=1.14.0,<1.18",
+    # X2Paddle 1.6.0 generates a valid YOLO9 static graph with Paddle 2.6.2.
+    # Paddle 3.x rejects the generated mixed scalar arithmetic during capture.
+    "paddlepaddle==2.6.2",
+    "x2paddle==1.6.0",
+    # Imported by X2Paddle but omitted from its wheel metadata.
+    "six>=1.16.0",
+]
 ncnn = [
     "pnnx",
     "ncnn",
@@ -255,6 +266,7 @@ all = [
     "libreyolo[tensorrt]",
     "libreyolo[tflite]",
     "libreyolo[openvino]",
+    "libreyolo[paddle]",
     "libreyolo[ncnn]",
     "libreyolo[tracking]",
     "libreyolo[rtdetr]",
@@ -430,6 +442,7 @@ markers = [
     "openvino: tests requiring OpenVINO",
     "ncnn: tests requiring ncnn",
     "tflite: tests requiring TensorFlow Lite export",
+    "paddle: tests requiring PaddlePaddle export/runtime",
     "coreml: tests requiring CoreML (macOS only)",
     "yolox: tests covering the YOLOX model family",
     "yolo7: tests covering the YOLOv7 model family",

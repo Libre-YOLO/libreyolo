@@ -18,6 +18,7 @@ from libreyolo.export.exporter import (
     NcnnExporter,
     OnnxExporter,
     OpenVINOExporter,
+    PaddleExporter,
     TensorRTExporter,
     TFLiteExporter,
     TorchScriptExporter,
@@ -131,6 +132,7 @@ class TestExporterFormats:
         assert "executorch" in BaseExporter._registry
         assert "tensorrt" in BaseExporter._registry
         assert "openvino" in BaseExporter._registry
+        assert "paddle" in BaseExporter._registry
         assert "ncnn" in BaseExporter._registry
         assert "tflite" in BaseExporter._registry
 
@@ -152,6 +154,9 @@ class TestExporterFormats:
         assert NcnnExporter.supports_int8 is False
         assert TFLiteExporter.requires_onnx is True
         assert TFLiteExporter.supports_fp16 is False
+        assert PaddleExporter.suffix == "_paddle"
+        assert PaddleExporter.requires_onnx is True
+        assert PaddleExporter.supports_fp16 is False
 
     def test_unsupported_exporter_rejects_embedded_nms(self):
         exporter = TorchScriptExporter(_make_wrapper())

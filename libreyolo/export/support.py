@@ -15,6 +15,7 @@ EXPORT_FORMATS = (
     "executorch",
     "tensorrt",
     "openvino",
+    "paddle",
     "ncnn",
     "tflite",
     "coreml",
@@ -69,6 +70,32 @@ _add(
     ("detect",),
     ("onnx", "torchscript", "tflite"),
     since="1.3",
+)
+_add(
+    "validated",
+    ("yolo9",),
+    ("detect",),
+    ("paddle",),
+    reason=(
+        "The trained LibreYOLO9t checkpoint is covered by raw-output, "
+        "metadata, factory reload, and public detection parity in "
+        "tests/e2e/test_paddle.py."
+    ),
+    since="1.6",
+    constraint=(
+        "X2Paddle 1.6.0, PaddlePaddle 2.6.2 CPU, ONNX 1.17, FP32, batch 1, "
+        "fixed square input; WSL2 Ubuntu 22.04"
+    ),
+)
+_add(
+    "blocked",
+    ("rfdetr",),
+    ("detect", "segment", "pose", "obb"),
+    ("paddle",),
+    reason=(
+        "RF-DETR requires ONNX opset 17 and GridSample, while X2Paddle 1.6.0 "
+        "accepts opset 15 or lower and has no GridSample mapper."
+    ),
 )
 _add(
     "validated",
@@ -3390,6 +3417,12 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
         return SupportEntry(
             "blocked",
             "This family and task have not been validated through the ONNX-to-TFLite path.",
+        )
+    if fmt == "paddle":
+        return SupportEntry(
+            "blocked",
+            "This family and task have not been validated through the "
+            "ONNX-to-Paddle conversion path.",
         )
     if fmt == "coreai":
         return SupportEntry(

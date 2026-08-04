@@ -1763,6 +1763,68 @@ class OpenVINOExporter(BaseExporter):
         )
 
 
+class PaddleExporter(BaseExporter):
+    """Static batch-1 FP32 Paddle export through X2Paddle."""
+
+    format_name = "paddle"
+    suffix = "_paddle"
+    requires_onnx = True
+    supports_int8 = False
+    supports_fp16 = False
+    apply_model_half = False
+
+    def __call__(
+        self,
+        *,
+        dynamic: bool = False,
+        batch: int = 1,
+        simplify: bool = True,
+        **kwargs,
+    ) -> str:
+        if dynamic:
+            raise ValueError("Paddle export requires dynamic=False.")
+        if batch != 1:
+            raise ValueError(f"Paddle export currently requires batch=1, got {batch}.")
+        if not simplify:
+            raise ValueError(
+                "Paddle export requires simplify=True for a fully static "
+                "X2Paddle conversion graph."
+            )
+        return super().__call__(
+            dynamic=False,
+            batch=1,
+            simplify=True,
+            **kwargs,
+        )
+
+    def _preflight(self, **kwargs):
+        # Check support policy before importing the optional converter stack.
+        super()._preflight(**kwargs)
+        from .paddle import check_paddle_export_available
+
+        check_paddle_export_available()
+
+    def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
+        metadata = super()._build_metadata(
+            precision, False, onnx_path, imgsz=imgsz
+        )
+        metadata["dynamic"] = False
+        metadata.pop("exported_from", None)
+        return metadata
+
+    def _export(
+        self, nn_model, dummy, *, onnx_path, output_path, metadata, **kwargs
+    ):
+        from .paddle import export_paddle
+
+        logger.info("Step 2/2: Converting ONNX to Paddle")
+        return export_paddle(
+            onnx_path=onnx_path,
+            output_path=output_path,
+            metadata=metadata,
+        )
+
+
 class NcnnExporter(BaseExporter):
     format_name = "ncnn"
     suffix = "_ncnn"
