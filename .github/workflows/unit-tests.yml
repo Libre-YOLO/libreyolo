@@ -107,3 +107,33 @@ jobs:
         env:
           LIBREYOLO_PR_GATE: "1"
         run: uv run --no-sync pytest tests/unit -m "${{ env.PR_GATE_MARKERS }} and distributed" --durations=25
+
+  # The compiled Hub kernels are pinned to audited commits. A pin the loader
+  # cannot fetch costs every user the accelerated path on every platform, and
+  # says so only in one log line inside a fallback that is meant to be quiet.
+  # This job resolves the live pins so that failure mode is visible instead.
+  #
+  # Deliberately separate and not part of the PR gate: it needs network, it
+  # reports on the Hub's state rather than on the pull request's changes, and
+  # a red pin should not block unrelated work. Keep it out of the required
+  # checks; treat a failure here as "open a PR bumping the pin".
+  hub-kernel-pins:
+    name: Hub kernel pins resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Create virtual environment
+        run: uv venv --python 3.10
+
+      - name: Install dependencies
+        run: uv pip install --no-sources --torch-backend cpu --group dev -e "."
+
+      - name: Resolve pinned Hub kernel revisions
+        run: uv run --no-sync pytest tests/unit/kernels -m network --durations=10

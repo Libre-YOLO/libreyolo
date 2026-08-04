@@ -47,10 +47,30 @@ nothing changes (no network access, portable paths everywhere). Set
 `LIBREYOLO_HUB_KERNELS=0` to disable them without uninstalling. Nothing is
 vendored; artifacts are fetched and cached by the `kernels` package, and a
 kernel that fails to load or run disables itself for the process and falls
-back to the portable path with one warning. Every hub kernel is pinned to an
-audited commit revision in its provider module — a moved branch on the Hub
-can never change the binary that runs in-process. Bumping a pin requires a
-GPU parity run of the provider's `*_matches_portable_on_cuda` test.
+back to the portable path. Every hub kernel is pinned to an audited commit
+revision in its provider module — a moved branch on the Hub can never change
+the binary that runs in-process. Bumping a pin requires a GPU parity run of
+the provider's `*_matches_portable_on_cuda` test.
+
+A load failure is one of two things, and they are logged differently because
+only one of them is your machine's business:
+
+- **No compiled build for this platform** (OS, torch or CUDA combination the
+  kernel authors did not build). Logged at INFO; the portable path is the
+  right answer and nothing is wrong.
+- **The pinned revision cannot be fetched at all.** Logged at ERROR, because
+  it is a packaging bug on our side that costs *every* user the accelerated
+  path regardless of platform. The `hub-kernel-pins` CI job resolves the live
+  pins so this cannot pass unnoticed; it needs network, is not part of the PR
+  gate, and a failure there means "open a PR bumping the pin", not "this pull
+  request is broken".
+
+> **Known issue.** The current `ms_deform_attn` pin is a raw commit SHA, and
+> the `kernels` client rejects commit SHAs on its `/api/kernels/` endpoint
+> (`RevisionNotFoundError: Invalid rev id`) — verified against `kernels`
+> 0.16.0, which `kernels>=0.6.0` allows. Until the pin is expressed in a form
+> that client accepts, the accelerated path never engages on any platform.
+> Results are unaffected: every family falls back to its portable path.
 
 Current hub-backed slot:
 

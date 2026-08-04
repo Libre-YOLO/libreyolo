@@ -50,6 +50,11 @@ _MAX_IM2COL_STEP = 64
 
 _hub_kernel = None
 _hub_failed = False
+# Why the load failed, for tests and for choosing the log level. "unsupported"
+# is a normal outcome (no compiled build for this OS/torch/CUDA combination);
+# "unresolvable" means the pin above cannot be fetched at all, which is a
+# packaging bug on our side and is wrong on every platform.
+_hub_failure_kind: Optional[str] = None
 
 
 def _hub_enabled() -> bool:
@@ -78,9 +83,29 @@ def _eligible() -> bool:
     )
 
 
+def _classify_load_failure(exc: BaseException) -> str:
+    """Split "no build for this machine" from "the pin cannot be fetched".
+
+    The first is the normal outcome on any platform the kernel authors did
+    not build for, and the portable path is the right answer. The second
+    means :data:`_HUB_REVISION` is unusable, which is wrong *everywhere* and
+    silently costs every user the accelerated path -- so it must not look
+    like routine fallback in the logs.
+    """
+    if isinstance(exc, ImportError):
+        return "unsupported"
+    name = type(exc).__name__
+    if name in ("RevisionNotFoundError", "RepositoryNotFoundError", "EntryNotFoundError"):
+        return "unresolvable"
+    text = str(exc).lower()
+    if "revision" in text or "rev id" in text:
+        return "unresolvable"
+    return "unsupported"
+
+
 def _load_hub_kernel():
     """Fetch and cache the Hub kernel; a failure disables the provider."""
-    global _hub_kernel, _hub_failed
+    global _hub_kernel, _hub_failed, _hub_failure_kind
     if _hub_kernel is not None or _hub_failed:
         return _hub_kernel
     try:
@@ -89,7 +114,24 @@ def _load_hub_kernel():
         _hub_kernel = get_kernel(_HUB_REPO, revision=_HUB_REVISION)
     except Exception as exc:
         _hub_failed = True
-        logger.warning("Hub kernel %s unavailable: %s", _HUB_REPO, exc)
+        _hub_failure_kind = _classify_load_failure(exc)
+        if _hub_failure_kind == "unresolvable":
+            logger.error(
+                "Hub kernel %s cannot be resolved at the pinned revision %s, so "
+                "the accelerated path is unavailable on every platform. This is "
+                "a LibreYOLO packaging bug, not a problem with your machine: "
+                "%s. Falling back to the portable implementation.",
+                _HUB_REPO,
+                _HUB_REVISION,
+                exc,
+            )
+        else:
+            logger.info(
+                "No compiled %s build for this platform; using the portable "
+                "implementation: %s",
+                _HUB_REPO,
+                exc,
+            )
     return _hub_kernel
 
 

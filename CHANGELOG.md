@@ -37,7 +37,7 @@ before 1.4.0 are documented in the
   RT-DETRv4, DEIM, DEIMv2, EC and OV-DEIM. Installing the extra is the
   opt-in; `LIBREYOLO_HUB_KERNELS=0` disables it. Eager CUDA fp32 only;
   exports always keep the portable path; load or runtime failures fall back
-  with one warning. The Hub artifact is pinned to an audited commit
+  (see the pin note under Fixed). The Hub artifact is pinned to an audited commit
   revision, and a CUDA-only parity test
   (`test_hub_matches_portable_on_cuda`) gates revision bumps. Shapes the slot
   cannot express (a per-level sampling point count, or `method='discrete'`)
@@ -57,6 +57,16 @@ before 1.4.0 are documented in the
   OWLv2 vision attention. See `docs/kernels.md`.
 
 ### Fixed
+
+- A Hub kernel whose pinned revision cannot be fetched is now reported as the
+  packaging bug it is (ERROR, naming the pin) instead of blending into the
+  routine "no build for this platform" fallback, which is now INFO. A new
+  non-blocking `hub-kernel-pins` CI job resolves the live pins so an unusable
+  pin cannot ship unnoticed. **The current `ms_deform_attn` pin is unusable**:
+  it is a raw commit SHA and the `kernels` client rejects commit SHAs on its
+  `/api/kernels/` endpoint, so the accelerated path never engages on any
+  platform. Results are unaffected (every family falls back to its portable
+  path); the speedup is simply not there until the pin is re-expressed.
 
 - `LibreViT` and `LibreDeiT` now honor their `fused_attn` attribute. It was a
   timm-compatibility vestige that nothing read, so
