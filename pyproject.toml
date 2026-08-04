@@ -23,6 +23,7 @@ dependencies = [
     "PyYAML>=6.0",
     "requests>=2.25.0",
     "opencv-python>=4.11.0.86",
+    "mss>=9.0.1",
     "tqdm>=4.65.0",
     "pycocotools>=2.0.0",
     "typer>=0.9.0",

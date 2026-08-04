@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Generator, List, Optional, Sequence, Tuple, Union
 
 import torch
 
@@ -34,7 +34,8 @@ from ..utils.image_loader import ImageInput, ImageLoader
 from ..utils.logging import ensure_default_logging
 from ..utils.predict_args import normalize_predict_kwargs
 from ..utils.results import Boxes, Results
-from ..utils.video import is_video_file
+from ..utils.screen import ScreenSource, grab_screen, is_screen_source
+from ..utils.video import collect_video_results, is_video_file, run_video_inference
 
 logger = logging.getLogger(__name__)
 
@@ -165,9 +166,7 @@ class LibreEnsemble:
         n = len(self.members)
         if weights is not None:
             if len(weights) != n:
-                raise ValueError(
-                    f"weights has {len(weights)} entries for {n} members"
-                )
+                raise ValueError(f"weights has {len(weights)} entries for {n} members")
             # Positivity (not non-negativity) so NaN weights also fail loudly.
             if not all(w > 0 for w in weights):
                 raise ValueError("weights must all be positive")
@@ -187,12 +186,14 @@ class LibreEnsemble:
                 f"{', '.join(sorted(FUSIONS))}, or a callable"
             )
 
-        if isinstance(min_votes, bool) or not isinstance(min_votes, int) or min_votes < 1:
+        if (
+            isinstance(min_votes, bool)
+            or not isinstance(min_votes, int)
+            or min_votes < 1
+        ):
             raise ValueError(f"min_votes must be a positive int, got {min_votes!r}")
         if min_votes > n:
-            raise ValueError(
-                f"min_votes={min_votes} can never be met by {n} members"
-            )
+            raise ValueError(f"min_votes={min_votes} can never be met by {n} members")
         if self.fusion == "nms" and min_votes > 1:
             raise ValueError(
                 "fusion='nms' cannot count votes; use fusion='wbf' or "
@@ -265,7 +266,10 @@ class LibreEnsemble:
                 "Ensemble label spaces differ: %d classes in the union, %d not "
                 "shared by every member (%s%s). Boxes only fuse within the same "
                 "class name — check member names dicts if these should match.",
-                len(union), len(partial), shown, more,
+                len(union),
+                len(partial),
+                shown,
+                more,
             )
         return union, luts, models_per_label, label_weights
 
@@ -275,7 +279,7 @@ class LibreEnsemble:
 
     def __call__(
         self,
-        source: ImageInput | None = None,
+        source: ImageInput | Sequence[ImageInput] | None = None,
         *,
         conf: Union[float, Sequence[float]] = 0.25,
         iou: Union[float, Sequence[float]] = 0.45,
@@ -289,8 +293,10 @@ class LibreEnsemble:
         color_format: str = "auto",
         batch: int = 1,
         stream: bool = False,
+        vid_stride: int = 1,
+        show: bool = False,
         **kwargs,
-    ) -> Union[Results, List[Results]]:
+    ) -> Union[Results, List[Results], Generator[Results, None, None]]:
         """Run every member on *source* and return fused Results.
 
         ``conf``, ``iou``, ``imgsz``, and ``device`` keep their standard
@@ -304,41 +310,179 @@ class LibreEnsemble:
         backends ignore it. ``classes`` (union class ids) and ``max_det`` apply
         to the fused result — members run generously and the ensemble trims
         once. ``batch`` is accepted for API parity; images are processed
-        sequentially.
+        sequentially. With ``stream=True``, images, directories, videos, and
+        screen captures yield fused Results one at a time.
         """
         normalize_predict_kwargs(kwargs)
         del batch
-        if stream or is_video_file(source):
-            raise NotImplementedError(
-                "video and stream ensembling are not available yet; run the "
-                "members individually for video sources"
-            )
 
         n = len(self.members)
         conf_l = self._per_member(conf, n, "conf")
         iou_l = self._per_member(iou, n, "iou")
         imgsz_l = self._per_member(imgsz, n, "imgsz", list_only=True)
         device_l = self._per_member(device, n, "device")
+        predict_kwargs = {
+            "classes": classes,
+            "max_det": max_det,
+            "augment": augment,
+            "save": save,
+            "output_path": output_path,
+            "color_format": color_format,
+        }
 
-        if isinstance(source, (str, Path)) and Path(source).is_dir():
+        if is_video_file(source):
+            gen = self._predict_frames(
+                source,
+                str(source),
+                conf_l,
+                iou_l,
+                imgsz_l,
+                device_l,
+                vid_stride=vid_stride,
+                show=show,
+                **predict_kwargs,
+            )
+            if stream:
+                return gen
+            return collect_video_results(gen, source, vid_stride)
+
+        if is_screen_source(source):
+            if stream:
+
+                def stream_results():
+                    yield from self._predict_frames(
+                        ScreenSource(source, vid_stride=vid_stride),
+                        str(source),
+                        conf_l,
+                        iou_l,
+                        imgsz_l,
+                        device_l,
+                        show=show,
+                        **predict_kwargs,
+                    )
+
+                return stream_results()
+            return self._predict_one(
+                grab_screen(source),
+                conf_l,
+                iou_l,
+                imgsz_l,
+                device_l,
+                source_label=str(source),
+                **{**predict_kwargs, "color_format": "rgb"},
+            )
+
+        sources = None
+        if isinstance(source, (list, tuple)):
+            sources = list(source)
+        elif isinstance(source, (str, Path)) and Path(source).is_dir():
+            sources = ImageLoader.collect_images(source)
+
+        if sources is not None:
+            if stream:
+                return self._stream_images(
+                    sources,
+                    conf_l,
+                    iou_l,
+                    imgsz_l,
+                    device_l,
+                    **predict_kwargs,
+                )
             return [
                 self._predict_one(
-                    p, conf_l, iou_l, imgsz_l, device_l,
-                    classes=classes, max_det=max_det, augment=augment,
-                    save=save, output_path=output_path, color_format=color_format,
+                    item,
+                    conf_l,
+                    iou_l,
+                    imgsz_l,
+                    device_l,
+                    **predict_kwargs,
                 )
-                for p in ImageLoader.collect_images(source)
+                for item in sources
             ]
 
+        if stream:
+            return self._stream_images(
+                [source],
+                conf_l,
+                iou_l,
+                imgsz_l,
+                device_l,
+                **predict_kwargs,
+            )
+
         return self._predict_one(
-            source, conf_l, iou_l, imgsz_l, device_l,
-            classes=classes, max_det=max_det, augment=augment,
-            save=save, output_path=output_path, color_format=color_format,
+            source,
+            conf_l,
+            iou_l,
+            imgsz_l,
+            device_l,
+            **predict_kwargs,
         )
 
-    def predict(self, *args, **kwargs) -> Union[Results, List[Results]]:
+    def predict(
+        self, *args, **kwargs
+    ) -> Union[Results, List[Results], Generator[Results, None, None]]:
         """Alias for ``__call__``."""
         return self(*args, **kwargs)
+
+    def _stream_images(
+        self,
+        sources: Sequence[ImageInput],
+        conf_l: List,
+        iou_l: List,
+        imgsz_l: List,
+        device_l: List,
+        **kwargs,
+    ) -> Generator[Results, None, None]:
+        """Lazily fuse a finite image sequence."""
+        for source in sources:
+            yield self._predict_one(source, conf_l, iou_l, imgsz_l, device_l, **kwargs)
+
+    def _predict_frames(
+        self,
+        source,
+        source_label: str,
+        conf_l: List,
+        iou_l: List,
+        imgsz_l: List,
+        device_l: List,
+        *,
+        vid_stride: int = 1,
+        show: bool = False,
+        classes: Optional[List[int]],
+        max_det: int,
+        augment: bool,
+        save: bool,
+        output_path: Optional[str],
+        color_format: str,
+    ) -> Generator[Results, None, None]:
+        """Fuse frames from a video-like source."""
+        del color_format
+
+        def predict_frame(image):
+            return self._predict_one(
+                image,
+                conf_l,
+                iou_l,
+                imgsz_l,
+                device_l,
+                classes=classes,
+                max_det=max_det,
+                augment=augment,
+                save=False,
+                output_path=None,
+                color_format="rgb",
+                source_label=source_label,
+            )
+
+        return run_video_inference(
+            source,
+            predict_frame,
+            vid_stride=vid_stride,
+            save=save,
+            show=show,
+            output_path=output_path,
+        )
 
     @staticmethod
     def _per_member(value, n: int, name: str, *, list_only: bool = False):
@@ -346,9 +490,7 @@ class LibreEnsemble:
         seq_types = (list,) if list_only else (list, tuple)
         if isinstance(value, seq_types):
             if len(value) != n:
-                raise ValueError(
-                    f"{name} has {len(value)} entries for {n} members"
-                )
+                raise ValueError(f"{name} has {len(value)} entries for {n} members")
             return list(value)
         return [value] * n
 
@@ -366,11 +508,12 @@ class LibreEnsemble:
         save: bool,
         output_path: Optional[str],
         color_format: str,
+        source_label: Optional[Union[str, Path]] = None,
     ) -> Results:
         # Decode once; members receive the same PIL image.
         img = ImageLoader.load(source, color_format=color_format)
         w, h = img.size
-        image_path = source if isinstance(source, (str, Path)) else None
+        image_path = source if isinstance(source, (str, Path)) else source_label
 
         speed: Dict[str, float] = {}
         member_results: List[Results] = []
@@ -398,7 +541,9 @@ class LibreEnsemble:
             scores,
             labels,
             model_ids,
-            weights=torch.tensor(self.weights, dtype=torch.float32, device=boxes.device),
+            weights=torch.tensor(
+                self.weights, dtype=torch.float32, device=boxes.device
+            ),
             num_models=len(self.members),
             iou_thr=self.fusion_iou,
             min_votes=self.min_votes,

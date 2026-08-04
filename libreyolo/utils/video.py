@@ -3,7 +3,7 @@
 import logging
 import warnings
 from pathlib import Path
-from typing import Callable, Generator, Iterator, Tuple, Union
+from typing import Callable, Generator, Iterator, Protocol, Tuple, Union
 
 import numpy as np
 
@@ -28,6 +28,27 @@ VIDEO_EXTENSIONS = {
     ".wmv",
     ".webm",
 }
+
+
+class FrameSource(Protocol):
+    """What ``run_video_inference`` needs from a frame source.
+
+    :class:`VideoSource` and :class:`~libreyolo.utils.screen.ScreenSource` both
+    satisfy it: a context manager that iterates ``(BGR frame, frame index)``
+    and reports the geometry needed to write an output video.
+    """
+
+    fps: float
+    total_frames: int
+    width: int
+    height: int
+    save_name: str
+
+    def __enter__(self) -> "FrameSource": ...
+
+    def __exit__(self, *exc) -> None: ...
+
+    def __iter__(self) -> Iterator[Tuple[np.ndarray, int]]: ...
 
 
 def is_video_file(source) -> bool:
@@ -91,6 +112,7 @@ class VideoSource:
             )
 
         self._path = str(path)
+        self.save_name = self._path
         self._vid_stride = max(1, int(vid_stride))
 
         self._cap = cv2.VideoCapture(self._path)
@@ -272,7 +294,7 @@ def collect_video_results(
 
 
 def run_video_inference(
-    source: Union[str, Path],
+    source: Union[str, Path, "FrameSource"],
     predict_frame_fn: Callable,
     *,
     vid_stride: int = 1,
@@ -282,13 +304,17 @@ def run_video_inference(
     annotate_fn: Union[Callable, None] = None,
     progress: bool = True,
 ) -> Generator:
-    """Generic video inference loop shared by all backends.
+    """Generic frame-by-frame inference loop shared by all backends.
 
     Args:
-        source: Path to video file.
+        source: Path to a video file, or an already-built frame source such as
+            :class:`VideoSource` or
+            :class:`~libreyolo.utils.screen.ScreenSource`. A frame source
+            yields ``(BGR frame, frame index)`` and has already applied its own
+            ``vid_stride``, so *vid_stride* is ignored for that form.
         predict_frame_fn: Callable that takes a PIL RGB image and returns
             a ``Results`` object.
-        vid_stride: Process every N-th frame.
+        vid_stride: Process every N-th frame (file sources only).
         save: Write annotated output video.
         show: Display frames in a cv2 window.
         output_path: Output path for saved video.
@@ -317,20 +343,34 @@ def run_video_inference(
         draw_points,
     )
 
-    with VideoSource(source, vid_stride=vid_stride) as video_src:
+    if isinstance(source, (str, Path)):
+        frame_source = VideoSource(source, vid_stride=vid_stride)
+        # VideoSource decodes every frame and this loop sees only the kept ones,
+        # so the frame count and output fps both scale down by the stride.
+        stride_divisor = max(1, vid_stride)
+        save_name = source
+        desc = Path(source).name
+    else:
+        # A pre-built frame source has already applied its own stride.
+        frame_source = source
+        stride_divisor = 1
+        save_name = getattr(source, "save_name", "stream")
+        desc = str(save_name)
+
+    with frame_source as video_src:
         writer = None
         out_path = None
         effective_fps = None
         if save:
-            out_path = resolve_video_save_path(source, output_path)
-            effective_fps = video_src.fps / max(1, vid_stride)
+            out_path = resolve_video_save_path(save_name, output_path)
+            effective_fps = video_src.fps / stride_divisor
             # The writer is created lazily from the first output frame instead
             # of the source dimensions: restore/super-resolution results render
             # on a canvas ``restore_scale`` times the source frame.
 
-        total = video_src.total_frames // max(1, vid_stride) or None
+        total = video_src.total_frames // stride_divisor or None
         pbar = (
-            tqdm(total=total, desc=Path(source).name, unit="frame", dynamic_ncols=True)
+            tqdm(total=total, desc=desc, unit="frame", dynamic_ncols=True)
             if progress
             else None
         )
