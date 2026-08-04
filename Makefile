@@ -31,7 +31,7 @@ help:
 	@echo "  test_general_nightly          - Run broad native inference nightly checks"
 	@echo "  test_flagship_nightly         - Run heavy YOLO9/RF-DETR nightly checks"
 	@echo "  test_training_nightly         - Run training-time GPU checks (CUDA graph capture)"
-	@echo "  test_nightly                  - Run general + flagship nightly checks"
+	@echo "  test_nightly                  - Run general + flagship + training nightly checks"
 	@echo "  test_rf5                      - Run RF5 training benchmark tests"
 	@echo "  build                         - Build package"
 	@echo "  clean                         - Remove build and test cache artifacts"

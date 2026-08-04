@@ -229,6 +229,7 @@ Commands:
 ```bash
 make test_general_nightly
 make test_flagship_nightly
+make test_training_nightly
 make test_nightly
 make test_e2e E2E_TIMEOUT=1800
 ```

@@ -1,6 +1,6 @@
 """Versioned contract for the nightly e2e test suite."""
 
-NIGHTLY_E2E_SUITE_VERSION = "2.3"
+NIGHTLY_E2E_SUITE_VERSION = "2.4"
 NIGHTLY_E2E_SUITE_CONTRACT = (
     "general=smallest task-appropriate native inference case for every public "
     "model family, "
@@ -12,7 +12,9 @@ NIGHTLY_E2E_SUITE_CONTRACT = (
     "families use probability and top-1 stability gates; "
     "FCN adds a real-checkpoint semantic predict, mIoU, and UI-render smoke; "
     "flagship=YOLO9/RF-DETR validation, video, tracking, CLI, and one RF1 "
-    "training/reload size per flagship family; export backends remain outside "
+    "training/reload size per flagship family; training=representative "
+    "real-CUDA coverage for training-time features, currently CUDA graph "
+    "capture and its lifecycle/fallback paths; export backends remain outside "
     "the default nightly"
 )
 NIGHTLY_E2E_SUITE_CHANGE_POLICY = (
