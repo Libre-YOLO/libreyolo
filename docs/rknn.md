@@ -70,6 +70,9 @@ in the PC simulator, and then removes the intermediary. Metadata is written to
 `<model>.rknn.metadata.json` because RKNN has no portable LibreYOLO metadata
 field. A successful `verify=True` run also writes
 `<model>.rknn.parity.json` with per-output error metrics.
+An unsuccessful parity gate writes `<model>.rknn.failed.parity.json`; the
+candidate artifact is discarded and any earlier successful export at the
+requested path remains untouched.
 
 High-level INT8 export is blocked until representative calibration and
 task-accuracy results exist.

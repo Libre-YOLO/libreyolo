@@ -9,6 +9,7 @@ import copy
 import importlib.util
 import json
 import logging
+import tempfile
 import warnings
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -1955,20 +1956,29 @@ class RknnExporter(BaseExporter):
             verify_input = torch.rand(
                 tuple(dummy.shape), generator=generator, dtype=torch.float32
             ).numpy()
-        result, simulated = export_rknn_with_simulator(
-            onnx_path=onnx_path,
-            output_path=output_path,
-            simulator_inputs=verify_input,
-            target_platform=resolved_target,
-            int8=int8,
-            calibration_data=calibration_data,
-            metadata=rknn_metadata,
-            verbose=verbose,
-            config=rknn_config,
-            build=rknn_build,
-        )
-        verification_completed = False
+        destination = Path(output_path)
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{destination.stem}.verify.",
+            suffix=destination.suffix,
+            dir=destination.parent,
+            delete=False,
+        ) as handle:
+            staging_path = Path(handle.name)
+        staging_path.unlink()
+
         try:
+            result, simulated = export_rknn_with_simulator(
+                onnx_path=onnx_path,
+                output_path=str(staging_path),
+                simulator_inputs=verify_input,
+                target_platform=resolved_target,
+                int8=int8,
+                calibration_data=calibration_data,
+                metadata=rknn_metadata,
+                verbose=verbose,
+                config=rknn_config,
+                build=rknn_build,
+            )
             reference = _run_onnx_reference(onnx_path, verify_input)
             metrics = compare_rknn_outputs(
                 reference,
@@ -1993,14 +2003,18 @@ class RknnExporter(BaseExporter):
                 "passed": parity_passed,
                 "outputs": metrics,
             }
-            report_path = Path(f"{result}.parity.json")
-            temporary = report_path.with_suffix(f"{report_path.suffix}.tmp")
-            temporary.write_text(
+            staged_report = Path(f"{staging_path}.parity.json")
+            temporary_report = staged_report.with_suffix(
+                f"{staged_report.suffix}.tmp"
+            )
+            temporary_report.write_text(
                 json.dumps(report, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-            temporary.replace(report_path)
+            temporary_report.replace(staged_report)
             if not parity_passed:
+                report_path = Path(f"{destination}.failed.parity.json")
+                staged_report.replace(report_path)
                 failures = "; ".join(
                     f"output {item['index']}: "
                     f"max_abs={item['max_abs_error']:.6g}, "
@@ -2015,16 +2029,23 @@ class RknnExporter(BaseExporter):
                     f"max_normalized_rmse={verify_max_normalized_rmse}): "
                     f"{failures}. Metrics: {report_path}"
                 )
-            verification_completed = True
+
+            staged_metadata = Path(f"{staging_path}.metadata.json")
+            Path(result).replace(destination)
+            if staged_metadata.is_file():
+                staged_metadata.replace(Path(f"{destination}.metadata.json"))
+            report_path = Path(f"{destination}.parity.json")
+            staged_report.replace(report_path)
+            Path(f"{destination}.failed.parity.json").unlink(missing_ok=True)
         finally:
-            if not verification_completed:
-                # Keep a completed parity report for diagnosis, but never a
-                # deployable-looking artifact from an unsuccessful verify run.
-                Path(result).unlink(missing_ok=True)
-                Path(f"{result}.metadata.json").unlink(missing_ok=True)
-                Path(f"{result}.parity.json.tmp").unlink(missing_ok=True)
+            # Verification publishes the staged files only after all parity
+            # gates pass. Any unsuccessful exit leaves a prior export intact.
+            staging_path.unlink(missing_ok=True)
+            Path(f"{staging_path}.metadata.json").unlink(missing_ok=True)
+            Path(f"{staging_path}.parity.json").unlink(missing_ok=True)
+            Path(f"{staging_path}.parity.json.tmp").unlink(missing_ok=True)
         logger.info("RKNN simulator parity passed: %s", report_path)
-        return result
+        return str(destination)
 
 
 class NcnnExporter(BaseExporter):

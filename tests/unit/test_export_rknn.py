@@ -284,7 +284,7 @@ def test_rknn_exporter_preserves_failed_parity_report(monkeypatch, tmp_path):
         )
 
     report = json.loads(
-        Path(f"{output_path}.parity.json").read_text(encoding="utf-8")
+        Path(f"{output_path}.failed.parity.json").read_text(encoding="utf-8")
     )
     assert report["passed"] is False
     assert report["outputs"][0]["within_tolerance"] is False
@@ -292,7 +292,9 @@ def test_rknn_exporter_preserves_failed_parity_report(monkeypatch, tmp_path):
     assert not Path(f"{output_path}.metadata.json").exists()
 
 
-def test_rknn_exporter_reference_failure_removes_artifacts(monkeypatch, tmp_path):
+def test_rknn_exporter_reference_failure_preserves_prior_artifacts(
+    monkeypatch, tmp_path
+):
     def fake_export_with_simulator(**kwargs):
         Path(kwargs["output_path"]).write_bytes(b"rknn")
         Path(f"{kwargs['output_path']}.metadata.json").write_text(
@@ -309,6 +311,9 @@ def test_rknn_exporter_reference_failure_removes_artifacts(monkeypatch, tmp_path
 
     monkeypatch.setattr(rknn_module, "_run_onnx_reference", fail_reference)
     output_path = tmp_path / "model.rknn"
+    output_path.write_bytes(b"previous-rknn")
+    metadata_path = Path(f"{output_path}.metadata.json")
+    metadata_path.write_text('{"previous": true}\n', encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="ONNX Runtime failed"):
         RknnExporter(object())._export(
@@ -324,8 +329,10 @@ def test_rknn_exporter_reference_failure_removes_artifacts(monkeypatch, tmp_path
             verify=True,
         )
 
-    assert not output_path.exists()
-    assert not Path(f"{output_path}.metadata.json").exists()
+    assert output_path.read_bytes() == b"previous-rknn"
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == {
+        "previous": True
+    }
     assert not Path(f"{output_path}.parity.json").exists()
 
 
