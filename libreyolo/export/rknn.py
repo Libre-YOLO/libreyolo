@@ -38,6 +38,12 @@ RKNN_SIMULATOR_VALIDATED_MODELS = frozenset(
         ("yolonas", "s", "detect"),
     }
 )
+RKNN_SIMULATOR_VALIDATED_IMGSZ = {
+    ("picodet", "s", "detect"): 320,
+    ("yolo9", "t", "detect"): 640,
+    ("yolo9_e2e", "t", "detect"): 640,
+    ("yolonas", "s", "detect"): 640,
+}
 RKNN_SIMULATOR_VALIDATED_TARGETS = frozenset({DEFAULT_RKNN_TARGET})
 
 # Toolkit2's floating build commonly lowers internal tensors to float16, so
@@ -82,6 +88,35 @@ def validate_rknn_export_request(
             f"RKNN target {target!r} is not validated. "
             f"Simulator-validated targets: {validated_targets}."
         )
+
+
+def resolve_rknn_imgsz(
+    *,
+    model_family: str,
+    model_size: str,
+    task: str,
+    imgsz: int | tuple[int, int] | None,
+) -> int:
+    """Resolve and enforce the exact canvas used by the recorded parity run."""
+    model_key = (
+        str(model_family).strip().lower(),
+        str(model_size).strip().lower(),
+        str(task).strip().lower(),
+    )
+    expected = RKNN_SIMULATOR_VALIDATED_IMGSZ.get(model_key)
+    if expected is None:
+        rendered = f"{model_key[0]}-{model_key[1]}/{model_key[2]}"
+        raise NotImplementedError(f"RKNN export is not validated for {rendered}.")
+    if imgsz is None:
+        return expected
+
+    actual = (int(imgsz), int(imgsz)) if isinstance(imgsz, int) else tuple(imgsz)
+    if actual != (expected, expected):
+        raise NotImplementedError(
+            f"RKNN export for {model_key[0]}-{model_key[1]} is validated only "
+            f"at imgsz={expected}, got {actual}."
+        )
+    return expected
 
 
 def resolve_rknn_target(

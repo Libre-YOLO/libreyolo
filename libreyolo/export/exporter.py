@@ -1830,6 +1830,7 @@ class RknnExporter(BaseExporter):
         *args,
         dynamic: bool = False,
         batch: int = 1,
+        imgsz: int | tuple[int, int] | None = None,
         opset: int | None = 19,
         **kwargs,
     ) -> str:
@@ -1837,11 +1838,24 @@ class RknnExporter(BaseExporter):
             raise ValueError("RKNN export requires static input shapes.")
         if batch != 1:
             raise NotImplementedError("RKNN export currently supports batch=1 only.")
+        if opset not in {None, 19}:
+            raise NotImplementedError(
+                f"RKNN export is validated only with ONNX opset 19, got {opset}."
+            )
+        from .rknn import resolve_rknn_imgsz
+
+        imgsz = resolve_rknn_imgsz(
+            model_family=self.model._get_model_name(),
+            model_size=self.model.size,
+            task=getattr(self.model, "task", "detect"),
+            imgsz=imgsz,
+        )
         return super().__call__(
             *args,
             dynamic=False,
             batch=1,
-            opset=19 if opset is None else opset,
+            imgsz=imgsz,
+            opset=19,
             **kwargs,
         )
 

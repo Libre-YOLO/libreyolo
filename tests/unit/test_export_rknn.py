@@ -104,11 +104,25 @@ def test_rknn_exporter_uses_opset_19_when_cli_passes_none(monkeypatch):
         lambda self, *args, **kwargs: kwargs,
     )
 
-    kwargs = RknnExporter(object())(opset=None)
+    kwargs = RknnExporter(_FakeModel())(opset=None)
 
     assert kwargs["opset"] == 19
     assert kwargs["dynamic"] is False
     assert kwargs["batch"] == 1
+    assert kwargs["imgsz"] == 640
+
+
+def test_rknn_exporter_rejects_untested_opset_and_imgsz():
+    exporter = RknnExporter(_FakeModel())
+
+    with pytest.raises(NotImplementedError, match="opset 19"):
+        exporter(opset=18)
+    with pytest.raises(NotImplementedError, match="imgsz=640"):
+        exporter(imgsz=1280)
+
+    picodet = RknnExporter(_FakeModel("picodet", "s"))
+    with pytest.raises(NotImplementedError, match="imgsz=320"):
+        picodet(imgsz=(640, 640))
 
 
 def test_rknn_exporter_blocks_unvalidated_int8():
