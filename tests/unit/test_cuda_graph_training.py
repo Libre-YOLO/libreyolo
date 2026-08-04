@@ -152,6 +152,44 @@ class TestTrainGraphManager:
             assert manager.run(spec, imgs) is None
         make.assert_not_called()
 
+    def test_buffer_snapshot_failure_disables_instead_of_raising(self):
+        """An OOM cloning the BatchNorm snapshot must not kill the run.
+
+        The snapshot allocates a copy of every module buffer, on device, at
+        the moment memory is tightest: immediately before capture reserves
+        static input, output and workspace buffers for a whole forward and
+        backward. It used to run outside the capture guard, so that OOM
+        propagated out of the training step and ended the run. An opt-in
+        speed flag must degrade to eager, never to a crash.
+        """
+        manager = TrainGraphManager(warmup_threshold=1)
+        spec = _spec()
+        with patch.object(
+            TrainGraphManager,
+            "_snapshot_buffers",
+            side_effect=torch.cuda.OutOfMemoryError("snapshot OOM"),
+        ):
+            assert manager.run(spec, _fake_cuda_batch()) is None
+        assert manager.disabled
+
+    def test_buffer_snapshot_failure_skips_restore(self):
+        """With no snapshot taken there is nothing to restore.
+
+        The handler restores unconditionally, so the failure path must leave
+        an empty snapshot rather than a half-built one it would then try to
+        copy back into live buffers.
+        """
+        manager = TrainGraphManager(warmup_threshold=1)
+        spec = _spec()
+        with patch.object(
+            TrainGraphManager,
+            "_snapshot_buffers",
+            side_effect=torch.cuda.OutOfMemoryError("snapshot OOM"),
+        ):
+            with patch.object(TrainGraphManager, "_restore_buffers") as restore:
+                assert manager.run(spec, _fake_cuda_batch()) is None
+        restore.assert_called_once_with([])
+
     def test_replay_failure_disables(self):
         manager = TrainGraphManager(warmup_threshold=1)
         spec = _spec()

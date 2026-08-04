@@ -7,7 +7,7 @@ UV := uv run --no-sync
 E2E_TIMEOUT ?= 900
 
 .DEFAULT_GOAL := help
-.PHONY: help setup format lint typecheck test test_pr_gate test_install_smoke test_e2e print_nightly_suite test_general_nightly test_flagship_nightly test_nightly test_rf5 build clean
+.PHONY: help setup format lint typecheck test test_pr_gate test_install_smoke test_e2e print_nightly_suite test_general_nightly test_flagship_nightly test_training_nightly test_nightly test_rf5 build clean
 
 help:
 	@echo "═══════════════════════════════════════════════════════════════════════════════"
@@ -30,6 +30,7 @@ help:
 	@echo "  print_nightly_suite           - Print nightly suite version and contract"
 	@echo "  test_general_nightly          - Run broad native inference nightly checks"
 	@echo "  test_flagship_nightly         - Run heavy YOLO9/RF-DETR nightly checks"
+	@echo "  test_training_nightly         - Run training-time GPU checks (CUDA graph capture)"
 	@echo "  test_nightly                  - Run general + flagship nightly checks"
 	@echo "  test_rf5                      - Run RF5 training benchmark tests"
 	@echo "  build                         - Build package"
@@ -135,9 +136,13 @@ test_general_nightly: print_nightly_suite
 test_flagship_nightly: print_nightly_suite
 	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='flagship_nightly and not export_backend'
 
+test_training_nightly: print_nightly_suite
+	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='training_nightly'
+
 test_nightly: print_nightly_suite
 	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='general_nightly'
 	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='flagship_nightly and not export_backend'
+	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='training_nightly'
 
 test_rf5: clean
 	$(UV) pytest tests/e2e/test_rf5_training.py -m rf5 -v

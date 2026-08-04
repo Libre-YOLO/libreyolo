@@ -247,6 +247,16 @@ V2.3 contract:
   CLI, and one RF1 training/reload size per flagship family; currently 48 tests
   with `not export_backend`. The full RF1 size matrix remains available under
   `-m rf1` for manual or future full-matrix runs.
+- `training_nightly`: training-time GPU features that neither inference lane
+  covers. Currently CUDA graph training capture: one case per distinct
+  mechanism rather than per family (a bespoke spec, a spec over a refactored
+  family head plus the mid-run capture invalidation, the DETR encoder mixin,
+  the classify mixin, the semantic mixin), plus the paths where a defect is
+  invisible from the loss alone: capture without AMP, layer freezing, resume,
+  gradient accumulation, validation with a live graph, and capture failing
+  mid-run. 14 tests. The full per-family sweep stays under `-m e2e`.
+  This lane exists because a feature whose every failure mode is a silent
+  fallback to eager cannot be left to manual runs.
 - Detector families cover detection, classifier families cover normalized
   probability plus top-1 stability, and DeepLabv3 covers dense semantic masks.
   L2CS gaze is non-redistributable (no public download route), so it runs as a

@@ -23,9 +23,8 @@ Shape handling is dispatch-based, not constraint-based: a graph is valid
 for exactly the input shape it was captured with, so the manager counts
 shapes and captures one graph once a shape has repeated
 ``warmup_threshold`` times. Batches at any other shape (multi-scale
-batches, the last partial batch of an epoch) run eager, unchanged. This
-keeps training numerics and behavior identical whether the flag is on or
-off, which the parity tests gate.
+batches, the last partial batch of an epoch) run eager, unchanged, so a
+shape the graph does not cover costs speed and nothing else.
 
 Capture-time contracts (enforced by the trainer, documented here):
 
@@ -442,12 +441,21 @@ class TrainGraphManager:
     def _capture_and_run(
         self, spec: CudaGraphTrainSpec, imgs: torch.Tensor
     ) -> Optional[Tuple[torch.Tensor, ...]]:
-        buffer_snapshot = self._snapshot_buffers(spec.network)
         forward_before = (
             "forward" in spec.network.__dict__,
             spec.network.__dict__.get("forward"),
         )
+        # Empty until the snapshot succeeds, so the handler below can restore
+        # unconditionally: restoring nothing is a no-op.
+        buffer_snapshot: List[Tuple[torch.Tensor, torch.Tensor]] = []
         try:
+            # Inside the guard on purpose. Cloning every buffer is a real
+            # allocation on the device, and it happens at the moment memory
+            # is tightest: right before capture reserves static input, output
+            # and workspace buffers for a whole forward and backward. An OOM
+            # here used to escape and kill the run, which is the one outcome
+            # an opt-in speed flag must never produce.
+            buffer_snapshot = self._snapshot_buffers(spec.network)
             # The sample clone becomes the graph's static input buffer; the
             # live batch tensor must stay caller-owned. allow_unused_input
             # mirrors eager autograd: parameters a family's training forward

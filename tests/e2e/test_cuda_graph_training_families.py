@@ -35,11 +35,31 @@ import yaml
 from PIL import Image
 
 # Not ``general_nightly``: that marker has a documented contract as the broad
-# *inference* sweep with a fixed case count (docs/testing.md). These are
-# training runs, so they follow the house pattern for training e2e files
-# (test_training_regression.py, test_dfine_seg_training.py): plain ``e2e``,
-# plus ``slow`` because the full file trains 20-odd models twice over.
+# *inference* sweep (docs/testing.md), and these are training runs. The full
+# file is ``e2e`` + ``slow``; a representative subset is additionally marked
+# ``training_nightly`` so the real capture paths run on GPU every night. That
+# lane exists because neither inference nightly marker selects this file, and
+# a feature whose every failure mode is a silent fallback to eager is exactly
+# the kind that must not rely on someone running it by hand.
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
+
+# One case per distinct mechanism rather than every family: the reference
+# bespoke spec (yolo9), a spec built on a refactored family head plus the
+# mid-run invalidation path (yolox), the encoder-boundary DETR mixin (dfine),
+# the classify mixin (resnet), and the semantic mixin, which is also the one
+# family that draws its own RNG stream inside the graph (segformer).
+NIGHTLY_FAMILIES = frozenset({"yolo9", "yolox", "dfine", "resnet", "segformer"})
+
+
+def _cases(cases):
+    """Attach ``training_nightly`` to the representative subset."""
+    return [
+        pytest.param(
+            *case,
+            marks=[pytest.mark.training_nightly] if case[0] in NIGHTLY_FAMILIES else [],
+        )
+        for case in cases
+    ]
 
 requires_cuda = pytest.mark.skipif(
     not torch.cuda.is_available(),
@@ -203,7 +223,7 @@ def test_capture_engages_and_holds(
 @pytest.mark.external_data
 @pytest.mark.parametrize(
     "family,class_name,size,imgsz,task,rel_tol,extra",
-    CASES,
+    _cases(CASES),
     ids=[case[0] for case in CASES],
 )
 def test_loss_trajectory_stays_within_eager_noise(
@@ -390,7 +410,7 @@ NON_DETECT_CASES = [
 @pytest.mark.external_data
 @pytest.mark.parametrize(
     "family,class_name,size,imgsz,task,dataset_fixture,rel_tol,extra",
-    NON_DETECT_CASES,
+    _cases(NON_DETECT_CASES),
     ids=[case[0] for case in NON_DETECT_CASES],
 )
 def test_non_detect_capture_engages_and_holds(
@@ -424,7 +444,7 @@ def test_non_detect_capture_engages_and_holds(
 @pytest.mark.external_data
 @pytest.mark.parametrize(
     "family,class_name,size,imgsz,task,dataset_fixture,rel_tol,extra",
-    NON_DETECT_CASES,
+    _cases(NON_DETECT_CASES),
     ids=[case[0] for case in NON_DETECT_CASES],
 )
 def test_non_detect_loss_trajectory_stays_within_eager_noise(
@@ -467,6 +487,7 @@ def test_non_detect_loss_trajectory_stays_within_eager_noise(
 
 
 @requires_cuda
+@pytest.mark.training_nightly
 def test_capture_engages_without_amp(detect_dataset, tmp_path, caplog):
     """``amp=False`` is a supported path and must still capture.
 
@@ -506,6 +527,7 @@ def test_capture_engages_without_amp(detect_dataset, tmp_path, caplog):
 
 
 @requires_cuda
+@pytest.mark.training_nightly
 def test_layer_freezing_matches_eager(detect_dataset, tmp_path):
     """Frozen layers change which parameters get gradients.
 
@@ -539,6 +561,7 @@ def test_layer_freezing_matches_eager(detect_dataset, tmp_path):
 
 
 @requires_cuda
+@pytest.mark.training_nightly
 def test_resume_from_checkpoint_recaptures(detect_dataset, tmp_path):
     """A resumed run must capture again and keep training.
 
@@ -586,6 +609,7 @@ def test_resume_from_checkpoint_recaptures(detect_dataset, tmp_path):
 
 
 @requires_cuda
+@pytest.mark.training_nightly
 def test_capture_failure_does_not_kill_the_run(detect_dataset, tmp_path, caplog):
     """Capture is opt-in and best-effort: failing it must cost speed, not the run.
 
@@ -627,6 +651,7 @@ def test_capture_failure_does_not_kill_the_run(detect_dataset, tmp_path, caplog)
 
 
 @requires_cuda
+@pytest.mark.training_nightly
 def test_gradient_accumulation_matches_eager(detect_dataset, tmp_path):
     """Capture must be safe when ``zero_grad`` runs once per window.
 
@@ -662,6 +687,7 @@ def test_gradient_accumulation_matches_eager(detect_dataset, tmp_path):
 
 
 @requires_cuda
+@pytest.mark.training_nightly
 def test_in_training_validation_runs_with_a_live_graph(detect_dataset, tmp_path):
     """Per-epoch validation must still work while a graph is captured.
 
@@ -694,6 +720,7 @@ def test_in_training_validation_runs_with_a_live_graph(detect_dataset, tmp_path)
 
 
 @requires_cuda
+@pytest.mark.training_nightly
 def test_yolox_capture_survives_the_mosaic_close_switch(detect_dataset, tmp_path):
     """YOLOX turns on its L1 branch mid-run; the graph must be rebuilt there.
 

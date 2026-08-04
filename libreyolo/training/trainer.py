@@ -387,10 +387,16 @@ class BaseTrainer(ABC):
     ) -> Dict:
         """``on_forward`` with optional CUDA-graph capture of the network.
 
-        Routing keeps a hard equivalence contract: any batch that cannot go
+        Routing keeps a hard *dispatch* contract: any batch that cannot go
         through a captured graph (no family spec, shape mismatch, capture
-        disabled) takes the exact ``on_forward`` path instead, so enabling
-        ``cuda_graph`` never changes training numerics.
+        disabled) takes the exact ``on_forward`` path instead. So the flag
+        never changes which code computes the loss.
+
+        It is not a bit-identical contract for every family. Most reproduce
+        eager exactly; three documented cases do not, for reasons inherent
+        to the family rather than to capture. See the exception list in
+        ``libreyolo.training.cuda_graph`` and the per-family table in
+        ``docs/training_cuda_graphs.md``.
         """
         # getattr defaults keep partially-constructed trainers (test
         # doubles, exotic subclasses skipping BaseTrainer.__init__) on the

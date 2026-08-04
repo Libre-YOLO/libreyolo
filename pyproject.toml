@@ -375,6 +375,7 @@ markers = [
     "e2e: end-to-end tests requiring full model loading and inference",
     "general_nightly: broad nightly inference checks across all model families",
     "flagship_nightly: heavier nightly checks for flagship YOLO9/RF-DETR models",
+    "training_nightly: nightly GPU checks for training-time features (CUDA graph capture) that neither inference nightly lane covers",
     "export_backend: tests covering an export backend or serialized runtime format",
     "supported_backend: tests covering a release-blocking supported backend",
     "experimental_backend: tests covering an experimental backend",
