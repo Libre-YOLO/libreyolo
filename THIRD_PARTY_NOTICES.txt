@@ -1100,6 +1100,26 @@ Used for: the plain DeiT architecture and released tiny/small/base patch-16
           variants are not included.
 
 --------------------------------------------------------------------
+Rockchip RKNN Model Zoo
+--------------------------------------------------------------------
+Source: https://github.com/airockchip/rknn_model_zoo
+Commit: bad6c7334531becaf90a561988519b7bec34d0ab
+License: Apache License 2.0
+Used for: The public RKNN conversion API flow and board-free simulator
+          initialization referenced by libreyolo/export/rknn.py. The
+          specific upstream reference files were
+          examples/LPRNet/python/convert.py and
+          py_utils/rknn_executor.py. LibreYOLO's implementation uses its
+          own exporter, metadata, calibration, error-handling, and parity
+          contracts. No AGPL source code was inspected or used.
+
+NOTE - optional vendor dependency: Rockchip's rknn-toolkit2 compiler and
+simulator are not Apache-2.0. They are distributed separately under the
+custom RKNN SDK License. LibreYOLO does not bundle, redistribute, install,
+or declare that SDK as a project dependency; users review and install it
+themselves in a supported Linux x86_64 environment.
+
+--------------------------------------------------------------------
 timm / PyTorch Image Models (Hugging Face)
 --------------------------------------------------------------------
 Source: https://github.com/huggingface/pytorch-image-models

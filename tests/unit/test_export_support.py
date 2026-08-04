@@ -65,6 +65,19 @@ def test_experimental_export_warns_in_preflight():
         exporter._preflight(half=False, int8=False, data=None)
 
 
+@pytest.mark.parametrize("family", ["yolo9", "yolo9_e2e", "yolonas", "picodet"])
+def test_rknn_retained_families_are_experimental(family):
+    entry = get_support(family, "detect", "rknn")
+    assert entry.tier == "experimental"
+    assert "RK3588 PC-simulator" in entry.reason
+
+
+@pytest.mark.parametrize("family", ["rfdetr", "yolo9_p2", "ec", "rtdetr", "deim"])
+def test_rknn_failed_candidates_are_blocked(family):
+    entry = get_support(family, "detect", "rknn")
+    assert entry.tier == "blocked"
+
+
 def test_vit_onnx_is_parity_validated():
     entry = get_support("vit", "classify", "onnx")
     assert entry.tier == "validated"
