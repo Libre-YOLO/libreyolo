@@ -3,7 +3,7 @@
 import logging
 import warnings
 from pathlib import Path
-from typing import Callable, Generator, Iterator, Protocol, Tuple, Union
+from typing import Any, Callable, Generator, Iterator, Protocol, Tuple, Union
 
 import numpy as np
 
@@ -48,7 +48,7 @@ class FrameSource(Protocol):
 
     def __exit__(self, *exc) -> None: ...
 
-    def __iter__(self) -> Iterator[Tuple[np.ndarray, int]]: ...
+    def __iter__(self) -> Iterator[Any]: ...
 
 
 def is_video_file(source) -> bool:
@@ -74,8 +74,11 @@ def resolve_video_save_path(
     """
     if output_path is not None:
         out = Path(output_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        return str(out)
+        if out.suffix:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            return str(out)
+        out.mkdir(parents=True, exist_ok=True)
+        return str(out / f"{Path(source).stem}.mp4")
 
     save_dir = Path("runs/detect") / "predict"
     save_dir = increment_path(save_dir, exist_ok=False, mkdir=True)
@@ -358,11 +361,32 @@ def run_video_inference(
         desc = str(save_name)
 
     with frame_source as video_src:
-        writer = None
+        writers = {}
+        out_paths = {}
         out_path = None
         effective_fps = None
+        is_multi = int(getattr(video_src, "num_streams", 1)) > 1
+        multi_output_dir = None
+        multi_output_template = None
         if save:
-            out_path = resolve_video_save_path(save_name, output_path)
+            if is_multi:
+                if output_path is None:
+                    multi_output_dir = increment_path(
+                        Path("runs/detect") / "predict",
+                        exist_ok=False,
+                        mkdir=True,
+                    )
+                else:
+                    requested = Path(output_path)
+                    if requested.suffix:
+                        requested.parent.mkdir(parents=True, exist_ok=True)
+                        multi_output_dir = requested.parent
+                        multi_output_template = requested
+                    else:
+                        requested.mkdir(parents=True, exist_ok=True)
+                        multi_output_dir = requested
+            else:
+                out_path = resolve_video_save_path(save_name, output_path)
             effective_fps = video_src.fps / stride_divisor
             # The writer is created lazily from the first output frame instead
             # of the source dimensions: restore/super-resolution results render
@@ -376,7 +400,19 @@ def run_video_inference(
         )
 
         try:
-            for frame_bgr, frame_idx in video_src:
+            for frame_item in video_src:
+                if hasattr(frame_item, "frame_bgr"):
+                    frame_bgr = frame_item.frame_bgr
+                    frame_idx = int(frame_item.frame_idx)
+                    source_index = int(frame_item.source_index)
+                    source_label = str(frame_item.source_label)
+                    frame_fps = float(frame_item.fps or effective_fps or 30.0)
+                else:
+                    frame_bgr, frame_idx = frame_item
+                    source_index = 0
+                    source_label = None
+                    frame_fps = float(effective_fps or 30.0)
+
                 # Convert BGR frame to PIL RGB for the model pipeline
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 pil_img = Image.fromarray(frame_rgb)
@@ -384,6 +420,8 @@ def run_video_inference(
                 # Run model-specific inference
                 result = predict_frame_fn(pil_img)
                 result.frame_idx = frame_idx
+                if source_label is not None:
+                    result.path = source_label
 
                 # Annotate frame for save/show
                 if save or show:
@@ -492,15 +530,41 @@ def run_video_inference(
                     )
 
                     if save:
+                        writer = writers.get(source_index)
                         if writer is None:
                             frame_h, frame_w = annotated_bgr.shape[:2]
+                            if is_multi:
+                                from .source import source_save_stem
+
+                                assert source_label is not None
+                                assert multi_output_dir is not None
+                                if multi_output_template is not None:
+                                    suffix = multi_output_template.suffix or ".mp4"
+                                    filename = (
+                                        f"{multi_output_template.stem}_{source_index}"
+                                        f"{suffix}"
+                                    )
+                                else:
+                                    stem = source_save_stem(source_label, source_index)
+                                    filename = f"{stem}_{source_index}.mp4"
+                                current_out_path = str(multi_output_dir / filename)
+                            else:
+                                current_out_path = out_path
+                            assert current_out_path is not None
                             writer = VideoWriter(
-                                out_path, effective_fps, frame_w, frame_h
+                                current_out_path, frame_fps, frame_w, frame_h
                             )
+                            writers[source_index] = writer
+                            out_paths[source_index] = current_out_path
                         writer.write_frame(annotated_bgr)
 
                     if show:
-                        cv2.imshow("LibreYOLO", annotated_bgr)
+                        window_name = (
+                            f"LibreYOLO: {source_label}"
+                            if is_multi and source_label is not None
+                            else "LibreYOLO"
+                        )
+                        cv2.imshow(window_name, annotated_bgr)
                         if cv2.waitKey(1) & 0xFF == ord("q"):
                             break
 
@@ -514,8 +578,8 @@ def run_video_inference(
         finally:
             if pbar is not None:
                 pbar.close()
-            if writer is not None:
+            for source_index, writer in writers.items():
                 writer.release()
-                logger.info("Video saved to %s", out_path)
+                logger.info("Video saved to %s", out_paths[source_index])
             if show:
                 cv2.destroyAllWindows()

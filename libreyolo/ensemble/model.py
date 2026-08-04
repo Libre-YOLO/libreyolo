@@ -34,8 +34,9 @@ from ..utils.image_loader import ImageInput, ImageLoader
 from ..utils.logging import ensure_default_logging
 from ..utils.predict_args import normalize_predict_kwargs
 from ..utils.results import Boxes, Results
-from ..utils.screen import ScreenSource, grab_screen, is_screen_source
-from ..utils.video import collect_video_results, is_video_file, run_video_inference
+from ..utils.screen import ScreenSource, grab_screen
+from ..utils.source import SourceKind, build_stream_source, classify_source
+from ..utils.video import collect_video_results, run_video_inference
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +294,7 @@ class LibreEnsemble:
         color_format: str = "auto",
         batch: int = 1,
         stream: bool = False,
+        stream_buffer: bool = False,
         vid_stride: int = 1,
         show: bool = False,
         **kwargs,
@@ -330,10 +332,12 @@ class LibreEnsemble:
             "color_format": color_format,
         }
 
-        if is_video_file(source):
+        source_spec = classify_source(source)
+
+        if source_spec.kind == SourceKind.VIDEO:
             gen = self._predict_frames(
-                source,
-                str(source),
+                source_spec.source,
+                str(source_spec.source),
                 conf_l,
                 iou_l,
                 imgsz_l,
@@ -344,14 +348,36 @@ class LibreEnsemble:
             )
             if stream:
                 return gen
-            return collect_video_results(gen, source, vid_stride)
+            return collect_video_results(gen, source_spec.source, vid_stride)
 
-        if is_screen_source(source):
+        if source_spec.live:
+            if not stream:
+                raise ValueError(
+                    "Live stream sources require stream=True so results are "
+                    "consumed incrementally."
+                )
+            frame_source = build_stream_source(
+                source_spec,
+                vid_stride=vid_stride,
+                stream_buffer=stream_buffer,
+            )
+            return self._predict_frames(
+                frame_source,
+                "stream",
+                conf_l,
+                iou_l,
+                imgsz_l,
+                device_l,
+                show=show,
+                **predict_kwargs,
+            )
+
+        if source_spec.kind == SourceKind.SCREEN:
             if stream:
 
                 def stream_results():
                     yield from self._predict_frames(
-                        ScreenSource(source, vid_stride=vid_stride),
+                        ScreenSource(source_spec.source, vid_stride=vid_stride),
                         str(source),
                         conf_l,
                         iou_l,
@@ -363,7 +389,7 @@ class LibreEnsemble:
 
                 return stream_results()
             return self._predict_one(
-                grab_screen(source),
+                grab_screen(source_spec.source),
                 conf_l,
                 iou_l,
                 imgsz_l,
@@ -373,10 +399,10 @@ class LibreEnsemble:
             )
 
         sources = None
-        if isinstance(source, (list, tuple)):
-            sources = list(source)
-        elif isinstance(source, (str, Path)) and Path(source).is_dir():
-            sources = ImageLoader.collect_images(source)
+        if source_spec.kind == SourceKind.IMAGE_BATCH:
+            sources = list(source_spec.items)
+        elif source_spec.kind == SourceKind.DIRECTORY:
+            sources = ImageLoader.collect_images(source_spec.source)
 
         if sources is not None:
             if stream:

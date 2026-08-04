@@ -61,11 +61,11 @@ from ..utils.results import (
     RestoredImage,
     SemanticMask,
 )
-from ..utils.screen import ScreenSource, grab_screen, is_screen_source
+from ..utils.screen import ScreenSource, grab_screen
+from ..utils.source import SourceKind, build_stream_source, classify_source
 from ..utils.video import (
     FrameSource,
     collect_video_results,
-    is_video_file,
     run_video_inference,
 )
 
@@ -4473,7 +4473,9 @@ class BaseBackend(ABC):
 
     def __call__(
         self,
-        source: Union[str, Path, Image.Image, np.ndarray, list, tuple, None] = None,
+        source: Union[
+            str, Path, int, Image.Image, np.ndarray, list, tuple, None
+        ] = None,
         *,
         conf: float = 0.25,
         iou: float = 0.45,
@@ -4485,6 +4487,7 @@ class BaseBackend(ABC):
         batch: int = 1,
         # video parameters
         stream: bool = False,
+        stream_buffer: bool = False,
         vid_stride: int = 1,
         show: bool = False,
         output_path: str | None = None,
@@ -4502,10 +4505,12 @@ class BaseBackend(ABC):
                 device,
             )
 
-        # Handle video input
-        if is_video_file(source):
+        source_spec = classify_source(source)
+
+        # Handle finite video input.
+        if source_spec.kind == SourceKind.VIDEO:
             gen = self._predict_video(
-                source,
+                source_spec.source,
                 conf=conf,
                 iou=iou,
                 imgsz=imgsz,
@@ -4518,12 +4523,36 @@ class BaseBackend(ABC):
             )
             if stream:
                 return gen
-            return collect_video_results(gen, source, vid_stride)
+            return collect_video_results(gen, source_spec.source, vid_stride)
+
+        if source_spec.live:
+            if not stream:
+                raise ValueError(
+                    "Live stream sources require stream=True so results are "
+                    "consumed incrementally."
+                )
+            frame_source = build_stream_source(
+                source_spec,
+                vid_stride=vid_stride,
+                stream_buffer=stream_buffer,
+            )
+            return self._predict_video(
+                frame_source,
+                source_label="stream",
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                max_det=max_det,
+                save=save,
+                show=show,
+                output_path=output_path,
+            )
 
         # Handle screen-capture input ("screen", "screen 1", "screen 1 x y w h")
-        if is_screen_source(source):
+        if source_spec.kind == SourceKind.SCREEN:
             return self._predict_screen(
-                source,
+                source_spec.source,
                 conf=conf,
                 iou=iou,
                 imgsz=imgsz,
@@ -4539,10 +4568,10 @@ class BaseBackend(ABC):
         # Handle in-memory batch input (list/tuple of images) and directories.
         # Both collapse to a list of images run in batches.
         images = None
-        if isinstance(source, (list, tuple)):
-            images = list(source)
-        elif isinstance(source, (str, Path)) and Path(source).is_dir():
-            images = ImageLoader.collect_images(source)
+        if source_spec.kind == SourceKind.IMAGE_BATCH:
+            images = list(source_spec.items)
+        elif source_spec.kind == SourceKind.DIRECTORY:
+            images = ImageLoader.collect_images(source_spec.source)
             if not images:
                 return iter(()) if stream else []
 

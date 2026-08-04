@@ -14,7 +14,6 @@ NOOP_PREDICT_KWARGS = {
     "retina_masks",
     "show_conf",
     "show_labels",
-    "stream_buffer",
     "verbose",
 }
 REJECTED_PREDICT_KWARGS = {"visualize", "embed"}
@@ -28,6 +27,7 @@ ACCEPTED_PREDICT_KWARGS = {
     "augment",
     "save",
     "stream",
+    "stream_buffer",
     "vid_stride",
 }
 
@@ -40,8 +40,7 @@ def normalize_predict_kwargs(kwargs: dict, passthrough: set[str] | None = None) 
     rejected = sorted(k for k in remaining if k in REJECTED_PREDICT_KWARGS)
     if rejected:
         raise NotImplementedError(
-            "LibreYOLO does not support these predict options: "
-            f"{', '.join(rejected)}."
+            f"LibreYOLO does not support these predict options: {', '.join(rejected)}."
         )
 
     noops = sorted(k for k in remaining if k in NOOP_PREDICT_KWARGS)

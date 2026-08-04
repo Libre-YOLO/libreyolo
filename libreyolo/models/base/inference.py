@@ -69,8 +69,13 @@ from ...utils.results import (
     RestoredImage,
     SemanticMask,
 )
-from ...utils.screen import ScreenSource, grab_screen, is_screen_source
-from ...utils.video import collect_video_results, is_video_file, run_video_inference
+from ...utils.screen import ScreenSource, grab_screen
+from ...utils.source import SourceKind, build_stream_source, classify_source
+from ...utils.video import (
+    FrameSource,
+    collect_video_results,
+    run_video_inference,
+)
 from .cuda_graph import forward_maybe_graphed, with_cuda_graph_scope
 
 logger = logging.getLogger(__name__)
@@ -163,7 +168,11 @@ class InferenceRunner:
     @with_cuda_graph_scope
     def __call__(
         self,
-        source: ImageInput | list[ImageInput] | tuple[ImageInput, ...] | None = None,
+        source: ImageInput
+        | int
+        | list[ImageInput | int]
+        | tuple[ImageInput | int, ...]
+        | None = None,
         *,
         conf: float = 0.25,
         iou: float = 0.45,
@@ -176,6 +185,7 @@ class InferenceRunner:
         batch: int = 1,
         # video parameters
         stream: bool = False,
+        stream_buffer: bool = False,
         vid_stride: int = 1,
         show: bool = False,
         # libreyolo-specific
@@ -209,6 +219,9 @@ class InferenceRunner:
                 instead of a materialized list. Recommended for video, screen
                 capture, and large directories to avoid high memory usage. A
                 single-image source yields exactly one Results.
+            stream_buffer: Keep every captured live frame instead of retaining
+                only the newest frame per camera. Buffering preserves frames but
+                can increase latency when inference is slower than capture.
             vid_stride: Process every N-th video or screen frame (default: 1).
             show: If True, display annotated frames in a window (video and
                 screen sources only).
@@ -281,10 +294,12 @@ class InferenceRunner:
                 "Use augment=False for edge models."
             )
 
-        # Handle video input
-        if is_video_file(source):
+        source_spec = classify_source(source)
+
+        # Handle finite video input.
+        if source_spec.kind == SourceKind.VIDEO:
             gen = self._predict_video(
-                source,
+                source_spec.source,
                 conf=conf,
                 iou=iou,
                 imgsz=imgsz,
@@ -298,12 +313,38 @@ class InferenceRunner:
             )
             if stream:
                 return gen
-            return collect_video_results(gen, source, vid_stride)
+            return collect_video_results(gen, source_spec.source, vid_stride)
+
+        # Webcams and network streams are unbounded and always stay lazy.
+        if source_spec.live:
+            if not stream:
+                raise ValueError(
+                    "Live stream sources require stream=True so results are "
+                    "consumed incrementally."
+                )
+            frame_source = build_stream_source(
+                source_spec,
+                vid_stride=vid_stride,
+                stream_buffer=stream_buffer,
+            )
+            return self._predict_video(
+                frame_source,
+                source_label="stream",
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                max_det=max_det,
+                save=save,
+                show=show,
+                output_path=output_path,
+                **kwargs,
+            )
 
         # Handle screen-capture input ("screen", "screen 1", "screen 1 x y w h")
-        if is_screen_source(source):
+        if source_spec.kind == SourceKind.SCREEN:
             return self._predict_screen(
-                source,
+                source_spec.source,
                 conf=conf,
                 iou=iou,
                 imgsz=imgsz,
@@ -321,10 +362,10 @@ class InferenceRunner:
         # Handle in-memory batch input (list/tuple of images) and directories.
         # Both collapse to a list of images run in batches.
         images: Optional[List[ImageInput]] = None
-        if isinstance(source, (list, tuple)):
-            images = list(source)
-        elif isinstance(source, (str, Path)) and Path(source).is_dir():
-            images = ImageLoader.collect_images(source)
+        if source_spec.kind == SourceKind.IMAGE_BATCH:
+            images = list(source_spec.items)
+        elif source_spec.kind == SourceKind.DIRECTORY:
+            images = ImageLoader.collect_images(source_spec.source)
             if not images:
                 return iter(()) if stream else []
 
@@ -1283,7 +1324,7 @@ class InferenceRunner:
 
     def _predict_video(
         self,
-        source: Union[str, Path],
+        source: Union[str, Path, FrameSource],
         *,
         conf: float = 0.25,
         iou: float = 0.45,
@@ -1294,13 +1335,15 @@ class InferenceRunner:
         show: bool = False,
         vid_stride: int = 1,
         output_path: Optional[str] = None,
+        source_label: Optional[str] = None,
         **kwargs,
     ) -> Generator[Results, None, None]:
         """Run inference on a video file, yielding per-frame Results."""
+        source_label = str(source) if source_label is None else source_label
         yield from run_video_inference(
             source,
             self._frame_predictor(
-                str(source),
+                source_label,
                 conf=conf,
                 iou=iou,
                 imgsz=imgsz,

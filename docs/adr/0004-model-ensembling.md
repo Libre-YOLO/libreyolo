@@ -105,7 +105,8 @@ expressible.
 - Members may live on different devices; fusion runs on the first member's
   output device (post-suppression row counts are small).
 - Task scope is detect only; any non-detect member raises at construction.
-  Sources: image path / PIL / numpy / bytes / list / directory / video / screen.
+  Sources: image path / PIL / numpy / bytes / list / directory / video / screen
+  / webcam / network stream / YouTube / multi-stream file.
   `stream=True` yields fused `Results` lazily for every source type.
 - `Results.speed` reports per-member inference times plus fusion
   (`member_0`, `member_1`, …, `fusion`), so the N× cost is visible.

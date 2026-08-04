@@ -42,6 +42,11 @@ dev = [
 ]
 
 [project.optional-dependencies]
+stream = [
+    # YouTube page URLs are resolved lazily to direct media URLs. Webcam,
+    # RTSP/RTMP/TCP/UDP, HLS, and local multi-stream inputs need no extra.
+    "yt-dlp",
+]
 onnx = [
     "onnx>=1.14.0",
     "onnxsim>=0.4.0",
@@ -220,6 +225,7 @@ wandb = [
     "wandb>=0.16.0",
 ]
 all = [
+    "libreyolo[stream]",
     "libreyolo[onnx]",
     "libreyolo[rfdetr]",
     "libreyolo[eomt]",

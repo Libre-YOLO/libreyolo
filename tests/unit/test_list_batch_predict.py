@@ -219,6 +219,46 @@ def test_runner_stream_screen_opens_capture_lazily(monkeypatch):
     assert opened == [("screen", 3)]
 
 
+@pytest.mark.parametrize("source", [0, "rtsp://127.0.0.1:8554/camera"])
+def test_runner_live_sources_require_lazy_streaming(source):
+    runner = InferenceRunner(_StubModel())
+
+    with pytest.raises(ValueError, match="stream=True"):
+        runner(source)
+
+
+def test_runner_routes_multi_camera_sources_to_threaded_capture(monkeypatch):
+    runner = InferenceRunner(_StubModel())
+    sentinel = object()
+    calls = {}
+
+    def fake_build(spec, *, vid_stride, stream_buffer):
+        calls["build"] = (spec.items, vid_stride, stream_buffer)
+        return sentinel
+
+    def fake_predict(source, **kwargs):
+        calls["predict"] = (source, kwargs)
+        yield "frame"
+
+    monkeypatch.setattr(inference_base, "build_stream_source", fake_build)
+    runner._predict_video = fake_predict
+
+    results = runner(
+        [0, "rtsp://127.0.0.1:8554/camera"],
+        stream=True,
+        stream_buffer=True,
+        vid_stride=2,
+    )
+
+    assert list(results) == ["frame"]
+    assert calls["build"] == (
+        (0, "rtsp://127.0.0.1:8554/camera"),
+        2,
+        True,
+    )
+    assert calls["predict"][0] is sentinel
+
+
 # =============================================================================
 # Exported-backend pipeline (BaseBackend and TensorRT batching)
 # =============================================================================
@@ -309,6 +349,37 @@ def test_backend_screen_source_grabs_one_rgb_image(monkeypatch):
     assert captured["image"].shape == (9, 11, 3)
     assert captured["kwargs"]["color_format"] == "rgb"
     assert result.path == "screen 1"
+
+
+@pytest.mark.parametrize("source", [0, "rtsp://127.0.0.1:8554/camera"])
+def test_backend_live_sources_require_lazy_streaming(source):
+    backend = _bare_backend()
+
+    with pytest.raises(ValueError, match="stream=True"):
+        backend(source)
+
+
+def test_backend_routes_webcam_to_threaded_capture(monkeypatch):
+    backend = _bare_backend()
+    sentinel = object()
+    calls = {}
+
+    def fake_build(spec, *, vid_stride, stream_buffer):
+        calls["build"] = (spec.items, vid_stride, stream_buffer)
+        return sentinel
+
+    def fake_predict(source, **kwargs):
+        calls["predict"] = (source, kwargs)
+        yield "frame"
+
+    monkeypatch.setattr(backend_base, "build_stream_source", fake_build)
+    backend._predict_video = fake_predict
+
+    results = backend(0, stream=True, stream_buffer=True, vid_stride=3)
+
+    assert list(results) == ["frame"]
+    assert calls["build"] == ((0,), 3, True)
+    assert calls["predict"][0] is sentinel
 
 
 def test_backend_sequential_batches_pass_indexed_save_stems():

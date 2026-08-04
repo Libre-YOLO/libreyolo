@@ -2,6 +2,7 @@
 
 import inspect
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Optional
 
@@ -49,6 +50,10 @@ def _build_predict_kwargs(
     max_det: int,
     save: bool,
     batch: int,
+    stream: bool,
+    stream_buffer: bool,
+    vid_stride: int,
+    show: bool,
     output_path: Optional[str],
     color_format: str,
     tiling: bool,
@@ -64,6 +69,10 @@ def _build_predict_kwargs(
         "max_det": max_det,
         "save": save,
         "batch": batch,
+        "stream": stream,
+        "stream_buffer": stream_buffer,
+        "vid_stride": vid_stride,
+        "show": show,
         "output_path": output_path,
         "color_format": color_format,
         "tiling": tiling,
@@ -121,6 +130,16 @@ def predict_cmd(
         help="Images per forward pass for directory sources "
         "(batch > 1 runs true batched inference on supported models)",
     ),
+    stream: bool = typer.Option(
+        False,
+        help="Yield results incrementally (automatic for webcams/live streams)",
+    ),
+    stream_buffer: bool = typer.Option(
+        False,
+        help="Buffer every live frame instead of keeping only the newest",
+    ),
+    vid_stride: int = typer.Option(1, help="Process every N-th video/live frame"),
+    show: bool = typer.Option(False, help="Display video/live results; q stops"),
     tiling: bool = typer.Option(False, help="Tiled inference for large images"),
     overlap_ratio: float = typer.Option(0.2, help="Tile overlap ratio"),
     output_path: Optional[str] = typer.Option(None, help="Explicit output path"),
@@ -168,10 +187,29 @@ def predict_cmd(
     except ValueError as exc:
         exit_with_error(out, "invalid_imgsz", str(exc))
 
-    # Validate source exists
-    source_path = Path(source)
-    if not source_path.exists() and not source.startswith(("http://", "https://")):
-        exit_with_error(out, "source_not_found", f"Source not found: {source}")
+    # Classify before path validation so webcam indices and RTSP-style URLs do
+    # not fall through as nonexistent image files.
+    from libreyolo.utils.source import SourceKind, classify_source
+
+    try:
+        source_spec = classify_source(source)
+    except FileNotFoundError as exc:
+        exit_with_error(out, "source_not_found", str(exc))
+    except (TypeError, ValueError) as exc:
+        exit_with_error(out, "config_type_error", str(exc))
+
+    remote_prefixes = ("http://", "https://", "s3://", "gs://")
+    if source_spec.kind in {SourceKind.IMAGE, SourceKind.VIDEO}:
+        source_path = Path(source)
+        if not source_path.exists() and not source.startswith(remote_prefixes):
+            exit_with_error(out, "source_not_found", f"Source not found: {source}")
+
+    runtime_source = (
+        source_spec.items[0]
+        if source_spec.kind == SourceKind.STREAM
+        else source_spec.source
+    )
+    effective_stream = stream or source_spec.live
 
     # Resolve CLI model name (yolox-s → LibreYOLOXs.pt)
     model_path = resolve_model_or_exit(out, model)
@@ -288,6 +326,10 @@ def predict_cmd(
         max_det=max_det,
         save=save,
         batch=batch,
+        stream=effective_stream,
+        stream_buffer=stream_buffer,
+        vid_stride=vid_stride,
+        show=show,
         output_path=output_path,
         color_format=color_format,
         tiling=tiling,
@@ -299,8 +341,54 @@ def predict_cmd(
     if gallery_obj is not None:
         predict_kwargs["gallery"] = gallery_obj
         predict_kwargs["threshold"] = gallery_threshold
-    results = loaded_model(source, **predict_kwargs)
+    results = loaded_model(runtime_source, **predict_kwargs)
     elapsed = time.time() - t0
+
+    if effective_stream and isinstance(results, Iterator):
+        image_size = get_loaded_model_input_size(loaded_model, imgsz=imgsz)
+        image_shape = (
+            [image_size[0], image_size[1]]
+            if isinstance(image_size, tuple)
+            else [image_size, image_size]
+        )
+        frame_number = 0
+        try:
+            for result in results:
+                frame_number += 1
+                predictions = result.summary()
+                path = result.path or str(source)
+                frame_idx = getattr(result, "frame_idx", None)
+                human = (
+                    f"frame {frame_number} {path}: {result.orig_shape[1]}x"
+                    f"{result.orig_shape[0]} {len(predictions)} result"
+                    f"{'s' if len(predictions) != 1 else ''}"
+                )
+                data = {
+                    "source": str(source),
+                    "model": model,
+                    "model_family": get_loaded_model_family(loaded_model) or "unknown",
+                    "image_size": image_shape,
+                    "device": str(loaded_model.device),
+                    "frame_index": frame_idx,
+                    "results": [
+                        {
+                            "path": path,
+                            "original_shape": list(result.orig_shape),
+                            "predictions": predictions,
+                        }
+                    ],
+                    "_human_text": human,
+                }
+                if save and output_path:
+                    data["output_path"] = output_path
+                out.result(data)
+        except KeyboardInterrupt:
+            out.progress("Inference stopped.")
+        finally:
+            close = getattr(results, "close", None)
+            if close is not None:
+                close()
+        return
 
     # Normalize to list
     if not isinstance(results, list):
