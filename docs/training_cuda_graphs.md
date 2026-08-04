@@ -100,7 +100,38 @@ Three things move these numbers:
   run sees no wall-clock change, so check `libreyolo profile` first if you
   are not sure where the time goes.
 
+### Without AMP
+
+Everything above is measured under AMP, the default. Capture engages the same
+way at `amp=False`, but the balance shifts: fp32 kernels run longer, so a step
+is less launch-bound and most families gain less. A few gain more.
+
+| Family | Batch | AMP | fp32 |
+| --- | --- | --- | --- |
+| mobilenetv4-s | 16 | 2.74x | 3.61x |
+| fomo-s | 16 | 3.63x | 3.06x |
+| yolo9-t | 8 | 1.99x | 1.69x |
+| yolo9_e2e-t | 8 | 1.76x | 1.52x |
+| picodet-s | 8 | 1.22x | 1.15x |
+| dfine-n | 4 | 1.16x | 1.13x |
+| yolox-t | 8 | 1.13x | 1.08x |
+| nafnet-s | 8 | 1.26x | 1.08x |
+| resnet-18 | 16 | 1.25x | 1.05x |
+| rtmdet-t | 8 | 1.10x | 1.04x |
+| yolonas-s | 8 | 1.17x | 1.03x |
+| rtdetr-r18 | 4 | 1.12x | 0.99x |
+
 ## Numerics
+
+**The parity column below is measured under AMP.** At `amp=False` these
+families do not reproduce their own eager runs on this hardware, with or
+without capture: two identical seeded eager YOLO9-t runs diverge by 36%
+relative over 20 steps, and YOLOX-t by 2.6%. cuDNN picks a nondeterministic
+weight-gradient algorithm for some fp32 convolution shapes (measured directly:
+two back-to-back fp32 wgrads on one 8x64x160x160 convolution differ by 3.2e-7
+relative), and a training loop compounds that. Turning TF32 off does not fix
+it. So at fp32 "bit-identical" is not an available guarantee for anything,
+and the graph is not what takes it away.
 
 The four "Numerics" values above mean:
 
@@ -127,9 +158,21 @@ The four "Numerics" values above mean:
   to eager, in the same way a different seed is. The manager logs this once
   at capture time for any family it applies to.
 
+The sharpest evidence is per-parameter, at step 0, where both arms provably
+hold identical weights: the loss is bit-identical for every one of the 24
+families, and no BatchNorm buffer differs. Gradients are bit-identical too
+for yolo9 (583/583), yolo9_p2 (775/775), yolo9_e2e (693/693), yolox
+(219/219), yolonas (460/460), picodet (369/369), yolo7 (271/271) and deimv2
+(298/300). D-FINE, DEIM and RT-DETRv2 look far worse (112/400, 113/422,
+95/312) until the same comparison is run eager against eager, which gives
+116/400, 117/422 and 98/312: those families reproduce barely a quarter of
+their own gradients, and capture moves 3 or 4 more out of several hundred.
+
 `tests/unit/test_cuda_graph_training.py` gates the dispatch and gating
 rules; `tests/e2e/test_cuda_graph_training_families.py` runs real two-epoch
-trainings per family and holds each one to the tolerance documented here.
+trainings per family and holds each one to the tolerance documented here,
+plus layer freezing, resume-from-checkpoint, gradient accumulation,
+validation with a live graph, and capture failing mid-run.
 
 ## Shapes
 

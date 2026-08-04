@@ -467,6 +467,166 @@ def test_non_detect_loss_trajectory_stays_within_eager_noise(
 
 
 @requires_cuda
+def test_capture_engages_without_amp(detect_dataset, tmp_path, caplog):
+    """``amp=False`` is a supported path and must still capture.
+
+    Everything else in this file runs under AMP, the default. Without it
+    ``trainer.scaler`` is None and the autocast context is never entered, so
+    the capture path takes different branches in the trainer.
+
+    No loss assertion here on purpose: at fp32 this hardware does not
+    reproduce its own eager run (cuDNN picks a nondeterministic weight-
+    gradient algorithm for some shapes), so equality would test that noise
+    rather than the capture. See docs/training_cuda_graphs.md.
+    """
+    import libreyolo
+
+    torch.manual_seed(0)
+    model = libreyolo.LibreYOLO9(None, "t")
+    with caplog.at_level(logging.INFO, logger=CAPTURE_LOGGER):
+        result = model.train(
+            data=str(detect_dataset),
+            epochs=2,
+            batch=4,
+            imgsz=320,
+            device=0,
+            workers=0,
+            seed=0,
+            amp=False,
+            project=str(tmp_path),
+            name="fp32",
+            exist_ok=True,
+            cuda_graph=True,
+            eval_interval=100,
+        )
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("captured training forward/backward" in m for m in messages), messages
+    assert not [m for m in messages if "capture disabled" in m], messages
+    assert all(np.isfinite(result["epoch_losses"])), result["epoch_losses"]
+
+
+@requires_cuda
+def test_layer_freezing_matches_eager(detect_dataset, tmp_path):
+    """Frozen layers change which parameters get gradients.
+
+    ``make_graphed_callables`` is handed the whole adapter, so a frozen
+    backbone means most of its parameters want no gradient. That path runs
+    on ``allow_unused_input=True``; this checks it produces the eager answer
+    rather than silently dropping live gradients too.
+    """
+    import libreyolo
+
+    def run(cuda_graph):
+        torch.manual_seed(0)
+        model = libreyolo.LibreYOLO9(None, "t")
+        return model.train(
+            data=str(detect_dataset),
+            epochs=2,
+            batch=4,
+            imgsz=320,
+            device=0,
+            workers=0,
+            seed=0,
+            freeze="10",
+            project=str(tmp_path),
+            name="graph" if cuda_graph else "eager",
+            exist_ok=True,
+            cuda_graph=cuda_graph,
+            eval_interval=100,
+        )["epoch_losses"]
+
+    assert run(False) == run(True)
+
+
+@requires_cuda
+def test_resume_from_checkpoint_recaptures(detect_dataset, tmp_path):
+    """A resumed run must capture again and keep training.
+
+    Capture records parameter addresses, so a checkpoint load that replaced
+    tensors instead of copying into them would leave the graph reading freed
+    storage. Resume loads before ``setup()``, so capture always sees the
+    final tensors, but that ordering is worth a test rather than a comment.
+    """
+    import libreyolo
+
+    torch.manual_seed(0)
+    first = libreyolo.LibreYOLO9(None, "t").train(
+        data=str(detect_dataset),
+        epochs=2,
+        batch=4,
+        imgsz=320,
+        device=0,
+        workers=0,
+        seed=0,
+        project=str(tmp_path),
+        name="first",
+        exist_ok=True,
+        cuda_graph=True,
+        eval_interval=100,
+    )
+
+    torch.manual_seed(0)
+    resumed = libreyolo.LibreYOLO9(first["last_checkpoint"], "t").train(
+        data=str(detect_dataset),
+        epochs=4,
+        batch=4,
+        imgsz=320,
+        device=0,
+        workers=0,
+        seed=0,
+        project=str(tmp_path),
+        name="second",
+        exist_ok=True,
+        cuda_graph=True,
+        resume=True,
+        eval_interval=100,
+    )
+    assert resumed["epoch_losses"], "resume produced no epochs"
+    assert all(np.isfinite(resumed["epoch_losses"])), resumed["epoch_losses"]
+
+
+@requires_cuda
+def test_capture_failure_does_not_kill_the_run(detect_dataset, tmp_path, caplog):
+    """Capture is opt-in and best-effort: failing it must cost speed, not the run.
+
+    The realistic trigger is an out-of-memory while allocating the graph's
+    static buffers, which is exactly when a user least wants their training
+    to die.
+    """
+    import libreyolo
+
+    def exploding(*args, **kwargs):
+        raise torch.cuda.OutOfMemoryError("simulated OOM during capture")
+
+    original = torch.cuda.make_graphed_callables
+    torch.cuda.make_graphed_callables = exploding
+    try:
+        with caplog.at_level(logging.INFO, logger=CAPTURE_LOGGER):
+            torch.manual_seed(0)
+            result = libreyolo.LibreYOLO9(None, "t").train(
+                data=str(detect_dataset),
+                epochs=2,
+                batch=4,
+                imgsz=320,
+                device=0,
+                workers=0,
+                seed=0,
+                project=str(tmp_path),
+                name="oom",
+                exist_ok=True,
+                cuda_graph=True,
+                eval_interval=100,
+            )
+    finally:
+        torch.cuda.make_graphed_callables = original
+
+    messages = [record.getMessage() for record in caplog.records]
+    disabled = [m for m in messages if "capture disabled" in m]
+    assert len(disabled) == 1, f"expected exactly one warning, got {disabled}"
+    assert all(np.isfinite(result["epoch_losses"])), result["epoch_losses"]
+
+
+@requires_cuda
 def test_gradient_accumulation_matches_eager(detect_dataset, tmp_path):
     """Capture must be safe when ``zero_grad`` runs once per window.
 
