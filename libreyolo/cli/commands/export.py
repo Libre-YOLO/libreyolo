@@ -22,8 +22,13 @@ def export_cmd(
         "onnx",
         help=(
             "Export format: onnx, torchscript, executorch, tensorrt, openvino, "
-            "mnn, ncnn, tflite (alias: litert), coreml, coreai (Apple, macOS only)"
+            "mnn, rknn, ncnn, tflite (alias: litert), coreml, "
+            "coreai (Apple, macOS only)"
         ),
+    ),
+    name: Optional[str] = typer.Option(
+        None,
+        help="RKNN target platform (currently rk3588 only)",
     ),
     imgsz: Optional[str] = typer.Option(
         None,
@@ -56,6 +61,10 @@ def export_cmd(
     json_output: bool = typer.Option(False, "--json", help="JSON output to stdout"),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress stderr"),
     verbose: bool = typer.Option(False, help="Verbose export logging"),
+    verify: bool = typer.Option(
+        False,
+        help="Run RKNN Toolkit2's PC simulator and compare with ONNX Runtime",
+    ),
     help_json: bool = typer.Option(
         False,
         "--help-json",
@@ -95,6 +104,18 @@ def export_cmd(
             "max_det is only supported for ONNX embedded NMS; CoreML embedded "
             "NMS does not expose max_det.",
         )
+    if name is not None and fmt != "rknn":
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "--name is currently an RKNN target option; use it with --format rknn.",
+        )
+    if verify and fmt != "rknn":
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "--verify is currently supported only with --format rknn.",
+        )
 
     model_path = resolve_model_or_exit(out, model)
 
@@ -125,6 +146,9 @@ def export_cmd(
         export_kwargs["iou"] = iou
         if fmt == "onnx":
             export_kwargs["max_det"] = max_det
+    if fmt == "rknn":
+        export_kwargs["name"] = name or "rk3588"
+        export_kwargs["verify"] = verify
     parsed_imgsz = None
     if imgsz is not None:
         try:
@@ -194,6 +218,9 @@ def export_cmd(
         "half": half,
         "int8": int8,
     }
+    if fmt == "rknn":
+        data_out["target"] = name or "rk3588"
+        data_out["verified"] = verify
 
     if not json_output:
         data_out["_human_text"] = (

@@ -6,107 +6,107 @@ Do not edit the matrix by hand.
 `✓` means parity-validated, `exp` means conversion is available without a
 numeric parity guarantee, and an empty cell is blocked in preflight.
 
-| Family | Task | onnx | torchscript | executorch | tensorrt | openvino | mnn | ncnn | tflite | coreml | coreai |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| alexnet | classify | ✓ | ✓ | exp | ✓ | ✓ |  | exp |  |  |  |
-| birefnet | matte | exp | ✓ |  |  |  |  |  |  |  |  |
-| centernet | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |  |
-| clip | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  | ✓ |
-| clip | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |
-| convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |
-| deeplabv3 | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |
-| deformable_detr | detect | ✓ | exp | exp | exp | exp |  |  |  |  |  |
-| deim | detect | ✓ | ✓ |  | exp | exp | ✓ |  |  |  | ✓ |
-| deimv2 | detect | exp | ✓ |  | exp | exp | exp |  |  |  | ✓ |
-| deit | classify | ✓ | ✓ | exp | ✓ | ✓ |  | exp |  |  |  |
-| depth_anything | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  | ✓ |
-| depth_anything3 | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |
-| detr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |  |
-| dexined | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  |
-| dfine | detect | ✓ | ✓ |  | exp | ✓ | ✓ |  |  |  | ✓ |
-| dfine | segment | ✓ | ✓ |  | exp | ✓ |  |  |  |  |  |
-| dinodetr | detect | ✓ | exp | exp | exp | exp |  |  |  |  |  |
-| dinov2 | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |
-| dinov2 | classify | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  | exp |
-| dinov2 | embed | ✓ | ✓ | exp | exp | exp |  |  | ✓ |  |  |
-| ec | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  |  | ✓ |
-| ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |  |
-| ec | segment | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |  |
-| edgetam | segment |  |  |  |  |  |  |  |  |  |  |
-| efficientdet | detect | ✓ | ✓ | exp | ✓ | ✓ |  | exp |  |  |  |
-| efficientnetv2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |
-| eomt | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |
-| eomt | segment |  |  |  |  |  |  |  |  |  |  |
-| eomt | panoptic |  |  |  |  |  |  |  |  |  |  |
-| faster_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |  |
-| fcn | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |
-| fcos | detect | ✓ | ✓ |  |  | exp |  |  |  |  |  |
-| feynobg | matte | exp | ✓ | exp |  |  |  |  |  |  |  |
-| florence2 | detect |  |  |  |  |  |  |  |  |  |  |
-| fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  | ✓ |
-| grounding_dino | detect |  |  |  |  |  |  |  |  |  |  |
-| hrnet | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |
-| internvl3 | detect |  |  |  |  |  |  |  |  |  |  |
-| kosmos2 | detect |  |  |  |  |  |  |  |  |  |  |
-| l2cs | gaze | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |
-| lfm2vl | detect |  |  |  |  |  |  |  |  |  |  |
-| lingbotvision | semantic | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  | ✓ |
-| locateanything | detect |  |  |  |  |  |  |  |  |  |  |
-| locateanything | point |  |  |  |  |  |  |  |  |  |  |
-| lwdetr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |  |
-| mask_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |  |
-| mask_rcnn | segment | ✓ |  |  |  |  |  |  |  |  |  |
-| midas | depth | ✓ | ✓ | exp | ✓ | ✓ |  | exp |  |  |  |
-| mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |
-| mobilesam | segment |  |  |  |  |  |  |  |  |  |  |
-| moge2 | normal | ✓ | ✓ | ✓ | ✓ | ✓ |  | exp |  |  |  |
-| nafnet | restore | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  | ✓ |
-| omdet_turbo | detect |  |  |  |  |  |  |  |  |  |  |
-| ov_deim | detect |  |  |  |  |  |  |  |  |  |  |
-| owlv2 | detect |  |  |  |  |  |  |  |  |  |  |
-| picodet | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  | ✓ |
-| picosam3 | segment | ✓ |  |  |  |  |  |  |  |  |  |
-| pidnet | semantic | ✓ | ✓ | ✓ | exp | ✓ |  | ✓ | ✓ |  | ✓ |
-| ppocr | ocr |  |  |  |  |  |  |  |  |  |  |
-| qwen3vl | detect |  |  |  |  |  |  |  |  |  |  |
-| realesrgan | restore | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |
-| resnet | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |
-| retinanet | detect | ✓ |  |  |  |  |  |  |  |  |  |
-| rfdetr | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | exp | ✓ |
-| rfdetr | segment | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |  |
-| rfdetr | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |  |
-| rfdetr | obb | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |  |
-| rtdetr | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  | exp | ✓ |
-| rtdetrv2 | detect | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  |  | ✓ |
-| rtdetrv4 | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  |  | ✓ |
-| rtmdet | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  |  |  | ✓ |
-| rtmdet | segment |  |  |  |  |  |  |  |  |  |  |
-| sam | segment |  |  |  |  |  |  |  |  |  |  |
-| sam2 | segment |  |  |  |  |  |  |  |  |  |  |
-| sam3 | segment |  |  |  |  |  |  |  |  |  |  |
-| sam3dbody | mesh |  |  |  |  |  |  |  |  |  |  |
-| segformer | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |
-| siglip2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  | ✓ |
-| siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  |
-| smolvlm2 | detect |  |  |  |  |  |  |  |  |  |  |
-| ssd | detect | ✓ |  |  |  |  |  |  |  |  |  |
-| swin | classify | ✓ | ✓ | exp | ✓ | ✓ |  | exp |  |  |  |
-| swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  |  | ✓ |  |  |
-| teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  |
-| vgg | classify | ✓ | ✓ | exp | ✓ | ✓ |  | exp |  |  |  |
-| vit | classify | ✓ | exp | exp | exp | exp |  | exp |  |  |  |
-| yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  | ✓ |
-| yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  | exp |  |  | ✓ |
-| yolo3 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  | ✓ |
-| yolo4 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  | ✓ |
-| yolo7 | detect | ✓ | ✓ | ✓ | exp | ✓ |  | ✓ |  |  | ✓ |
-| yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
-| yolo9_e2e | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  |  | ✓ |
-| yolo9_p2 | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ | exp |  |  | ✓ |
-| yolonas | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ | ✓ | ✓ |  | ✓ |
-| yolonas | pose | ✓ | ✓ | ✓ | exp | ✓ |  | ✓ |  |  |  |
-| yolox | detect | ✓ | ✓ | ✓ | exp | ✓ |  | ✓ | ✓ | exp | ✓ |
-| zipdepth | depth | ✓ | ✓ | ✓ | exp | ✓ |  | ✓ |  |  | ✓ |
+| Family | Task | onnx | torchscript | executorch | tensorrt | openvino | mnn | rknn | ncnn | tflite | coreml | coreai |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| alexnet | classify | ✓ | ✓ | exp | ✓ | ✓ |  |  | exp |  |  |  |
+| birefnet | matte | exp | ✓ |  |  |  |  |  |  |  |  |  |
+| centernet | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |  |  |
+| clip | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  | ✓ |
+| clip | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |
+| convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |  | ✓ |
+| deeplabv3 | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |
+| deformable_detr | detect | ✓ | exp | exp | exp | exp |  |  |  |  |  |  |
+| deim | detect | ✓ | ✓ |  | exp | exp | ✓ |  |  |  |  | ✓ |
+| deimv2 | detect | exp | ✓ |  | exp | exp | exp |  |  |  |  | ✓ |
+| deit | classify | ✓ | ✓ | exp | ✓ | ✓ |  |  | exp |  |  |  |
+| depth_anything | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  | ✓ |
+| depth_anything3 | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |
+| detr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |  |  |
+| dexined | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  |
+| dfine | detect | ✓ | ✓ |  | exp | ✓ | ✓ |  |  |  |  | ✓ |
+| dfine | segment | ✓ | ✓ |  | exp | ✓ |  |  |  |  |  |  |
+| dinodetr | detect | ✓ | exp | exp | exp | exp |  |  |  |  |  |  |
+| dinov2 | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |
+| dinov2 | classify | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |  | exp |
+| dinov2 | embed | ✓ | ✓ | exp | exp | exp |  |  |  | ✓ |  |  |
+| ec | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  |  |  | ✓ |
+| ec | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |  |  |
+| ec | segment | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |  |  |
+| edgetam | segment |  |  |  |  |  |  |  |  |  |  |  |
+| efficientdet | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | exp |  |  |  |
+| efficientnetv2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |  | ✓ |
+| eomt | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |
+| eomt | segment |  |  |  |  |  |  |  |  |  |  |  |
+| eomt | panoptic |  |  |  |  |  |  |  |  |  |  |  |
+| faster_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |  |  |
+| fcn | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |
+| fcos | detect | ✓ | ✓ |  |  | exp |  |  |  |  |  |  |
+| feynobg | matte | exp | ✓ | exp |  |  |  |  |  |  |  |  |
+| florence2 | detect |  |  |  |  |  |  |  |  |  |  |  |
+| fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ |
+| grounding_dino | detect |  |  |  |  |  |  |  |  |  |  |  |
+| hrnet | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |
+| internvl3 | detect |  |  |  |  |  |  |  |  |  |  |  |
+| kosmos2 | detect |  |  |  |  |  |  |  |  |  |  |  |
+| l2cs | gaze | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |
+| lfm2vl | detect |  |  |  |  |  |  |  |  |  |  |  |
+| lingbotvision | semantic | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |  | ✓ |
+| locateanything | detect |  |  |  |  |  |  |  |  |  |  |  |
+| locateanything | point |  |  |  |  |  |  |  |  |  |  |  |
+| lwdetr | detect | ✓ | ✓ | exp | exp | exp |  |  |  |  |  |  |
+| mask_rcnn | detect | ✓ |  |  |  |  |  |  |  |  |  |  |
+| mask_rcnn | segment | ✓ |  |  |  |  |  |  |  |  |  |  |
+| midas | depth | ✓ | ✓ | exp | ✓ | ✓ |  |  | exp |  |  |  |
+| mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |  | ✓ |
+| mobilesam | segment |  |  |  |  |  |  |  |  |  |  |  |
+| moge2 | normal | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | exp |  |  |  |
+| nafnet | restore | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ |
+| omdet_turbo | detect |  |  |  |  |  |  |  |  |  |  |  |
+| ov_deim | detect |  |  |  |  |  |  |  |  |  |  |  |
+| owlv2 | detect |  |  |  |  |  |  |  |  |  |  |  |
+| picodet | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  | exp | ✓ |  |  | ✓ |
+| picosam3 | segment | ✓ |  |  |  |  |  |  |  |  |  |  |
+| pidnet | semantic | ✓ | ✓ | ✓ | exp | ✓ |  |  | ✓ | ✓ |  | ✓ |
+| ppocr | ocr |  |  |  |  |  |  |  |  |  |  |  |
+| qwen3vl | detect |  |  |  |  |  |  |  |  |  |  |  |
+| realesrgan | restore | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |  | ✓ |
+| resnet | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |  | ✓ |
+| retinanet | detect | ✓ |  |  |  |  |  |  |  |  |  |  |
+| rfdetr | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | exp | ✓ |
+| rfdetr | segment | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |  |  |
+| rfdetr | pose | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |  |  |
+| rfdetr | obb | ✓ | ✓ | ✓ | exp | exp |  |  |  |  |  |  |
+| rtdetr | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  |  | exp | ✓ |
+| rtdetrv2 | detect | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  |  |  | ✓ |
+| rtdetrv4 | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  |  |  | ✓ |
+| rtmdet | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  |  |  |  | ✓ |
+| rtmdet | segment |  |  |  |  |  |  |  |  |  |  |  |
+| sam | segment |  |  |  |  |  |  |  |  |  |  |  |
+| sam2 | segment |  |  |  |  |  |  |  |  |  |  |  |
+| sam3 | segment |  |  |  |  |  |  |  |  |  |  |  |
+| sam3dbody | mesh |  |  |  |  |  |  |  |  |  |  |  |
+| segformer | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |
+| siglip2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  | ✓ |
+| siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  |
+| smolvlm2 | detect |  |  |  |  |  |  |  |  |  |  |  |
+| ssd | detect | ✓ |  |  |  |  |  |  |  |  |  |  |
+| swin | classify | ✓ | ✓ | exp | ✓ | ✓ |  |  | exp |  |  |  |
+| swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  |  |  | ✓ |  |  |
+| teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  |
+| vgg | classify | ✓ | ✓ | exp | ✓ | ✓ |  |  | exp |  |  |  |
+| vit | classify | ✓ | exp | exp | exp | exp |  |  | exp |  |  |  |
+| yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ |
+| yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | exp |  |  | ✓ |
+| yolo3 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ |
+| yolo4 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ |
+| yolo7 | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  | ✓ |  |  | ✓ |
+| yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp | ✓ | ✓ | exp | ✓ |
+| yolo9_e2e | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ | exp | ✓ |  |  | ✓ |
+| yolo9_p2 | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  | exp |  |  | ✓ |
+| yolonas | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ | exp | ✓ | ✓ |  | ✓ |
+| yolonas | pose | ✓ | ✓ | ✓ | exp | ✓ |  |  | ✓ |  |  |  |
+| yolox | detect | ✓ | ✓ | ✓ | exp | ✓ |  |  | ✓ | ✓ | exp | ✓ |
+| zipdepth | depth | ✓ | ✓ | ✓ | exp | ✓ |  |  | ✓ |  |  | ✓ |
 
 ## Parity thresholds
 
@@ -416,6 +416,7 @@ A check mark applies only under any constraint listed here.
 ## Blocked combinations
 
 - `alexnet` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `alexnet` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `alexnet` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `alexnet` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `alexnet` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
@@ -423,104 +424,127 @@ A check mark applies only under any constraint listed here.
 - `birefnet` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `birefnet` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `birefnet` / `matte` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `birefnet` / `matte` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `birefnet` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
 - `birefnet` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `birefnet` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `birefnet` / `matte` / `coreai`: The decoder needs torchvision deform_conv2d, which the Core AI converter cannot lower ('unable to handle call function op: deform_conv2d.default'). The same operator already blocks the NCNN path. An encoder-only contract is the realistic route, matching the seam the CUDA graph work used.
 - `centernet` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `centernet` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `centernet` / `detect` / `ncnn`: NCNN cannot lower CenterNet's portable deformable sampling plus baked top-k decode contract. Use ONNX or TorchScript.
 - `centernet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `centernet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `centernet` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `clip` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `clip` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `clip` / `classify` / `ncnn`: No parity-valid frozen-class artifact is available for this runtime.
 - `clip` / `classify` / `tflite`: onnx2tf 2.6.7 emits a LiteRT graph whose TRANSPOSE receives a rank-5 permutation for a rank-4 tensor.
 - `clip` / `classify` / `coreml`: No parity-valid frozen-class artifact is available for this runtime.
 - `clip` / `embed` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `clip` / `embed` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `clip` / `embed` / `ncnn`: PNNX 20260526 leaves unsupported pnnx.Expression nodes in the CLIP attention graph, so the generated NCNN network has no runnable input.
 - `clip` / `embed` / `tflite`: onnx2tf 2.6.7 emits a LiteRT graph whose TRANSPOSE receives a rank-5 permutation for a rank-4 tensor.
 - `clip` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `clip` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
 - `convnext` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `convnext` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `convnext` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `deeplabv3` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `deeplabv3` / `semantic` / `mnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `deeplabv3` / `semantic` / `rknn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `deeplabv3` / `semantic` / `ncnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `deeplabv3` / `semantic` / `tflite`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `deeplabv3` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `deeplabv3` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `deformable_detr` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `deformable_detr` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `deformable_detr` / `detect` / `ncnn`: NCNN export is not supported for Deformable DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deformable_detr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deformable_detr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `deformable_detr` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `deim` / `detect` / `executorch`: The trained nano model captures, lowers, and serializes, but ExecuTorch 1.2 runtime execution fails with an invalid delegated tensor dimension order.
+- `deim` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `deim` / `detect` / `ncnn`: NCNN export is not supported for DEIM: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deim` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deim` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `deimv2` / `detect` / `executorch`: The trained atto model captures, lowers, and serializes, but the ExecuTorch 1.2 runtime process terminates while executing forward.
+- `deimv2` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `deimv2` / `detect` / `ncnn`: NCNN export is not supported for DEIMv2: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deimv2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deimv2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `deit` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `deit` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `deit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `deit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `depth_anything` / `depth` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `depth_anything` / `depth` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `depth_anything` / `depth` / `ncnn`: PNNX 20260526 reports unsupported batch-index reshapes in the DINOv2 transformer graph; the produced NCNN artifact fails numeric parity.
 - `depth_anything` / `depth` / `tflite`: onnx2tf 2.6.7 converts the DINOv2 depth graph, but LiteRT 2.1.2 cannot broadcast [1,3,3,32] and [1,72,72,32] in a generated ADD.
 - `depth_anything` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `depth_anything3` / `depth` / `mnn`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
+- `depth_anything3` / `depth` / `rknn`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `ncnn`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `tflite`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `coreml`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `depth_anything3` / `depth` / `coreai`: The model raises NotImplementedError for every format: depth export is out of scope per ADR 0006, the depth task contract. Depth Anything V2 exports and validates at 5.2e-06, so this is specific to the V3 family and not a Core AI limitation.
 - `detr` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `detr` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `detr` / `detect` / `ncnn`: NCNN export is not supported for DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `detr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `detr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `detr` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `dexined` / `edge` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `dexined` / `edge` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `dexined` / `edge` / `ncnn`: PNNX 20260526 leaves an unsupported Tensor.index channel-reversal node, so the generated NCNN network has no runnable input.
 - `dexined` / `edge` / `coreml`: This edge runtime has no parity-valid artifact for the requested format.
 - `dexined` / `edge` / `coreai`: This edge runtime has no parity-valid artifact for the requested format.
 - `dfine` / `detect` / `executorch`: Strict capture reaches an unsupported ContextVar read in deformable attention. Forcing the manual exported grid-sample path permits serialization, but ExecuTorch 1.2 runtime execution still fails with an invalid delegated tensor dimension order.
+- `dfine` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `dfine` / `detect` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dfine` / `detect` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `executorch`: Strict capture reaches the same untraceable deformable-attention ContextVar read as detection. Forcing the manual capture path permits serialization, but ExecuTorch 1.2 runtime execution fails with an invalid delegated tensor dimension order.
 - `dfine` / `segment` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `dfine` / `segment` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `dfine` / `segment` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dfine` / `segment` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
 - `dinodetr` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `dinodetr` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `dinodetr` / `detect` / `ncnn`: NCNN export is not supported for DINO-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dinodetr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `dinodetr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dinodetr` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `dinov2` / `semantic` / `mnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `dinov2` / `semantic` / `rknn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `dinov2` / `semantic` / `ncnn`: PNNX 20260526 cannot lower the DINOv2 attention graph's batch-axis broadcasts and leaves an unsupported pnnx.Expression node.
 - `dinov2` / `semantic` / `tflite`: onnx2tf 2.6.7 flatbuffer-direct lowering cannot lower the backbone's cubic Resize because its input C/H/W signature remains dynamic.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `dinov2` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `dinov2` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `dinov2` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export is not implemented for this format.
 - `dinov2` / `embed` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `dinov2` / `embed` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `dinov2` / `embed` / `ncnn`: PNNX 20260526 cannot lower the DINOv2 attention graph's batch-axis broadcasts and leaves an unsupported pnnx.Expression node.
 - `dinov2` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `dinov2` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
+- `ec` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `ec` / `detect` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_LAYERNORMALIZATION custom operation that LiteRT 2.1.2 cannot prepare.
 - `ec` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `ec` / `pose` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `ec` / `pose` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `ec` / `pose` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `pose` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `ec` / `pose` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `ec` / `pose` / `coreai`: This family and task have not been validated for Core AI export.
 - `ec` / `segment` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `ec` / `segment` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `ec` / `segment` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `segment` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `ec` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -531,18 +555,22 @@ A check mark applies only under any constraint listed here.
 - `edgetam` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `mnn`: Promptable model export is out of scope for the v1 runtime contract.
+- `edgetam` / `segment` / `rknn`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `edgetam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `efficientdet` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `efficientdet` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `efficientdet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `efficientdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `efficientdet` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `efficientnetv2` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `efficientnetv2` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `efficientnetv2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `eomt` / `semantic` / `executorch`: Strict torch.export capture fails on a data-dependent symbolic expression in the mask path before XNNPACK lowering.
 - `eomt` / `semantic` / `mnn`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `semantic` / `rknn`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
@@ -553,6 +581,7 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `segment` / `tensorrt`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `segment` / `openvino`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `segment` / `mnn`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `segment` / `rknn`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `segment` / `ncnn`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `segment` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `segment` / `coreml`: EoMT instance and panoptic export do not yet have runtime parsing.
@@ -563,6 +592,7 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `panoptic` / `tensorrt`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `openvino`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `mnn`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `panoptic` / `rknn`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `ncnn`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreml`: EoMT instance and panoptic export do not yet have runtime parsing.
@@ -572,12 +602,14 @@ A check mark applies only under any constraint listed here.
 - `faster_rcnn` / `detect` / `tensorrt`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `openvino`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `faster_rcnn` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `faster_rcnn` / `detect` / `ncnn`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `tflite`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `coreml`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `faster_rcnn` / `detect` / `coreai`: This runtime has no parity evidence for Faster R-CNN's proposal, RoIAlign, variable-length output, and embedded-NMS graph.
 - `fcn` / `semantic` / `executorch`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
 - `fcn` / `semantic` / `mnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `fcn` / `semantic` / `rknn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `fcn` / `semantic` / `ncnn`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
 - `fcn` / `semantic` / `tflite`: This runtime has no parity-valid FCN artifact yet; only ONNX, TorchScript, TensorRT, and OpenVINO were assessed for this port.
 - `fcn` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
@@ -585,6 +617,7 @@ A check mark applies only under any constraint listed here.
 - `fcos` / `detect` / `executorch`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
 - `fcos` / `detect` / `tensorrt`: FCOS requires dynamic padded H/W to preserve its 800/1333 aspect transform, while the current TensorRT runtime profiles dynamic batch only.
 - `fcos` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `fcos` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `fcos` / `detect` / `ncnn`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
 - `fcos` / `detect` / `tflite`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
 - `fcos` / `detect` / `coreml`: No runtime parity contract exists for FCOS dynamic anchor grids and variable padded spatial shapes in this format.
@@ -592,6 +625,7 @@ A check mark applies only under any constraint listed here.
 - `feynobg` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `feynobg` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `feynobg` / `matte` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `feynobg` / `matte` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `feynobg` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
 - `feynobg` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `feynobg` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -602,11 +636,13 @@ A check mark applies only under any constraint listed here.
 - `florence2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `florence2` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `fomo` / `point` / `mnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `fomo` / `point` / `rknn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `fomo` / `point` / `tflite`: LiteRT 2.1.2 cannot invoke the onnx2tf 2.6.7 graph because a DEPTHWISE_CONV_2D reports 16 filter channels versus zero input channels.
 - `fomo` / `point` / `coreml`: The CoreML wrapper does not implement the raw point-heatmap contract.
 - `grounding_dino` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
@@ -615,12 +651,14 @@ A check mark applies only under any constraint listed here.
 - `grounding_dino` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `openvino`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `mnn`: Open-vocabulary runtime export is out of scope for v1.
+- `grounding_dino` / `detect` / `rknn`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `coreai`: Open-vocabulary runtime export is out of scope for v1.
 - `hrnet` / `pose` / `executorch`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `mnn`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `hrnet` / `pose` / `rknn`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `ncnn`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `tflite`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `coreml`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
@@ -631,6 +669,7 @@ A check mark applies only under any constraint listed here.
 - `internvl3` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `internvl3` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
@@ -641,11 +680,13 @@ A check mark applies only under any constraint listed here.
 - `kosmos2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `kosmos2` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `l2cs` / `gaze` / `mnn`: The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.
+- `l2cs` / `gaze` / `rknn`: The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.
 - `l2cs` / `gaze` / `ncnn`: The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.
 - `l2cs` / `gaze` / `tflite`: The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.
 - `l2cs` / `gaze` / `coreml`: The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.
@@ -656,11 +697,13 @@ A check mark applies only under any constraint listed here.
 - `lfm2vl` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `lfm2vl` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `lingbotvision` / `semantic` / `mnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `lingbotvision` / `semantic` / `rknn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `lingbotvision` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `lingbotvision` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `lingbotvision` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
@@ -670,6 +713,7 @@ A check mark applies only under any constraint listed here.
 - `locateanything` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `locateanything` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
@@ -680,11 +724,13 @@ A check mark applies only under any constraint listed here.
 - `locateanything` / `point` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `openvino`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `mnn`: Generative VLM export is out of scope for v1.
+- `locateanything` / `point` / `rknn`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `ncnn`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `tflite`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `coreml`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `coreai`: Generative VLM export is out of scope for v1.
 - `lwdetr` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `lwdetr` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `lwdetr` / `detect` / `ncnn`: NCNN export is not supported for LW-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `lwdetr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `lwdetr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -694,6 +740,7 @@ A check mark applies only under any constraint listed here.
 - `mask_rcnn` / `detect` / `tensorrt`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `detect` / `openvino`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `detect` / `mnn`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `detect` / `rknn`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `detect` / `ncnn`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `detect` / `tflite`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `detect` / `coreml`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
@@ -703,15 +750,18 @@ A check mark applies only under any constraint listed here.
 - `mask_rcnn` / `segment` / `tensorrt`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `segment` / `openvino`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `segment` / `mnn`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
+- `mask_rcnn` / `segment` / `rknn`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `segment` / `ncnn`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `segment` / `tflite`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `segment` / `coreml`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `mask_rcnn` / `segment` / `coreai`: Only ONNX Runtime has parity evidence for Mask R-CNN's proposal, RoIAlign, variable-length detection, and full-image mask graph.
 - `midas` / `depth` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `midas` / `depth` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `midas` / `depth` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `midas` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `midas` / `depth` / `coreai`: This family and task have not been validated for Core AI export.
 - `mobilenetv4` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `mobilenetv4` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `mobilenetv4` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `mobilesam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
@@ -719,15 +769,18 @@ A check mark applies only under any constraint listed here.
 - `mobilesam` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `mnn`: Promptable model export is out of scope for the v1 runtime contract.
+- `mobilesam` / `segment` / `rknn`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `coreai`: Promptable model export is out of scope for the v1 runtime contract.
 - `moge2` / `normal` / `mnn`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
+- `moge2` / `normal` / `rknn`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `tflite`: onnx2tf 2.6.7 flatbuffer-direct lowering cannot lower the encoder's cubic Resize because its input C/H/W signature remains dynamic.
 - `moge2` / `normal` / `coreml`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `coreai`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `nafnet` / `restore` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `nafnet` / `restore` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `nafnet` / `restore` / `tflite`: onnx2tf 2.6.7 converts the fixed-canvas graph, but LiteRT 2.1.2 fails at invoke time because input tensor 4539 lacks data.
 - `nafnet` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `omdet_turbo` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
@@ -736,6 +789,7 @@ A check mark applies only under any constraint listed here.
 - `omdet_turbo` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `openvino`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `mnn`: Open-vocabulary runtime export is out of scope for v1.
+- `omdet_turbo` / `detect` / `rknn`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
@@ -746,6 +800,7 @@ A check mark applies only under any constraint listed here.
 - `ov_deim` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
 - `ov_deim` / `detect` / `openvino`: Open-vocabulary runtime export is out of scope for v1.
 - `ov_deim` / `detect` / `mnn`: Open-vocabulary runtime export is out of scope for v1.
+- `ov_deim` / `detect` / `rknn`: Open-vocabulary runtime export is out of scope for v1.
 - `ov_deim` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
 - `ov_deim` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `ov_deim` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
@@ -756,6 +811,7 @@ A check mark applies only under any constraint listed here.
 - `owlv2` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `openvino`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `mnn`: Open-vocabulary runtime export is out of scope for v1.
+- `owlv2` / `detect` / `rknn`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
@@ -768,11 +824,13 @@ A check mark applies only under any constraint listed here.
 - `picosam3` / `segment` / `tensorrt`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `openvino`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `mnn`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
+- `picosam3` / `segment` / `rknn`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `ncnn`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `tflite`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `coreml`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `coreai`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `pidnet` / `semantic` / `mnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `pidnet` / `semantic` / `rknn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `pidnet` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `ppocr` / `ocr` / `onnx`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `torchscript`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
@@ -780,6 +838,7 @@ A check mark applies only under any constraint listed here.
 - `ppocr` / `ocr` / `tensorrt`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `openvino`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `mnn`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
+- `ppocr` / `ocr` / `rknn`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `ncnn`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `tflite`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `coreml`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
@@ -790,49 +849,61 @@ A check mark applies only under any constraint listed here.
 - `qwen3vl` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `qwen3vl` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `realesrgan` / `restore` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `realesrgan` / `restore` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `realesrgan` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `resnet` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `resnet` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `resnet` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `retinanet` / `detect` / `torchscript`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
 - `retinanet` / `detect` / `executorch`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
 - `retinanet` / `detect` / `tensorrt`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
 - `retinanet` / `detect` / `openvino`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
 - `retinanet` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `retinanet` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `retinanet` / `detect` / `ncnn`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
 - `retinanet` / `detect` / `tflite`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
 - `retinanet` / `detect` / `coreml`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
 - `retinanet` / `detect` / `coreai`: RetinaNet's dynamic P3-P7 anchor graph and external class-aware postprocessing have parity evidence only through ONNX Runtime.
+- `rfdetr` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `rfdetr` / `detect` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `detect` / `tflite`: onnx2tf emits a flatbuffer at the native 384x384 canvas, but LiteRT cannot allocate it because STRIDED_SLICE receives an input above its supported 5-D rank.
 - `rfdetr` / `segment` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `rfdetr` / `segment` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `rfdetr` / `segment` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `segment` / `tflite`: onnx2tf 2.4.x assigns an invalid NHWC layout to the segmentation-head Einsum (78 channels versus the required 256), so conversion fails.
 - `rfdetr` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rfdetr` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
 - `rfdetr` / `pose` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `rfdetr` / `pose` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `rfdetr` / `pose` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `pose` / `tflite`: RF-DETR pose-x TFLite conversion exceeded the CPU timebox and 8 GB working memory without producing an artifact on this toolchain.
 - `rfdetr` / `pose` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rfdetr` / `pose` / `coreai`: This family and task have not been validated for Core AI export.
 - `rfdetr` / `obb` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `rfdetr` / `obb` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `rfdetr` / `obb` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `obb` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rfdetr` / `obb` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rfdetr` / `obb` / `coreai`: This family and task have not been validated for Core AI export.
+- `rtdetr` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `rtdetr` / `detect` / `ncnn`: NCNN export is not supported for RT-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rtdetr` / `detect` / `tflite`: LiteRT 2.1.2 rejects the onnx2tf 2.6.7 graph because a CONCATENATION receives incompatible 256 and 1 dimensions.
+- `rtdetrv2` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `rtdetrv2` / `detect` / `ncnn`: NCNN export is not supported for RT-DETRv2: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rtdetrv2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtdetrv2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `rtdetrv4` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `rtdetrv4` / `detect` / `ncnn`: NCNN export is not supported for RT-DETRv4: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rtdetrv4` / `detect` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError at the native 640x640 canvas.
 - `rtdetrv4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rtmdet` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `rtmdet` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `rtmdet` / `detect` / `ncnn`: PNNX 20260526 reports an unregistered nn.Conv2d layer and leaves the RTMDet NCNN graph without usable input blobs.
 - `rtmdet` / `detect` / `tflite`: onnx2tf 2.6.7 exports, reloads, and preserves raw output parity, but at the native 640x640 canvas public boxes fall to 0.911 IoU with 29.9 px coordinate drift.
 - `rtmdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -842,6 +913,7 @@ A check mark applies only under any constraint listed here.
 - `rtmdet` / `segment` / `tensorrt`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `rtmdet` / `segment` / `openvino`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `rtmdet` / `segment` / `mnn`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
+- `rtmdet` / `segment` / `rknn`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `rtmdet` / `segment` / `ncnn`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `rtmdet` / `segment` / `tflite`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `rtmdet` / `segment` / `coreml`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
@@ -852,6 +924,7 @@ A check mark applies only under any constraint listed here.
 - `sam` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `mnn`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam` / `segment` / `rknn`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
@@ -862,6 +935,7 @@ A check mark applies only under any constraint listed here.
 - `sam2` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `mnn`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam2` / `segment` / `rknn`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
@@ -872,6 +946,7 @@ A check mark applies only under any constraint listed here.
 - `sam3` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `mnn`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam3` / `segment` / `rknn`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
@@ -882,19 +957,23 @@ A check mark applies only under any constraint listed here.
 - `sam3dbody` / `mesh` / `tensorrt`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `openvino`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `mnn`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
+- `sam3dbody` / `mesh` / `rknn`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `ncnn`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `tflite`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `coreml`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `coreai`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `segformer` / `semantic` / `mnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `segformer` / `semantic` / `rknn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `ncnn`: PNNX leaves unsupported pnnx.Expression nodes in the SegFormer graph; the generated NCNN network reports 'network graph not ready' and has no runnable input blob.
 - `segformer` / `semantic` / `tflite`: onnx2tf 2.6.7 emits a flatbuffer, but LiteRT 2.1.2 cannot prepare its attention reshape (1024 input elements versus 256 output elements).
 - `segformer` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `coreai`: The SegFormer Core AI capture path has not been assessed. Its published weights are non-commercial regardless of export format.
 - `siglip2` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `siglip2` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `siglip2` / `classify` / `ncnn`: No parity-valid frozen-class artifact is available for this runtime.
 - `siglip2` / `classify` / `coreml`: No parity-valid frozen-class artifact is available for this runtime.
 - `siglip2` / `embed` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `siglip2` / `embed` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `siglip2` / `embed` / `ncnn`: PNNX 20260526 leaves unsupported pnnx.Expression nodes in the SigLIP2 attention graph, so the generated NCNN network has no runnable input.
 - `siglip2` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `siglip2` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
@@ -904,6 +983,7 @@ A check mark applies only under any constraint listed here.
 - `smolvlm2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `smolvlm2` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
@@ -913,56 +993,71 @@ A check mark applies only under any constraint listed here.
 - `ssd` / `detect` / `tensorrt`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
 - `ssd` / `detect` / `openvino`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
 - `ssd` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `ssd` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `ssd` / `detect` / `ncnn`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
 - `ssd` / `detect` / `tflite`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
 - `ssd` / `detect` / `coreml`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
 - `ssd` / `detect` / `coreai`: SSD's decoded fixed-default-box head has only been parity-validated through the ONNX Runtime contract.
 - `swin` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `swin` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `swin` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `swin` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `swin` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `swinir` / `restore` / `executorch`: The fixed-canvas graph captures, lowers, serializes, and reloads, but ExecuTorch 1.2 runtime execution fails in aten::alias_copy.out because the source and destination tensors have different dimension orders.
 - `swinir` / `restore` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `swinir` / `restore` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `swinir` / `restore` / `ncnn`: PNNX writes NCNN artifacts after reporting unsupported 5-rank Permute operations, but the NCNN runtime process exits while loading or executing the resulting graph.
 - `swinir` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `swinir` / `restore` / `coreai`: The export process DIES rather than hangs, and the kill point moves between runs, which is the signature of memory exhaustion rather than a stuck loop. One run reached 'Step 3/3: Optimizing and writing the asset' before stopping; a later run of the same graph at the same 128 canvas died inside to_coreai() before returning, in both cases with a leaked-semaphore warning and no traceback. Window attention unrolls into a very large number of small ops, so the converter's peak memory is the prime suspect on a 16 GB machine. Next steps: watch RSS during conversion, try the smallest available size at a 64 canvas, and check the system log for a memory kill. Do NOT assume optimize() is at fault; an earlier note said so on the strength of a single run and the second run contradicted it.
 - `teed` / `edge` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `teed` / `edge` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `teed` / `edge` / `ncnn`: PNNX 20260526 leaves an unsupported Tensor.index channel-reversal node, so the generated NCNN network has no runnable input.
 - `teed` / `edge` / `coreml`: This edge runtime has no parity-valid artifact for the requested format.
 - `teed` / `edge` / `coreai`: This edge runtime has no parity-valid artifact for the requested format.
 - `vgg` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `vgg` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `vgg` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `vgg` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `vgg` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `vit` / `classify` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `vit` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `vit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `vit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `vit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `yolo1` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `yolo1` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `yolo1` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_EINSUM custom operation that LiteRT 2.1.2 cannot prepare at the native 448x448 canvas.
 - `yolo1` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo2` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `yolo2` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `yolo2` / `detect` / `tflite`: LiteRT 2.1.2 cannot prepare the onnx2tf 2.6.7 artifact because a RESHAPE maps 4,225 input elements to one output element.
 - `yolo2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo3` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `yolo3` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `yolo3` / `detect` / `tflite`: A public-domain trained checkpoint exports, reloads, and preserves normalized raw parity, but public top-k class membership changes.
 - `yolo3` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo4` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `yolo4` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `yolo4` / `detect` / `tflite`: onnx2tf 2.6.7 exports and runs, but public boxes fall to 0 IoU with 176 px coordinate drift on the deterministic full model.
 - `yolo4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo7` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `yolo7` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `yolo7` / `detect` / `tflite`: The converted LiteRT graph changes decoded box coordinates beyond the detector parity tolerance.
 - `yolo7` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo9_e2e` / `detect` / `tflite`: onnx2tf 2.6.7 exports a runnable artifact, but public top-k class membership changes after LiteRT 2.1.2 conversion.
 - `yolo9_e2e` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `yolo9_p2` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `yolo9_p2` / `detect` / `tflite`: onnx2tf 2.6.7 exports a runnable artifact, but public top-k class membership changes after LiteRT 2.1.2 conversion.
 - `yolo9_p2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolonas` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolonas` / `pose` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `yolonas` / `pose` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `yolonas` / `pose` / `tflite`: LiteRT rejects the converted pose graph because a CONCATENATION input has an unsupported/invalid tensor type.
 - `yolonas` / `pose` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolonas` / `pose` / `coreai`: This family and task have not been validated for Core AI export.
 - `yolox` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `yolox` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `zipdepth` / `depth` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `zipdepth` / `depth` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `zipdepth` / `depth` / `tflite`: onnx2tf 2.6.7 flatbuffer-direct conversion does not support the edge-mode Pad operation in ZipDepth's convex upsampler.
 - `zipdepth` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.

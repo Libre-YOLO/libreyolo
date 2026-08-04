@@ -1815,6 +1815,192 @@ class MNNExporter(BaseExporter):
         )
 
 
+class RknnExporter(BaseExporter):
+    """Compile an exact simulator-tested detector variant for RK3588."""
+
+    format_name = "rknn"
+    suffix = ".rknn"
+    requires_onnx = True
+    supports_int8 = False
+    supports_fp16 = False
+    apply_model_half = False
+
+    def __call__(
+        self,
+        *args,
+        dynamic: bool = False,
+        batch: int = 1,
+        opset: int | None = 19,
+        **kwargs,
+    ) -> str:
+        if dynamic:
+            raise ValueError("RKNN export requires static input shapes.")
+        if batch != 1:
+            raise NotImplementedError("RKNN export currently supports batch=1 only.")
+        return super().__call__(
+            *args,
+            dynamic=False,
+            batch=1,
+            opset=19 if opset is None else opset,
+            **kwargs,
+        )
+
+    def _validate(self, half: bool, int8: bool, data: str | None):
+        if half:
+            raise NotImplementedError(
+                "RKNN does not expose LibreYOLO's half=True contract. Omit half "
+                "and int8 for the tested vendor floating-point build."
+            )
+        return super()._validate(half, int8, data)
+
+    def _preflight(self, **kwargs):
+        from .rknn import (
+            check_rknn_available,
+            resolve_rknn_target,
+            validate_rknn_export_request,
+        )
+
+        target_platform = resolve_rknn_target(
+            name=kwargs.get("name"),
+            target=kwargs.get("target"),
+            target_platform=kwargs.get("target_platform"),
+        )
+        validate_rknn_export_request(
+            model_family=self.model._get_model_name(),
+            model_size=self.model.size,
+            task=getattr(self.model, "task", "detect"),
+            target_platform=target_platform,
+        )
+        super()._preflight(**kwargs)
+        check_rknn_available()
+
+    def _export(
+        self,
+        nn_model,
+        dummy,
+        *,
+        output_path,
+        metadata,
+        calibration_data,
+        onnx_path,
+        int8,
+        opset,
+        verbose,
+        name=None,
+        target=None,
+        target_platform=None,
+        rknn_config=None,
+        rknn_build=None,
+        verify=False,
+        verify_input=None,
+        verify_rtol=1e-3,
+        verify_atol=1e-4,
+        verify_min_cosine=0.9999,
+        verify_max_normalized_rmse=0.02,
+        **kwargs,
+    ):
+        from .rknn import (
+            _run_onnx_reference,
+            compare_rknn_outputs,
+            evaluate_rknn_metrics,
+            export_rknn,
+            export_rknn_with_simulator,
+            resolve_rknn_target,
+        )
+
+        resolved_target = resolve_rknn_target(
+            name=name,
+            target=target,
+            target_platform=target_platform,
+        )
+        rknn_metadata = dict(metadata or {})
+        rknn_metadata.update(
+            {
+                "dynamic": False,
+                "onnx_opset": int(opset),
+                "rknn_target": resolved_target,
+            }
+        )
+        logger.info("Step 2/2: Compiling RKNN for %s", resolved_target)
+
+        if not verify:
+            return export_rknn(
+                onnx_path=onnx_path,
+                output_path=output_path,
+                target_platform=resolved_target,
+                int8=int8,
+                calibration_data=calibration_data,
+                metadata=rknn_metadata,
+                verbose=verbose,
+                config=rknn_config,
+                build=rknn_build,
+            )
+
+        if verify_input is None:
+            generator = torch.Generator(device="cpu").manual_seed(0)
+            verify_input = torch.rand(
+                tuple(dummy.shape), generator=generator, dtype=torch.float32
+            ).numpy()
+        result, simulated = export_rknn_with_simulator(
+            onnx_path=onnx_path,
+            output_path=output_path,
+            simulator_inputs=verify_input,
+            target_platform=resolved_target,
+            int8=int8,
+            calibration_data=calibration_data,
+            metadata=rknn_metadata,
+            verbose=verbose,
+            config=rknn_config,
+            build=rknn_build,
+        )
+        reference = _run_onnx_reference(onnx_path, verify_input)
+        metrics = compare_rknn_outputs(
+            reference,
+            simulated,
+            rtol=float(verify_rtol),
+            atol=float(verify_atol),
+            raise_on_failure=False,
+        )
+        parity_passed, metrics = evaluate_rknn_metrics(
+            metrics,
+            min_cosine=float(verify_min_cosine),
+            max_normalized_rmse=float(verify_max_normalized_rmse),
+        )
+        report = {
+            "backend": "rknn-simulator",
+            "target": resolved_target,
+            "reference": "onnxruntime",
+            "rtol": float(verify_rtol),
+            "atol": float(verify_atol),
+            "min_cosine": float(verify_min_cosine),
+            "max_normalized_rmse": float(verify_max_normalized_rmse),
+            "passed": parity_passed,
+            "outputs": metrics,
+        }
+        report_path = Path(f"{result}.parity.json")
+        temporary = report_path.with_suffix(f"{report_path.suffix}.tmp")
+        temporary.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        temporary.replace(report_path)
+        if not parity_passed:
+            failures = "; ".join(
+                f"output {item['index']}: max_abs={item['max_abs_error']:.6g}, "
+                f"cosine={item['cosine_similarity']:.6g}, "
+                f"normalized_rmse={item['normalized_rmse']:.6g}"
+                for item in metrics
+                if not item["accepted"]
+            )
+            raise AssertionError(
+                "RKNN simulator acceptance failed "
+                f"(min_cosine={verify_min_cosine}, "
+                f"max_normalized_rmse={verify_max_normalized_rmse}): "
+                f"{failures}. Metrics: {report_path}"
+            )
+        logger.info("RKNN simulator parity passed: %s", report_path)
+        return result
+
+
 class NcnnExporter(BaseExporter):
     format_name = "ncnn"
     suffix = "_ncnn"

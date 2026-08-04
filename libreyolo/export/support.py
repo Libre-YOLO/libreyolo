@@ -16,6 +16,7 @@ EXPORT_FORMATS = (
     "tensorrt",
     "openvino",
     "mnn",
+    "rknn",
     "ncnn",
     "tflite",
     "coreml",
@@ -191,6 +192,23 @@ _add(
     ),
     since="1.6",
     constraint="MNN 3.6.1, CPU, FP32, batch 1, fixed NCHW input shape",
+)
+_add(
+    "experimental",
+    ("yolo9", "yolo9_e2e", "yolonas", "picodet"),
+    ("detect",),
+    ("rknn",),
+    reason=(
+        "Exact small variants passed RKNN Toolkit2 2.3.2 compilation, "
+        "RK3588 PC-simulator raw-output gates, and matched post-NMS "
+        "detections on a real image. Support is limited to YOLO9-t, "
+        "YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s; on-device latency and "
+        "parity have not been measured."
+    ),
+    constraint=(
+        "RKNN Toolkit2 2.3.2, RK3588 PC simulator, vendor floating build, "
+        "batch 1, fixed square input"
+    ),
 )
 _add(
     "validated",
@@ -3445,6 +3463,12 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
         return SupportEntry(
             "blocked",
             "MNN v1 supports G0/G1 detection exports only.",
+        )
+    if fmt == "rknn":
+        return SupportEntry(
+            "blocked",
+            "RKNN v1 is limited to the exact simulator-tested detection variants: "
+            "YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.",
         )
     if fmt in {"tensorrt", "openvino"}:
         runtime = "TensorRT" if fmt == "tensorrt" else "OpenVINO"

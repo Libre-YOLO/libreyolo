@@ -19,6 +19,20 @@ Example::
 """
 
 from .exporter import BaseExporter
+from .rknn import (
+    compare_rknn_outputs,
+    export_rknn,
+    run_rknn_simulator,
+    verify_rknn_simulator_parity,
+)
 from .support import SupportEntry, get_support
 
-__all__ = ["BaseExporter", "SupportEntry", "get_support"]
+__all__ = [
+    "BaseExporter",
+    "SupportEntry",
+    "compare_rknn_outputs",
+    "export_rknn",
+    "get_support",
+    "run_rknn_simulator",
+    "verify_rknn_simulator_parity",
+]

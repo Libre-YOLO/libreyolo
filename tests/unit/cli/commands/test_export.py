@@ -103,3 +103,48 @@ def test_export_cli_rejects_coreml_max_det(monkeypatch):
     data = _parse_json_output(result.output)
     assert data["error"] == "config_unsupported"
     assert "max_det is only supported for ONNX" in data["message"]
+
+
+def test_export_cli_passes_rknn_target_and_verify(monkeypatch, tmp_path):
+    from libreyolo.cli.commands import export
+
+    captured = {}
+    monkeypatch.setattr(export, "resolve_model_or_exit", lambda out, model: model)
+    monkeypatch.setattr(
+        export,
+        "load_model_or_exit",
+        lambda out, model, model_path, device: _LoadedModel(
+            tmp_path / "model.rknn", captured
+        ),
+    )
+
+    result = runner.invoke(
+        _build_app(),
+        [
+            "model=dummy.pt",
+            "format=rknn",
+            "name=rk3588",
+            "verify=true",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = _parse_json_output(result.output)
+    assert captured["format"] == "rknn"
+    assert captured["kwargs"]["name"] == "rk3588"
+    assert captured["kwargs"]["verify"] is True
+    assert data["target"] == "rk3588"
+    assert data["verified"] is True
+
+
+@pytest.mark.parametrize("option", ["name=rk3588", "verify=true"])
+def test_export_cli_rejects_rknn_only_options_for_other_formats(option):
+    result = runner.invoke(
+        _build_app(),
+        ["model=dummy.pt", "format=onnx", option, "--json"],
+    )
+
+    assert result.exit_code == 2
+    data = _parse_json_output(result.output)
+    assert data["error"] == "config_unsupported"
