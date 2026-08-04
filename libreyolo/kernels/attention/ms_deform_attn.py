@@ -16,9 +16,11 @@ only consults this slot through :func:`maybe_ms_deform_attn`.
 The in-tree provider loads the compiled CUDA kernel published at
 ``kernels-community/deformable-detr`` on the Hugging Face Hub (Apache-2.0)
 via the optional ``kernels`` package. Nothing is vendored: the artifact is
-fetched at runtime. Installing the ``libreyolo[hub-kernels]`` extra is the
-opt-in; once the ``kernels`` package is present the provider is on by
-default and ``LIBREYOLO_HUB_KERNELS=0`` disables it. The autograd bridge
+fetched at runtime, pinned to the audited revision in ``_HUB_REVISION`` so
+a moved branch can never swap the binary that runs in-process. Installing
+the ``libreyolo[hub-kernels]`` extra is the opt-in; once the ``kernels``
+package is present the provider is on by default and
+``LIBREYOLO_HUB_KERNELS=0`` disables it. The autograd bridge
 below follows the ``MSDeformAttnFunction`` interface of Deformable-DETR
 (https://github.com/fundamentalvision/Deformable-DETR, Apache-2.0,
 Copyright (c) 2020 SenseTime).
@@ -39,6 +41,11 @@ from .. import register, resolve
 logger = logging.getLogger(__name__)
 
 _HUB_REPO = "kernels-community/deformable-detr"
+# Commit pin: native code fetched from the Hub executes in-process (forward
+# and backward), so selection by repo name alone would let a moved branch
+# change the binary under users. Bump deliberately, with a GPU parity run
+# (tests/unit/kernels/test_ms_deform_attn.py::test_hub_matches_portable_on_cuda).
+_HUB_REVISION = "4d2393e5d7879f7cf68db04cc7c9c7342272bc05"
 _MAX_IM2COL_STEP = 64
 
 _hub_kernel = None
@@ -79,7 +86,7 @@ def _load_hub_kernel():
     try:
         from kernels import get_kernel
 
-        _hub_kernel = get_kernel(_HUB_REPO)
+        _hub_kernel = get_kernel(_HUB_REPO, revision=_HUB_REVISION)
     except Exception as exc:
         _hub_failed = True
         logger.warning("Hub kernel %s unavailable: %s", _HUB_REPO, exc)
@@ -172,6 +179,8 @@ def _supported_inputs(
     if value.dim() != 4 or sampling_locations.dim() != 6 or attention_weights.dim() != 5:
         return False
     batch = value.shape[0]
+    if batch == 0:
+        return False
     step = batch if batch < _MAX_IM2COL_STEP else _MAX_IM2COL_STEP
     return batch % step == 0
 
@@ -187,6 +196,12 @@ def hub_ms_deform_attn(
     if not _supported_inputs(
         value, spatial_shapes, sampling_locations, attention_weights
     ):
+        return None
+    if _hub_kernel is None and torch.cuda.is_current_stream_capturing():
+        # Never fetch/load the kernel module inside CUDA graph capture; the
+        # load performs I/O and module initialization that would poison the
+        # capture. Graph warmup iterations load it, after which captures
+        # record the compiled op like any other.
         return None
     if _load_hub_kernel() is None:
         return None
@@ -210,6 +225,11 @@ def hub_ms_deform_attn(
         return None
 
 
+def _not_exporting() -> bool:
+    """Fallback for ``torch.compiler.is_exporting`` on torch versions without it."""
+    return False
+
+
 def ms_deform_attn_available() -> bool:
     """Whether the slot could run here, checked before adapting layouts.
 
@@ -217,11 +237,13 @@ def ms_deform_attn_available() -> bool:
     the adaptation work (and any ``tolist()`` that would bake constants into
     a trace) never happens on the portable path. Tracing and export always
     report unavailable: exported graphs must not capture a runtime-fetched
-    kernel.
+    kernel. ``is_exporting`` covers non-strict ``torch.export``, which traces
+    with FakeTensors without setting ``is_compiling``.
     """
     if (
         torch.jit.is_tracing()
         or torch.compiler.is_compiling()
+        or getattr(torch.compiler, "is_exporting", _not_exporting)()
         or torch.onnx.is_in_onnx_export()
     ):
         return False
@@ -262,7 +284,9 @@ def maybe_ms_deform_attn(
 
     Callers keep their portable grid_sample port as the fallback. Tracing
     and export always take the portable path: exported graphs must not
-    capture a runtime-fetched kernel.
+    capture a runtime-fetched kernel. ``is_exporting`` covers non-strict
+    ``torch.export``, which traces with FakeTensors without setting
+    ``is_compiling``.
     """
     if not ms_deform_attn_available():
         return None

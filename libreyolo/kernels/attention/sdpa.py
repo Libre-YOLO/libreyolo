@@ -48,11 +48,19 @@ def manual_attention_required() -> bool:
     Two capture kinds are deliberately *excluded*:
 
     - **``torch.compile``** lowers SDPA better than the manual equation, so
-      forcing primitives there would deoptimize compiled inference.
-      ``torch.compiler.is_compiling()`` cannot distinguish it from
-      ``torch.export``, so neither is gated here.
-    - **``torch.export``** (ExecuTorch, Core AI) decomposes SDPA to core ATen
-      in ``run_decompositions()`` before the converter sees it.
+      forcing primitives there would deoptimize compiled inference. Neither
+      dynamo predicate can single out ``torch.export``: on torch 2.11 both
+      ``is_compiling()`` and ``is_exporting()`` are True under plain
+      ``torch.compile`` as well, so gating on either would cost the compiled
+      path its fused kernels.
+    - **``torch.export``** (ExecuTorch, Core AI) therefore stays ungated, and
+      does not need the gate: both backends decompose SDPA to core ATen
+      before their converter runs, Core AI through ``run_decompositions()``
+      and ExecuTorch through ``to_edge_transform_and_lower``.
+
+    The ``ms_deform_attn`` slot does gate on both dynamo predicates, but it
+    loses nothing by it: that slot has no compiled-inference story to protect,
+    only a runtime-fetched binary to keep out of every captured graph.
 
     The ``ms_deform_attn`` slot uses a stricter rule (it also refuses under
     ``torch.compiler.is_compiling()``) because it dispatches to a

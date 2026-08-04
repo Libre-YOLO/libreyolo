@@ -25,8 +25,11 @@ before 1.4.0 are documented in the
   RT-DETRv4, DEIM, DEIMv2, EC and OV-DEIM. Installing the extra is the
   opt-in; `LIBREYOLO_HUB_KERNELS=0` disables it. Eager CUDA fp32 only;
   exports always keep the portable path; load or runtime failures fall back
-  with one warning. Shapes the slot cannot express (a per-level sampling
-  point count, or `method='discrete'`) also fall back.
+  with one warning. The Hub artifact is pinned to an audited commit
+  revision, and a CUDA-only parity test
+  (`test_hub_matches_portable_on_cuda`) gates revision bumps. Shapes the slot
+  cannot express (a per-level sampling point count, or `method='discrete'`)
+  also fall back.
 
 - Fused scaled-dot-product attention across the transformer families, using
   stock torch (no optional dependency). SegFormer, Depth Anything (and

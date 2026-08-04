@@ -47,7 +47,10 @@ nothing changes (no network access, portable paths everywhere). Set
 `LIBREYOLO_HUB_KERNELS=0` to disable them without uninstalling. Nothing is
 vendored; artifacts are fetched and cached by the `kernels` package, and a
 kernel that fails to load or run disables itself for the process and falls
-back to the portable path with one warning.
+back to the portable path with one warning. Every hub kernel is pinned to an
+audited commit revision in its provider module — a moved branch on the Hub
+can never change the binary that runs in-process. Bumping a pin requires a
+GPU parity run of the provider's `*_matches_portable_on_cuda` test.
 
 Current hub-backed slot:
 
@@ -87,19 +90,20 @@ equation behind `manual_attention_required()`, which covers ONNX export
 `torch.jit.trace`, the capture used by the TorchScript, CoreML and NCNN
 exporters. Exported graphs are unchanged.
 
-Two capture kinds are deliberately excluded. `torch.compile` lowers SDPA
-better than the manual equation, so forcing primitives there would deoptimize
-compiled inference; `torch.compiler.is_compiling()` cannot tell it apart from
-`torch.export`, so neither is gated. That is safe for the `torch.export`
-backends because both decompose SDPA to core ATen before their converter runs
-(Core AI through `run_decompositions()`, ExecuTorch through
+The dynamo-based captures are deliberately excluded. `torch.compile` lowers
+SDPA better than the manual equation, so forcing primitives there would
+deoptimize compiled inference — and neither predicate can single out
+`torch.export`: on torch 2.11 both `is_compiling()` and `is_exporting()` are
+True under plain `torch.compile` too. `torch.export` does not need the gate
+anyway, because both backends decompose SDPA to core ATen before their
+converter runs (Core AI through `run_decompositions()`, ExecuTorch through
 `to_edge_transform_and_lower`).
 
-Note this is a *looser* rule than the `ms_deform_attn` slot's, which also
-refuses under `torch.compiler.is_compiling()`. That slot dispatches to a
-runtime-fetched compiled kernel that must never be captured at all; SDPA is
-stock torch either way, so only the capture formats that care about the op
-spelling are gated.
+This is a *looser* rule than the `ms_deform_attn` slot's, which refuses under
+both dynamo predicates as well. That slot dispatches to a runtime-fetched
+compiled binary that must never be captured at all and has no compiled-
+inference story to protect; SDPA is stock torch either way, so only the
+capture formats that care about the op spelling are gated.
 
 **A byte-exact parity bar keeps manual math by default.** Several ports are
 pinned to `max_abs_diff == 0` against a reference that itself runs manual
