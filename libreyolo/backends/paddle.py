@@ -100,6 +100,11 @@ class PaddleBackend(BaseBackend):
 
         config = paddle_infer.Config(str(model_file), str(params_file))
         config.disable_gpu()
+        # The Paddle 2.6 CPU fusion pipeline can crash while optimizing the
+        # large gather/scatter graphs emitted for deformable attention. Keep
+        # the portable, unfused static graph used by parity validation.
+        config.disable_mkldnn()
+        config.switch_ir_optim(False)
         config.enable_memory_optim()
         self.predictor = paddle_infer.create_predictor(config)
         self.input_names = tuple(self.predictor.get_input_names())

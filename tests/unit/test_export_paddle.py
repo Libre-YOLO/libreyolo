@@ -31,6 +31,8 @@ def test_paddle_exporter_rejects_dynamic_batch_and_unsimplified_graph():
         exporter(batch=2)
     with pytest.raises(ValueError, match="simplify=True"):
         exporter(simplify=False)
+    with pytest.raises(ValueError, match="opset=15"):
+        exporter(opset=14)
 
 
 def test_rfdetr_block_happens_before_dependency_check(monkeypatch):
@@ -96,6 +98,48 @@ def test_export_paddle_keeps_only_runtime_artifacts_and_metadata(monkeypatch, tm
     }
 
 
+def test_export_paddle_restores_previous_artifact_when_install_fails(
+    monkeypatch, tmp_path
+):
+    from libreyolo.export import paddle as paddle_export
+
+    def fake_convert(model_path, save_dir, **kwargs):
+        inference = Path(save_dir) / "inference_model"
+        inference.mkdir(parents=True)
+        (inference / "model.pdmodel").write_bytes(b"new-model")
+        (inference / "model.pdiparams").write_bytes(b"new-parameters")
+
+    package = types.ModuleType("x2paddle")
+    convert = types.ModuleType("x2paddle.convert")
+    convert.onnx2paddle = fake_convert
+    package.convert = convert
+    monkeypatch.setitem(sys.modules, "x2paddle", package)
+    monkeypatch.setitem(sys.modules, "x2paddle.convert", convert)
+    monkeypatch.setattr(paddle_export, "check_paddle_export_available", lambda: None)
+    monkeypatch.setattr(
+        paddle_export, "_normalize_onnx_for_x2paddle", lambda path: None
+    )
+
+    onnx_path = tmp_path / "model.onnx"
+    onnx_path.write_bytes(b"onnx")
+    output = tmp_path / "model_paddle"
+    output.mkdir()
+    (output / "model.pdmodel").write_bytes(b"old-model")
+    real_replace = paddle_export.os.replace
+
+    def fail_new_install(source, destination):
+        if Path(source).name == "artifact":
+            raise OSError("simulated install failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(paddle_export.os, "replace", fail_new_install)
+    with pytest.raises(OSError, match="simulated install failure"):
+        paddle_export.export_paddle(str(onnx_path), str(output))
+
+    assert (output / "model.pdmodel").read_bytes() == b"old-model"
+    assert not (tmp_path / ".model_paddle.previous").exists()
+
+
 def test_x2paddle_onnx_normalization_removes_only_default_dilation(tmp_path):
     onnx = pytest.importorskip("onnx")
     from onnx import TensorProto, helper
@@ -132,6 +176,176 @@ def test_x2paddle_onnx_normalization_removes_only_default_dilation(tmp_path):
     }
     assert "dilations" not in first_names
     assert second["dilations"] == [2, 1]
+
+
+def test_x2paddle_onnx_normalization_rewrites_static_sizes_resize(tmp_path):
+    onnx = pytest.importorskip("onnx")
+    from onnx import TensorProto, helper, numpy_helper
+
+    from libreyolo.export.paddle import _normalize_onnx_for_x2paddle
+
+    sizes = numpy_helper.from_array(
+        np.asarray([1, 3, 8, 8], dtype=np.int64), name="sizes"
+    )
+    resize = helper.make_node(
+        "Resize",
+        ["input", "", "", "sizes"],
+        ["output"],
+        mode="linear",
+        coordinate_transformation_mode="half_pixel",
+    )
+    graph = helper.make_graph(
+        [resize],
+        "resize",
+        [helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, 4, 4])],
+        [helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 3, 8, 8])],
+        initializer=[sizes],
+        value_info=[
+            helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 3, 8, 8])
+        ],
+    )
+    model = helper.make_model(
+        graph, opset_imports=[helper.make_opsetid("", 15)], ir_version=8
+    )
+    path = tmp_path / "resize.onnx"
+    onnx.save(model, path)
+
+    _normalize_onnx_for_x2paddle(path)
+
+    normalized = onnx.load(path)
+    node = normalized.graph.node[0]
+    assert list(node.input[:2]) == ["input", ""]
+    assert len(node.input) == 3
+    rewritten = {
+        initializer.name: numpy_helper.to_array(initializer)
+        for initializer in normalized.graph.initializer
+    }
+    np.testing.assert_array_equal(rewritten[node.input[2]], [1.0, 1.0, 2.0, 2.0])
+    attributes = {
+        attribute.name: helper.get_attribute_value(attribute)
+        for attribute in node.attribute
+    }
+    assert attributes["coordinate_transformation_mode"] == b"pytorch_half_pixel"
+    reshape = normalized.graph.node[1]
+    assert reshape.op_type == "Reshape"
+    assert list(reshape.input) == [node.output[0], "sizes"]
+    assert reshape.output[0] == "output"
+
+
+def test_x2paddle_onnx_normalization_decomposes_clip(tmp_path):
+    onnx = pytest.importorskip("onnx")
+    from onnx import TensorProto, helper, numpy_helper
+
+    from libreyolo.export.paddle import _normalize_onnx_for_x2paddle
+
+    lower = numpy_helper.from_array(np.asarray(0, dtype=np.int64), name="lower")
+    upper = numpy_helper.from_array(np.asarray(31, dtype=np.int64), name="upper")
+    graph = helper.make_graph(
+        [helper.make_node("Clip", ["input", "lower", "upper"], ["output"])],
+        "clip",
+        [helper.make_tensor_value_info("input", TensorProto.INT64, [1, 4])],
+        [helper.make_tensor_value_info("output", TensorProto.INT64, [1, 4])],
+        initializer=[lower, upper],
+    )
+    path = tmp_path / "clip.onnx"
+    onnx.save(
+        helper.make_model(
+            graph, opset_imports=[helper.make_opsetid("", 15)], ir_version=8
+        ),
+        path,
+    )
+
+    _normalize_onnx_for_x2paddle(path)
+
+    normalized = onnx.load(path)
+    assert [node.op_type for node in normalized.graph.node] == ["Max", "Min"]
+    assert normalized.graph.node[0].input[:] == ["input", "lower"]
+    assert normalized.graph.node[1].output[0] == "output"
+
+
+def test_x2paddle_onnx_normalization_resolves_negative_gather_indices(tmp_path):
+    onnx = pytest.importorskip("onnx")
+    from onnx import TensorProto, helper, numpy_helper
+
+    from libreyolo.export.paddle import _normalize_onnx_for_x2paddle
+
+    indices = numpy_helper.from_array(
+        np.asarray([-1, 0], dtype=np.int64), name="indices"
+    )
+    graph = helper.make_graph(
+        [helper.make_node("Gather", ["input", "indices"], ["output"], axis=1)],
+        "gather",
+        [helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 4, 2])],
+        [helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 2, 2])],
+        initializer=[indices],
+    )
+    path = tmp_path / "gather.onnx"
+    onnx.save(
+        helper.make_model(
+            graph, opset_imports=[helper.make_opsetid("", 15)], ir_version=8
+        ),
+        path,
+    )
+
+    _normalize_onnx_for_x2paddle(path)
+
+    normalized = onnx.load(path)
+    node = normalized.graph.node[0]
+    rewritten = {
+        initializer.name: numpy_helper.to_array(initializer)
+        for initializer in normalized.graph.initializer
+    }
+    np.testing.assert_array_equal(rewritten[node.input[1]], [3, 0])
+
+
+@pytest.mark.parametrize(
+    ("equation", "inputs"),
+    (
+        ("bchw,bnc->bnhw", ("features", "queries")),
+        ("bqc,bchw->bqhw", ("queries", "features")),
+    ),
+)
+def test_x2paddle_onnx_normalization_lowers_mask_projection_einsum(
+    tmp_path, equation, inputs
+):
+    onnx = pytest.importorskip("onnx")
+    from onnx import TensorProto, helper
+
+    from libreyolo.export.paddle import _normalize_onnx_for_x2paddle
+
+    graph = helper.make_graph(
+        [
+            helper.make_node(
+                "Einsum",
+                inputs,
+                ["masks"],
+                equation=equation,
+            )
+        ],
+        "einsum",
+        [
+            helper.make_tensor_value_info("features", TensorProto.FLOAT, [1, 8, 4, 4]),
+            helper.make_tensor_value_info("queries", TensorProto.FLOAT, [1, 3, 8]),
+        ],
+        [helper.make_tensor_value_info("masks", TensorProto.FLOAT, [1, 3, 4, 4])],
+    )
+    path = tmp_path / "einsum.onnx"
+    onnx.save(
+        helper.make_model(
+            graph, opset_imports=[helper.make_opsetid("", 15)], ir_version=8
+        ),
+        path,
+    )
+
+    _normalize_onnx_for_x2paddle(path)
+
+    normalized = onnx.load(path)
+    assert [node.op_type for node in normalized.graph.node] == [
+        "Reshape",
+        "MatMul",
+        "Reshape",
+    ]
+    assert normalized.graph.node[-1].output[0] == "masks"
 
 
 def test_x2paddle_onnx_normalization_rejects_newer_opset(tmp_path):
@@ -208,10 +422,18 @@ def _install_fake_paddle(monkeypatch):
             self.model = model
             self.parameters = parameters
             self.cpu = False
+            self.mkldnn_disabled = False
+            self.ir_optim = True
             self.memory_optimized = False
 
         def disable_gpu(self):
             self.cpu = True
+
+        def disable_mkldnn(self):
+            self.mkldnn_disabled = True
+
+        def switch_ir_optim(self, enabled):
+            self.ir_optim = enabled
 
         def enable_memory_optim(self):
             self.memory_optimized = True

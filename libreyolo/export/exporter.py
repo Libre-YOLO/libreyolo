@@ -1779,6 +1779,7 @@ class PaddleExporter(BaseExporter):
         dynamic: bool = False,
         batch: int = 1,
         simplify: bool = True,
+        opset: int | None = None,
         **kwargs,
     ) -> str:
         if dynamic:
@@ -1790,10 +1791,16 @@ class PaddleExporter(BaseExporter):
                 "Paddle export requires simplify=True for a fully static "
                 "X2Paddle conversion graph."
             )
+        if opset is not None and int(opset) != 15:
+            raise ValueError(
+                "Paddle export requires opset=15 for the validated X2Paddle "
+                f"conversion graph, got {opset}."
+            )
         return super().__call__(
             dynamic=False,
             batch=1,
             simplify=True,
+            opset=15,
             **kwargs,
         )
 

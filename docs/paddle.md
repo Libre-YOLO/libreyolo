@@ -1,9 +1,9 @@
 # PaddlePaddle export
 
-LibreYOLO supports an experimental PaddlePaddle export and CPU inference path
-for YOLO9 detection. The graph is exported to static ONNX, converted with
-X2Paddle, and packaged with LibreYOLO metadata so the exported directory can be
-loaded through the same factory as other runtimes.
+LibreYOLO supports a narrow PaddlePaddle export and CPU inference path for the
+parity-backed G0/G1 cells listed below. The graph is exported to static ONNX
+opset 15, converted with X2Paddle, and packaged with LibreYOLO metadata so the
+exported directory can be loaded through the same factory as other runtimes.
 
 ## Install
 
@@ -44,11 +44,20 @@ The artifact is a directory containing `model.pdmodel`, `model.pdiparams`, and
 
 ## Current boundary
 
-- Supported: YOLO9 detection, FP32, batch 1, fixed square input, CPU runtime.
+- Supported G0: YOLO9 detection.
+- Supported G1: YOLO9-E2E and YOLO9-P2 detection; EC detection, pose, and
+  segmentation; RT-DETRv4, D-FINE, DEIM, and DEIMv2 detection; and YOLO-NAS
+  detection and pose.
 - Not supported: dynamic shapes, FP16, INT8, embedded NMS, or GPU runtime.
+- The validated conversion graph requires ONNX opset 15. Passing another
+  `opset` value fails before tracing.
 - RF-DETR is blocked before tracing. Its export requires ONNX opset 17 and
   GridSample, while X2Paddle 1.6.0 supports opset 15 or lower and does not map
   GridSample.
+- RT-DETR and RT-DETRv2 detection are blocked by the same GridSample/opset
+  ceiling.
+- D-FINE segmentation converts, but remains blocked because trained mask parity
+  did not pass (3.52% relative RMS error and 0.582 minimum matched-mask IoU).
 - Other model families and tasks remain blocked until they have conversion,
   raw-output, metadata, reload, and public-result parity evidence.
 
