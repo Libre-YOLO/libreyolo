@@ -407,22 +407,37 @@ class LibreSegformerNet(nn.Module):
             nn.init.ones_(module.weight)
             nn.init.zeros_(module.bias)
 
+    def forward_logits(self, x: torch.Tensor) -> torch.Tensor:
+        """Normalise, encode and decode to the head's native-resolution logits.
+
+        The boundary the CUDA-graph training capture splits on: a pure
+        function of the input at a fixed input shape. Everything after it
+        (upsampling to the label grid, the ignore-index check, cross-entropy)
+        depends on the labels and stays eager.
+        """
+        x = (x - self.pixel_mean.to(dtype=x.dtype)) / self.pixel_std.to(dtype=x.dtype)
+        return self.decode_head(self.encoder(x))
+
+    def loss_from_logits(self, logits: torch.Tensor, targets: torch.Tensor) -> dict:
+        """Cross-entropy at the label resolution, from native-resolution logits."""
+        logits = F.interpolate(
+            logits, size=targets.shape[-2:], mode="bilinear", align_corners=False
+        )
+        targets = targets.long()
+        if bool((targets != self.IGNORE_INDEX).any()):
+            loss = F.cross_entropy(logits, targets, ignore_index=self.IGNORE_INDEX)
+        else:
+            # cross_entropy returns NaN when every pixel is ignored; emit a
+            # graph-connected zero so the optimizer step stays sane.
+            loss = logits.sum() * 0.0
+        return {"total_loss": loss, "sem": loss}
+
     def forward(self, x: torch.Tensor, targets: torch.Tensor | None = None):
         h, w = x.shape[-2], x.shape[-1]
-        x = (x - self.pixel_mean.to(dtype=x.dtype)) / self.pixel_std.to(dtype=x.dtype)
-        encoder_hidden_states = self.encoder(x)
-        logits = self.decode_head(encoder_hidden_states)
+        logits = self.forward_logits(x)
 
         if self.training and targets is not None:
-            logits = F.interpolate(logits, size=targets.shape[-2:], mode="bilinear", align_corners=False)
-            targets = targets.long()
-            if bool((targets != self.IGNORE_INDEX).any()):
-                loss = F.cross_entropy(logits, targets, ignore_index=self.IGNORE_INDEX)
-            else:
-                # cross_entropy returns NaN when every pixel is ignored; emit a
-                # graph-connected zero so the optimizer step stays sane.
-                loss = logits.sum() * 0.0
-            return {"total_loss": loss, "sem": loss}
+            return self.loss_from_logits(logits, targets)
 
         return F.interpolate(logits, size=(h, w), mode="bilinear", align_corners=False)
 

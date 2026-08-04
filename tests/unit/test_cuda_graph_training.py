@@ -164,6 +164,146 @@ class TestTrainGraphManager:
 
 
 # =============================================================================
+# Invalidation (mid-run changes to what the captured region computes)
+# =============================================================================
+#
+# YOLOX turns on its L1 branch when mosaic closes, which adds tensors to the
+# network's output. Replaying the pre-switch graph past that point would keep
+# training the pre-switch network, so the family trainer invalidates and the
+# manager re-captures.
+
+
+class _ToyNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lin = nn.Linear(4, 4)
+
+    def forward(self, x):
+        return (self.lin(x),)
+
+
+class TestCaptureInvalidation:
+    def _captured(self, network):
+        manager = TrainGraphManager(warmup_threshold=1)
+        spec = CudaGraphTrainSpec(network=network, assemble=MagicMock())
+        imgs = _fake_cuda_batch()
+
+        def fake_make_graphed(module, sample, **kwargs):
+            # Mirror the real call's in-place rebind of module.forward.
+            module.forward = MagicMock(return_value=("flat",))
+            return module
+
+        with patch(
+            "torch.cuda.make_graphed_callables", side_effect=fake_make_graphed
+        ):
+            assert manager.run(spec, imgs) == ("flat",)
+        return manager, spec, imgs
+
+    def test_invalidate_restores_eager_forward_and_recaptures(self):
+        network = _ToyNet()
+        eager_forward = network.forward
+        manager, spec, imgs = self._captured(network)
+        assert manager.captured
+        assert "forward" in network.__dict__  # capture rebound it
+
+        manager.invalidate("mosaic close")
+        assert not manager.captured
+        assert not manager.disabled
+        # The eager forward is back: a re-capture's warm-up must not replay
+        # the dead graph (that fails with "Cannot prepare for replay during
+        # capturing stage" and permanently disables capture).
+        assert "forward" not in network.__dict__
+        assert network.forward.__func__ is eager_forward.__func__
+
+        with patch(
+            "torch.cuda.make_graphed_callables",
+            return_value=MagicMock(return_value=("flat2",)),
+        ) as make:
+            assert manager.run(spec, imgs) == ("flat2",)
+        make.assert_called_once()
+
+    def test_invalidate_resets_the_warmup_count(self):
+        manager = TrainGraphManager(warmup_threshold=3)
+        spec = _spec()
+        imgs = _fake_cuda_batch()
+        assert manager.run(spec, imgs) is None
+        assert manager.run(spec, imgs) is None
+        manager.invalidate("nothing captured yet")
+        # Counting starts over, so a switch landing near the end of a run
+        # never pays for a capture it cannot amortise.
+        with patch("torch.cuda.make_graphed_callables") as make:
+            assert manager.run(spec, imgs) is None
+            assert manager.run(spec, imgs) is None
+        make.assert_not_called()
+
+    def test_invalidate_after_disable_is_a_noop(self):
+        manager = TrainGraphManager(warmup_threshold=1)
+        manager.disabled = True
+        manager.invalidate("late switch")
+        assert manager.disabled
+        assert not manager.captured
+
+    def test_capture_failure_restores_eager_forward(self):
+        network = _ToyNet()
+        manager = TrainGraphManager(warmup_threshold=1)
+        spec = CudaGraphTrainSpec(network=network, assemble=MagicMock())
+        with patch(
+            "torch.cuda.make_graphed_callables", side_effect=RuntimeError("boom")
+        ):
+            assert manager.run(spec, _fake_cuda_batch()) is None
+        assert manager.disabled
+        # The eager fallback must call the real forward, not a half-built graph.
+        assert "forward" not in network.__dict__
+
+    def test_trainer_hook_routes_to_manager(self):
+        manager = TrainGraphManager()
+        host = SimpleNamespace(_cuda_graph_manager=manager)
+        with patch.object(TrainGraphManager, "invalidate") as invalidate:
+            BaseTrainer.invalidate_cuda_graph(host, "because")
+        invalidate.assert_called_once_with("because")
+
+    def test_trainer_hook_without_manager_is_a_noop(self):
+        BaseTrainer.invalidate_cuda_graph(SimpleNamespace(), "because")
+
+
+# =============================================================================
+# Stochastic-layer detection
+# =============================================================================
+#
+# Capture does not disable dropout or stochastic depth, but a replayed graph
+# consumes the generator on its own schedule, so it does not reproduce the
+# sequence an eager step would draw. Families that have such layers inside the
+# captured region are statistically equivalent, not bit-identical, and the
+# manager says so once at capture time rather than leaving it to be found in
+# a diff.
+
+
+class TestStochasticLayerDetection:
+    def test_clean_network_reports_none(self):
+        assert TrainGraphManager._stochastic_layers(_ToyNet()) == []
+
+    def test_active_dropout_is_reported(self):
+        net = nn.Sequential(nn.Linear(4, 4), nn.Dropout(0.5))
+        assert TrainGraphManager._stochastic_layers(net) == ["1"]
+
+    def test_disabled_dropout_is_not_reported(self):
+        net = nn.Sequential(nn.Linear(4, 4), nn.Dropout(0.0))
+        assert TrainGraphManager._stochastic_layers(net) == []
+
+    def test_stochastic_depth_is_reported_by_name(self):
+        class DropPath(nn.Module):
+            def __init__(self, drop_prob):
+                super().__init__()
+                self.drop_prob = drop_prob
+
+            def forward(self, x):
+                return x
+
+        net = nn.Sequential(DropPath(0.1), DropPath(0.0))
+        assert TrainGraphManager._stochastic_layers(net) == ["0"]
+
+
+# =============================================================================
 # Capture error mode (pin-memory thread race)
 # =============================================================================
 #
@@ -444,6 +584,233 @@ class TestRFDETRSpecGating:
         fn, host = self._host()
         host.criterion = None
         assert fn(host) is None
+
+
+class TestClassifyMixinGating:
+    """One mixin serves ResNet, ConvNeXt, MobileNetV4 and EfficientNetV2.
+
+    All four train on ``F.cross_entropy(model(imgs), targets)``, so the
+    network never reads the labels and the whole of it is capturable.
+    """
+
+    def _host(self, task="classify", model=None):
+        from libreyolo.models.base.classify_cuda_graph import ClassifyCudaGraphMixin
+
+        host = SimpleNamespace(
+            wrapper_model=SimpleNamespace(task=task),
+            model=nn.Linear(4, 3) if model is None else model,
+        )
+        return ClassifyCudaGraphMixin.cuda_graph_train_spec, host
+
+    def test_classify_supported(self):
+        fn, host = self._host()
+        spec = fn(host)
+        assert spec is not None
+        assert spec.network.module is host.model
+
+    def test_other_tasks_unsupported(self):
+        for task in ("detect", "segment", "semantic"):
+            fn, host = self._host(task=task)
+            assert fn(host) is None, task
+
+    def test_non_module_unsupported(self):
+        fn, host = self._host(model="not a module")
+        assert fn(host) is None
+
+    def test_assemble_matches_the_eager_loss(self):
+        import torch.nn.functional as F
+
+        fn, host = self._host()
+        spec = fn(host)
+        imgs = torch.randn(2, 4)
+        targets = torch.tensor([0, 2])
+        logits = host.model(imgs)
+        spec.network(imgs)  # records the output skeleton
+        out = spec.assemble((logits,), imgs, targets)
+        assert torch.equal(out["total_loss"], F.cross_entropy(logits, targets))
+        assert "loss_ce" in out
+
+    def test_every_classify_trainer_inherits_it(self):
+        from libreyolo.models.base.classify_cuda_graph import ClassifyCudaGraphMixin
+        from libreyolo.models.convnext.trainer import ConvNeXtTrainer
+        from libreyolo.models.efficientnetv2.trainer import EfficientNetV2Trainer
+        from libreyolo.models.mobilenetv4.trainer import MobileNetV4Trainer
+        from libreyolo.models.resnet.trainer import ResNetTrainer
+
+        for trainer in (
+            ResNetTrainer,
+            ConvNeXtTrainer,
+            MobileNetV4Trainer,
+            EfficientNetV2Trainer,
+        ):
+            assert issubclass(trainer, ClassifyCudaGraphMixin), trainer.__name__
+
+
+class TestSemanticMixinGating:
+    def _host(self, task="semantic", model=None):
+        from libreyolo.models.base.semantic_cuda_graph import (
+            SemanticLogitsCudaGraphMixin,
+        )
+
+        class Net(nn.Module):
+            def forward_logits(self, imgs):
+                return imgs * 2
+
+            def loss_from_logits(self, logits, targets):
+                return {"total_loss": logits.sum(), "sem": logits.sum()}
+
+        host = SimpleNamespace(
+            wrapper_model=SimpleNamespace(task=task),
+            model=Net() if model is None else model,
+        )
+        return SemanticLogitsCudaGraphMixin.cuda_graph_train_spec, host
+
+    def test_semantic_supported(self):
+        fn, host = self._host()
+        assert fn(host) is not None
+
+    def test_other_tasks_unsupported(self):
+        fn, host = self._host(task="detect")
+        assert fn(host) is None
+
+    def test_network_without_the_split_unsupported(self):
+        fn, host = self._host(model=nn.Linear(4, 4))
+        assert fn(host) is None
+
+    def test_both_families_expose_the_split(self):
+        from libreyolo.models.lingbotvision.nn import LingBotVisionSemanticSegmenter
+        from libreyolo.models.segformer.nn import LibreSegformerNet
+
+        for cls in (LibreSegformerNet, LingBotVisionSemanticSegmenter):
+            assert hasattr(cls, "forward_logits"), cls.__name__
+            assert hasattr(cls, "loss_from_logits"), cls.__name__
+
+
+class TestDETRMixinGating:
+    """One mixin serves D-FINE, DEIM, DEIMv2, RT-DETR v1/v2/v4 and EC.
+
+    The decoder reads the ground truth to size its denoising queries, so the
+    capture stops at the encoder.
+    """
+
+    def _host(self, task="detect", model=None, criterion=MagicMock()):
+        from libreyolo.models.base.detr_cuda_graph import DETREncoderCudaGraphMixin
+
+        class Net(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.backbone = nn.Identity()
+                self.encoder = nn.Identity()
+                self.decoder = nn.Identity()
+
+        host = SimpleNamespace(
+            wrapper_model=SimpleNamespace(task=task),
+            model=Net() if model is None else model,
+            criterion=criterion,
+        )
+        return DETREncoderCudaGraphMixin.cuda_graph_train_spec, host
+
+    def test_detect_supported(self):
+        fn, host = self._host()
+        assert fn(host) is not None
+
+    def test_other_tasks_unsupported(self):
+        for task in ("segment", "pose", "semantic"):
+            fn, host = self._host(task=task)
+            assert fn(host) is None, task
+
+    def test_model_without_the_trio_unsupported(self):
+        fn, host = self._host(model=nn.Linear(4, 4))
+        assert fn(host) is None
+
+    def test_missing_criterion_unsupported(self):
+        fn, host = self._host(criterion=None)
+        assert fn(host) is None
+
+    def test_every_detr_trainer_inherits_it(self):
+        from libreyolo.models.base.detr_cuda_graph import DETREncoderCudaGraphMixin
+        from libreyolo.models.deim.trainer import DEIMTrainer
+        from libreyolo.models.deimv2.trainer import DEIMv2Trainer
+        from libreyolo.models.dfine.trainer import DFINETrainer
+        from libreyolo.models.ec.trainer import ECTrainer
+        from libreyolo.models.rtdetr.trainer import RTDETRTrainer
+        from libreyolo.models.rtdetrv2.trainer import RTDETRv2Trainer
+        from libreyolo.models.rtdetrv4.trainer import RTDETRv4Trainer
+
+        for trainer in (
+            DFINETrainer,
+            DEIMTrainer,
+            DEIMv2Trainer,
+            ECTrainer,
+            RTDETRTrainer,
+            RTDETRv2Trainer,
+            RTDETRv4Trainer,
+        ):
+            assert issubclass(trainer, DETREncoderCudaGraphMixin), trainer.__name__
+
+    def test_capture_half_runs_the_families_own_forward(self):
+        """The capturable half must not re-derive the family's prefix.
+
+        DEIMv2's backbone emits more maps than its encoder consumes without
+        splitting a low-level feature off, which a hand-rolled prefix got
+        wrong (it passed ``low_level_feat=`` to a decoder that has no such
+        argument). Running the real forward with the decoder stubbed keeps
+        every family's own branching.
+        """
+        from libreyolo.models.base.detr_cuda_graph import _BackboneEncoder
+
+        seen = {}
+
+        class Net(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.backbone = nn.Identity()
+                self.encoder = nn.Identity()
+                self.decoder = nn.Identity()
+
+            def forward(self, x, targets=None):
+                a, b = x, x * 2
+                return self.decoder([a, b], targets=targets, extra=x * 3)
+
+        net = Net()
+        original_decoder_forward = net.decoder.forward
+        adapter = _BackboneEncoder(net)
+        flat = adapter(torch.ones(2))
+        assert len(flat) == 3  # two feats plus the one tensor kwarg
+        feats, kwargs = adapter.split(list(flat))
+        assert len(feats) == 2
+        assert set(kwargs) == {"extra"}
+        assert torch.equal(kwargs["extra"], torch.full((2,), 3.0))
+        # The stub is removed again: the decoder must be callable afterwards.
+        assert net.decoder.forward.__func__ is original_decoder_forward.__func__
+        seen.clear()
+
+    def test_shared_tensor_kwarg_is_not_duplicated(self):
+        """EC hands ``feats[0]`` to its mask head; it must not be emitted twice.
+
+        ``make_graphed_callables`` returns one static output buffer per
+        output tensor, and the same tensor appearing twice would give the
+        eager half two aliases of one buffer instead of the two distinct
+        values the family expects.
+        """
+        from libreyolo.models.base.detr_cuda_graph import _BackboneEncoder
+
+        class Net(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.backbone = nn.Identity()
+                self.encoder = nn.Identity()
+                self.decoder = nn.Identity()
+
+            def forward(self, x, targets=None):
+                feats = [x, x * 2]
+                return self.decoder(feats, targets=targets, spatial_feat=feats[0])
+
+        adapter = _BackboneEncoder(Net())
+        flat = adapter(torch.ones(2))
+        assert len(flat) == 2
+        feats, kwargs = adapter.split(list(flat))
+        assert kwargs["spatial_feat"] is feats[0]
 
 
 # =============================================================================

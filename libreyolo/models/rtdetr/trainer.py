@@ -26,6 +26,7 @@ from libreyolo.models.yolo9.transforms import (
 from .config import RTDETRConfig
 from .loss import RTDETRLoss
 from .transforms import RTDETRTrainTransform
+from ..base.detr_cuda_graph import DETREncoderCudaGraphMixin
 
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ def convert_targets_for_detr(
     return detr_targets
 
 
-class RTDETRTrainer(BaseTrainer):
+class RTDETRTrainer(DETREncoderCudaGraphMixin, BaseTrainer):
     """RT-DETR-specific trainer."""
 
     # RT-DETR pairs a CNN (PResNet/HGNetv2) backbone with a transformer

@@ -368,6 +368,17 @@ class BaseTrainer(ABC):
         """
         return None
 
+    def invalidate_cuda_graph(self, reason: str) -> None:
+        """Drop any captured training graph so a later batch re-captures.
+
+        Call this from a family hook that changes what the captured region
+        computes mid-run (YOLOX enabling its L1 branch at mosaic close is
+        the canonical case). A no-op when capture is off.
+        """
+        manager = getattr(self, "_cuda_graph_manager", None)
+        if manager is not None:
+            manager.invalidate(reason)
+
     def _forward_train(
         self,
         imgs: torch.Tensor,

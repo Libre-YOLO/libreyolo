@@ -135,14 +135,13 @@ class RTMDetTrainer(BaseTrainer):
             family="rtmdet",
         )
 
-    def on_forward(
-        self,
-        imgs: torch.Tensor,
-        targets: torch.Tensor,
-        polygons: Optional[List] = None,
-    ) -> Dict:
-        cls_scores, bbox_preds = self.model(imgs)
+    def _loss_from_head(self, cls_scores, bbox_preds, targets: torch.Tensor) -> Dict:
+        """Run the criterion over raw head outputs.
 
+        Split out of ``on_forward`` so the CUDA-graph path shares the exact
+        same tail: the graph captures the network only, and this method is
+        the eager remainder for both routes.
+        """
         # Targets: (B, max_labels, 5) [class, cx, cy, w, h] in pixel coords,
         # zero-padded. Convert to per-image (gt_boxes_xyxy, gt_labels) lists.
         gt_boxes_list = []
@@ -165,3 +164,41 @@ class RTMDetTrainer(BaseTrainer):
             gt_labels_list.append(cls)
 
         return self._loss_fn(cls_scores, bbox_preds, gt_boxes_list, gt_labels_list)
+
+    def on_forward(
+        self,
+        imgs: torch.Tensor,
+        targets: torch.Tensor,
+        polygons: Optional[List] = None,
+    ) -> Dict:
+        cls_scores, bbox_preds = self.model(imgs)
+        return self._loss_from_head(cls_scores, bbox_preds, targets)
+
+    def cuda_graph_train_spec(self):
+        """Capture spec: graph the network, keep the dynamic assigner eager.
+
+        The network forward takes images only, so the boundary is the one
+        ``on_forward`` already uses; ``assemble`` is ``_loss_from_head``,
+        shared verbatim with the eager path.
+        """
+        from libreyolo.training.cuda_graph import (
+            CudaGraphTrainSpec,
+            GraphableNetwork,
+        )
+        from .nn import LibreRTMDetModel
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            return None
+        if not isinstance(self.model, LibreRTMDetModel):
+            return None
+        if getattr(self, "_loss_fn", None) is None:
+            return None
+
+        network = GraphableNetwork(self.model)
+
+        def assemble(flat, imgs, targets, polygons=None):
+            cls_scores, bbox_preds = network.rebuild(flat)
+            return self._loss_from_head(cls_scores, bbox_preds, targets)
+
+        return CudaGraphTrainSpec(network=network, assemble=assemble)
