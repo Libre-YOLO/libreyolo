@@ -63,8 +63,8 @@ def _model_responses(*, runtime_metadata=None, max_batch_size=8, dtype="FP32"):
         "name": "detector",
         "versions": ["1"],
         "inputs": [{"name": "images", "datatype": dtype, "shape": [-1, 3, 8, 8]}],
-        # Deliberately opposite to config order. Config order is the stable
-        # runtime contract and must be retained by the backend.
+        # Deliberately opposite to config order. Model metadata preserves the
+        # graph output order required by positional backend postprocessors.
         "outputs": [
             {"name": "boxes", "datatype": "FP32", "shape": [-1, -1, 4]},
             {"name": "scores", "datatype": "FP32", "shape": [-1, -1, 2]},
@@ -376,7 +376,7 @@ def test_triton_initializes_metadata_and_https_client(monkeypatch):
     assert backend.task == "detect"
     assert backend.names == {0: "cat", 1: "dog"}
     assert backend.imgsz == 8
-    assert backend.output_names == ["scores", "boxes"]
+    assert backend.output_names == ["boxes", "scores"]
     assert client_cls.instances[0].kwargs == {
         "url": "example.test:8443",
         "ssl": True,
@@ -401,7 +401,7 @@ def test_triton_preserves_flagship_detection_metadata(monkeypatch, family, size)
     assert backend.nb_classes == 2
 
 
-def test_triton_casts_input_and_returns_config_order(monkeypatch):
+def test_triton_casts_input_and_returns_metadata_order(monkeypatch):
     config, metadata = _model_responses(dtype="FP16")
     client_cls = _install_fake_client(monkeypatch, config=config, metadata=metadata)
     backend = TritonBackend("http://127.0.0.1:8000/detector")
@@ -412,11 +412,12 @@ def test_triton_casts_input_and_returns_config_order(monkeypatch):
     assert infer_input.datatype == "FP16"
     assert infer_input.array.dtype == np.float16
     assert infer_input.binary_data is True
-    assert [output.shape[-1] for output in outputs] == [2, 4]
+    assert [output.shape[-1] for output in outputs] == [4, 2]
+    assert [float(output[0, 0, 0]) for output in outputs] == [2.0, 1.0]
     infer_call = next(
         call for call in client_cls.instances[0].calls if call[0] == "infer"
     )
-    assert [output.name for output in infer_call[2]["outputs"]] == ["scores", "boxes"]
+    assert [output.name for output in infer_call[2]["outputs"]] == ["boxes", "scores"]
     assert infer_call[2]["timeout"] == 30_000_000
 
 

@@ -509,7 +509,6 @@ class TritonBackend(BaseBackend):
             raise TritonBackendError(f"{artifact} config.pbtxt declares no outputs.")
         if not isinstance(metadata_outputs, list) or not metadata_outputs:
             raise TritonBackendError(f"{artifact} model metadata exposes no outputs.")
-        output_names = []
         config_output_types = {}
         for output in config_outputs:
             if not isinstance(output, dict) or not isinstance(output.get("name"), str):
@@ -519,12 +518,12 @@ class TritonBackend(BaseBackend):
                 raise TritonBackendError(
                     f"{artifact} declares duplicate output {name!r}."
                 )
-            output_names.append(name)
             config_output_types[name] = _normalized_datatype(
                 output.get("data_type"),
                 location=f"{artifact} config output {name!r}",
             )
 
+        output_names = []
         metadata_output_types = {}
         for output in metadata_outputs:
             if not isinstance(output, dict) or not isinstance(output.get("name"), str):
@@ -534,11 +533,12 @@ class TritonBackend(BaseBackend):
                 raise TritonBackendError(
                     f"{artifact} exposes duplicate output {name!r}."
                 )
+            output_names.append(name)
             metadata_output_types[name] = _normalized_datatype(
                 output.get("datatype"),
                 location=f"{artifact} metadata output {name!r}",
             )
-        if set(output_names) != set(metadata_output_types):
+        if set(config_output_types) != set(output_names):
             raise TritonBackendError(
                 f"{artifact} output names differ between config and metadata."
             )
