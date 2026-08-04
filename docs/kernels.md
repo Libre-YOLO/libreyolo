@@ -81,9 +81,25 @@ matrix. This needs no optional dependency: it is stock torch.
 
 Two rules decide when a family uses it.
 
-**ONNX export never does.** LibreYOLO defaults to opset 13, which has no
-symbolic for fused SDPA, so every swapped call site keeps the primitive-op
-equation under `torch.onnx.is_in_onnx_export()`. Exported graphs are unchanged.
+**Graph capture never does.** Every swapped call site keeps the primitive-op
+equation behind `manual_attention_required()`, which covers ONNX export
+(LibreYOLO defaults to opset 13, which has no symbolic for fused SDPA) *and*
+`torch.jit.trace`, the capture used by the TorchScript, CoreML and NCNN
+exporters. Exported graphs are unchanged.
+
+Two capture kinds are deliberately excluded. `torch.compile` lowers SDPA
+better than the manual equation, so forcing primitives there would deoptimize
+compiled inference; `torch.compiler.is_compiling()` cannot tell it apart from
+`torch.export`, so neither is gated. That is safe for the `torch.export`
+backends because both decompose SDPA to core ATen before their converter runs
+(Core AI through `run_decompositions()`, ExecuTorch through
+`to_edge_transform_and_lower`).
+
+Note this is a *looser* rule than the `ms_deform_attn` slot's, which also
+refuses under `torch.compiler.is_compiling()`. That slot dispatches to a
+runtime-fetched compiled kernel that must never be captured at all; SDPA is
+stock torch either way, so only the capture formats that care about the op
+spelling are gated.
 
 **A byte-exact parity bar keeps manual math by default.** Several ports are
 pinned to `max_abs_diff == 0` against a reference that itself runs manual
@@ -96,6 +112,10 @@ from libreyolo.kernels.attention import set_fused_attention
 
 set_fused_attention(model)  # returns how many attention modules switched
 ```
+
+The count is the number of `fused_attn` flags that moved, and every module
+carrying one honors it. `LibreViT` and `LibreDeiT` also carry the flag (they
+default to SDPA, following timm) so the switch turns them off too.
 
 That trades byte-exact agreement with the family's upstream reference for the
 fused kernels. On an RTX 5070 Ti under fp16 autocast, Swin window attention

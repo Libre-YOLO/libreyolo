@@ -30,15 +30,23 @@ before 1.4.0 are documented in the
 
 - Fused scaled-dot-product attention across the transformer families, using
   stock torch (no optional dependency). SegFormer, Depth Anything (and
-  MoGe-2), BERT, Grounding DINO, SwinIR and PP-OCR use it by default; ONNX
-  export still traces the primitive-op equation, so exported graphs are
-  unchanged. Families pinned to a byte-exact parity bar (Swin,
+  MoGe-2), BERT, Grounding DINO, SwinIR and PP-OCR use it by default; graph
+  capture (ONNX, plus the `torch.jit.trace`-based TorchScript, CoreML and
+  NCNN exporters) still records the primitive-op equation, so exported graphs
+  are unchanged. Families pinned to a byte-exact parity bar (Swin,
   LibreDINO-DETR's Swin backbone, BiRefNet, FeyNoBG, OWLv2, LW-DETR,
   SigLIP 2, ZipDepth, MobileSAM) keep manual attention by default and opt in
   with `libreyolo.kernels.attention.set_fused_attention(model)`, which trades
   byte-exact agreement with upstream for the fused kernels. Measured on an
-  RTX 5070 Ti under fp16 autocast: 1.77x on Swin window attention, 3.74x on
+  RTX 5070 Ti under fp16 autocast: ~2x on Swin window attention, ~3.8x on
   OWLv2 vision attention. See `docs/kernels.md`.
+
+### Fixed
+
+- `LibreViT` and `LibreDeiT` now honor their `fused_attn` attribute. It was a
+  timm-compatibility vestige that nothing read, so
+  `libreyolo.kernels.attention.set_fused_attention` reported switching it
+  while fused attention kept running. Default behavior is unchanged for both.
 
 - `val_loss=True` extended from the `g0` flagships to **every trainable
   family** (`g0`, `g1` and `g2`), across four tasks rather than detection
