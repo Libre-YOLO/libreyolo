@@ -131,10 +131,37 @@ class Bagel(PreTrainedModel):
         if runner is None:
             return eager()
 
-        # The graph bakes in whatever auxiliary tensors capture saw. They are
-        # derived from the same packing as `tokens`, and the runner keys its
-        # cache on that tensor's shape, so a replay only ever reuses aux values
-        # that belong to the same packing.
+        # The graph bakes in the auxiliary tensors capture saw, but the runner
+        # keys its cache on the token tensor's shape alone, and equal token
+        # counts do NOT imply equal packings (a 448x224 and a 224x448 image
+        # pack to the same token count with different position ids; so do two
+        # small images vs one large one, with different cu_seqlens). Replaying
+        # across packings would silently reuse stale aux tensors, so record the
+        # packing that each token shape's graph baked in and refuse to replay
+        # any other packing at that shape. The tolist() reads sync once per
+        # tower call, which the surrounding pipeline already does anyway.
+        signature = (
+            tuple(cu_seqlens.tolist()),
+            int(max_seqlen if not torch.is_tensor(max_seqlen) else max_seqlen.item()),
+            tuple(position_ids.tolist()),
+        )
+        key = (tuple(tokens.shape), tokens.dtype, str(tokens.device))
+        signatures = getattr(self, "_vit_graph_signatures", None)
+        if signatures is None:
+            signatures = self._vit_graph_signatures = {}
+        recorded = signatures.get(key)
+        if recorded is None:
+            signatures[key] = signature
+        elif recorded != signature:
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "sensenova: packed shape %s seen with a different packing than "
+                "its captured graph; running the vision tower eagerly",
+                key[0],
+            )
+            return eager()
+
         self._vit_graph_aux = (position_ids, cu_seqlens, max_seqlen)
         try:
             return runner.run(tokens, auto=bool(getattr(self, "_vit_graph_auto", False)))

@@ -454,3 +454,96 @@ def test_sensenova_run_vit_dispatch():
     with torch.no_grad():
         fallback = Bagel.run_vit(stub, tokens, position_ids, cu_seqlens, tokens_n).clone()
     assert torch.equal(eager, fallback), "fallback did not return the eager result"
+
+
+@requires_cuda
+def test_sensenova_run_vit_rejects_stale_packing():
+    """Equal token counts do not imply equal packings; replay must not mix them.
+
+    A 448x224 and a 224x448 image pack to the same token count with different
+    position ids, and two small images pack to the same count as one large one
+    with different ``cu_seqlens``. The runner keys its graph cache on the token
+    tensor's shape alone, so without the packing-signature guard a second
+    packing at the same shape would replay the first packing's captured
+    auxiliary tensors and return silently wrong embeddings (found by Greptile
+    on the PR). The guard must send the mismatched packing to the eager path.
+    """
+    from libreyolo.models.base.cuda_graph import GraphRunner
+    from libreyolo.models.sensenova.modeling.bagel import Bagel
+    from libreyolo.models.sensenova.modeling.siglip_navit import (
+        SiglipVisionConfig,
+        SiglipVisionModel,
+    )
+
+    torch.manual_seed(0)
+    config = SiglipVisionConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        image_size=64,
+        patch_size=16,
+    )
+    tower = SiglipVisionModel(config)
+    tower.vision_model.embeddings.convert_conv2d_to_linear(config)
+    tower = tower.cuda().eval().to(torch.bfloat16)
+
+    tokens_n = 16
+    patch = config.patch_size
+    tokens = torch.randn(tokens_n, 3 * patch * patch, device="cuda", dtype=torch.bfloat16)
+
+    # Packing A: one segment, ascending positions. Packing B: same token
+    # count, but two segments with different position ids.
+    pos_a = torch.arange(tokens_n, device="cuda")
+    cu_a = torch.tensor([0, tokens_n], device="cuda", dtype=torch.int32)
+    pos_b = torch.cat(
+        [torch.arange(tokens_n // 2, device="cuda")] * 2
+    )
+    cu_b = torch.tensor([0, tokens_n // 2, tokens_n], device="cuda", dtype=torch.int32)
+
+    class _Stub:
+        pass
+
+    stub = _Stub()
+    stub.vit_model = tower
+    stub._vit_graph_runner = GraphRunner(
+        forward_fn=lambda t: Bagel.vit_forward_for_graph(stub, t),
+        family="sensenova",
+    )
+    stub._vit_graph_auto = False
+
+    with torch.no_grad():
+        eager_a = tower(
+            packed_pixel_values=tokens,
+            packed_flattened_position_ids=pos_a,
+            cu_seqlens=cu_a,
+            max_seqlen=tokens_n,
+        ).clone()
+        eager_b = tower(
+            packed_pixel_values=tokens,
+            packed_flattened_position_ids=pos_b,
+            cu_seqlens=cu_b,
+            max_seqlen=tokens_n // 2,
+        ).clone()
+        assert not torch.equal(eager_a, eager_b), (
+            "the two packings produced identical outputs; the test cannot "
+            "distinguish a stale replay"
+        )
+
+        # Packing A captures the graph.
+        out_a = Bagel.run_vit(stub, tokens, pos_a, cu_a, tokens_n).clone()
+        assert stub._vit_graph_runner.info()["graph_count"] == 1
+        assert torch.equal(out_a, eager_a)
+
+        # Packing B has the same token shape: it must NOT replay A's graph.
+        out_b = Bagel.run_vit(stub, tokens, pos_b, cu_b, tokens_n // 2).clone()
+        assert torch.equal(out_b, eager_b), (
+            "same-shape different-packing call replayed stale auxiliary tensors"
+        )
+        assert stub._vit_graph_runner.info()["graph_count"] == 1, (
+            "the mismatched packing should go eager, not capture a second graph"
+        )
+
+        # Packing A still replays its own graph correctly afterwards.
+        out_a2 = Bagel.run_vit(stub, tokens, pos_a, cu_a, tokens_n).clone()
+        assert torch.equal(out_a2, eager_a)
