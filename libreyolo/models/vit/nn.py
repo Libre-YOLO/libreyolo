@@ -120,15 +120,14 @@ class Attention(nn.Module):
         )
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
-        if torch.onnx.is_in_onnx_export():
-            # LibreYOLO defaults to ONNX opset 13, where PyTorch has no
-            # symbolic for fused SDPA. Keep eager inference on the exact timm
-            # path and lower the same equation to primitive MatMul/Softmax
-            # operators only while tracing an ONNX graph.
-            attention = (q * self.scale) @ k.transpose(-2, -1)
-            attention = self.attn_drop(attention.softmax(dim=-1))
-            x = attention @ v
-        else:
+        # ``fused_attn`` was a timm-compat attribute that nothing read, so
+        # libreyolo.kernels.attention.set_fused_attention() reported switching
+        # it while SDPA kept running. Honoring it here makes that count true.
+        # The gate stays ONNX-only rather than the shared
+        # ``manual_attention_required()``: this family is outside the kernel
+        # campaign and its jit.trace-based artifacts (TorchScript, CoreML,
+        # NCNN) were validated with SDPA in the graph.
+        if self.fused_attn and not torch.onnx.is_in_onnx_export():
             x = F.scaled_dot_product_attention(
                 q,
                 k,
@@ -137,6 +136,14 @@ class Attention(nn.Module):
                 dropout_p=self.attn_drop.p if self.training else 0.0,
                 is_causal=False,
             )
+        else:
+            # LibreYOLO defaults to ONNX opset 13, where PyTorch has no
+            # symbolic for fused SDPA. Keep eager inference on the exact timm
+            # path and lower the same equation to primitive MatMul/Softmax
+            # operators only while tracing an ONNX graph.
+            attention = (q * self.scale) @ k.transpose(-2, -1)
+            attention = self.attn_drop(attention.softmax(dim=-1))
+            x = attention @ v
         x = x.transpose(1, 2).reshape(batch, tokens, channels)
         x = self.norm(x)
         x = self.proj(x)

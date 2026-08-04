@@ -12,6 +12,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ...kernels.attention.ms_deform_attn import (
+    maybe_ms_deform_attn,
+    ms_deform_attn_available,
+    spatial_shapes_tensor,
+)
+
 
 # =============================================================================
 # Core Utilities (used by nn.py, denoising.py, loss.py)
@@ -68,6 +74,19 @@ def deformable_attention_core_func(
     Returns:
         output: [bs, query_length, C]
     """
+    # The grid_sample path below is the default and the export path; when the
+    # optional accelerated ``ms_deform_attn`` slot resolves it takes over
+    # (see ``libreyolo/kernels/attention/ms_deform_attn.py``). The layout here
+    # is already the slot's, so only the spatial shapes need normalizing.
+    if ms_deform_attn_available():
+        accelerated = maybe_ms_deform_attn(
+            value,
+            spatial_shapes_tensor(value_spatial_shapes, value.device),
+            sampling_locations,
+            attention_weights,
+        )
+        if accelerated is not None:
+            return accelerated
     bs, _, n_head, c = value.shape
     _, Len_q, _, n_levels, n_points, _ = sampling_locations.shape
 

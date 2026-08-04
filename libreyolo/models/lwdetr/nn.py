@@ -32,6 +32,13 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
+from ...kernels.attention.ms_deform_attn import (
+    maybe_ms_deform_attn,
+    ms_deform_attn_available,
+    spatial_shapes_tensor,
+)
+from ...kernels.attention.sdpa import manual_attention_required
+
 __all__ = ["LWDETR_CONFIGS", "LWDETRExportWrapper", "LibreLWDETRModel"]
 
 
@@ -265,6 +272,11 @@ class Attention(nn.Module):
         else:
             self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.proj = nn.Linear(dim, dim)
+        # Opt-in fused SDPA. Default off: weights/parity_lwdetr.py pins
+        # max_abs_diff == 0.0 against the official model and fused kernels
+        # accumulate in a different order. Flip with
+        # libreyolo.kernels.attention.set_fused_attention(model).
+        self.fused_attn = False
 
     def forward(self, x: Tensor) -> Tensor:
         batch, num_tokens, channels = x.shape
@@ -278,9 +290,16 @@ class Attention(nn.Module):
             batch, num_tokens, 3, self.num_heads, self.head_dim
         ).permute(2, 0, 3, 1, 4)
         query, key, value = qkv.unbind(0)
-        attn = (query * self.scale) @ key.transpose(-2, -1)
-        attn = attn.softmax(dim=-1)
-        x = (attn @ value).transpose(1, 2).reshape(batch, num_tokens, channels)
+        if self.fused_attn and not manual_attention_required():
+            x = F.scaled_dot_product_attention(
+                query, key, value, attn_mask=None, dropout_p=0.0,
+                is_causal=False, scale=self.scale,
+            )
+        else:
+            attn = (query * self.scale) @ key.transpose(-2, -1)
+            attn = attn.softmax(dim=-1)
+            x = attn @ value
+        x = x.transpose(1, 2).reshape(batch, num_tokens, channels)
         return self.proj(x)
 
 
@@ -803,7 +822,25 @@ def ms_deform_attn_core_pytorch(
     reference path whenever exporting or running fp16. LibreYOLO always takes
     it: no build step, runs on every device, and exports to ONNX opset >= 16
     (``grid_sample`` -> ``GridSample``).
+
+    When the optional accelerated ``ms_deform_attn`` kernel slot resolves
+    (see ``libreyolo/kernels/attention/ms_deform_attn.py``) it takes over;
+    the grid_sample path below stays the default and the export path.
     """
+    if ms_deform_attn_available():
+        weights = attention_weights
+        if weights.dim() == 4:
+            # The caller flattens (levels, points); the slot takes them split.
+            weights = weights.unflatten(-1, sampling_locations.shape[-3:-1])
+        accelerated = maybe_ms_deform_attn(
+            # (bs, heads, c, Len_in) -> the slot's (bs, Len_in, heads, c).
+            value.permute(0, 3, 1, 2),
+            spatial_shapes_tensor(value_spatial_shapes, value.device),
+            sampling_locations,
+            weights,
+        )
+        if accelerated is not None:
+            return accelerated
     batch, n_heads, head_dim, _ = value.shape
     _, len_query, _, num_levels, num_points, _ = sampling_locations.shape
     value_list = value.split([h * w for h, w in value_spatial_shapes], dim=3)
@@ -962,6 +999,11 @@ class MultiheadAttention(nn.Module):
         self.in_proj_weight = nn.Parameter(torch.empty(3 * embed_dim, embed_dim))
         self.in_proj_bias = nn.Parameter(torch.empty(3 * embed_dim)) if bias else None
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        # Opt-in fused SDPA: exactly the accumulation-order gap the class
+        # docstring above describes, which weights/parity_lwdetr.py's
+        # max_abs_diff == 0.0 bar would catch. Flip with
+        # libreyolo.kernels.attention.set_fused_attention(model).
+        self.fused_attn = False
 
         nn.init.xavier_uniform_(self.in_proj_weight)
         if self.in_proj_bias is not None:
@@ -991,10 +1033,16 @@ class MultiheadAttention(nn.Module):
 
         q, k, v = _split_heads(q), _split_heads(k), _split_heads(v)
 
-        q = q / math.sqrt(self.head_dim)
-        attn = torch.bmm(q, k.transpose(-2, -1))
-        attn = F.softmax(attn, dim=-1)
-        attn_output = torch.bmm(attn, v)
+        if self.fused_attn and not manual_attention_required():
+            attn_output = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False,
+                scale=1.0 / math.sqrt(self.head_dim),
+            )
+        else:
+            q = q / math.sqrt(self.head_dim)
+            attn = torch.bmm(q, k.transpose(-2, -1))
+            attn = F.softmax(attn, dim=-1)
+            attn_output = torch.bmm(attn, v)
 
         attn_output = (
             attn_output.permute(1, 0, 2)

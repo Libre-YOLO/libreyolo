@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils import checkpoint
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 def _to_2tuple(value: int | Sequence[int]) -> tuple[int, int]:
@@ -140,7 +141,6 @@ class WindowAttention(nn.Module):
         )
         qkv = qkv.permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        attention = (q * self.scale) @ k.transpose(-2, -1)
 
         relative_bias = self.relative_position_bias_table[
             self.relative_position_index.view(-1)
@@ -149,20 +149,47 @@ class WindowAttention(nn.Module):
             self.window_size[0] * self.window_size[1],
             -1,
         )
-        attention = attention + relative_bias.permute(2, 0, 1).unsqueeze(0)
-        if mask is not None:
-            num_windows = mask.shape[0]
-            attention = attention.view(
-                batch_windows // num_windows,
-                num_windows,
-                self.num_heads,
-                tokens,
-                tokens,
+        bias = relative_bias.permute(2, 0, 1).unsqueeze(0)
+        if manual_attention_required():
+            # Graph capture (ONNX, and the jit.trace-based TorchScript /
+            # CoreML / NCNN exporters) must see the primitive-op equation;
+            # eager inference keeps the fused kernels below.
+            attention = (q * self.scale) @ k.transpose(-2, -1)
+            attention = attention + bias
+            if mask is not None:
+                num_windows = mask.shape[0]
+                attention = attention.view(
+                    batch_windows // num_windows,
+                    num_windows,
+                    self.num_heads,
+                    tokens,
+                    tokens,
+                )
+                attention = attention + mask.unsqueeze(1).unsqueeze(0)
+                attention = attention.view(-1, self.num_heads, tokens, tokens)
+            attention = self.attn_drop(self.softmax(attention))
+            x = attention @ v
+        else:
+            # SDPA takes one additive float mask, so the relative position bias
+            # and the shifted-window mask are summed into it. The window mask
+            # is (num_windows, tokens, tokens) and the batch is laid out as
+            # (batch, num_windows) flattened, so repeat tiles it per window.
+            attn_mask = bias
+            if mask is not None:
+                num_windows = mask.shape[0]
+                attn_mask = bias + mask.unsqueeze(1).repeat(
+                    batch_windows // num_windows, 1, 1, 1
+                )
+            x = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=attn_mask,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+                is_causal=False,
+                scale=self.scale,
             )
-            attention = attention + mask.unsqueeze(1).unsqueeze(0)
-            attention = attention.view(-1, self.num_heads, tokens, tokens)
-        attention = self.attn_drop(self.softmax(attention))
-        x = (attention @ v).transpose(1, 2).reshape(batch_windows, tokens, channels)
+        x = x.transpose(1, 2).reshape(batch_windows, tokens, channels)
         return self.proj_drop(self.proj(x))
 
 

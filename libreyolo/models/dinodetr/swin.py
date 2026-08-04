@@ -14,6 +14,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from ..deformable_detr.common import NestedTensor
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 def _to_2tuple(value: int) -> tuple[int, int]:
@@ -114,6 +115,11 @@ class WindowAttention(nn.Module):
         self.proj_drop = nn.Dropout(0.0)
         nn.init.trunc_normal_(self.relative_position_bias_table, std=0.02)
         self.softmax = nn.Softmax(dim=-1)
+        # Opt-in fused SDPA. Default off: tests/unit/test_dinodetr_parity.py
+        # pins max_abs_diff == 0.0 against the upstream checkpoint and fused
+        # kernels accumulate in a different order. Flip with
+        # libreyolo.kernels.attention.set_fused_attention(model).
+        self.fused_attn = False
 
     def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
         batch_windows, tokens, channels = x.shape
@@ -129,7 +135,6 @@ class WindowAttention(nn.Module):
             .permute(2, 0, 3, 1, 4)
         )
         query, key, value = qkv[0], qkv[1], qkv[2]
-        attention = (query * self.scale) @ key.transpose(-2, -1)
         relative_bias = self.relative_position_bias_table[
             self.relative_position_index.view(-1)
         ].view(
@@ -138,6 +143,28 @@ class WindowAttention(nn.Module):
             -1,
         )
         relative_bias = relative_bias.permute(2, 0, 1).contiguous()
+        if self.fused_attn and not manual_attention_required():
+            # SDPA takes one additive float mask, so the relative position bias
+            # and the shifted-window mask are summed into it. The window mask is
+            # (num_windows, tokens, tokens) and the batch is laid out as
+            # (batch, num_windows) flattened, so repeat tiles it per window.
+            attn_mask = relative_bias.unsqueeze(0)
+            if mask is not None:
+                attn_mask = attn_mask + mask.unsqueeze(1).repeat(
+                    batch_windows // mask.shape[0], 1, 1, 1
+                )
+            fused = F.scaled_dot_product_attention(
+                query,
+                key,
+                value,
+                attn_mask=attn_mask,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+                is_causal=False,
+                scale=self.scale,
+            )
+            fused = fused.transpose(1, 2).reshape(batch_windows, tokens, channels)
+            return self.proj_drop(self.proj(fused))
+        attention = (query * self.scale) @ key.transpose(-2, -1)
         attention = attention + relative_bias.unsqueeze(0)
         if mask is not None:
             num_windows = mask.shape[0]

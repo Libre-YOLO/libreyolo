@@ -30,6 +30,7 @@ from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ...kernels.attention.sdpa import manual_attention_required
 
 # Upstream MODEL_CONFIGS. Only 'base' has released checkpoints today; the other
 # entries are kept so future upstream releases map onto new size codes without
@@ -208,6 +209,11 @@ class EfficientGlobalAttention(nn.Module):
 
         self.proj_out = nn.Conv2d(dim, dim, 1)
         self.norm = nn.BatchNorm2d(dim)
+        # Opt-in fused SDPA. Default off: tests/unit/test_zipdepth_parity.py
+        # pins max_abs_diff == 0.0 against the official implementation and
+        # fused kernels accumulate in a different order. Flip with
+        # libreyolo.kernels.attention.set_fused_attention(model).
+        self.fused_attn = False
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
@@ -226,8 +232,15 @@ class EfficientGlobalAttention(nn.Module):
             .expand(B, -1, -1, -1)
         )
 
-        attn_t2s = (q_tok @ k_sp.transpose(-2, -1)) * self.scale
-        tokens_updated = F.softmax(attn_t2s, dim=-1) @ v_sp
+        fused = self.fused_attn and not manual_attention_required()
+        if fused:
+            tokens_updated = F.scaled_dot_product_attention(
+                q_tok, k_sp, v_sp, attn_mask=None, dropout_p=0.0,
+                is_causal=False, scale=self.scale,
+            )
+        else:
+            attn_t2s = (q_tok @ k_sp.transpose(-2, -1)) * self.scale
+            tokens_updated = F.softmax(attn_t2s, dim=-1) @ v_sp
 
         q_sp = (
             self.q_spatial(x)
@@ -244,8 +257,14 @@ class EfficientGlobalAttention(nn.Module):
         )
         v_tok = tokens_updated
 
-        attn_s2t = F.softmax((q_sp @ k_tok.transpose(-2, -1)) * self.scale, dim=-1)
-        out = attn_s2t @ v_tok
+        if fused:
+            out = F.scaled_dot_product_attention(
+                q_sp, k_tok, v_tok, attn_mask=None, dropout_p=0.0,
+                is_causal=False, scale=self.scale,
+            )
+        else:
+            attn_s2t = F.softmax((q_sp @ k_tok.transpose(-2, -1)) * self.scale, dim=-1)
+            out = attn_s2t @ v_tok
 
         out = out.transpose(1, 2).reshape(B, N, C).transpose(1, 2).reshape(B, C, H, W)
         return x + self.norm(self.proj_out(out))

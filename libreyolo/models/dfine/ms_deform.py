@@ -17,6 +17,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ...kernels.attention.ms_deform_attn import (
+    maybe_ms_deform_attn_v2,
+    ms_deform_attn_available,
+    spatial_shapes_tensor,
+)
+
 
 def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
     x = x.clip(min=0.0, max=1.0)
@@ -143,7 +149,30 @@ def deformable_attention_core_func_v2(
         method: ``"default"`` (bilinear) or ``"discrete"`` (nearest integer).
 
     Returns: ``(bs, Len_q, n_head * c)``.
+
+    The loop below is the default and the export path. When the optional
+    accelerated ``ms_deform_attn`` slot resolves and the flat point layout
+    reshapes onto the slot's ``(n_levels, n_points)`` one, it takes over
+    (see ``libreyolo/kernels/attention/ms_deform_attn.py``). Neither
+    ``method='discrete'`` nor the forced-manual grid_sample used by the
+    ONNX/Core AI exporters ever does.
     """
+    if (
+        method == "default"
+        and not _FORCE_MANUAL_GRID_SAMPLE_EXPORT
+        and not _FORCE_MANUAL_GRID_SAMPLE.get()
+        and ms_deform_attn_available()
+    ):
+        accelerated = maybe_ms_deform_attn_v2(
+            # Per-level (bs, n_head, c, H*W) -> the slot's (bs, Len_in, n_head, c).
+            torch.cat(list(value), dim=-1).permute(0, 3, 1, 2),
+            spatial_shapes_tensor(value_spatial_shapes, value[0].device),
+            sampling_locations,
+            attention_weights,
+            num_points_list,
+        )
+        if accelerated is not None:
+            return accelerated
     bs, n_head, c, _ = value[0].shape
     _, Len_q, _, _, _ = sampling_locations.shape
 
