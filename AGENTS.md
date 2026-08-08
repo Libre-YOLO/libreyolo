@@ -103,6 +103,7 @@
   evidence.
 
 ## Pull Request (PR) policy
+- Before pushing PR changes, run `greptile review --agent --branch <target-branch>` when the Greptile CLI is available and address valid findings.
 - All development PRs target `dev`, never `release`. This holds regardless of
   which branch GitHub shows as the default: `release` is the public default
   branch, but it only receives curated release merges, not feature PRs.
@@ -128,5 +129,8 @@
   what it did not. It never implies review or approval it does not have.
 
 ## General library constraints
+- User-facing workflows must be directly callable. Document validation evidence
+  and known limits separately; do not make acknowledgement flags the public
+  capability contract.
 - Generally every user facing API (Python, yamls, etc) has to follow the de-facto YOLO CLI/API conventions
 - The Flagship models of LibreYOLO are YOLO9 (CNNs) and RF-DETR (transformers), and new features have to at least cover this two

@@ -19,7 +19,7 @@ from .test_tensorrt_round8 import TensorRTRound8Case, _run_tensorrt_case
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.tensorrt,
     pytest.mark.trt,
 ]

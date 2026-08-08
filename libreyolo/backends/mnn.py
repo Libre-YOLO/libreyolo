@@ -111,7 +111,7 @@ class MNNBackend(BaseBackend):
         model_family = str(metadata.get("model_family", "")).lower()
         if model_family not in _SUPPORTED_FAMILIES:
             raise ValueError(
-                "MNN v1 supports G0/G1 detection exports only; "
+                "MNN v1 has no runtime contract for this model family; "
                 f"got model_family={model_family or 'missing'!r}."
             )
         model_size = metadata.get("model_size") or metadata.get("size")

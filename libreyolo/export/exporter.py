@@ -620,6 +620,11 @@ class BaseExporter(ABC):
 
     def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
         """Run cheap format-specific checks before model or calibration setup."""
+        if kwargs.get("deepstream") and self.format_name != "onnx":
+            raise ValueError(
+                "deepstream=True is supported only for ONNX export "
+                f"(format='onnx'); got format={self.format_name!r}."
+            )
         family = self.model._get_model_name()
         task = getattr(self.model, "task", "detect")
         if not isinstance(task, str):
@@ -635,13 +640,6 @@ class BaseExporter(ABC):
             raise NotImplementedError(
                 f"{family} {task} export to {self.format_name} is blocked: "
                 f"{support.reason}{alternatives_text}"
-            )
-        if support.tier == "experimental":
-            warnings.warn(
-                f"{family} {task} export to {self.format_name} is experimental: "
-                f"{support.reason}",
-                RuntimeWarning,
-                stacklevel=3,
             )
         if kwargs.get("nms") and not self.supports_embedded_nms:
             raise NotImplementedError(
@@ -1459,6 +1457,33 @@ class OnnxExporter(BaseExporter):
                     "Embedded NMS ONNX export currently supports YOLO9 "
                     "detection models only."
                 )
+        if kwargs.get("deepstream"):
+            from .deepstream import (
+                deepstream_supported_families,
+                deepstream_supported_tasks,
+            )
+
+            if kwargs.get("nms"):
+                raise ValueError(
+                    "deepstream=True and nms=True are mutually exclusive: "
+                    "DeepStream runs suppression in its clustering stage."
+                )
+            task = getattr(self.model, "task", "detect")
+            if not isinstance(task, str):
+                task = "detect"
+            family = self.model._get_model_name()
+            supported = deepstream_supported_families(task)
+            if not supported:
+                supported_tasks = ", ".join(sorted(deepstream_supported_tasks()))
+                raise NotImplementedError(
+                    f"DeepStream export does not support the {task!r} task. "
+                    f"Supported tasks: {supported_tasks}."
+                )
+            if family not in supported:
+                raise NotImplementedError(
+                    f"DeepStream {task} export supports families "
+                    f"{sorted(supported)}; got {family!r}."
+                )
         super()._preflight(half=half, int8=int8, data=data, **kwargs)
 
     def _export(
@@ -1475,6 +1500,7 @@ class OnnxExporter(BaseExporter):
         opset,
         simplify,
         nms=False,
+        deepstream=False,
         iou=0.45,
         conf=0.25,
         max_det=300,
@@ -1483,6 +1509,20 @@ class OnnxExporter(BaseExporter):
         **kwargs,
     ):
         imgsz = (dummy.shape[-2], dummy.shape[-1])
+
+        if deepstream:
+            from .deepstream import wrap_for_deepstream
+
+            ds_task = getattr(self.model, "task", "detect")
+            if not isinstance(ds_task, str):
+                ds_task = "detect"
+            nn_model = wrap_for_deepstream(
+                nn_model,
+                model_family=self.model._get_model_name(),
+                imgsz=imgsz,
+                model_size=getattr(self.model, "size", None),
+                task=ds_task,
+            ).eval()
 
         if nms:
             from .nms import EmbeddedNMSDetector
@@ -1515,7 +1555,28 @@ class OnnxExporter(BaseExporter):
                 meta["nms_iou"] = str(iou)
                 meta["max_det"] = str(max_det)
                 meta["nms_raw_output"] = "true"
+            if deepstream:
+                meta["deepstream"] = "true"
             return meta
+
+        def _write_deepstream_sidecars(onnx_result_path: str) -> None:
+            if not deepstream:
+                return
+            from .deepstream import write_deepstream_sidecars
+
+            names = getattr(self.model, "names", None) or {}
+            class_names = [names[k] for k in sorted(names, key=int)]
+            write_deepstream_sidecars(
+                onnx_result_path,
+                model_family=self.model._get_model_name(),
+                class_names=class_names,
+                imgsz=imgsz,
+                batch=dummy.shape[0],
+                precision="int8" if int8 else ("fp16" if half else "fp32"),
+                conf=conf,
+                iou=iou,
+                task=ds_task,
+            )
 
         if int8:
             import tempfile
@@ -1538,8 +1599,9 @@ class OnnxExporter(BaseExporter):
                     half=False,
                     metadata=_onnx_metadata(precision_half=False),
                     nms=nms,
+                    deepstream=deepstream,
                 )
-                return quantize_onnx_int8(
+                result = quantize_onnx_int8(
                     fp32_path,
                     output_path,
                     calibration_data=calibration_data,
@@ -1549,8 +1611,10 @@ class OnnxExporter(BaseExporter):
                     nodes_to_exclude=nodes_to_exclude,
                     skip_symbolic_shape=nms,
                 )
+                _write_deepstream_sidecars(result)
+                return result
 
-        return export_onnx(
+        result = export_onnx(
             nn_model,
             dummy,
             output_path=output_path,
@@ -1560,7 +1624,10 @@ class OnnxExporter(BaseExporter):
             half=half,
             metadata=_onnx_metadata(precision_half=half),
             nms=nms,
+            deepstream=deepstream,
         )
+        _write_deepstream_sidecars(result)
+        return result
 
 
 class TorchScriptExporter(BaseExporter):

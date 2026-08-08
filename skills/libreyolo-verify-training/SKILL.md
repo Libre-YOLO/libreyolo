@@ -5,10 +5,10 @@ description: >-
   train() runs without crashing. Use when adding or changing a trainer, loss,
   augmentation, scheduler, or DDP path; when someone asks "does training work
   for family X?", "is this model trainable?", or reports bad fine-tune
-  results; or before claiming a new family's training is production-ready.
+  results; or before making a validation claim about a new family's training.
   Covers the confidence ladder (overfit gate, RF1 marbles floor, regression
   and RF5 tiers, full-run spot checks), the objective definition of
-  "experimental training", the recurring silent-training-bug classes and how
+  training-evidence tiers, the recurring silent-training-bug classes and how
   to hunt each one, and how to watch a live run. Speed problems are
   libreyolo-profiling; running the suites is libreyolo-run-e2e-tests.
 ---
@@ -45,11 +45,11 @@ libreyolo val model=runs/train/exp/weights/best.pt data=coco8.yaml split=train
 **Rung 1: the RF1 floor (the repo's objective bar).**
 `tests/e2e/test_rf1_training.py` fine-tunes every trainable family on the
 marbles dataset and asserts `MIN_MAP = 0.05` plus a save/reload check.
-The `_EXPERIMENTAL_TRAINING_SKIP` map in that file **is** the objective
-definition of "experimental training": a family on that list has wired
-training but unvalidated convergence, and must not be advertised as trainable
-without that caveat. Getting a family off the list means making it pass RF1,
-not editing the list.
+The `_RF1_NOT_APPLICABLE` and `_RF1_VALIDATION_GAPS` maps distinguish families
+without a training implementation from trainable families that have not yet
+cleared RF1. Each entry must describe completed checks and known limits.
+Removing a validation-gap entry means making the family pass RF1, not hiding
+the evidence gap.
 
 ```bash
 PYTHONPATH=. .venv/Scripts/python.exe -m pytest tests/e2e/test_rf1_training.py \
@@ -127,7 +127,7 @@ number of runs, live or finished.
 State the rung reached, per family: "YOLO9-t passes rung 0 and RF1;
 regression suite green; no rung-4 claim made." Never say "training works"
 from a completed `train()` alone, and never present a family on the
-experimental skip list as trainable without saying so.
+RF1 skip list as having validated convergence without saying so.
 
 ## Related
 

@@ -1,4 +1,4 @@
-"""ECTrainer — D-FINE-style trainer adapted for EC (EXPERIMENTAL).
+"""ECTrainer — D-FINE-style trainer adapted for EC.
 
 Subclasses ``DFINETrainer`` and overrides only the points where EC's recipe
 diverges from D-FINE's:
@@ -9,8 +9,7 @@ diverges from D-FINE's:
 * ``get_loss_components`` reports ``mal`` instead of ``vfl``.
 * ``get_model_family`` / ``get_model_tag`` / ``_config_class`` updated.
 
-Training has not been validated on a real fine-tune run; this is shipped
-behind an explicit ``allow_experimental`` gate on ``LibreEC.train()``.
+Training has not yet been validated on a full real-data fine-tune run.
 """
 
 from __future__ import annotations

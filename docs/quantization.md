@@ -84,8 +84,8 @@ know what you are doing.
 - `data=` (train/val): the labeled dataset. Purpose: gradients and metrics.
 
 Activation range estimation (`algorithm=`): the default `minmax` keeps the
-absolute extremes seen across calibration batches; `percentile`
-(experimental) uses the mean of per-batch 0.1/99.9 percentiles. Measured on
+absolute extremes seen across calibration batches; `percentile` uses the mean
+of per-batch 0.1/99.9 percentiles. Measured on
 coco128, minmax with a multi-batch calibration set wins for every tested
 model, and percentile clipping collapses DETR-family accuracy because
 transformer activation outliers are functionally load-bearing. What

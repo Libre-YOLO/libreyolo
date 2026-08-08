@@ -26,7 +26,7 @@ from .test_tensorrt_round12 import _assert_predict_parity
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.slow,
     pytest.mark.skipif(
         importlib.util.find_spec("onnx2tf") is None
@@ -161,7 +161,7 @@ def _run_tflite_case(tmp_path, monkeypatch, case: TFLiteRound13Case) -> None:
         SUPPORT,
         key,
         SupportEntry(
-            "experimental",
+            "available",
             "Round 13 measured probe bypasses the recorded conversion hold.",
         ),
     )

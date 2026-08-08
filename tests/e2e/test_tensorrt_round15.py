@@ -18,7 +18,7 @@ from .test_tensorrt_round12 import TensorRTRound12Case, _run_tensorrt_case
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.tensorrt,
     pytest.mark.trt,
 ]
@@ -41,5 +41,5 @@ _RTDETRV4 = TensorRTRound12Case(
         "Repeated builds change public top-k class membership or box geometry."
     ),
 )
-def test_tensorrt_round15_rtdetrv4_measured_experimental(tmp_path):
+def test_tensorrt_round15_rtdetrv4_measured_available(tmp_path):
     _run_tensorrt_case(tmp_path, _RTDETRV4)

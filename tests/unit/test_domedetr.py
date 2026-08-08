@@ -389,6 +389,22 @@ def test_every_export_format_is_blocked_with_a_reason(fmt):
         model.export(format=fmt)
 
 
+def test_support_registry_agrees_with_the_runtime_block():
+    """The published support table must not advertise what export() refuses.
+
+    These are two independent sources: the guard in BaseExporter.create and
+    the tiers in libreyolo/export/support.py that generate
+    docs/export_support.md. Registering only the first left the docs claiming
+    ONNX/TorchScript/TensorRT/OpenVINO were available for this family.
+    """
+    from libreyolo.export.support import EXPORT_FORMATS, get_support
+
+    for fmt in EXPORT_FORMATS:
+        entry = get_support("domedetr", "detect", fmt)
+        assert entry.tier == "blocked", f"{fmt} advertised as {entry.tier}"
+        assert "query count" in entry.reason
+
+
 def test_export_registry_has_no_domedetr_support_recorded():
     """The published inventory must not advertise an export this cannot do."""
     import json

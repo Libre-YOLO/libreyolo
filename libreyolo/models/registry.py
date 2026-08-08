@@ -1,22 +1,22 @@
-"""The model registry: every family enrolled in a rollout group.
+"""Model coverage groups used by cross-family tests and tooling.
 
-Groups decide where a cross-cutting feature lands first and how hard it is
-validated before release. They classify families, never tasks: a feature
-scoped to "g1 detect" combines a group with a task filter at the feature
-level. ``tests/unit/test_model_registry.py`` fails when a registered family
-is not enrolled here, so porting a new model requires adding exactly one
-line to ``MODEL_GROUPS``.
+Groups select representative coverage sets; they do not grant or restrict a
+user-facing capability. Support is determined by each family's implemented
+API and by format-specific capability checks. Groups classify families, never
+tasks. ``tests/unit/test_model_registry.py`` fails when a registered family is
+not enrolled here, so porting a new model requires adding exactly one line to
+``MODEL_GROUPS``.
 """
 
 from __future__ import annotations
 
 GROUPS: dict[str, str] = {
-    "g0": "Flagship: features are designed and fully GPU-validated here first.",
-    "g1": "Core trainable detectors: features follow g0 in the same release wave, GPU-smoked per family.",
-    "g2": "Supporting trainables: kept green in CI; features land opportunistically or on request.",
-    "g3": "Inference-only specialists: predict/val/export surface only; training features do not apply.",
-    "g4": "Museum: frozen exhibits; bug fixes only.",
-    "s": "Sibling tiers (SAM, open-vocab, VLM, zero-shot): separate product surfaces, excluded from group rollouts.",
+    "g0": "Flagship anchors required in shared-feature coverage.",
+    "g1": "Trainable detector coverage set.",
+    "g2": "Additional trainable-family coverage set.",
+    "g3": "Families without a training implementation.",
+    "g4": "Historical families with inference coverage.",
+    "s": "Sibling APIs (SAM, open-vocab, VLM, zero-shot) covered separately.",
 }
 
 MODEL_GROUPS: dict[str, str] = {
@@ -117,7 +117,7 @@ MODEL_GROUPS: dict[str, str] = {
 
 
 def group_of(family: str) -> str | None:
-    """Return the rollout group for ``family``, or ``None`` if unenrolled."""
+    """Return the coverage group for ``family``, or ``None`` if unenrolled."""
     return MODEL_GROUPS.get(family)
 
 

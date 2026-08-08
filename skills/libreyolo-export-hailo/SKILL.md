@@ -88,7 +88,7 @@ postprocess.
 **Status caveat:** no LibreYOLO family has been validated end-to-end through the DFC to a
 running HEF yet. The rules above predict compilability from architecture; parser,
 quantization, and accuracy remain unproven until a HEF is compiled and measured. Treat
-every "candidate" as experimental.
+every "candidate" as requiring recorded validation evidence.
 
 ## Step 1 — export static ONNX from LibreYOLO
 

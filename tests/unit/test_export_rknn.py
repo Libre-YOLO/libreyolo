@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import ClassVar
 
@@ -182,13 +183,15 @@ def test_rknn_preflight_checks_scope_before_vendor_sdk(monkeypatch):
         )
     assert sdk_checked is False
 
-    with pytest.warns(RuntimeWarning, match="experimental"):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         RknnExporter(_FakeModel())._preflight(
             half=False,
             int8=False,
             data=None,
             name="rk3588",
         )
+    assert not caught
     assert sdk_checked is True
 
 

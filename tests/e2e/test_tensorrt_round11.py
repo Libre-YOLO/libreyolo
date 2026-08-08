@@ -26,7 +26,7 @@ from .test_tensorrt_round10 import _image, _pairwise_box_iou, _raw_outputs
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.tensorrt,
     pytest.mark.trt,
 ]
@@ -95,7 +95,7 @@ ROUND11_VALIDATED_CASES = (
     _RTMDET,
 )
 
-ROUND11_EXPERIMENTAL_CASES = (
+ROUND11_AVAILABLE_CASES = (
     pytest.param(
         _YOLO7,
         marks=pytest.mark.xfail(
@@ -478,8 +478,8 @@ def test_tensorrt_round11_raw_and_predict_parity(tmp_path, case):
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
-    ROUND11_EXPERIMENTAL_CASES,
+    ROUND11_AVAILABLE_CASES,
     ids=lambda case: f"{case.family}-{case.task}",
 )
-def test_tensorrt_round11_measured_experimental(tmp_path, case):
+def test_tensorrt_round11_measured_available(tmp_path, case):
     _run_tensorrt_case(tmp_path, case)

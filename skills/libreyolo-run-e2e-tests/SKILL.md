@@ -39,7 +39,7 @@ resource-heavy. Treat them as an integration gate, not a quick check.
 ```bash
 make test_e2e                                  # all e2e files, each own process, "e2e and not rf5"
 make test_e2e FROM=test_rf1_training.py        # resume from a file (skip earlier ones)
-make test_e2e MARKERS='e2e and not experimental_backend'   # custom marker expr
+make test_e2e MARKERS='e2e and not extended_backend'   # custom marker expr
 make test_e2e MARKER='onnx'                    # MARKER= is an alias for MARKERS=
 
 make test_nightly            # general + flagship nightly (what CI runs)
@@ -89,7 +89,7 @@ Every file carries `pytest.mark.e2e` plus more specific markers. Compose with
 
 | Group | Marker(s) | Files |
 |---|---|---|
-| **Export backends** | `export_backend` + `supported_backend`/`experimental_backend` + backend | `test_onnx` (onnx, *supported*), `test_torchscript`, `test_openvino`, `test_ncnn`, `test_tensorrt` (trt), `test_coreml_roundtrip` (macOS), `test_yolonas_pose_export` |
+| **Export backends** | `export_backend` + `supported_backend`/`extended_backend` + backend | `test_onnx` (onnx, *supported*), `test_torchscript`, `test_openvino`, `test_ncnn`, `test_tensorrt` (trt), `test_coreml_roundtrip` (macOS), `test_yolonas_pose_export` |
 | **Inference / parity** | `general_nightly`, plus family/task | `test_deterministic_inference`, `test_openvocab_inference`, `test_rfdetr_keypoint_parity`, `test_weight_requirements` |
 | **Training** | `rf1`, `rf5`, `slow`, `flagship_nightly` | `test_rf1_training` (rf1), `test_rf5_training` (rf5), `test_training_regression`, `test_rfdetr_lora`, `test_rfdetr_seg_training` |
 | **Task / family tiers** | `fomo`, `l2cs`, `sam`, `vlm`, `openvocab`, `yolonas` | `test_fomo`, `test_l2cs_gaze`, `test_sam_smoke`, `test_sam2_smoke`, `test_mobilesam_smoke`, `test_lfm2_vlm_smoke`, `test_yolonas`, `test_sam3dbody_contract` |
@@ -100,8 +100,8 @@ Common selections:
 ```bash
 # Only the ONNX backend, across all families
 make test_e2e MARKERS='onnx'
-# All export backends except the experimental ones (ONNX only, the release gate)
-make test_e2e MARKERS='export_backend and not experimental_backend'
+# All export backends except extended-runtime coverage (ONNX only, the release gate)
+make test_e2e MARKERS='export_backend and not extended_backend'
 # One model family end to end
 make test_e2e MARKERS='yolo9'
 # Everything except training and the slowest export backends

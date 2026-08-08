@@ -1,6 +1,6 @@
-"""The model-registry enrollment gate.
+"""The model-registry coverage enrollment contract.
 
-Every family the factory registers must be enrolled in a rollout group in
+Every family the factory registers must be enrolled in a coverage group in
 ``libreyolo/models/registry.py``. This is what keeps the registry maintained:
 a port that forgets to enroll fails here, not in review.
 """

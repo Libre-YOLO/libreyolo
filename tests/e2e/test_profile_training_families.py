@@ -59,7 +59,7 @@ CASES = [
         None,
         {},
         "detect_dataset",
-        {"imgsz": 320, "allow_experimental": True, "multi_scale": False},
+        {"imgsz": 320, "multi_scale": False},
     ),
     ("rtdetr", "LibreRTDETR", "r18", None, {}, "detect_dataset", {"imgsz": 320}),
     ("rtdetrv2", "LibreRTDETRv2", "r18", None, {}, "detect_dataset", {"imgsz": 320}),
@@ -109,7 +109,7 @@ CASES = [
         None,
         {},
         "detect_dataset",
-        {"imgsz": 320, "allow_experimental": True},
+        {"imgsz": 320},
     ),
     (
         "rtmdet",
@@ -118,7 +118,7 @@ CASES = [
         None,
         {},
         "detect_dataset",
-        {"imgsz": 320, "allow_experimental": True},
+        {"imgsz": 320},
     ),
     (
         "picodet",
@@ -127,7 +127,7 @@ CASES = [
         None,
         {},
         "detect_dataset",
-        {"imgsz": 320, "allow_experimental": True},
+        {"imgsz": 320},
     ),
     (
         "fomo",
@@ -136,7 +136,7 @@ CASES = [
         None,
         {"task": "point"},
         "detect_dataset",
-        {"imgsz": 96, "allow_experimental": True},
+        {"imgsz": 96},
     ),
     (
         "segformer",

@@ -51,7 +51,6 @@ from ...utils.serialization import (
 )
 from ...validation.preprocessors import StandardValPreprocessor
 from .cuda_graph import (
-    CudaGraphUnavailable,
     GraphRunner,
     forward_maybe_graphed,
     normalize_cuda_graph_mode,
@@ -132,7 +131,6 @@ class BaseModel(ABC):
     TRAIN_CONFIG: ClassVar[Optional[type[TrainConfig]]] = None
     val_preprocessor_class = StandardValPreprocessor
     validator_class: ClassVar[Optional[type]] = None
-    EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset()
     # Dataset-variant weight suffixes (e.g. "visdrone" accepts
     # ``LibreYOLO9P2s-visdrone.pt``). Families that publish checkpoints
     # trained on a non-default dataset opt in; the variant stays part of the
@@ -653,13 +651,7 @@ class BaseModel(ABC):
     @classmethod
     def get_download_notice(cls, filename: str, url: str) -> Optional[str]:
         """Return an optional warning shown before auto-downloading weights."""
-        if Path(filename).name.lower() not in cls.EXPERIMENTAL_WEIGHT_FILENAMES:
-            return None
-        return (
-            f"{Path(filename).name} is an EXTREMELY experimental preview checkpoint. "
-            "It is provided for early pose-estimation testing and may change without "
-            "compatibility guarantees."
-        )
+        return None
 
     @classmethod
     def verify_downloaded_file(cls, local_path: str, source_url: str) -> None:
@@ -1607,8 +1599,8 @@ class BaseModel(ABC):
             batch: Calibration batch size.
             algorithm: Activation range estimation: "minmax" (absolute
                 extremes across batches; the measured best default),
-                "percentile" (experimental: mean of per-batch 0.1/99.9
-                percentiles; degrades transformer families), or "auto"
+                "percentile" (mean of per-batch 0.1/99.9 percentiles; measured
+                to degrade transformer families), or "auto"
                 (minmax).
             keep_high_precision: Substring patterns of module names kept in
                 float. Defaults to the family policy (first layer + heads).

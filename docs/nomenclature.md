@@ -8,9 +8,10 @@ task-resolution rules in [`libreyolo/tasks.py`](../libreyolo/tasks.py).
 
 ## Model groups
 
-Families are enrolled in rollout groups that decide where a cross-cutting
-feature lands first and how hard it is validated. The single source of truth
-is `MODEL_GROUPS` in
+Families are enrolled in coverage groups used by cross-family tests and
+tooling. A group does not grant or restrict a user-facing capability; support
+comes from the family's implemented API and format-specific capability checks.
+The single source of truth is `MODEL_GROUPS` in
 [`libreyolo/models/registry.py`](../libreyolo/models/registry.py); the CLI
 inventory exposes each family's group, and
 `tests/unit/test_model_registry.py` fails when a registered family is not
@@ -18,18 +19,17 @@ enrolled.
 
 | Group | Meaning |
 |---|---|
-| `g0` | Flagship (`yolo9`, `rfdetr`). Features are designed and fully GPU-validated here first. |
-| `g1` | Core trainable detectors. Features follow `g0` in the same release wave, GPU-smoked per family. |
-| `g2` | Supporting trainables. Kept green in CI; features land opportunistically or on request. |
-| `g3` | Inference-only specialists. Predict/val/export surface only; training features do not apply. |
-| `g4` | Museum (`deit`, `yolo1`-`yolo4`). Frozen exhibits; bug fixes only. |
-| `s`  | Sibling tiers (SAM, open-vocab, VLM, zero-shot). Separate product surfaces, excluded from group rollouts. |
+| `g0` | Flagship anchors (`yolo9`, `rfdetr`) required in shared-feature coverage. |
+| `g1` | Trainable detector coverage set. |
+| `g2` | Additional trainable-family coverage set. |
+| `g3` | Families without a training implementation. |
+| `g4` | Historical families with inference coverage (`deit`, `yolo1`-`yolo4`). |
+| `s`  | Sibling APIs (SAM, open-vocab, VLM, zero-shot) covered separately. |
 
-Groups classify **families, not tasks**: "add validation loss to `g1`" means
-the `g1` families, and a task-scoped rollout says so explicitly ("`g1`
-detect"). A group states the default priority, not an obligation; a family
-may sit out a feature its architecture cannot support, documented at the
-feature.
+Groups classify **families, not tasks**. A task-scoped coverage run says so
+explicitly (for example, "`g1` detect"). Capability decisions must remain
+explicit at the family, task, and format surface rather than being inferred
+from group membership.
 
 ## Filename schema
 
@@ -467,7 +467,7 @@ Detector-factory family support follows:
 | `fcos`      | `("detect",)`                     | detect | detect-only; inference-only native dense graph; official 91-column COCO head maps sparse ids to contiguous COCO-80 |
 | `deeplabv3` | `("semantic",)`                    | semantic | background plus 20 VOC-named classes, trained on the matching COCO subset; fixed 520; inference + `val`; `train()` raises |
 | `efficientdet` | `("detect",)`                    | detect | EfficientDet D0-D4; inference-only; fixed native resolution per size; ONNX, TorchScript, OpenVINO, and TensorRT export parity validated |
-| `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is gated experimental, segment training is not implemented |
+| `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is implemented and directly callable, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
 | `dinov2`    | `("semantic", "classify", "embed")` | semantic | DINOv2 backbone + task head; embed bypasses heads and returns the 384-d final CLS token at 224 (all sizes share DINOv2-S); no text tower |

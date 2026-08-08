@@ -263,7 +263,7 @@ before 1.4.0 are documented in the
   official COCO checkpoint loads all 319 state entries strictly; raw heads,
   anchors, preprocessing, and native detections are exact against the pinned
   BSD-3-Clause source. ONNX and TorchScript have trained-checkpoint runtime
-  parity, OpenVINO is experimental due to low-confidence NMS ordering drift,
+  parity, OpenVINO has a low-confidence NMS ordering drift,
   and the published `LibreFCOSr50.pt` mirror carries the explicit
   pretrained-weight license caveat
 - LibreDeepLabv3, an inference-only semantic port of torchvision's three
@@ -375,11 +375,11 @@ LibreYOLO v1.4.0: 15 new model families, 3 new tasks (panoptic, matte, OCR), a q
   - LibrePicoSAM3, native 96px promptable ROI segmentation, ONNX-only export (#585)
   - LibreOMDetTurbo, open-vocabulary detection, size t, transformers-backed (#600)
   - LibreOVDEIM, open-vocabulary detection, sizes s/m/l, native NMS-free port via LibreOpenVocab("ov-deim"); code Apache-2.0, weights CC BY-NC 4.0, licensing confirmed by the upstream author (#607)
-  - LibreSenseNovaVision (experimental), 7B unified multimodal checkpoint serving 7 tasks; weights CC BY-NC 4.0 non-commercial; not yet in __all__, the model inventory, CLI or UI (#618)
+  - LibreSenseNovaVision, 7B unified multimodal checkpoint serving 7 tasks; weights CC BY-NC 4.0 non-commercial; not yet in __all__, the model inventory, CLI or UI (#618)
 - Three new tasks: panoptic, matte, ocr, with result types PanopticSegmentation, Matte, OCRRegions and validators PanopticValidator (+ PanopticQuality), MatteValidator, OCRValidator (#557, #560, #549, #575)
 - EoMT instance segmentation and panoptic: sizes s/b/l, 640px, new 1280 weight variant, panoptic checkpoints for s/b/l (#553, #557, #560)
 - RTMDet-Ins instance segmentation, inference and validation, sizes t/s/m/l/x (training not implemented) (#572)
-- D-FINE segmentation (experimental) with published seg weights and automatic detect-to-segment transfer in CLI train (#537)
+- D-FINE segmentation with published seg weights and automatic detect-to-segment transfer in CLI train (#537)
 - NAFNet SIDD denoise weight variant (LibreNAFNetl-restore-sidd, l size only) (#549)
 - Quantization subsystem: libreyolo quantize CLI and model.quantize()/quant_info()/dequantize()/save(); recipes fp16/bf16/fp8/int8/w4a16/w4a8/nvfp4/mxfp4/int2 (research); QAT/QAD via train() on quantized checkpoints; supported families yolo9 and rfdetr; in-tree Triton kernels with a pluggable registry and LIBREYOLO_QUANT_KERNELS override (#619, #623)
 - BoT-SORT tracker (model.track(tracker="botsort"), BoTSortTracker/BoTSortConfig exported top-level) (#621)
@@ -392,7 +392,7 @@ LibreYOLO v1.4.0: 15 new model families, 3 new tasks (panoptic, matte, OCR), a q
 - Augmentations: classification auto_augment/erasing/mixup/cutmix, copy-paste for segmentation, perspective and flipud, rot90 for OBB, vflip+rot90 for restore, HSV jitter for semantic (#532)
 - Declarative augmentation spec (libreyolo/data/augment/spec.py): a per-family used/mosaic-gated/ignored matrix for every TrainConfig augmentation knob, pinned to the real pipelines by tests; the CLI now warns for every family when an explicitly-set training parameter is ignored (previously RF-DETR only), and training warns when mixup_prob is set with mosaic_prob=0 in the mosaic-gated pipelines (#635)
 - Spawn-path multi-GPU training for ResNet, ConvNeXt, EfficientNetV2, MobileNetV4 and NAFNet (#567)
-- Canonical export-support matrix with validated/experimental/blocked tiers, docs page and ADR 0011 (#578, #587)
+- Canonical export-support matrix with validated/available/blocked tiers, docs page and ADR 0011 (#578, #587)
 - TFLite inference backend (LibreYOLO("model.tflite") via ai-edge-litert, Python >= 3.12) (#587)
 - "litert" export alias for tflite and libreyolo[litert] extra (#563)
 - Semantic, depth and point export unblocked (PIDNet, FOMO, ZipDepth, Depth Anything V2 under a fixed-resolution batch-1 depth contract) (#562, #578, #587)
@@ -415,7 +415,9 @@ LibreYOLO v1.4.0: 15 new model families, 3 new tasks (panoptic, matte, OCR), a q
 - model.train(profile=True) keeps training after the profiled window; profile_then_stop=True restores the old stop behavior (#590)
 - Semantic and panoptic val/predict accept augment=True (previously raised) (#601, #608)
 - YOLO-NAS multi-class pose checkpoints load with their real class count and return real class ids (previously forced to single-class person) (#530)
-- Export gated by the support matrix: blocked combos raise up front, experimental combos warn (#578, #587)
+- Export gated by the support matrix: blocked combinations raise up front;
+  callable combinations proceed without blanket warnings, with validation
+  context recorded in the generated support documentation (#578, #587)
 - RF-DETR imgsz validated early in predict/val/export with suggested valid sizes (#551)
 - EC training config augmentation defaults zeroed to match the trainer's actual pass-through path (executed training unchanged) (#551)
 - libreyolo models --json schema changed (task-suffixed cli_names, new keys); libreyolo formats/info JSON gained keys (#578)

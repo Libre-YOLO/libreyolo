@@ -436,7 +436,7 @@ markers = [
     "training_nightly: opt-in GPU checks for training-time CUDA graph capture",
     "export_backend: tests covering an export backend or serialized runtime format",
     "supported_backend: tests covering a release-blocking supported backend",
-    "experimental_backend: tests covering an experimental backend",
+    "extended_backend: tests covering an extended backend",
     "onnx: tests covering ONNX export or inference",
     "triton: tests covering NVIDIA Triton HTTP inference",
     "torchscript: tests covering TorchScript export or inference",

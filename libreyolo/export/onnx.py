@@ -158,6 +158,7 @@ def export_onnx(
     half: bool,
     metadata: dict,
     nms: bool = False,
+    deepstream: bool = False,
 ) -> str:
     """Export a PyTorch model to ONNX format.
 
@@ -175,6 +176,9 @@ def export_onnx(
             ``(batch, max_det, 6)`` detection tensor first, followed by the raw
             detector tensor used by LibreYOLO backends for native postprocess
             parity. Skip the segmentation-probe / family output-schema logic.
+        deepstream: When True, use the DeepStream-adapted schema for tasks with
+            an nvinfer post-processor. Raw-tensor tasks preserve their regular
+            ONNX output names and dynamic axes.
 
     Returns:
         The output_path string.
@@ -191,6 +195,33 @@ def export_onnx(
         raise ImportError(
             "ONNX export requires the 'onnx' package. "
             "Install with: uv sync --extra onnx  or  pip install onnx"
+        )
+
+    task = metadata.get("task")
+    deepstream_raw_outputs = False
+    if deepstream:
+        from .deepstream import deepstream_uses_raw_outputs
+
+        deepstream_raw_outputs = deepstream_uses_raw_outputs(task)
+
+    if deepstream and not deepstream_raw_outputs:
+        # Parser-backed and native nvinfer tasks use one adapted output.
+        # Raw-tensor tasks retain their normal ONNX names and dynamic axes
+        # below so applications can decode every tensor from metadata.
+        input_name = "input" if metadata.get("model_family") == "rfdetr" else "images"
+        return _export_onnx_graph(
+            nn_model,
+            dummy,
+            output_path=output_path,
+            opset=opset,
+            simplify=simplify,
+            half=half,
+            metadata=metadata,
+            input_names=[input_name],
+            output_names=["output"],
+            dynamic_axes=(
+                {input_name: {0: "batch"}, "output": {0: "batch"}} if dynamic else None
+            ),
         )
 
     if nms:
@@ -221,7 +252,6 @@ def export_onnx(
     # to output count heuristic for direct export_onnx() calls. For known
     # DETR detection families we already know the output schema, so skip
     # the probe forward pass entirely and reuse the count below.
-    task = metadata.get("task")
     model_family = metadata.get("model_family")
     is_seg = metadata.get("segmentation") == "true" or task == "segment"
     is_yolo9_pose = model_family == "yolo9" and task == "pose"
@@ -260,7 +290,11 @@ def export_onnx(
         and not is_edge
         and not is_semantic
         and not is_gaze
-        and not is_hrnet_pose
+        # Supersedes the narrower is_hrnet_pose guard: every pose family has
+        # its own output-name branch below, and probing here would misread a
+        # multi-tensor pose head (rfdetr-pose 3, yolonas-pose 4) as
+        # segmentation via num_outputs >= 3.
+        and task != "pose"
     ):
         num_outputs = _detect_num_outputs(nn_model, dummy)
         is_seg = num_outputs >= 3

@@ -125,7 +125,6 @@ class LibreRFDETR(BaseModel):
         "pose": POSE_INPUT_SIZES,
         "obb": INPUT_SIZES,
     }
-    EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset()
     TRAIN_CONFIG: ClassVar[type[RFDETRConfig]] = RFDETRConfig
     val_preprocessor_class: ClassVar[type[RFDETRValPreprocessor]] = RFDETRValPreprocessor
     TTA_FIXED_SIZE: ClassVar[bool] = True  # fixed square; multi-scale TTA is a no-op

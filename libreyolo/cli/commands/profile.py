@@ -90,12 +90,6 @@ def run_cmd(
     warmup: int = typer.Option(5, "--warmup", help="Warmup steps before measuring"),
     repeat: int = typer.Option(1, "--repeat", help="Repeat N times for mean +/- stdev (a single run lies when launch-bound)"),
     device: str = typer.Option("0", "--device"),
-    allow_experimental: bool = typer.Option(
-        False, "--allow-experimental",
-        help="Acknowledge an experimental training path (e.g. ec) so gated "
-             "families can be profiled. A profile run trains for a few steps "
-             "and writes no checkpoint, so the unvalidated-convergence caveat "
-             "behind the gate does not apply."),
     project: str = typer.Option("runs/profile", "--project"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -113,14 +107,12 @@ def run_cmd(
     for i in range(max(1, repeat)):
         name = f"prof_{i}" if repeat > 1 else "prof"
         model = LibreYOLO(model_path=weights, size=size, device=device)
-        # Only forwarded when set: non-gated families don't accept the kwarg.
-        extra = {"allow_experimental": True} if allow_experimental else {}
         model.train(
             data=data, epochs=epochs, batch=batch, imgsz=imgsz, workers=workers,
             amp=amp, device=device, profile=True, profile_then_stop=True,
             profile_steps=steps,
             profile_warmup=warmup, profile_open=False, no_aug_epochs=0,
-            project=project, name=name, exist_ok=True, **extra,
+            project=project, name=name, exist_ok=True,
         )
         last_dir = Path(project) / name
         pj = last_dir / "profile.json"
