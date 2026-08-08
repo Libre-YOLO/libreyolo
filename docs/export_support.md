@@ -80,6 +80,7 @@ in preflight.
 | rfdetr | obb | ✓ | ✓ | ✓ | available | available |  |  |  |  |  |  |  |
 | rtdetr | detect | ✓ | ✓ | ✓ | available | ✓ |  | ✓ |  |  |  | available | ✓ |
 | rtdetrv2 | detect | ✓ | ✓ | ✓ | available | available |  | ✓ |  |  |  |  | ✓ |
+| rtdetrv2 | obb | ✓ | ✓ | available | available | available |  |  |  |  |  |  |  |
 | rtdetrv4 | detect | ✓ | ✓ | ✓ | available | ✓ | ✓ | ✓ |  |  |  |  | ✓ |
 | rtmdet | detect | ✓ | ✓ | available | ✓ | ✓ |  |  |  |  |  |  | ✓ |
 | rtmdet | segment |  |  |  |  |  |  |  |  |  |  |  |  |
@@ -318,6 +319,8 @@ A check mark applies only under any constraint listed here.
 - `rtdetrv2` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `rtdetrv2` / `detect` / `mnn`: MNN 3.6.1, CPU, FP32, batch 1, fixed NCHW input shape
 - `rtdetrv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `rtdetrv2` / `obb` / `onnx`: FP32, batch 1, fixed 1024x1024 input canvas
+- `rtdetrv2` / `obb` / `torchscript`: FP32, batch 1, fixed 1024x1024 input canvas
 - `rtdetrv4` / `detect` / `onnx`: fixed export canvas; same-device CPU raw parity after one shared unordered-query permutation; published Apache-2.0 trained checkpoint covered by non-square public predict parity
 - `rtdetrv4` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `rtdetrv4` / `detect` / `openvino`: fixed export canvas
@@ -1078,6 +1081,13 @@ These converter paths are callable with the recorded validation context.
 - `rtdetrv2` / `detect` / `ncnn`: NCNN export is not supported for RT-DETRv2: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rtdetrv2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtdetrv2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `rtdetrv2` / `obb` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
+- `rtdetrv2` / `obb` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `rtdetrv2` / `obb` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
+- `rtdetrv2` / `obb` / `ncnn`: NCNN export is not supported for RT-DETRv2: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
+- `rtdetrv2` / `obb` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `rtdetrv2` / `obb` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `rtdetrv2` / `obb` / `coreai`: This family and task have not been validated for Core AI export.
 - `rtdetrv4` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `rtdetrv4` / `detect` / `ncnn`: NCNN export is not supported for RT-DETRv4: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rtdetrv4` / `detect` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError at the native 640x640 canvas.

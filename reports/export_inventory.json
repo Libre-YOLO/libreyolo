@@ -1371,7 +1371,8 @@
   "rtdetrv2": {
     "class": "libreyolo.models.rtdetrv2.model.LibreRTDETRv2",
     "tasks": [
-      "detect"
+      "detect",
+      "obb"
     ],
     "default_task": "detect",
     "sizes": {
@@ -1379,7 +1380,12 @@
       "r34": 640,
       "r50": 640,
       "r50m": 640,
-      "r101": 640
+      "r101": 640,
+      "n": 1024,
+      "s": 1024,
+      "m": 1024,
+      "l": 1024,
+      "x": 1024
     },
     "default_imgsz": {
       "r18": 640,
@@ -1388,7 +1394,22 @@
       "r50m": 640,
       "r101": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "r18": 640,
+        "r34": 640,
+        "r50": 640,
+        "r50m": 640,
+        "r101": 640
+      },
+      "obb": {
+        "n": 1024,
+        "s": 1024,
+        "m": 1024,
+        "l": 1024,
+        "x": 1024
+      }
+    },
     "export_override": "custom",
     "optional_extra": null,
     "available": true,

@@ -2632,6 +2632,51 @@ _add(
 )
 _add(
     "validated",
+    ("rtdetrv2",),
+    ("obb",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The official Apache-2.0 RT-DETRv2-N OBB checkpoint is covered by "
+        "artifact reload, task metadata, raw five-coordinate output parity, "
+        "and non-square public OBB prediction parity."
+    ),
+    since="1.6",
+    constraint="FP32, batch 1, fixed 1024x1024 input canvas",
+)
+_add(
+    "experimental",
+    ("rtdetrv2",),
+    ("obb",),
+    ("openvino",),
+    reason=(
+        "The official N checkpoint exports, reloads, and preserves the top "
+        "public OBB within 0.041 pixels, but the complete decoder query set "
+        "does not meet raw-output parity after matching."
+    ),
+    since="1.6",
+    constraint=(
+        "OpenVINO 2026.2 CPU, FP32, batch 1, fixed 1024x1024 input canvas; "
+        "export the ONNX intermediate on CPU"
+    ),
+)
+_add(
+    "experimental",
+    ("rtdetrv2",),
+    ("obb",),
+    ("tensorrt",),
+    reason=(
+        "The official N checkpoint builds, reloads, and preserves the top "
+        "public OBB within 0.057 pixels, but matched raw queries still drift "
+        "by up to 0.078 in logits and 0.034 in normalized box coordinates."
+    ),
+    since="1.6",
+    constraint=(
+        "TensorRT 10.16 FP32 on RTX 5070 Ti, batch 1, fixed 1024x1024 input "
+        "canvas; export the ONNX intermediate on CPU"
+    ),
+)
+_add(
+    "validated",
     ("dfine",),
     ("segment",),
     ("onnx", "torchscript"),

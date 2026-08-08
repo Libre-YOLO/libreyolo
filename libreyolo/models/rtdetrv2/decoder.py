@@ -566,6 +566,11 @@ class RTDETRTransformerv2(nn.Module):
             self._anchor_cache.popitem(last=False)
 
     def _get_anchors_for_spatial_shapes(self, spatial_shapes, memory):
+        if torch.jit.is_tracing():
+            # Export is fixed-shape. Direct buffer access records movable
+            # attributes; tracing ``.to(memory.device)`` freezes the export
+            # host device into TorchScript.
+            return self.anchors, self.valid_mask
         shape_key = self._spatial_shape_key(spatial_shapes)
         key = (shape_key, memory.device, memory.dtype)
         cached = self._anchor_cache.get(key)

@@ -39,6 +39,11 @@ before 1.4.0 are documented in the
   precedent. Convert them yourself with
   `weights/convert_domedetr_weights.py`.
 
+- RT-DETRv2 oriented-object detection inference for the official DOTA 1.0
+  `n`, `s`, `m`, `l`, and `x` checkpoints, with strict local conversion,
+  aspect-preserving preprocessing, native `Results.obb` output, validation,
+  and validated ONNX and TorchScript export.
+
 - Built-in Comet, ClearML, Neptune (`neptune-scale`) and DVC/DVCLive training
   loggers, with the same canonical metrics and failure-isolation contract as
   the existing TensorBoard, MLflow and Weights & Biases integrations.

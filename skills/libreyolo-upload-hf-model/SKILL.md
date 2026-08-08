@@ -166,6 +166,9 @@ LibreRTDETRx.pt,
 
 LibreRTDETRv2r18.pt, LibreRTDETRv2r34.pt, LibreRTDETRv2r50.pt,
 LibreRTDETRv2r50m.pt, LibreRTDETRv2r101.pt,
+LibreRTDETRv2n-obb.pt, LibreRTDETRv2s-obb.pt,
+LibreRTDETRv2m-obb.pt, LibreRTDETRv2l-obb.pt,
+LibreRTDETRv2x-obb.pt,
 
 LibreRTDETRv4s.pt, LibreRTDETRv4m.pt, LibreRTDETRv4l.pt,
 LibreRTDETRv4x.pt,

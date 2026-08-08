@@ -286,6 +286,22 @@ Used for: RT-DETR model family (libreyolo/models/rtdetr/) including
           ported from rtdetrv2_pytorch/src/nn/backbone/hgnetv2.py.
 
 --------------------------------------------------------------------
+RT-DETRv2 OBB (RicePasteM / RiO-DETR)
+--------------------------------------------------------------------
+Source: https://github.com/RicePasteM/RiO-DETR
+Pinned commit: 22d5232a4e0df6ac4bc26ed1c8aac8b4060449c7
+License: Apache License 2.0
+Used for: the inference-only RT-DETRv2 OBB encoder and decoder in
+          libreyolo/models/rtdetrv2/obb_encoder.py and obb_decoder.py.
+          The port adapts engine/rtv4/hybrid_encoder.py and
+          engine/rtv4/rtdetrv2_obb_decoder.py. The official DOTA 1.0
+          checkpoints were validated from RicePasteM/RT-DETR-OBB at
+          revision f376e9dcedfb9a47a21ac71ef61ad99f8b545698. LibreYOLO
+          does not bundle or rehost those checkpoints; users convert a
+          locally supplied official checkpoint with
+          weights/convert_rtdetrv2_weights.py.
+
+--------------------------------------------------------------------
 RF-DETR (Roboflow)
 --------------------------------------------------------------------
 Source: https://github.com/roboflow/rf-detr

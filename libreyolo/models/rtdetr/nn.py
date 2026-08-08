@@ -165,6 +165,8 @@ class TransformerEncoderLayer(nn.Module):
     def with_pos_embed(tensor, pos_embed):
         if pos_embed is None:
             return tensor
+        if torch.jit.is_tracing():
+            return tensor + pos_embed
         pos_embed = pos_embed.to(device=tensor.device, dtype=tensor.dtype)
         return tensor + pos_embed
 
@@ -318,7 +320,11 @@ class HybridEncoder(nn.Module):
                     self.hidden_dim,
                     self.pe_temperature,
                 )
-                setattr(self, f"pos_embed{idx}", pos_embed)
+                # Non-persistent: the embedding is deterministic geometry, not
+                # checkpoint state. Registering it still lets exported modules
+                # follow ``module.to(device)`` instead of freezing a CPU tensor
+                # into the traced graph.
+                self.register_buffer(f"pos_embed{idx}", pos_embed, persistent=False)
                 self._cache_pos_embed(
                     (
                         idx,
@@ -337,6 +343,11 @@ class HybridEncoder(nn.Module):
             self._pos_embed_cache.popitem(last=False)
 
     def _get_pos_embed(self, enc_ind, h, w, src_flatten):
+        if torch.jit.is_tracing():
+            # Export is fixed-shape. Returning the registered buffer directly
+            # records a movable GetAttr; tracing ``.to(src.device)`` would bake
+            # the export machine's device into the saved graph.
+            return getattr(self, f"pos_embed{enc_ind}")
         key = (enc_ind, h, w, src_flatten.device, src_flatten.dtype)
         pos_embed = self._pos_embed_cache.get(key)
         if pos_embed is None:
