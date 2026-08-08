@@ -5,7 +5,9 @@ description: >-
   by fan-out agents over the release..dev diff, a gate scoreboard (unit CI,
   GPU e2e on Modal reusing the nightly, weight autodownload probe, wheel
   smoke, notices sync, docs drift, breaking-change sweep), the branch/tag/PyPI
-  mechanics, post-publish verification, and the handoff to the marketing
+  mechanics, the libreyolo.com docs-site update (registry regeneration,
+  version stamp, changelog page, version freeze, manual deploy),
+  post-publish verification, and the handoff to the marketing
   repo's announcement pipeline. Use whenever the user says "release",
   "cut vX.Y.Z", "ship a version", "prepare the changelog for the release",
   or "is dev ready to release?".
@@ -328,8 +330,12 @@ silently.
 ### Gate G: docs drift
 
 Every headline changelog item should be reachable in docs: repo `docs/`
-and, where relevant, the website repo. List headline facts with no doc
-mention; the user decides whether that blocks or ships as follow-up.
+and the website repo. List headline facts with no doc mention; the user
+decides whether that blocks or ships as follow-up.
+
+The website side has a mechanical half that this gate does NOT cover. See
+Phase 3b; run it, because a stale generated registry is invisible in a diff
+of prose.
 
 ## Phase 3: Go/no-go, then cut it
 
@@ -405,6 +411,55 @@ hotfix, use the "Minor vs patch" branch-off-`release` variant instead.
    for a manual approval (the job shows as "Publish to PyPI"). This is a
    human-required click; the agent never approves it.
 
+## Phase 3b: The docs site (after the tag, before the announcement)
+
+The docs at libreyolo.com are an exploded page tree in the website repo
+(`LibreYOLO/libreyolo-website`), not a page inside this repo. Half of what
+they state is GENERATED from this repo, so a release that changes the
+library changes the docs whether or not anyone edits markdown. That half
+goes stale silently: the prose still reads fine.
+
+Do these in order. Steps 1 and 2 are the ones that break quietly.
+
+1. **Re-run the registry generator and diff its output.**
+   `scripts/build-registry/build-registry.mjs`, then `emit-registry.mjs`.
+   Its inputs are dumped snapshots of THIS repo: `docs/export_support.md`,
+   each family's `model.py`, `models/registry.py`, `models/inventory.py`,
+   the HF org listing, and the vision-analysis results. Re-dump them from
+   the tag you just cut, regenerate, and diff `src/data/docs/registry.json`.
+   Treat every diff as a docs bug until you have explained it. An empty
+   diff after a feature release means you forgot to re-dump.
+
+2. **Bump the docs version stamp.** `src/data/docs/nav.json` -> `version`,
+   and `last_verified` in the frontmatter of any page whose claims you
+   re-checked. The stamp drives the "vX.Y.Z latest" badge in the nav rail;
+   if it lags, the site advertises the wrong release as current.
+
+3. **Add the release to `content/docs/start/changelog.md`.** This is the
+   reader-facing release-notes page. Summarize from `CHANGELOG.md`, do not
+   paste it: the page is prose for humans, the repo file is the record.
+
+4. **Freeze the outgoing version, if the tree forked.** Frozen monopages
+   live at `/docs/vX.Y.Z`, carry `FrozenVersionBanner`, canonical to
+   `/docs`, and stay out of the sitemap. Deliberately NOT noindexed:
+   pairing noindex with a canonical is a documented way to deindex the
+   wrong page. Add the new entry to `src/data/docs-versions.js`, which is
+   the single list every frozen page's sidebar reads.
+
+5. **Check the promises.** Any GitHub issue or discussion where a docs page
+   was promised for this version is part of the release. Search closed and
+   open issues for the version number before you call docs done.
+
+6. **Deploy.** Manual only: `./node_modules/.bin/vercel --prod --yes` from
+   the website repo. There is no push-to-deploy. Then verify on prod, not
+   on localhost: the sitemap, `/llms.txt`, `/llms-full.txt`, and one `.md`
+   twin. Submit the sitemap in Search Console if page count changed much.
+
+If the docs site cannot ship the same day, that is allowed, but say so
+explicitly in the go/no-go rather than discovering it in Phase 5. The
+announcement links to docs pages; a link to a page describing the previous
+release is worse than a delayed announcement.
+
 ## Phase 4: Post-publish verification (do not skip)
 
 ```bash
@@ -434,6 +489,11 @@ the user to post by hand.
 
 ## Anti-patterns
 
+- Calling the release done when PyPI is green while libreyolo.com still
+  describes the previous version. The docs site is a separate repo with a
+  manual deploy, so nothing fails loudly when it is skipped.
+- Editing docs prose without re-running the registry generator. Half the
+  facts on a model page are generated; the prose looks correct either way.
 - Writing the changelog from memory or from PR titles alone; titles lie,
   diffs don't. Verify each headline claim against the actual source.
 - Counting an unwired native port, a modified-not-new family, or an
@@ -465,6 +525,8 @@ the user to post by hand.
 ## Related
 
 - `RELEASING.md`: the minimal engineering process this skill wraps.
+- `LibreYOLO/libreyolo-website`: the docs site (Phase 3b). Its
+  `skills/write-docs-page/` owns page conventions and verification rules.
 - `skills/libreyolo-run-e2e-tests/`: how to run e2e correctly (markers,
   one-file-per-process rule).
 - `skills/launch-serverless-gpu-job/`: rented/serverless GPUs for gates
