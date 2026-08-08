@@ -333,6 +333,7 @@ def test_profile_emits_report(
     """profile=True + profile_then_stop=True must emit the analysis artifacts
     and truncate the run — for every trainable family, through the public API."""
     import libreyolo
+    from libreyolo.models.registry import group_of
 
     dataset = request.getfixturevalue(dataset_fixture)
     torch.manual_seed(0)
@@ -352,6 +353,7 @@ def test_profile_emits_report(
         profile_steps=2,
         profile_open=False,
         eval_interval=100,
+        **({"pretrained": False} if group_of(family) in {"g0", "g1"} else {}),
         **extra,
     )
 

@@ -336,8 +336,15 @@ class LibreRTDETR(BaseModel):
         # Skip pretrained download when weights will be loaded immediately after
         # (_loading_from_weights) or when called from _rebuild_for_new_classes
         # (_in_rebuild) — in both cases the backbone weights are overwritten anyway.
-        skip = getattr(self, "_in_rebuild", False) or getattr(self, "_loading_from_weights", False)
+        scratch = self._is_scratch_build()
+        skip = (
+            scratch
+            or getattr(self, "_in_rebuild", False)
+            or getattr(self, "_loading_from_weights", False)
+        )
         pretrained = cfg["backbone_pretrained"] and not skip
+        freeze_at = -1 if scratch else cfg["backbone_freeze_at"]
+        freeze_norm = False if scratch else cfg["backbone_freeze_norm"]
         backbone_kwargs: Dict[str, Any] = {}
         if cfg.get("backbone_type") == "hgnetv2":
             from .hgnetv2 import HGNetv2
@@ -345,15 +352,15 @@ class LibreRTDETR(BaseModel):
             backbone_kwargs["backbone"] = HGNetv2(
                 name=cfg["backbone_arch"],
                 return_idx=[1, 2, 3],
-                freeze_at=cfg["backbone_freeze_at"],
-                freeze_norm=cfg["backbone_freeze_norm"],
+                freeze_at=freeze_at,
+                freeze_norm=freeze_norm,
                 pretrained=pretrained,
             )
         else:
             backbone_kwargs.update(
                 backbone_depth=cfg["backbone_depth"],
-                backbone_freeze_at=cfg["backbone_freeze_at"],
-                backbone_freeze_norm=cfg["backbone_freeze_norm"],
+                backbone_freeze_at=freeze_at,
+                backbone_freeze_norm=freeze_norm,
                 backbone_pretrained=pretrained,
             )
         return RTDETRModel(

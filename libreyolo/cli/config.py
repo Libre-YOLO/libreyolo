@@ -19,7 +19,7 @@ def get_unsupported_train_params(family: str | None) -> set[str]:
     (``libreyolo.data.augment.spec``), which covers every trainable family.
     Families may declare additional non-augmentation ignores via an
     ``UNSUPPORTED_TRAIN_PARAMS`` class attribute (RF-DETR: optimizer/momentum/
-    nesterov/pretrained), which is unioned in.
+    nesterov), which is unioned in.
     """
     from libreyolo.data.augment.spec import ignored_aug_params
 
@@ -172,6 +172,11 @@ def _iter_model_classes():
     rfcls = try_ensure_rfdetr()
     if rfcls is not None and rfcls not in seen:
         yield rfcls
+
+
+def get_model_class(family: str | None):
+    """Return the registered wrapper for *family*, including lazy families."""
+    return next((cls for cls in _iter_model_classes() if cls.FAMILY == family), None)
 
 
 def detect_family_from_weight_filename(model: str) -> Optional[str]:

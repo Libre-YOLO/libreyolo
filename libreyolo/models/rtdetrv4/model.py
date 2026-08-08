@@ -72,6 +72,7 @@ class LibreRTDETRv4(LibreDFINE):
             nb_classes=self.nb_classes,
             eval_spatial_size=(self.input_size, self.input_size),
             activation="silu",
+            train_from_scratch=self._is_scratch_build(),
         )
 
     @ddp_aware()

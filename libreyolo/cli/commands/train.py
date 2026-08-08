@@ -20,6 +20,7 @@ from ..config import (
     apply_family_defaults,
     build_family_train_kwargs,
     detect_family_from_model_ref,
+    get_model_class,
     get_unsupported_train_params,
 )
 from ..output import OutputHandler
@@ -53,17 +54,40 @@ def _create_explicit_task_train_model(
     task: str | None,
     resume: bool | str,
     device: str,
+    pretrained: bool = True,
+    seed: int = 0,
 ):
-    """Instantiate task-specific train models that should start from architecture.
+    """Build a known architecture when training must not load a checkpoint.
 
-    Cross-task training can use detect checkpoints only as transfer weights.
-    Create the requested architecture first so task-specific heads exist before
-    training.
+    Scratch training covers every G0/G1 family. The older transfer path below
+    remains limited to families that need a task-specific architecture before
+    loading their published checkpoint.
     """
+    from libreyolo.tasks import normalize_task
+
+    if pretrained is False and not resume:
+        from libreyolo.models.registry import group_of
+
+        model_cls = get_model_class(family)
+        if model_cls is not None and group_of(family) in {"g0", "g1"}:
+            size = model_cls.detect_size_from_filename(Path(model_path).name)
+            if size is None:
+                return None
+            train_task = (
+                normalize_task(task)
+                if task is not None
+                else model_cls.detect_task_from_filename(Path(model_path).name)
+                or model_cls.DEFAULT_TASK
+            )
+            return model_cls._from_scratch(
+                size=size,
+                task=train_task,
+                device=device,
+                seed=seed,
+            )
+
     if family not in {"yolo9", "rfdetr", "dfine"} or resume:
         return None
-
-    from libreyolo.tasks import normalize_task
 
     if family == "yolo9":
         from libreyolo.models.yolo9.model import LibreYOLO9 as model_cls
@@ -438,6 +462,15 @@ def train_cmd(
             out, model=model, model_path=model_path, device=device
         )
         family = get_loaded_model_family(loaded_model)
+    if train_pretrained is False and resume_val:
+        from libreyolo.models.registry import group_of
+
+        if group_of(family) in {"g0", "g1"}:
+            exit_with_error(
+                out,
+                "config_unsupported",
+                "pretrained=false cannot be combined with resume.",
+            )
     if loaded_model is None:
         loaded_model = _create_explicit_task_train_model(
             family=family,
@@ -445,7 +478,13 @@ def train_cmd(
             task=normalized_task,
             resume=resume_val,
             device=device,
+            pretrained=train_pretrained,
+            seed=seed,
         )
+        if loaded_model is not None and train_pretrained is False:
+            # The architecture was seeded and built through _from_scratch().
+            # Do not rebuild it a second time in the public train wrapper.
+            train_pretrained = None
         if (
             loaded_model is not None
             and family == "yolo9"
@@ -674,9 +713,11 @@ def train_cmd(
     train_kwargs = build_family_train_kwargs(
         params, family, model_path=model_path, user_provided=user_provided
     )
-    train_kwargs["pretrained"] = train_pretrained  # Not in TrainConfig
+    if train_pretrained is not None:
+        train_kwargs["pretrained"] = train_pretrained  # Not in TrainConfig
     if family == "rfdetr":
-        train_kwargs.pop("pretrained", None)
+        if train_pretrained is not False:
+            train_kwargs.pop("pretrained", None)
         if not val and "val" in user_provided:
             out.progress(
                 "Warning: RF-DETR does not support disabling validation via val=false. Ignoring."

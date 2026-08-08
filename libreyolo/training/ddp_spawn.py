@@ -114,6 +114,10 @@ def _build_init_kw(model_instance: Any) -> dict:
     for attr in ("size", "nb_classes", "reg_max", "task", "num_masks", "proto_channels", "num_keypoints"):
         if (attr in supported or supports_kwargs) and hasattr(model_instance, attr):
             kw[attr] = getattr(model_instance, attr)
+    if supports_kwargs and getattr(model_instance, "_training_from_scratch", False):
+        # Workers rebuild the architecture before loading the temporary state
+        # dict. Preserve scratch-only backbone trainability during that build.
+        kw["_scratch_init"] = True
     return kw
 
 

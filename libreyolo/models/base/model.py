@@ -68,7 +68,7 @@ _WRAPPER_OWNED_CFG_KEYS = frozenset({"size", "num_classes"})
 
 
 def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
-    """Decorate a family ``train()`` method to accept ``cfg='path/to/yaml'``.
+    """Add shared config-file and scratch-initialization handling to ``train()``.
 
     Loads the yaml as a dict and merges it into kwargs with user-provided
     kwargs winning. Keys consumed by positional args (and a small set of
@@ -86,12 +86,35 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
 
     @functools.wraps(train_fn)
     def wrapper(self, *args, cfg=None, **user_kwargs):
-        if cfg is None:
-            return train_fn(self, *args, **user_kwargs)
-        cfg_kwargs = load_train_cfg(cfg)
-        consumed = set(pos_names[: len(args)]) | _WRAPPER_OWNED_CFG_KEYS
-        merged = {k: v for k, v in cfg_kwargs.items() if k not in consumed}
-        merged.update(user_kwargs)
+        merged = dict(user_kwargs)
+        if cfg is not None:
+            cfg_kwargs = load_train_cfg(cfg)
+            consumed = set(pos_names[: len(args)]) | _WRAPPER_OWNED_CFG_KEYS
+            merged = {k: v for k, v in cfg_kwargs.items() if k not in consumed}
+            merged.update(user_kwargs)
+
+        if merged.get("pretrained") is False:
+            from ..registry import group_of
+
+            if group_of(self.FAMILY) in {"g0", "g1"}:
+                bound = sig.bind_partial(self, *args, **merged)
+                bound.apply_defaults()
+                extras = next(
+                    (
+                        bound.arguments.get(param.name, {})
+                        for param in sig.parameters.values()
+                        if param.kind == inspect.Parameter.VAR_KEYWORD
+                    ),
+                    {},
+                )
+                if bound.arguments.get("resume", extras.get("resume", False)):
+                    raise ValueError("pretrained=False cannot be combined with resume.")
+                self._reset_for_scratch(
+                    seed=bound.arguments.get("seed", extras.get("seed", 0))
+                )
+                if "pretrained" not in sig.parameters:
+                    merged.pop("pretrained")
+
         return train_fn(self, *args, **merged)
 
     wrapper._libreyolo_cfg_wrapped = True  # type: ignore[attr-defined]
@@ -191,6 +214,7 @@ class BaseModel(ABC):
         **kwargs,
     ):
         ensure_default_logging()
+        scratch_init = bool(kwargs.pop("_scratch_init", False))
         self.family = self.FAMILY
         self.task = self._resolve_task(task)
         valid_sizes = self._get_valid_sizes()
@@ -237,10 +261,13 @@ class BaseModel(ABC):
         # Signal _init_model that weights will be loaded immediately after, so
         # subclasses can skip pretrained backbone downloads that would be wasted.
         self._loading_from_weights = isinstance(model_path, (str, Path, dict))
+        self._initializing_from_scratch = scratch_init
         try:
             self.model = self._init_model()
         finally:
             self._loading_from_weights = False
+            self._initializing_from_scratch = False
+        self._training_from_scratch = scratch_init
 
         if model_path is None:
             self.model_path = None
@@ -257,6 +284,44 @@ class BaseModel(ABC):
         else:
             self.model.eval()
         self.model.to(self.device)
+
+    @classmethod
+    def _from_scratch(
+        cls,
+        *,
+        size: str,
+        nb_classes: int = 80,
+        device: str = "auto",
+        task: str | None = None,
+        seed: int = 0,
+        **kwargs,
+    ) -> "BaseModel":
+        """Construct an architecture without loading model or backbone weights."""
+        cls._seed_scratch_initialization(seed)
+        return cls(
+            None,
+            size=size,
+            nb_classes=nb_classes,
+            device=device,
+            task=task,
+            _scratch_init=True,
+            **kwargs,
+        )
+
+    @staticmethod
+    def _seed_scratch_initialization(seed: int) -> None:
+        if seed is None or int(seed) < 0:
+            return
+        import random
+
+        import numpy as np
+
+        seed = int(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
     @staticmethod
     def _resolve_weights_path(model_path: str) -> str:
@@ -515,6 +580,38 @@ class BaseModel(ABC):
         heads.
         """
         return state_dict
+
+    def _prepare_scratch_init(self) -> None:
+        """Let wrappers reset checkpoint-derived architecture state."""
+
+    def _is_scratch_build(self) -> bool:
+        """Return whether this build belongs to a scratch-training lifecycle."""
+        return bool(
+            getattr(self, "_initializing_from_scratch", False)
+            or getattr(self, "_training_from_scratch", False)
+        )
+
+    def _reset_for_scratch(self, *, seed: int = 0) -> None:
+        """Replace the loaded network with a freshly initialized architecture."""
+        self._seed_scratch_initialization(seed)
+        self._prepare_scratch_init()
+        self._graph_runner = None
+        self._cuda_graph_mode = None
+        self._initializing_from_scratch = True
+        try:
+            model = self._init_model()
+        finally:
+            self._initializing_from_scratch = False
+
+        self.model = model
+        self.model_path = None
+        self._training_from_scratch = True
+        self.names = (
+            {i: name for i, name in enumerate(COCO_CLASSES)}
+            if self.nb_classes == 80
+            else {i: f"class_{i}" for i in range(self.nb_classes)}
+        )
+        self.model.train().to(self.device)
 
     def _rebuild_for_new_classes(self, new_nb_classes: int):
         """Rebuild model with a new class count, preserving weights where shapes match."""
