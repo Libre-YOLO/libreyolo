@@ -10,6 +10,9 @@ Differences from upstream:
   matcher + weight_dict + losses as plain kwargs.
 - ``misc.dist_utils.{is_dist_available_and_initialized, get_world_size}``
   inlined as small helpers (LibreYOLO is single-GPU from this module's POV).
+- ``_get_go_indices`` batches its GPU->CPU transfer (one ``tolist`` per image
+  instead of upstream's two ``.item()`` device syncs per unique pair); the
+  output is identical.
 """
 
 from __future__ import annotations
@@ -406,8 +409,9 @@ class DFINECriterion(nn.Module):
             count_sort_indices = torch.argsort(counts, descending=True)
             unique_sorted = unique[count_sort_indices]
             column_to_row = {}
-            for idx in unique_sorted:
-                row_idx, col_idx = idx[0].item(), idx[1].item()
+            # One batched GPU->CPU transfer; upstream's per-element .item()
+            # loop costs two device syncs per unique pair (~1,200/step).
+            for row_idx, col_idx in unique_sorted.tolist():
                 if row_idx not in column_to_row:
                     column_to_row[row_idx] = col_idx
             final_rows = torch.tensor(list(column_to_row.keys()), device=ind.device)
