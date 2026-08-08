@@ -7,10 +7,10 @@ description: >-
   for X", "what would it take to add X"), when triaging a model-request issue,
   or when building a batch of candidates for the museum tier. Covers the
   already-in-the-tree check, the license gate, choosing the port source and
-  scaffold, the fixed PRD section template, and saving the result locally under
-  the user's Documents/handoffs directory. Never publish or register the
-  handoff remotely. This is the planning half; the execution half is
-  `libreyolo-port-model`.
+  scaffold, preferring training support when practical, the fixed PRD section
+  template, and saving the result locally under the user's Documents/handoffs
+  directory. Never publish or register the handoff remotely. This is the
+  planning half; the execution half is `libreyolo-port-model`.
 ---
 
 # Write a PRD for adding a model to LibreYOLO
@@ -114,12 +114,14 @@ rejection tests.
 ## 4. Scope and evidence
 
 Say which tasks are in scope and declare `SUPPORTED_TASKS` explicitly. Then pick
-an implementation and evidence target from `libreyolo-port-model` section 2, and remember that
-**inference-only is a legitimate ship state**. A PRD that gates delivery on a
-working trainer will usually stall. Make the trainer a follow-up unless training
-is the point of the port.
+an implementation and evidence target from `libreyolo-port-model` section 2.
+**Prefer a trainable port whenever practical.** Do not default to inference-only
+merely to reduce the first implementation's scope. If a safe, reproducible
+fine-tuning path exists, include training support in the handoff's initial
+definition of done. Inference-only remains legitimate when a concrete technical,
+licensing, data, or compute constraint prevents useful user fine-tuning.
 
-Whether the PRD requires a trainer follows two implementation facts:
+Whether the PRD requires a trainer follows three implementation facts:
 
 1. **Task shape.** The task is closed-set and label-supervised: the user's
    dataset is images plus plain labels the existing pipeline already carries
@@ -132,10 +134,21 @@ Whether the PRD requires a trainer follows two implementation facts:
    on a single GPU. A pretraining pipeline needing multi-node or web-scale
    data does not count (Depth Anything V2's teacher-student distillation is
    the precedent: supervised task, no user-facing recipe, inference-only).
-Both facts support a normal fine-tuning path: the PRD requires a trainer and
-states the completed checks and remaining validation work. Otherwise the PRD
-states the concrete missing implementation or recipe. Genuinely unsure: write
-"implementation scope: maintainer call" in the PRD and ask, instead of
+3. **Integration feasibility.** LibreYOLO's data pipeline can represent the
+   required labels, the necessary training operators can be implemented from
+   compatible sources, and a normal user can fine-tune on practical hardware.
+   Needing web-scale data, multi-node pretraining, unavailable custom kernels,
+   or unsupported annotations fails this gate. Historic or museum status alone
+   does not.
+
+All three pass: the PRD requires a trainer, includes training in the definition
+of done, and states the completed checks and remaining validation work. If
+delivery must be staged, make training a named second milestone in the same
+handoff rather than an unspecified optional follow-up. Splitting it into a
+separate handoff requires an explicit maintainer decision. Any gate fails:
+inference-only, and the PRD names the failed gate, the supporting evidence, and
+what would need to change for training to become feasible. Genuinely unsure:
+write "implementation scope: maintainer call" in the PRD and ask, instead of
 guessing.
 
 The one-line intuition: ship a trainer when a real user could run
@@ -187,6 +200,10 @@ Section 0 always carries these gates:
 4. **Tests**: the right registration for the task (see section 7).
 5. **UI smoke check**: load one converted checkpoint through the UI and confirm
    predict renders.
+6. **Training decision**: when all three training gates in section 4 pass,
+   include a trainer and its convergence evidence in the definition of done.
+   Otherwise name the failed gate and evidence instead of silently scoping
+   training out.
 
 Close with the branch rule: branch off `dev` and land the work through
 `merge-to-dev`. An agent may open the PR but never approves or merges it. The PR
