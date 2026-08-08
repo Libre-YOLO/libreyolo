@@ -443,7 +443,7 @@
     "export_override": "none",
     "optional_extra": null,
     "available": true,
-    "group": "g3"
+    "group": "g2"
   },
   "ec": {
     "class": "libreyolo.models.ec.model.LibreEC",
