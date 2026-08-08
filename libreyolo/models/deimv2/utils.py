@@ -11,9 +11,12 @@ from PIL import Image
 from ...postprocess.deim import postprocess
 from ...utils.image_loader import ImageInput, ImageLoader
 from ..deim.utils import unwrap_deim_checkpoint
+from ...preprocess.deimv2 import (  # noqa: F401  (moved; re-exported for backward compatibility)
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    preprocess_numpy,
+)
 
-IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
-IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
 
 __all__ = [
     "IMAGENET_MEAN",
@@ -25,19 +28,6 @@ __all__ = [
 ]
 
 
-def preprocess_numpy(
-    img_rgb_hwc: np.ndarray,
-    input_size: int = 640,
-    *,
-    imagenet_norm: bool = False,
-) -> Tuple[np.ndarray, float]:
-    img_resized = Image.fromarray(img_rgb_hwc).resize(
-        (input_size, input_size), Image.Resampling.BILINEAR
-    )
-    chw = (np.array(img_resized, dtype=np.float32) / 255.0).transpose(2, 0, 1)
-    if imagenet_norm:
-        chw = (chw - IMAGENET_MEAN) / IMAGENET_STD
-    return chw.astype(np.float32), 1.0
 
 
 def preprocess_image(

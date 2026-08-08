@@ -10,6 +10,7 @@ import torch.nn as nn
 
 from libreyolo.models.deim.backbone import HGNetv2
 
+from ...preprocess.deimv2 import DINO_SIZES  # noqa: F401  (moved; re-exported)
 from .engine.backbone.dinov3_adapter import DINOv3STAs
 from .engine.deim.deim_decoder import DEIMTransformer
 from .engine.deim.hybrid_encoder import HybridEncoder
@@ -17,7 +18,6 @@ from .engine.deim.lite_encoder import LiteEncoder
 
 
 SIZE_ALIASES = {"a": "atto", "f": "femto", "p": "pico"}
-DINO_SIZES = {"s", "m", "l", "x"}
 
 
 SIZE_CONFIGS: dict[str, dict[str, Any]] = {

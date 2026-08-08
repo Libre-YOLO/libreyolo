@@ -6,10 +6,17 @@ the YOLOX and RTMDet decode paths. Moved verbatim from
 compatibility).
 """
 
+from __future__ import annotations
+
 from typing import Tuple, Union
 
-import torch
-import torchvision.ops
+from ..utils.lazy import lazy_module
+
+
+# torch is resolved on first use so this module stays importable in a
+# torch-free ONNX deployment (discussions/711).
+torch = lazy_module("torch")
+torchvision = lazy_module("torchvision")
 
 
 def _input_size_hw(input_size: Union[int, Tuple[int, int]]) -> Tuple[int, int]:

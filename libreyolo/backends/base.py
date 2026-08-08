@@ -1,31 +1,44 @@
 """Base class for LibreYOLO inference backends."""
 
+# Annotations are deferred so that the ``-> torch.Tensor`` hints below do not
+# resolve torch at class-definition time; see the lazy torch import further
+# down.
+from __future__ import annotations
+
 import json
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
-import torch
-import torch.nn.functional as F
+from ..utils.lazy import lazy_module, module_available
+
 from PIL import Image
 
-from ..models.yolo9.utils import (
+# Constants and the yolo9 postprocess entry point live in the torch-free
+# ``postprocess`` package, so importing them here does not drag in
+# ``models/__init__.py`` (which eagerly builds every nn.Module to populate
+# the can_load registry) and keeps this module importable without torch.
+from ..postprocess.yolo9 import (
     _YOLO9_MAX_NMS_CANDIDATES,
     postprocess as yolo9_postprocess,
-    preprocess_image,
 )
-from ..models.yolonas.utils import (
+from ..postprocess.yolonas import (
     YOLO_NAS_PRE_NMS_TOP_K,
     YOLO_NAS_POSE_RESIZE_SIZE,
     YOLO_NAS_RESIZE_SIZE,
+)
+from ..preprocess import as_batched_input, as_input
+from ..preprocess.yolo9 import preprocess_image
+from ..preprocess.yolonas import (
     preprocess_image as yolonas_preprocess_image,
     preprocess_pose_image as yolonas_preprocess_pose_image,
 )
-from ..models.yolox.utils import preprocess_image as yolox_preprocess_image
+from ..preprocess.yolox import preprocess_image as yolox_preprocess_image
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.drawing import (
     draw_boxes,
@@ -68,6 +81,70 @@ from ..utils.video import (
     collect_video_results,
     run_video_inference,
 )
+
+
+@lru_cache(maxsize=1)
+def _torch_installed() -> bool:
+    """Whether torch is importable.
+
+    Cached: the answer cannot change within a process, and this is consulted
+    once per built result.
+    """
+    return module_available("torch")
+
+
+def _f32(data):
+    """float32 ``torch.Tensor`` when torch is installed, ``ndarray`` otherwise.
+
+    Results containers hold ``TensorLike`` (tensor *or* ndarray) and never
+    require a tensor, which is what lets a torch-free ONNX deployment build a
+    Results object. With torch installed the tensor branch is taken and
+    behaviour is byte-for-byte unchanged.
+    """
+    if _torch_installed():
+        return torch.tensor(data, dtype=torch.float32)
+    return np.asarray(data, dtype=np.float32)
+
+
+def _zeros_f32(shape):
+    """Empty-detection counterpart to :func:`_f32`."""
+    if _torch_installed():
+        return torch.zeros(shape, dtype=torch.float32)
+    return np.zeros(shape, dtype=np.float32)
+
+
+def _zeros_bool(length):
+    """All-False mask, as a ``torch.Tensor`` if torch is installed."""
+    if _torch_installed():
+        return torch.zeros(length, dtype=torch.bool)
+    return np.zeros(length, dtype=bool)
+
+
+def _bool_array(data):
+    """Boolean mask stack, as a ``torch.Tensor`` if torch is installed."""
+    if _torch_installed():
+        return torch.from_numpy(data).bool()
+    return np.asarray(data, dtype=bool)
+
+
+def _to_blob(input_tensor) -> np.ndarray:
+    """Return the runtime input as a contiguous numpy array.
+
+    Preprocessing yields a torch tensor when torch is installed and an ndarray
+    otherwise (see ``libreyolo.preprocess.as_batched_input``). Every non-torch
+    runtime (ONNX, OpenVINO, ncnn, ...) wants numpy either way, so normalise
+    here instead of at each call site.
+    """
+    if isinstance(input_tensor, np.ndarray):
+        return input_tensor
+    return input_tensor.detach().cpu().numpy()
+
+
+
+# torch is resolved on first use so this module stays importable in a
+# torch-free ONNX deployment (discussions/711).
+torch = lazy_module("torch")
+F = lazy_module("torch.nn.functional")
 
 logger = logging.getLogger(__name__)
 
@@ -894,7 +971,7 @@ class BaseBackend(ABC):
     @staticmethod
     def _preprocess_rfdetr(image, input_size, color_format, task=None):
         """RF-DETR preprocessing: direct resize + ImageNet normalization."""
-        from ..models.rfdetr.utils import (
+        from ..preprocess.rfdetr import (
             IMAGENET_MEAN,
             IMAGENET_STD,
             preprocess_numpy as rfdetr_preprocess_numpy,
@@ -920,7 +997,7 @@ class BaseBackend(ABC):
             return (img_tensor - mean) / std, original_img, original_size
 
         img_chw, _ = rfdetr_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
         return img_tensor, original_img, original_size
 
     @staticmethod
@@ -933,7 +1010,7 @@ class BaseBackend(ABC):
         original_img = img.copy()
 
         img_chw, _ = lwdetr_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
 
         return img_tensor, original_img, original_size
 
@@ -987,7 +1064,7 @@ class BaseBackend(ABC):
         original_img = img.copy()
 
         img_chw, _ = preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
         return img_tensor, original_img, original_size
 
     @staticmethod
@@ -1012,43 +1089,43 @@ class BaseBackend(ABC):
         original_img = img.copy()
 
         img_chw, _ = detr_preprocess_numpy(np.asarray(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
 
         return img_tensor, original_img, original_size
 
     @staticmethod
     def _preprocess_dfine(image, input_size, color_format):
         """D-FINE preprocessing: plain resize + RGB + /255, no ImageNet norm."""
-        from ..models.dfine.utils import preprocess_numpy as dfine_preprocess_numpy
+        from ..preprocess.dfine import preprocess_numpy as dfine_preprocess_numpy
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
         original_img = img.copy()
 
         img_chw, _ = dfine_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
 
         return img_tensor, original_img, original_size
 
     @staticmethod
     def _preprocess_deim(image, input_size, color_format):
         """DEIM-D-FINE preprocessing: plain resize + RGB + /255."""
-        from ..models.deim.utils import preprocess_numpy as deim_preprocess_numpy
+        from ..preprocess.deim import preprocess_numpy as deim_preprocess_numpy
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
         original_img = img.copy()
 
         img_chw, _ = deim_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
 
         return img_tensor, original_img, original_size
 
     @staticmethod
     def _preprocess_deimv2(image, input_size, color_format, model_size=None):
         """DEIMv2 preprocessing; DINO-backed sizes use ImageNet normalization."""
-        from ..models.deimv2.nn import DINO_SIZES
-        from ..models.deimv2.utils import preprocess_numpy as deimv2_preprocess_numpy
+        from ..preprocess.deimv2 import DINO_SIZES
+        from ..preprocess.deimv2 import preprocess_numpy as deimv2_preprocess_numpy
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
@@ -1057,23 +1134,21 @@ class BaseBackend(ABC):
         img_chw, _ = deimv2_preprocess_numpy(
             np.array(img), input_size, imagenet_norm=model_size in DINO_SIZES
         )
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
 
         return img_tensor, original_img, original_size
 
     @staticmethod
     def _preprocess_ec(image, input_size, color_format):
         """EC preprocessing: plain resize + RGB + /255 + ImageNet (mean, std)."""
-        from ..models.ec.postprocess import (
-            preprocess_numpy as ec_preprocess_numpy,
-        )
+        from ..preprocess.ec import preprocess_numpy as ec_preprocess_numpy
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
         original_img = img.copy()
 
         img_chw, _ = ec_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
         return img_tensor, original_img, original_size
 
     @staticmethod
@@ -1086,7 +1161,7 @@ class BaseBackend(ABC):
         original_img = img.copy()
 
         img_chw, _ = picodet_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
         return img_tensor, original_img, original_size
 
     @staticmethod
@@ -1106,20 +1181,20 @@ class BaseBackend(ABC):
         original_img = img.copy()
 
         img_chw, ratio = rtmdet_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
         return img_tensor, original_img, original_size, ratio
 
     @staticmethod
     def _preprocess_rtdetr(image, input_size, color_format):
         """RT-DETR preprocessing: direct resize + normalize to [0,1]."""
-        from ..models.rtdetr.utils import preprocess_numpy as rtdetr_preprocess_numpy
+        from ..preprocess.rtdetr import preprocess_numpy as rtdetr_preprocess_numpy
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size  # (W, H)
         original_img = img.copy()
 
         img_chw, _ = rtdetr_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw)
+        img_tensor = as_input(img_chw)
         return img_tensor, original_img, original_size
 
     @staticmethod
@@ -3519,17 +3594,14 @@ class BaseBackend(ABC):
         if len(boxes) == 0:
             keypoints_obj = None
             if keypoints is not None:
-                keypoints_obj = Keypoints(
-                    torch.as_tensor(keypoints, dtype=torch.float32),
-                    orig_shape,
-                )
+                keypoints_obj = Keypoints(_f32(keypoints), orig_shape)
             return Results(
                 boxes=Boxes(
-                    torch.zeros((0, 4), dtype=torch.float32),
-                    torch.zeros((0,), dtype=torch.float32),
-                    torch.zeros((0,), dtype=torch.float32),
+                    _zeros_f32((0, 4)),
+                    _zeros_f32((0,)),
+                    _zeros_f32((0,)),
                 ),
-                obb=OBB(torch.zeros((0, 7), dtype=torch.float32), orig_shape)
+                obb=OBB(_zeros_f32((0, 7)), orig_shape)
                 if self.task == "obb"
                 else None,
                 keypoints=keypoints_obj,
@@ -3585,35 +3657,33 @@ class BaseBackend(ABC):
             if keypoints is not None:
                 keypoints = keypoints[top_indices]
 
-        boxes_t = torch.tensor(boxes, dtype=torch.float32)
-        conf_t = torch.tensor(max_scores, dtype=torch.float32)
-        cls_t = torch.tensor(class_ids, dtype=torch.float32)
-        obb_t = torch.tensor(obb, dtype=torch.float32) if obb is not None else None
+        boxes_t = _f32(boxes)
+        conf_t = _f32(max_scores)
+        cls_t = _f32(class_ids)
+        obb_t = _f32(obb) if obb is not None else None
 
         if classes is not None and len(boxes_t) > 0:
-            cls_mask = torch.zeros(len(cls_t), dtype=torch.bool)
+            cls_mask = _zeros_bool(len(cls_t))
             for cid in classes:
                 cls_mask |= cls_t == cid
             boxes_t = boxes_t[cls_mask]
             conf_t = conf_t[cls_mask]
             cls_t = cls_t[cls_mask]
+            mask_np = _to_blob(cls_mask)
             if masks is not None:
-                masks = masks[cls_mask.numpy()]
+                masks = masks[mask_np]
             if obb_t is not None:
                 obb_t = obb_t[cls_mask]
             if keypoints is not None:
-                keypoints = keypoints[cls_mask.numpy()]
+                keypoints = keypoints[mask_np]
 
         masks_obj = None
         if masks is not None and len(masks) > 0:
-            masks_obj = Masks(torch.from_numpy(masks).bool(), orig_shape=orig_shape)
+            masks_obj = Masks(_bool_array(masks), orig_shape=orig_shape)
 
         keypoints_obj = None
         if keypoints is not None:
-            keypoints_obj = Keypoints(
-                torch.as_tensor(keypoints, dtype=torch.float32),
-                orig_shape,
-            )
+            keypoints_obj = Keypoints(_f32(keypoints), orig_shape)
 
         obb_obj = None
         if obb_t is not None:
@@ -3830,7 +3900,7 @@ class BaseBackend(ABC):
         return effective
 
     def _forward(self, input_tensor: torch.Tensor):
-        blob = input_tensor.detach().cpu().numpy()
+        blob = _to_blob(input_tensor)
         try:
             outputs = self._run_inference(blob)
         except Exception:
@@ -4109,7 +4179,7 @@ class BaseBackend(ABC):
             image, effective_imgsz, color_format
         )
 
-        blob = input_tensor.numpy()
+        blob = _to_blob(input_tensor)
 
         all_outputs = self._run_inference(blob)
 
@@ -4443,7 +4513,7 @@ class BaseBackend(ABC):
             for t in tensors
         )
         if stackable and not getattr(self, "_batched_inference_failed", False):
-            blob = np.concatenate([t.numpy() for t in tensors], axis=0)
+            blob = np.concatenate([_to_blob(t) for t in tensors], axis=0)
             try:
                 all_outputs = self._run_inference(blob)
             except Exception as e:
@@ -4766,7 +4836,7 @@ class BaseBackend(ABC):
             input_tensor, original_img, original_size, ratio = self._preprocess(
                 pil_img, effective_imgsz, "rgb"
             )
-            blob = input_tensor.numpy()
+            blob = _to_blob(input_tensor)
             all_outputs = self._run_inference(blob)
             orig_w, orig_h = original_size
             orig_shape = (orig_h, orig_w)

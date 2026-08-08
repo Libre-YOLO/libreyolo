@@ -8,9 +8,16 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-import torch
-
 from ..tasks import normalize_task
+from .lazy import lazy_module
+
+# torch is resolved on first use so this module stays importable in a
+# torch-free ONNX deployment (discussions/711): warn_on_metadata_schema_version
+# and the metadata helpers here sit on backends/onnx.py's import path, while
+# only the ``.pt`` loaders below actually need torch. Kept as a module
+# attribute rather than a function-local import so ``serialization.torch``
+# stays patchable.
+torch = lazy_module("torch")
 
 
 SCHEMA_VERSION = "1.0"

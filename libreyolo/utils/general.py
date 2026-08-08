@@ -1,13 +1,21 @@
 """Shared general utility functions."""
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Union
 from urllib.parse import urlparse
 
-import torch
+from .lazy import lazy_module
+
 
 from ..postprocess.common import postprocess_detections  # noqa: F401  (moved; re-exported for backward compatibility)
+
+
+# torch is resolved on first use so this module stays importable in a
+# torch-free ONNX deployment (discussions/711).
+torch = lazy_module("torch")
 
 logger = logging.getLogger(__name__)
 

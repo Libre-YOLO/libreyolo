@@ -3,94 +3,105 @@
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path as _Path
 
-# Core API — always available
-from .models import (
-    LibreYOLO,
-    LibreYOLOX,
-    LibreYOLO9,
-    LibreYOLO9E2E,
-    LibreYOLO9P2,
-    LibreYOLONAS,
-    LibreDFINE,
-    LibreDOMEDETR,
-    LibreDEIM,
-    LibreDEIMv2,
-    LibreDETR,
-    LibreDeformableDETR,
-    LibreDINODETR,
-    LibreLWDETR,
-    LibreMaskRCNN,
-    LibreFCOS,
-    LibreFasterRCNN,
-    LibreRetinaNet,
-    LibreSSD,
-    LibreCenterNet,
-    LibreEfficientDet,
-    LibreEC,
-    LibrePICODET,
-    LibreRTDETR,
-    LibreRTDETRv2,
-    LibreRTDETRv4,
-    LibreRTMDet,
-    LibreYOLO3,
-    LibreYOLO4,
-    LibreYOLO2,
-    LibreYOLO1,
-    LibreYOLO7,
-    LibreHRNet,
-    LibreL2CS,
-    LibreFOMO,
-    LibreMiDaS,
-    LibreDepthAnythingV2,
-    LibreZipDepth,
-    LibreMoGe2,
-    LibreTEED,
-    LibreDexiNed,
-    LibreDepthAnything3,
-    LibreNAFNet,
-    LibreBiRefNet,
-    LibreFeyNobg,
-    LibreRealESRGAN,
-    LibreSwinIR,
-    LibreFCN,
-    LibreEoMT,
-    LibreDeepLabv3,
-    LibrePIDNet,
-    LibreSegformer,
-    LibreLingBotVision,
-    LibreViT,
-    LibreMobileNetV4,
-    LibreConvNeXt,
-    LibreDeiT,
-    LibreSwin,
-    LibreEfficientNetV2,
-    LibreVGG,
-    LibreResNet,
-    LibreAlexNet,
-    LibreCLIP,
-    LibreSigLIP2,
-    LibrePPOCR,
+# Core API — resolved lazily through ``__getattr__`` so that ``import
+# libreyolo`` does not pull torch. The ONNX inference path (backends/onnx.py +
+# BaseBackend._build_result) is numpy-native, which lets a ``pip install
+# --no-deps libreyolo`` deployment run inference without the torch wheel.
+# See https://github.com/LibreYOLO/libreyolo/discussions/711.
+#
+# Laziness lives ONLY at this level. ``models/__init__.py`` stays eager and
+# atomic: it builds the can_load() registry as an import side effect and its
+# import ORDER is load-bearing (first match wins, so e.g. LibreYOLO9P2 must
+# register before LibreYOLO9). Touching any model name here imports that whole
+# module in one go, so the registry is never observed half-populated. Do not
+# make the per-family imports in models/__init__.py lazy.
+_MODEL_EXPORTS = (
+    "LibreYOLO",
+    "LibreYOLOX",
+    "LibreYOLO9",
+    "LibreYOLO9E2E",
+    "LibreYOLO9P2",
+    "LibreYOLONAS",
+    "LibreDFINE",
+    "LibreDOMEDETR",
+    "LibreDEIM",
+    "LibreDEIMv2",
+    "LibreDETR",
+    "LibreDeformableDETR",
+    "LibreDINODETR",
+    "LibreLWDETR",
+    "LibreMaskRCNN",
+    "LibreFCOS",
+    "LibreFasterRCNN",
+    "LibreRetinaNet",
+    "LibreSSD",
+    "LibreCenterNet",
+    "LibreEfficientDet",
+    "LibreEC",
+    "LibrePICODET",
+    "LibreRTDETR",
+    "LibreRTDETRv2",
+    "LibreRTDETRv4",
+    "LibreRTMDet",
+    "LibreYOLO3",
+    "LibreYOLO4",
+    "LibreYOLO2",
+    "LibreYOLO1",
+    "LibreYOLO7",
+    "LibreHRNet",
+    "LibreL2CS",
+    "LibreFOMO",
+    "LibreMiDaS",
+    "LibreDepthAnythingV2",
+    "LibreZipDepth",
+    "LibreMoGe2",
+    "LibreTEED",
+    "LibreDexiNed",
+    "LibreDepthAnything3",
+    "LibreNAFNet",
+    "LibreBiRefNet",
+    "LibreFeyNobg",
+    "LibreRealESRGAN",
+    "LibreSwinIR",
+    "LibreFCN",
+    "LibreEoMT",
+    "LibreDeepLabv3",
+    "LibrePIDNet",
+    "LibreSegformer",
+    "LibreLingBotVision",
+    "LibreViT",
+    "LibreMobileNetV4",
+    "LibreConvNeXt",
+    "LibreDeiT",
+    "LibreSwin",
+    "LibreEfficientNetV2",
+    "LibreVGG",
+    "LibreResNet",
+    "LibreAlexNet",
+    "LibreCLIP",
+    "LibreSigLIP2",
+    "LibrePPOCR",
 )
-from .utils.results import (
-    Results,
-    Boxes,
-    Masks,
-    Keypoints,
-    Points,
-    Probs,
-    OBB,
-    Gaze,
-    SemanticMask,
-    PanopticSegmentation,
-    DepthMap,
-    EdgeMap,
-    NormalMap,
-    RestoredImage,
-    Matte,
-    Meshes,
-    OCRRegions,
-    Embeddings,
-    Identities,
+_RESULTS_EXPORTS = (
+    "Results",
+    "Boxes",
+    "Masks",
+    "Keypoints",
+    "Points",
+    "Probs",
+    "OBB",
+    "Gaze",
+    "SemanticMask",
+    "PanopticSegmentation",
+    "DepthMap",
+    "EdgeMap",
+    "NormalMap",
+    "RestoredImage",
+    "Matte",
+    "Meshes",
+    "OCRRegions",
+    "Embeddings",
+    "Identities",
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -127,6 +138,18 @@ def __getattr__(name):
         # (``LibreRFDETR``); recursing into ``__getattr__`` directly would
         # skip the eager case.
         return getattr(sys.modules[__name__], new_name)
+
+    # Core model / results exports. Resolving any of these imports the whole
+    # ``models`` package in one atomic step, preserving can_load() registry
+    # order (see the _MODEL_EXPORTS comment above).
+    if name in _MODEL_EXPORTS or name in _RESULTS_EXPORTS:
+        import importlib
+
+        module_path = ".models" if name in _MODEL_EXPORTS else ".utils.results"
+        attr = getattr(importlib.import_module(module_path, package=__name__), name)
+        # Cache into module globals so repeat access skips __getattr__ entirely.
+        globals()[name] = attr
+        return attr
 
     _lazy = {
         "LibreRFDETR": (".models.rfdetr.model", "LibreRFDETR"),
@@ -200,6 +223,13 @@ def __getattr__(name):
         mod = importlib.import_module(module_path, package=__name__)
         return getattr(mod, attr)
     raise AttributeError(f"module 'libreyolo' has no attribute '{name}'")
+
+
+def __dir__():
+    # Model/results names resolve lazily, so they are absent from globals()
+    # until first use. Advertise them anyway to keep tab-completion and
+    # introspection behaving as they did when the imports were eager.
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [
