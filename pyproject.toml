@@ -470,6 +470,7 @@ markers = [
     "dinodetr: tests covering the DINO-DETR model family",
     "centernet: tests covering the CenterNet model family",
     "dfine: tests covering the D-FINE model family",
+    "domedetr: tests covering the Dome-DETR tiny-object model family",
     "deim: tests covering the DEIM model family",
     "deimv2: tests covering the DEIMv2 model family",
     "ec: tests covering the ECDet model family",

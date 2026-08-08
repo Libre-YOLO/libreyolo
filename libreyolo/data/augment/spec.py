@@ -82,6 +82,7 @@ FAMILY_DISPLAY_NAMES: Dict[str, str] = {
     "rtdetrv2": "RT-DETRv2",
     "rtdetrv4": "RT-DETRv4",
     "dfine": "D-FINE",
+    "domedetr": "Dome-DETR",
     "deim": "DEIM",
     "deimv2": "DEIMv2",
     "ec": "EC",
@@ -223,6 +224,11 @@ FAMILY_AUG_SUPPORT: Dict[str, Dict[str, Support]] = {
     },
     # --- DETR-style pass-through pipelines ------------------------------
     "dfine": dict(_DETR_STYLE),
+    # Dome-DETR inherits DFINETrainer.create_transforms unchanged, so its
+    # knob support is D-FINE's. Multi-scale is the one thing it cannot
+    # take (MWAS needs the stride-8 map divisible by the window size), and
+    # that is enforced by DOMEDETRConfig.multi_scale=False, not here.
+    "domedetr": dict(_DETR_STYLE),
     "deim": dict(_DETR_STYLE),
     "deimv2": dict(_DETR_STYLE),
     # EC is multi-task (detect/segment/pose). Its pose pipeline honors

@@ -35,6 +35,22 @@ project the weights were derived from. Per-family summary:
              recoverable, so LibreYOLO1t ships as code only (bring your own
              tiny-yolov1.weights to convert).
 
+    Dome-DETR (LibreDOMEDETR{s,m,l}-{aitod,visdrone})  NOT REDISTRIBUTED
+             upstream: https://huggingface.co/RicePasteM/Dome-DETR
+             Not mirrored to the LibreYOLO organization. The upstream model
+             card carries no license field in its metadata, and its prose
+             simultaneously states the project is Apache-2.0 and that the
+             material is "for academic research purposes only". Those do not
+             agree, and the stricter reading is not a redistribution grant, so
+             the weight license is implied from the source repository rather
+             than stated. Until upstream sets an explicit license, download the
+             checkpoints from the link above and convert locally with
+             weights/convert_domedetr_weights.py. This follows the YOLO-NAS
+             precedent of linking rather than rehosting.
+             There is no COCO checkpoint for this family: only AI-TOD-V2
+             (9 classes) and VisDrone (12), hence the dataset suffix on every
+             canonical filename and the absence of a bare LibreDOMEDETRs.pt.
+
     YOLOv7   (LibreYOLO7b)                             MIT
              upstream: MultimediaTechLab/YOLO (Kin-Yiu Wong & Hao-Tang Tsui)
              The authors' MIT re-release, not WongKinYiu/yolov7 (GPL-3.0).

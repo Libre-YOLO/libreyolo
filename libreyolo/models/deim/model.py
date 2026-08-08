@@ -43,6 +43,12 @@ class LibreDEIM(BaseModel):
         # DEIM-D-FINE intentionally shares the same architecture keys as D-FINE.
         # The factory resolves that ambiguity with model_family metadata or a
         # DEIM filename hint before falling back to registry order.
+        #
+        # Dome-DETR also descends from D-FINE and carries pre_bbox_head, but it
+        # is a different architecture (DeFE/MWAS/PAQI), not an ambiguous
+        # sibling, so reject it outright rather than leaving it to ordering.
+        if any(k.startswith("encoder.DeFE.") for k in weights_dict):
+            return False
         return any("decoder.pre_bbox_head." in k for k in weights_dict)
 
     @classmethod

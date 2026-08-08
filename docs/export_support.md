@@ -30,6 +30,7 @@ in preflight.
 | dinov2 | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |
 | dinov2 | classify | ✓ | ✓ | ✓ | available | ✓ |  |  |  |  |  |  | available |
 | dinov2 | embed | ✓ | ✓ | available | available | available |  |  |  |  | ✓ |  |  |
+| domedetr | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | ✓ | available | ✓ | ✓ | ✓ |  |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | ✓ | available | available | ✓ |  |  |  |  |  |  |
 | ec | segment | ✓ | ✓ | ✓ | available | ✓ | ✓ |  |  |  |  |  |  |
@@ -653,6 +654,18 @@ These converter paths are callable with the recorded validation context.
 - `dinov2` / `embed` / `ncnn`: PNNX 20260526 cannot lower the DINOv2 attention graph's batch-axis broadcasts and leaves an unsupported pnnx.Expression node.
 - `dinov2` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `dinov2` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
+- `domedetr` / `detect` / `onnx`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `torchscript`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `executorch`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `tensorrt`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `openvino`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `paddle`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `mnn`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `rknn`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `ncnn`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `tflite`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `coreml`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
+- `domedetr` / `detect` / `coreai`: Dome-DETR rejects export for every format. PAQI sets the query count per image, so a traced graph is only valid for the image it was traced on; a static formulation would need the greedy density-adaptive NMS unrolled over all 250-1500 candidates. Use D-FINE for an exportable DETR.
 - `ec` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `ec` / `detect` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_LAYERNORMALIZATION custom operation that LiteRT 2.1.2 cannot prepare.

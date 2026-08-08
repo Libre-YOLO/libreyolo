@@ -140,6 +140,18 @@ def _pose_keypoint_shape_metadata(model) -> dict:
     return meta
 
 
+_DOMEDETR_EXPORT_MESSAGE = (
+    "Dome-DETR export is not supported. PAQI decides the query count per image "
+    "(density-filtered proposals plus a greedy density-adaptive NMS), so the "
+    "decoder output length is data dependent. Tracing bakes in whichever count "
+    "the tracing image happened to produce, giving a graph that silently "
+    "returns wrong results for every other image, and a static formulation "
+    "needs the greedy suppression unrolled over all 250-1500 candidates. "
+    "Reducing to a fixed top-k would remove exactly the tiny-object recall "
+    "this family exists for. Use LibreDFINE if you need an exportable DETR."
+)
+
+
 _FIXED_SQUARE_EXPORT_FAMILIES = {
     "clip",
     "deformable_detr",
@@ -306,6 +318,8 @@ class BaseExporter(ABC):
             raise ValueError(
                 f"Unsupported export format: {format!r}. Must be one of: {valid}"
             )
+        if model is not None and getattr(model, "FAMILY", None) == "domedetr":
+            raise NotImplementedError(_DOMEDETR_EXPORT_MESSAGE)
         return cls._registry[key](model)
 
     # Template method
@@ -719,6 +733,8 @@ class BaseExporter(ABC):
                 num_windows=num_windows,
                 name="RF-DETR export imgsz",
             )
+        if model_name == "domedetr":
+            raise NotImplementedError(_DOMEDETR_EXPORT_MESSAGE)
         if _is_rectangular_imgsz(imgsz) and model_name in _FIXED_SQUARE_EXPORT_FAMILIES:
             raise NotImplementedError(
                 f"Rectangular imgsz export is not supported for {model_name}: "

@@ -3503,6 +3503,13 @@ _FAMILY_BLOCKS = {
         "Depth Anything 3 currently rejects export for every format; its "
         "depth graph has not been added to the exported-runtime contract."
     ),
+    "domedetr": (
+        "Dome-DETR rejects export for every format. PAQI sets the query count "
+        "per image, so a traced graph is only valid for the image it was traced "
+        "on; a static formulation would need the greedy density-adaptive NMS "
+        "unrolled over all 250-1500 candidates. Use D-FINE for an exportable "
+        "DETR."
+    ),
     "eomt": "EoMT instance and panoptic export do not yet have runtime parsing.",
     "l2cs": (
         "The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, "

@@ -193,6 +193,15 @@ class LibreRFDETR(BaseModel):
         ):
             return False
 
+        # Dome-DETR is a D-FINE derivative whose only overlap with the broad
+        # marker list below is ``decoder.denoising_class_embed.weight``
+        # (matched by the "class_embed" token). D-FINE itself is saved from the
+        # same collision by registry order; Dome-DETR registers late because
+        # importing it pulls in models.dfine, so reject it on its own key
+        # rather than relying on ordering.
+        if any(k.startswith("encoder.DeFE.") for k in weights_dict):
+            return False
+
         keys_lower = [k.lower() for k in weights_dict]
         if any(
             "detr" in k

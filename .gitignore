@@ -61,6 +61,10 @@ sample_images*/
 # Catch-all so any current or future Libre* family snapshot dir (and the
 # *.bin / config / tokenizer files inside it) can never be committed.
 weights/Libre*/
+# Lock files the weight downloader leaves behind next to the .pt it was
+# fetching. The .pt itself is already ignored; the lock is not, so it keeps
+# getting swept into commits by `git add -A` (cleaned up once in f85487b8).
+*.download.lock
 
 # OC-SORT parity oracle: vendored MIT reference + dev harness (test-only, not shipped)
 /parity_ref/
