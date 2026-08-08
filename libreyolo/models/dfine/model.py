@@ -64,6 +64,13 @@ class LibreDFINE(BaseModel):
         # D-FINE-unique decoder key prefix.  ``pre_bbox_head`` is present in
         # D-FINE but absent from RT-DETR (which otherwise shares
         # ``dec_bbox_head``, ``denoising_class_embed``, and ``enc_bbox_head``).
+        #
+        # Dome-DETR derives from D-FINE and carries ``pre_bbox_head`` too, so
+        # reject its DeFE-bearing checkpoints explicitly. Registry order
+        # already puts LibreDOMEDETR first; this makes the rejection hold even
+        # when ``can_load`` is consulted on its own.
+        if any(k.startswith("encoder.DeFE.") for k in weights_dict):
+            return False
         return any("decoder.pre_bbox_head." in k for k in weights_dict)
 
     @classmethod

@@ -1021,3 +1021,11 @@ class FOMOValPreprocessor(BaseValPreprocessor):
             padded_targets[:n] = targets[:n]
 
         return resized, padded_targets
+
+
+class DOMEDETRValPreprocessor(DFINEValPreprocessor):
+    """Dome-DETR validation preprocessor: same RGB /255 plain resize as D-FINE.
+
+    Only the input size differs (800 rather than 640), and that is carried by
+    the model's ``INPUT_SIZES`` rather than by the preprocessor.
+    """

@@ -279,6 +279,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "detr",
         "dinodetr",
         "dfine",
+        "domedetr",
         "deim",
         "deimv2",
         "ec",

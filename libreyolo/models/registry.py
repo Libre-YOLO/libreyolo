@@ -50,6 +50,7 @@ MODEL_GROUPS: dict[str, str] = {
     "efficientnetv2": "g2",
     # g3 - inference-only specialists
     "lwdetr": "g3",
+    "domedetr": "g3",
     "detr": "g3",
     "deformable_detr": "g3",
     "mask_rcnn": "g3",
