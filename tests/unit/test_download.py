@@ -5,10 +5,15 @@ import queue
 import time
 from pathlib import Path
 
-import requests
 import pytest
+import requests
+import torch
 
 from libreyolo.models.base.model import BaseModel
+from libreyolo.models.deim.model import LibreDEIM
+from libreyolo.models.deimv2.model import LibreDEIMv2
+from libreyolo.models.dfine.model import LibreDFINE
+from libreyolo.models.ec.model import LibreEC
 from libreyolo.utils import download
 
 pytestmark = pytest.mark.unit
@@ -320,4 +325,40 @@ def test_factory_reports_and_chains_download_failure(monkeypatch, tmp_path):
     ) as exc_info:
         models.LibreYOLO("LibreYOLO9t.pt")
 
+    assert exc_info.value.__cause__ is failure
+
+
+@pytest.mark.parametrize(
+    ("model_cls", "filename", "size"),
+    [
+        (LibreDFINE, "LibreDFINEn.pt", "n"),
+        (LibreDEIM, "LibreDEIMn.pt", "n"),
+        (LibreDEIMv2, "LibreDEIMv2atto.pt", "atto"),
+        (LibreEC, "LibreECs.pt", "s"),
+    ],
+    ids=("dfine", "deim", "deimv2", "ec"),
+)
+def test_direct_constructor_attempts_autodownload(
+    model_cls, filename, size, monkeypatch, tmp_path
+):
+    monkeypatch.chdir(tmp_path)
+    target = Path("weights") / filename
+    calls = []
+
+    failure = RuntimeError("connection reset while fetching checkpoint")
+
+    def fake_download(model_path, requested_size):
+        calls.append((Path(model_path), requested_size))
+        raise failure
+
+    monkeypatch.setattr(model_cls, "_init_model", lambda _self: torch.nn.Identity())
+    monkeypatch.setattr(download, "download_weights", fake_download)
+
+    with pytest.raises(
+        FileNotFoundError,
+        match="Auto-download failed: connection reset while fetching checkpoint",
+    ) as exc_info:
+        model_cls(filename, size=size, device="cpu")
+
+    assert calls == [(target, size)]
     assert exc_info.value.__cause__ is failure
