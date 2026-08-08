@@ -445,7 +445,7 @@ class DeepStreamInstanceSegOutput(nn.Module):
         return torch.cat((rows, masks.reshape(b, q, self.mask_h * self.mask_w)), dim=-1)
 
 
-def wrap_for_deepstream(
+def _build_deepstream_wrapper(
     nn_model: nn.Module,
     *,
     model_family: str,
@@ -453,7 +453,7 @@ def wrap_for_deepstream(
     model_size: str | None = None,
     task: str = "detect",
 ) -> nn.Module:
-    """Wrap an export-mode model with the DeepStream output adapter."""
+    """Pick the DeepStream output adapter for ``model_family``/``task``."""
     if task == "classify":
         if model_family not in _CLASSIFY_FAMILIES:
             raise NotImplementedError(
@@ -522,6 +522,33 @@ def wrap_for_deepstream(
         f"DeepStream export is not supported for model family {model_family!r}. "
         f"Supported families: {sorted(deepstream_supported_families())}"
     )
+
+
+def wrap_for_deepstream(
+    nn_model: nn.Module,
+    *,
+    model_family: str,
+    imgsz: tuple[int, int],
+    model_size: str | None = None,
+    task: str = "detect",
+) -> nn.Module:
+    """Wrap an export-mode model with the DeepStream output adapter."""
+    wrapped = _build_deepstream_wrapper(
+        nn_model,
+        model_family=model_family,
+        imgsz=imgsz,
+        model_size=model_size,
+        task=task,
+    )
+    if wrapped is nn_model:
+        return wrapped
+    # The adapters hold constant buffers (_scale, _mean, _std) built on CPU,
+    # while the model being exported may already sit on CUDA. Line them up or
+    # tracing dies on a device mismatch.
+    params = next(nn_model.parameters(), None)
+    if params is not None:
+        wrapped = wrapped.to(params.device)
+    return wrapped
 
 
 def deepstream_supported_families(task: str = "detect") -> set[str]:
