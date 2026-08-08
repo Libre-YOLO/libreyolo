@@ -198,7 +198,7 @@ def test_onnx_predict_matches_torch_path_end_to_end(tmp_path, classes):
 
     from libreyolo.models.yolo9.model import LibreYOLO9
 
-    model = LibreYOLO9(model_path=None, size="t", nb_classes=4, device="cpu")
+    model = LibreYOLO9({}, size="t", nb_classes=4, device="cpu")
     onnx_path = Path(model.export(format="onnx", imgsz=128)).resolve()
 
     body = f"""
@@ -270,7 +270,9 @@ def test_g0_g1_families_predict_without_torch(family, size, imgsz):
 
     from libreyolo.cli.config import get_model_class
 
-    model = get_model_class(family)(model_path=None, size=size, device="cpu")
+    # `{}` (empty state dict), not None: None makes RF-DETR fetch its DINOv2
+    # backbone over HTTP, and the PR gate blocks external network access.
+    model = get_model_class(family)({}, size=size, device="cpu")
     onnx_path = Path(model.export(format="onnx", imgsz=imgsz)).resolve()
 
     body = f"""
