@@ -4,12 +4,17 @@ Moved verbatim from ``libreyolo/models/yolo9/utils.py``, which re-exports
 everything here for backward compatibility.
 """
 
+from __future__ import annotations
+
 import numpy as np
-import torch
-from torchvision.ops import batched_nms
+from ..utils.lazy import lazy_module
+
 from typing import Dict, Tuple, Union
 
-from ..data.obb import xywhr_iou
+
+# torch is resolved on first use so this module stays importable in a
+# torch-free ONNX deployment (discussions/711).
+torch = lazy_module("torch")
 
 
 _YOLO9_MAX_NMS_CANDIDATES = 30000
@@ -38,6 +43,11 @@ def _nms_keep_indices(
     iou_thres: float,
     max_det: int,
 ) -> torch.Tensor:
+    # Imported here rather than at module scope: this module must stay
+    # importable without torchvision for the torch-free ONNX path, which
+    # reaches NMS through _batched_nms_numpy in backends/base.py instead.
+    from torchvision.ops import batched_nms
+
     if boxes.numel() == 0:
         return torch.zeros(0, dtype=torch.long, device=boxes.device)
 
@@ -116,6 +126,12 @@ def _rotated_nms_keep_indices(
     iou_thres: float,
     max_det: int,
 ) -> torch.Tensor:
+    # Imported here rather than at module scope: ``libreyolo.data`` pulls the
+    # dataset stack (and torch) at import time, and this module sits on the
+    # torch-free ONNX import path. Rotated NMS is OBB-only, which that path
+    # does not reach.
+    from ..data.obb import xywhr_iou
+
     if xywhr.numel() == 0:
         return torch.zeros(0, dtype=torch.long, device=xywhr.device)
 

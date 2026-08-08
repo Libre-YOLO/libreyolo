@@ -5,13 +5,26 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
-import torch
+from .lazy import lazy_module
 
 
-TensorLike = Union[torch.Tensor, np.ndarray]
+# torch is resolved on first use so this module stays importable in a
+# torch-free ONNX deployment (discussions/711).
+torch = lazy_module("torch")
+
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import torch as _torch
+
+    TensorLike = Union[_torch.Tensor, np.ndarray]
+else:
+    # Evaluated at import time, so it must not touch the lazy torch proxy.
+    # Annotations elsewhere in this module are strings (see __future__ import),
+    # so nothing dereferences this alias at runtime.
+    TensorLike = Any
 
 
 def _move(data: TensorLike | None, *args, **kwargs):

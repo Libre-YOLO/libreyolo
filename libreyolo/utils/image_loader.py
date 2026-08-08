@@ -1,18 +1,33 @@
 """Unified image loader for all image input formats."""
 
+from __future__ import annotations
+
 import io
 from pathlib import Path
-from typing import List, Union
+from typing import TYPE_CHECKING, Any, List, Union
 
 import numpy as np
-import torch
+from .lazy import lazy_module
+
 from PIL import Image
 
 
-# Type alias for all supported image inputs
-ImageInput = Union[
-    str, Path, Image.Image, np.ndarray, torch.Tensor, bytes, "io.BytesIO"
-]
+# torch is resolved on first use so this module stays importable in a
+# torch-free ONNX deployment (discussions/711).
+torch = lazy_module("torch")
+
+
+# Type alias for all supported image inputs. Built at import time, so it must
+# not dereference the lazy torch proxy; annotations in this module are strings
+# via ``from __future__ import annotations`` and never evaluate it at runtime.
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import torch as _torch
+
+    ImageInput = Union[
+        str, Path, Image.Image, np.ndarray, _torch.Tensor, bytes, "io.BytesIO"
+    ]
+else:
+    ImageInput = Any
 
 # Supported image file extensions for directory scanning
 SUPPORTED_EXTENSIONS = {

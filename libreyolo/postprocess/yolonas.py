@@ -13,10 +13,15 @@ from __future__ import annotations
 
 from typing import Tuple, Union
 
-import torch
-import torchvision.ops
+from ..utils.lazy import lazy_module
 
 from .common import _input_size_hw
+
+
+# torch/torchvision are resolved on first use so this module stays
+# importable in a torch-free ONNX deployment (discussions/711).
+torch = lazy_module("torch")
+torchvision = lazy_module("torchvision")
 
 YOLO_NAS_RESIZE_SIZE = 636
 YOLO_NAS_POSE_RESIZE_SIZE = 640
