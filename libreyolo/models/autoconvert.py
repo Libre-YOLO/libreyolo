@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -690,6 +691,20 @@ def _canonical_path(source: Path, prefix: str, size: str, task: str) -> Path:
     return source.parent / f"{source.stem}-{prefix}{size}{task_part}.pt"
 
 
+def _atomic_torch_save(value: Any, path: Path) -> None:
+    """Save a checkpoint without exposing a partially written zip archive."""
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    os.close(fd)
+    temporary = Path(temporary_name)
+    try:
+        torch.save(value, temporary)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def autoconvert_upstream_checkpoint(
     model_path: str,
     *,
@@ -747,7 +762,7 @@ def autoconvert_upstream_checkpoint(
     # of the same source fresh while avoiding collisions with official weights
     # or other fine-tunes of the same family/size/task in the directory.
     try:
-        torch.save(wrapped, out_path)
+        _atomic_torch_save(wrapped, out_path)
     except (OSError, RuntimeError) as exc:
         # Read-only source directory (e.g. a mounted cache). torch.save can
         # surface the failure as OSError (Python open) or RuntimeError (its

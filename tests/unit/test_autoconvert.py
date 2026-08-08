@@ -6,6 +6,8 @@ tests stay fast and need no external weights.
 """
 
 import argparse
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -111,6 +113,82 @@ def _synthetic_upstream_yolo9(nc: int) -> dict:
 
 
 class TestAutoconvertOrchestration:
+    def test_publishes_conversion_atomically(self, tmp_path, monkeypatch):
+        src = tmp_path / "v9-t.pt"
+        torch.save({"model": _synthetic_upstream_yolo9(nc=2)}, src)
+        expected = tmp_path / "v9-t-LibreYOLO9t.pt"
+        real_save = torch.save
+        observed = {}
+
+        def inspect_save(value, destination, *args, **kwargs):
+            destination = Path(destination)
+            observed["temporary"] = destination
+            assert destination != expected
+            assert destination.parent == expected.parent
+            assert not expected.exists()
+            real_save(value, destination, *args, **kwargs)
+            assert not expected.exists()
+
+        monkeypatch.setattr(autoconvert_module.torch, "save", inspect_save)
+
+        out = autoconvert_upstream_checkpoint(str(src))
+
+        assert out == str(expected)
+        assert expected.exists()
+        assert not observed["temporary"].exists()
+
+    def test_atomic_save_preserves_existing_file_on_failure(
+        self, tmp_path, monkeypatch
+    ):
+        destination = tmp_path / "converted.pt"
+        destination.write_bytes(b"complete-old-checkpoint")
+
+        def fail_after_partial_write(_value, temporary):
+            Path(temporary).write_bytes(b"partial")
+            raise RuntimeError("injected save failure")
+
+        monkeypatch.setattr(autoconvert_module.torch, "save", fail_after_partial_write)
+
+        with pytest.raises(RuntimeError, match="injected save failure"):
+            autoconvert_module._atomic_torch_save({}, destination)
+
+        assert destination.read_bytes() == b"complete-old-checkpoint"
+        assert list(tmp_path.glob(f".{destination.name}.*.tmp")) == []
+
+    def test_concurrent_writers_use_private_staging_files(
+        self, tmp_path, monkeypatch
+    ):
+        destination = tmp_path / "converted.pt"
+        barrier = threading.Barrier(2)
+        real_save = torch.save
+        staged_paths = []
+        staged_paths_lock = threading.Lock()
+
+        def synchronized_save(value, temporary, *args, **kwargs):
+            with staged_paths_lock:
+                staged_paths.append(Path(temporary))
+            barrier.wait(timeout=5)
+            real_save(value, temporary, *args, **kwargs)
+
+        monkeypatch.setattr(autoconvert_module.torch, "save", synchronized_save)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(
+                    autoconvert_module._atomic_torch_save,
+                    {"writer": torch.tensor([writer])},
+                    destination,
+                )
+                for writer in range(2)
+            ]
+            for future in futures:
+                future.result(timeout=10)
+
+        assert len(set(staged_paths)) == 2
+        assert all(path.parent == destination.parent for path in staged_paths)
+        assert all(not path.exists() for path in staged_paths)
+        assert torch.load(destination, weights_only=True)["writer"].item() in {0, 1}
+
     def test_converts_upstream_yolo9_with_custom_nc(self, tmp_path):
         src = tmp_path / "v9-t.pt"
         torch.save(
