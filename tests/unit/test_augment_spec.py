@@ -497,7 +497,8 @@ def test_get_unsupported_train_params_rfdetr_keeps_class_level_ignores():
     # Spec-derived augmentation ignores plus the class-declared extras.
     assert {"mosaic", "mixup", "hsv_prob", "degrees", "translate", "shear",
             "mosaic_scale", "mixup_scale", "optimizer", "momentum",
-            "nesterov", "pretrained"} <= rf
+            "nesterov"} <= rf
+    assert "pretrained" not in rf
     assert "flip_prob" not in rf
 
 

@@ -148,7 +148,6 @@ class LibreRFDETR(BaseModel):
         "nesterov",
         "hsv_prob",
         "translate",
-        "pretrained",
     }
 
     # =========================================================================
@@ -365,7 +364,10 @@ class LibreRFDETR(BaseModel):
             # detection/seg/etc. fall back to the small default.
             size = "x" if normalize_task(resolved_task) == "pose" else "s"
 
-        if isinstance(model_path, dict) and not model_path:
+        scratch_init = bool(kwargs.get("_scratch_init", False))
+        if (scratch_init and model_path is None) or (
+            isinstance(model_path, dict) and not model_path
+        ):
             weight_source = None
         elif normalize_task(resolved_task) == "pose" and model_path is None:
             weight_source = None
@@ -585,6 +587,10 @@ class LibreRFDETR(BaseModel):
             obb=self._is_obb,
             num_keypoints=self.num_keypoints,
         )
+
+    def _prepare_scratch_init(self) -> None:
+        self._weight_source = None
+        self._model_num_classes = self.nb_classes
 
     def _rebuild_for_new_classes(self, new_nc: int):
         """Rebuild the detector head for a new class count."""

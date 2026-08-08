@@ -86,11 +86,12 @@ class LibreRTDETRv2(LibreRTDETR):
                 f"LibreRTDETRv2 size {self.size!r} uses an HGNetv2 backbone; "
                 f"use LibreRTDETR for HGNetv2 variants."
             )
+        scratch = self._is_scratch_build()
         return RTDETRv2Model(
             num_classes=self.nb_classes,
             backbone_depth=cfg["backbone_depth"],
-            backbone_freeze_at=cfg["backbone_freeze_at"],
-            backbone_freeze_norm=cfg["backbone_freeze_norm"],
+            backbone_freeze_at=-1 if scratch else cfg["backbone_freeze_at"],
+            backbone_freeze_norm=False if scratch else cfg["backbone_freeze_norm"],
             backbone_pretrained=False,
             hidden_dim=cfg["encoder_hidden_dim"],
             dim_feedforward=cfg["encoder_dim_feedforward"],

@@ -176,6 +176,7 @@ class LibreDFINE(BaseModel):
             nb_classes=self.nb_classes,
             eval_spatial_size=(self.input_size, self.input_size),
             enable_mask_head=self.task == "segment",
+            train_from_scratch=self._is_scratch_build(),
         )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
