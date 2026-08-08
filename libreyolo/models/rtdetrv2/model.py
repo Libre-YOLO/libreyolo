@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from functools import wraps
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -305,6 +306,7 @@ class LibreRTDETRv2(LibreRTDETR):
         if self.task == "detect" and is_obb:
             raise ValueError("RT-DETRv2 OBB checkpoints must be loaded with task='obb'")
 
+    @wraps(LibreRTDETR.train)
     def train(self, *args, **kwargs):
         if self.task == "obb":
             raise NotImplementedError(

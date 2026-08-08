@@ -3804,7 +3804,7 @@ class BaseBackend(ABC):
             "rtdetr": RTDETRValPreprocessor,
             "rtdetrv2": (
                 RTDETRv2OBBValPreprocessor
-                if self.task == "obb"
+                if getattr(self, "task", "detect") == "obb"
                 else RTDETRv2ValPreprocessor
             ),
             "rtdetrv4": DFINEValPreprocessor,
