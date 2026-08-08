@@ -336,11 +336,15 @@ class LibreLingBotVision(BaseModel):
         loggers=None,
         **kwargs,
     ) -> Dict:
-        """Train the dense head on a semantic dataset (backbone frozen by
-        default — the report's linear-probing recipe). Pass
-        ``freeze_backbone=False`` to fine-tune the whole network.
+        """Train on a semantic dataset.
+
+        Fine-tuning keeps the report's linear-probe default. Scratch training
+        trains the random backbone unless ``freeze_backbone`` is explicit.
         """
         from .trainer import LingBotVisionTrainer
+
+        if self._is_scratch_build():
+            kwargs.setdefault("freeze_backbone", False)
 
         train_kwargs = dict(
             data=data,

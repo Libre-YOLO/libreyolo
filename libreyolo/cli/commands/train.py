@@ -59,7 +59,7 @@ def _create_explicit_task_train_model(
 ):
     """Build a known architecture when training must not load a checkpoint.
 
-    Scratch training covers every G0/G1 family. The older transfer path below
+    Scratch training covers every G0/G1/G2 family. The older transfer path below
     remains limited to families that need a task-specific architecture before
     loading their published checkpoint.
     """
@@ -69,7 +69,7 @@ def _create_explicit_task_train_model(
         from libreyolo.models.registry import group_of
 
         model_cls = get_model_class(family)
-        if model_cls is not None and group_of(family) in {"g0", "g1"}:
+        if model_cls is not None and group_of(family) in {"g0", "g1", "g2"}:
             size = model_cls.detect_size_from_filename(Path(model_path).name)
             if size is None:
                 return None
@@ -79,11 +79,16 @@ def _create_explicit_task_train_model(
                 else model_cls.detect_task_from_filename(Path(model_path).name)
                 or model_cls.DEFAULT_TASK
             )
+            scratch_kwargs = {}
+            variant = model_cls.detect_variant_from_filename(Path(model_path).name)
+            if variant is not None:
+                scratch_kwargs["weight_variant"] = variant
             return model_cls._from_scratch(
                 size=size,
                 task=train_task,
                 device=device,
                 seed=seed,
+                **scratch_kwargs,
             )
 
     if family not in {"yolo9", "rfdetr", "dfine"} or resume:
@@ -465,7 +470,7 @@ def train_cmd(
     if train_pretrained is False and resume_val:
         from libreyolo.models.registry import group_of
 
-        if group_of(family) in {"g0", "g1"}:
+        if group_of(family) in {"g0", "g1", "g2"}:
             exit_with_error(
                 out,
                 "config_unsupported",

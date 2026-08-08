@@ -1,4 +1,4 @@
-"""G0/G1 train-from-scratch contracts."""
+"""G0/G1/G2 train-from-scratch contracts."""
 
 from __future__ import annotations
 
@@ -18,20 +18,34 @@ from libreyolo.models.registry import families_in
 
 pytestmark = pytest.mark.unit
 
-SCRATCH_FAMILIES = families_in("g0") + families_in("g1")
+SCRATCH_FAMILIES = families_in("g0") + families_in("g1") + families_in("g2")
 CLI_CASES = (
-    ("yolo9-t", "yolo9", "t"),
-    ("rfdetr-n", "rfdetr", "n"),
-    ("yolo9_e2e-t", "yolo9_e2e", "t"),
-    ("yolo9_p2-t", "yolo9_p2", "t"),
-    ("ec-s", "ec", "s"),
-    ("rtdetr-r18", "rtdetr", "r18"),
-    ("rtdetrv2-r18", "rtdetrv2", "r18"),
-    ("rtdetrv4-s", "rtdetrv4", "s"),
-    ("dfine-n", "dfine", "n"),
-    ("deim-n", "deim", "n"),
-    ("deimv2-atto", "deimv2", "atto"),
-    ("yolonas-s", "yolonas", "s"),
+    ("yolo9-t", "yolo9", "t", "detect"),
+    ("rfdetr-n", "rfdetr", "n", "detect"),
+    ("yolo9_e2e-t", "yolo9_e2e", "t", "detect"),
+    ("yolo9_p2-t", "yolo9_p2", "t", "detect"),
+    ("ec-s", "ec", "s", "detect"),
+    ("rtdetr-r18", "rtdetr", "r18", "detect"),
+    ("rtdetrv2-r18", "rtdetrv2", "r18", "detect"),
+    ("rtdetrv4-s", "rtdetrv4", "s", "detect"),
+    ("dfine-n", "dfine", "n", "detect"),
+    ("deim-n", "deim", "n", "detect"),
+    ("deimv2-atto", "deimv2", "atto", "detect"),
+    ("yolonas-s", "yolonas", "s", "detect"),
+    ("yolox-t", "yolox", "t", "detect"),
+    ("yolo7-b", "yolo7", "b", "detect"),
+    ("rtmdet-t", "rtmdet", "t", "detect"),
+    ("picodet-s", "picodet", "s", "detect"),
+    ("fomo-s", "fomo", "s", "point"),
+    ("segformer-b0", "segformer", "b0", "semantic"),
+    ("lingbotvision-s", "lingbotvision", "s", "semantic"),
+    ("dinov2-s", "dinov2", "s", "semantic"),
+    ("nafnet-s", "nafnet", "s", "restore"),
+    ("resnet-18", "resnet", "18", "classify"),
+    ("convnext-t", "convnext", "t", "classify"),
+    ("mobilenetv4-s", "mobilenetv4", "s", "classify"),
+    ("efficientnetv2-b0", "efficientnetv2", "b0", "classify"),
+    ("domedetr-s", "domedetr", "s", "detect"),
 )
 
 
@@ -68,14 +82,14 @@ def test_pretrained_false_rejects_resume_before_reset(family):
         model.train("unused.yaml", pretrained=False, resume=True)
 
 
-def test_scratch_handling_does_not_change_g2_behavior():
+def test_scratch_handling_does_not_change_g3_behavior():
     captured = {}
 
     class Wrapper:
-        FAMILY = "yolox"
+        FAMILY = "detr"
 
         def _reset_for_scratch(self, **_kwargs):
-            pytest.fail("G2 behavior must remain unchanged")
+            pytest.fail("G3 behavior must remain unchanged")
 
     def train(_self, data, **kwargs):
         captured.update(data=data, kwargs=kwargs)
@@ -132,6 +146,20 @@ def test_ddp_workers_rebuild_with_the_scratch_policy():
     model._training_from_scratch = True
 
     assert _build_init_kw(model)["_scratch_init"] is True
+
+
+def test_ddp_workers_preserve_checkpoint_variant():
+    from libreyolo.training.ddp_spawn import _build_init_kw
+
+    class Wrapper:
+        def __init__(self, size, **kwargs):
+            pass
+
+    model = Wrapper.__new__(Wrapper)
+    model.size = "s"
+    model.weight_variant = "visdrone"
+
+    assert _build_init_kw(model)["weight_variant"] == "visdrone"
 
 
 def test_yolo9_scratch_reset_is_seeded_and_discards_loaded_state():
@@ -233,6 +261,71 @@ def test_rfdetr_ddp_scratch_worker_loads_temporary_state(monkeypatch):
     assert model._training_from_scratch is True
 
 
+@pytest.mark.parametrize("task", ["semantic", "classify"])
+def test_dinov2_scratch_reset_skips_pretrained_backbone(monkeypatch, task):
+    import libreyolo.models.rfdetr.nn as rfdetr_nn
+    from libreyolo.models.dinov2.model import LibreDINOv2
+
+    backbone_loads = []
+
+    def build_backbone(*, load_dinov2_weights, **_kwargs):
+        backbone_loads.append(load_dinov2_weights)
+        return nn.Sequential(nn.Identity(), nn.Identity())
+
+    monkeypatch.setattr(rfdetr_nn, "build_backbone", build_backbone)
+    model = LibreDINOv2(
+        None,
+        size="n",
+        nb_classes=3,
+        device="cpu",
+        task=task,
+    )
+    model._reset_for_scratch(seed=7)
+
+    assert backbone_loads == [True, False]
+    assert all(parameter.requires_grad for parameter in model.model.parameters())
+
+
+@pytest.mark.parametrize(
+    "scratch,freeze,expected",
+    [
+        (False, None, None),
+        (True, None, False),
+        (True, True, True),
+    ],
+    ids=["finetune-default", "scratch-default", "scratch-explicit-freeze"],
+)
+def test_lingbotvision_scratch_default_trains_backbone(
+    monkeypatch, scratch, freeze, expected
+):
+    import libreyolo.models.lingbotvision.trainer as trainer_module
+    from libreyolo.models.lingbotvision.model import LibreLingBotVision
+
+    captured = {}
+
+    class Trainer:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def train(self):
+            return {}
+
+    monkeypatch.setattr(trainer_module, "LingBotVisionTrainer", Trainer)
+    model = LibreLingBotVision.__new__(LibreLingBotVision)
+    model.model = nn.Identity()
+    model.size = "s"
+    model.nb_classes = 3
+    model.input_size = 512
+    model.device = torch.device("cpu")
+    model._training_from_scratch = scratch
+    model._restore_after_training = lambda _result: None
+
+    kwargs = {} if freeze is None else {"freeze_backbone": freeze}
+    model.train("unused.yaml", device="cpu", **kwargs)
+
+    assert captured.get("freeze_backbone") is expected
+
+
 @pytest.mark.parametrize(
     "module_name,class_name,decoder_name",
     [
@@ -270,12 +363,37 @@ def test_hgnet_scratch_build_only_disables_finetune_freezes(
     ) == expected
 
 
+@pytest.mark.parametrize("scratch", [False, True], ids=["finetune", "scratch"])
+def test_domedetr_scratch_policy_reaches_hgnet(monkeypatch, scratch):
+    import libreyolo.models.domedetr.nn as module
+
+    captured = {}
+    monkeypatch.setattr(
+        module,
+        "HGNetv2",
+        lambda **kwargs: captured.update(kwargs) or nn.Identity(),
+    )
+    monkeypatch.setattr(module, "DomeHybridEncoder", lambda **_kwargs: nn.Identity())
+    monkeypatch.setattr(module, "DomeTransformer", lambda **_kwargs: nn.Identity())
+
+    module.LibreDOMEDETRModel(config="l", train_from_scratch=scratch)
+
+    cfg = module.SIZE_CONFIGS["l"]
+    expected = (False, -1, False) if scratch else (True, -1, cfg["freeze_norm"])
+    assert (
+        captured["freeze_stem_only"],
+        captured["freeze_at"],
+        captured["freeze_norm"],
+    ) == expected
+
+
 @pytest.mark.parametrize(
     "module_name,class_name,model_name",
     [
         ("libreyolo.models.dfine.model", "LibreDFINE", "LibreDFINEModel"),
         ("libreyolo.models.deim.model", "LibreDEIM", "LibreDEIMModel"),
         ("libreyolo.models.rtdetrv4.model", "LibreRTDETRv4", "LibreDFINEModel"),
+        ("libreyolo.models.domedetr.model", "LibreDOMEDETR", "LibreDOMEDETRModel"),
     ],
 )
 def test_hgnet_wrappers_preserve_scratch_policy_on_rebuild(
@@ -302,12 +420,12 @@ def test_hgnet_wrappers_preserve_scratch_policy_on_rebuild(
 
 
 @pytest.mark.parametrize(
-    "alias,family,size",
+    "alias,family,size,task",
     CLI_CASES,
     ids=[case[1] for case in CLI_CASES],
 )
 def test_cli_known_alias_builds_scratch_without_loading_weights(
-    monkeypatch, tmp_path, alias, family, size
+    monkeypatch, alias, family, size, task
 ):
     import libreyolo.cli.commands.train as train_module
 
@@ -318,12 +436,12 @@ def test_cli_known_alias_builds_scratch_without_loading_weights(
 
         def train(self, data, **kwargs):
             captured["train"] = {"data": data, "kwargs": kwargs}
-            return {"output_dir": str(tmp_path / "run")}
+            return {"output_dir": "unused-run"}
 
     ScratchModel.FAMILY = family
 
     class ScratchClass:
-        DEFAULT_TASK = "detect"
+        DEFAULT_TASK = task
 
         @classmethod
         def detect_size_from_filename(cls, _filename):
@@ -331,6 +449,10 @@ def test_cli_known_alias_builds_scratch_without_loading_weights(
 
         @classmethod
         def detect_task_from_filename(cls, _filename):
+            return None
+
+        @classmethod
+        def detect_variant_from_filename(cls, _filename):
             return None
 
         @classmethod
@@ -355,7 +477,7 @@ def test_cli_known_alias_builds_scratch_without_loading_weights(
             "pretrained=false",
             "epochs=1",
             "seed=29",
-            f"project={tmp_path}",
+            "project=unused-project",
             "exist_ok=true",
             "--json",
         ],
@@ -365,9 +487,56 @@ def test_cli_known_alias_builds_scratch_without_loading_weights(
     assert json.loads(result.stdout)["model_family"] == family
     assert captured["init"] == {
         "size": size,
-        "task": "detect",
+        "task": task,
         "device": "auto",
         "seed": 29,
     }
     assert captured["train"]["data"] == "unused.yaml"
     assert "pretrained" not in captured["train"]["kwargs"]
+
+
+def test_cli_scratch_build_preserves_filename_variant(monkeypatch):
+    import libreyolo.cli.commands.train as train_module
+
+    captured = {}
+
+    class ScratchClass:
+        DEFAULT_TASK = "detect"
+
+        @classmethod
+        def detect_size_from_filename(cls, _filename):
+            return "s"
+
+        @classmethod
+        def detect_task_from_filename(cls, _filename):
+            return None
+
+        @classmethod
+        def detect_variant_from_filename(cls, _filename):
+            return "visdrone"
+
+        @classmethod
+        def _from_scratch(cls, **kwargs):
+            captured.update(kwargs)
+            return object()
+
+    monkeypatch.setattr(train_module, "get_model_class", lambda _family: ScratchClass)
+
+    model = train_module._create_explicit_task_train_model(
+        family="domedetr",
+        model_path="LibreDOMEDETRs-visdrone.pt",
+        task=None,
+        resume=False,
+        device="cpu",
+        pretrained=False,
+        seed=31,
+    )
+
+    assert model is not None
+    assert captured == {
+        "size": "s",
+        "task": "detect",
+        "device": "cpu",
+        "seed": 31,
+        "weight_variant": "visdrone",
+    }

@@ -96,7 +96,7 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
         if merged.get("pretrained") is False:
             from ..registry import group_of
 
-            if group_of(self.FAMILY) in {"g0", "g1"}:
+            if group_of(self.FAMILY) in {"g0", "g1", "g2"}:
                 bound = sig.bind_partial(self, *args, **merged)
                 bound.apply_defaults()
                 extras = next(

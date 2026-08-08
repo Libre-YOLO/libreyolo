@@ -111,7 +111,16 @@ def _build_init_kw(model_instance: Any) -> dict:
         "_class": cls.__name__,
         "device": "auto",
     }
-    for attr in ("size", "nb_classes", "reg_max", "task", "num_masks", "proto_channels", "num_keypoints"):
+    for attr in (
+        "size",
+        "nb_classes",
+        "reg_max",
+        "task",
+        "num_masks",
+        "proto_channels",
+        "num_keypoints",
+        "weight_variant",
+    ):
         if (attr in supported or supports_kwargs) and hasattr(model_instance, attr):
             kw[attr] = getattr(model_instance, attr)
     if supports_kwargs and getattr(model_instance, "_training_from_scratch", False):

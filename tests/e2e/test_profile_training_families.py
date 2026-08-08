@@ -210,6 +210,15 @@ CASES = [
         "classify_dataset",
         {"imgsz": 224},
     ),
+    (
+        "domedetr",
+        "LibreDOMEDETR",
+        "s",
+        None,
+        {"weight_variant": "aitod"},
+        "detect_dataset",
+        {"imgsz": 320, "multi_scale": False},
+    ),
 ]
 
 
@@ -353,7 +362,11 @@ def test_profile_emits_report(
         profile_steps=2,
         profile_open=False,
         eval_interval=100,
-        **({"pretrained": False} if group_of(family) in {"g0", "g1"} else {}),
+        **(
+            {"pretrained": False}
+            if group_of(family) in {"g0", "g1", "g2"}
+            else {}
+        ),
         **extra,
     )
 

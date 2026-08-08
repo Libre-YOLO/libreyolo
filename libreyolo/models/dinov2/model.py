@@ -69,6 +69,7 @@ class _DINOv2ModelWrapper(nn.Module):
         config: str,
         nb_classes: int,
         device: str = "cpu",
+        load_dinov2_weights: bool = True,
     ) -> None:
         super().__init__()
         # Lazy import so the outer module-level import stays rfdetr-free.
@@ -78,7 +79,10 @@ class _DINOv2ModelWrapper(nn.Module):
         # the dense-head path (uses the segmenter freeze layout).
         self.model: nn.Module | None = None
         self.segmenter = RFDETRSemanticSegmenter(
-            config=config, nb_classes=nb_classes, device=device
+            config=config,
+            nb_classes=nb_classes,
+            device=device,
+            load_dinov2_weights=load_dinov2_weights,
         )
         self.nb_classes = nb_classes
         self.resolution = self.segmenter.resolution
@@ -119,6 +123,7 @@ class _DINOv2ClassifierWrapper(nn.Module):
         config: str,
         nb_classes: int,
         device: str = "cpu",
+        load_dinov2_weights: bool = True,
     ) -> None:
         super().__init__()
         # Lazy import so the outer module-level import stays rfdetr-free.
@@ -128,7 +133,10 @@ class _DINOv2ClassifierWrapper(nn.Module):
         # the linear-head path (uses the classifier freeze layout).
         self.model: nn.Module | None = None
         self.classifier = RFDETRClassifier(
-            config=config, nb_classes=nb_classes, device=device
+            config=config,
+            nb_classes=nb_classes,
+            device=device,
+            load_dinov2_weights=load_dinov2_weights,
         )
         self.nb_classes = nb_classes
         self.resolution = self.classifier.resolution
@@ -156,7 +164,12 @@ class _DINOv2ClassifierWrapper(nn.Module):
 class _DINOv2EmbedderWrapper(nn.Module):
     """DINOv2 backbone-only wrapper returning the final CLS token."""
 
-    def __init__(self, config: str, device: str = "cpu") -> None:
+    def __init__(
+        self,
+        config: str,
+        device: str = "cpu",
+        load_dinov2_weights: bool = True,
+    ) -> None:
         super().__init__()
         from ..rfdetr.nn import RFDETRClassifier
 
@@ -165,6 +178,7 @@ class _DINOv2EmbedderWrapper(nn.Module):
             nb_classes=1,
             device=device,
             dropout=0.0,
+            load_dinov2_weights=load_dinov2_weights,
         )
         # Retain only the encoder. The classifier backbone's projector is not
         # used for CLS extraction; keeping its random parameters would waste
@@ -407,21 +421,25 @@ class LibreDINOv2(BaseModel):
     # =========================================================================
 
     def _init_model(self) -> nn.Module:
+        load_dinov2_weights = not self._is_scratch_build()
         if self.task == "classify":
             return _DINOv2ClassifierWrapper(
                 config=self.size,
                 nb_classes=self._model_num_classes,
                 device=str(self.device),
+                load_dinov2_weights=load_dinov2_weights,
             )
         if self.task == "embed":
             return _DINOv2EmbedderWrapper(
                 config=self.size,
                 device=str(self.device),
+                load_dinov2_weights=load_dinov2_weights,
             )
         return _DINOv2ModelWrapper(
             config=self.size,
             nb_classes=self._model_num_classes,
             device=str(self.device),
+            load_dinov2_weights=load_dinov2_weights,
         )
 
     def _rebuild_for_new_classes(self, new_nc: int) -> None:
