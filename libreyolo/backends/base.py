@@ -112,6 +112,20 @@ def _zeros_f32(shape):
     return np.zeros(shape, dtype=np.float32)
 
 
+def _zeros_bool(length):
+    """All-False mask, as a ``torch.Tensor`` if torch is installed."""
+    if _torch_installed():
+        return torch.zeros(length, dtype=torch.bool)
+    return np.zeros(length, dtype=bool)
+
+
+def _bool_array(data):
+    """Boolean mask stack, as a ``torch.Tensor`` if torch is installed."""
+    if _torch_installed():
+        return torch.from_numpy(data).bool()
+    return np.asarray(data, dtype=bool)
+
+
 def _to_blob(input_tensor) -> np.ndarray:
     """Return the runtime input as a contiguous numpy array.
 
@@ -3524,29 +3538,27 @@ class BaseBackend(ABC):
         obb_t = _f32(obb) if obb is not None else None
 
         if classes is not None and len(boxes_t) > 0:
-            cls_mask = torch.zeros(len(cls_t), dtype=torch.bool)
+            cls_mask = _zeros_bool(len(cls_t))
             for cid in classes:
                 cls_mask |= cls_t == cid
             boxes_t = boxes_t[cls_mask]
             conf_t = conf_t[cls_mask]
             cls_t = cls_t[cls_mask]
+            mask_np = _to_blob(cls_mask)
             if masks is not None:
-                masks = masks[cls_mask.numpy()]
+                masks = masks[mask_np]
             if obb_t is not None:
                 obb_t = obb_t[cls_mask]
             if keypoints is not None:
-                keypoints = keypoints[cls_mask.numpy()]
+                keypoints = keypoints[mask_np]
 
         masks_obj = None
         if masks is not None and len(masks) > 0:
-            masks_obj = Masks(torch.from_numpy(masks).bool(), orig_shape=orig_shape)
+            masks_obj = Masks(_bool_array(masks), orig_shape=orig_shape)
 
         keypoints_obj = None
         if keypoints is not None:
-            keypoints_obj = Keypoints(
-                torch.as_tensor(keypoints, dtype=torch.float32),
-                orig_shape,
-            )
+            keypoints_obj = Keypoints(_f32(keypoints), orig_shape)
 
         obb_obj = None
         if obb_t is not None:

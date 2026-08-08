@@ -179,7 +179,8 @@ def test_numpy_and_torch_nms_agree():
 
 
 @pytest.mark.onnx
-def test_onnx_predict_matches_torch_path_end_to_end(tmp_path):
+@pytest.mark.parametrize("classes", [None, [0]], ids=["all", "class-filter"])
+def test_onnx_predict_matches_torch_path_end_to_end(tmp_path, classes):
     """The torch-free ONNX path must return exactly what the torch path returns.
 
     Exports a small YOLO9 to ONNX (needs torch), then runs the same model
@@ -187,6 +188,10 @@ def test_onnx_predict_matches_torch_path_end_to_end(tmp_path):
     with torch blocked. Boxes, scores and classes must match exactly. This is
     the guarantee the lightweight-install docs promise; if the numpy and torch
     branches ever diverge numerically, this fails.
+
+    Parametrised over ``classes`` because the class-filter branch builds its own
+    boolean mask and indexes masks/keypoints with it, which is a separate
+    torch-conversion path from the unfiltered one.
     """
     pytest.importorskip("onnx")
     pytest.importorskip("onnxruntime")
@@ -204,7 +209,8 @@ def test_onnx_predict_matches_torch_path_end_to_end(tmp_path):
 
         backend = OnnxBackend(r"{onnx_path}")
         res = backend.predict(
-            libreyolo.SAMPLE_IMAGE, imgsz=128, conf=0.0, max_det=25
+            libreyolo.SAMPLE_IMAGE, imgsz=128, conf=0.0, max_det=25,
+            classes={classes!r},
         )
         res = res[0] if isinstance(res, list) else res
         print("RESULT" + json.dumps({{
@@ -223,7 +229,7 @@ def test_onnx_predict_matches_torch_path_end_to_end(tmp_path):
     from libreyolo.backends.onnx import OnnxBackend
 
     res = OnnxBackend(str(onnx_path)).predict(
-        libreyolo.SAMPLE_IMAGE, imgsz=128, conf=0.0, max_det=25
+        libreyolo.SAMPLE_IMAGE, imgsz=128, conf=0.0, max_det=25, classes=classes
     )
     res = res[0] if isinstance(res, list) else res
     ref = {
