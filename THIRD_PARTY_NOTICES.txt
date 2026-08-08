@@ -255,6 +255,26 @@ Used for: D-FINE instance-segmentation mask decoder/head, mask matching,
           ArgoHA/D-FINE-seg#70.
 
 --------------------------------------------------------------------
+Dome-DETR (RicePasteM)
+-------------------------------------------------------------------
+Source: https://github.com/RicePasteM/Dome-DETR
+Commit: 2dde3bc1946a3e9fad9abd0612b59fc39bd6b861
+License: Apache License 2.0
+Copyright (c) 2025 The Dome-DETR Authors. All Rights Reserved.
+Used for: the Dome-DETR tiny-object detection family
+          (libreyolo/models/domedetr/, libreyolo/postprocess/domedetr.py,
+          weights/convert_domedetr_weights.py, weights/parity_domedetr.py).
+          Specifically the DeFE density head, the MWAS window processor,
+          and PAQI query initialisation with its density-adaptive NMS; the
+          static-shape MWAS formulation follows the same repository's
+          onnx-export branch. Upstream is itself modified from D-FINE
+          (Apache-2.0), and the parts Dome-DETR shares with it are imported
+          from libreyolo/models/dfine/ rather than re-vendored.
+          The upstream LICENSE leaves the copyright line as the
+          "[yyyy] [name of copyright owner]" placeholder; the attribution
+          above comes from the upstream source headers.
+
+-------------------------------------------------------------------
 RT-DETR (lyuwenyu)
 --------------------------------------------------------------------
 Source: https://github.com/lyuwenyu/RT-DETR
