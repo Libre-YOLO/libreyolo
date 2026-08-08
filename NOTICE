@@ -476,6 +476,32 @@ Deformable DETR (Apache License 2.0)
     released variants. Source-file lineage headers are preserved; see
     docs/provenance/deformable_detr.md.
 
+Dome-DETR (Apache License 2.0)
+    Path:    libreyolo/models/domedetr/,
+             libreyolo/postprocess/domedetr.py,
+             weights/convert_domedetr_weights.py,
+             weights/parity_domedetr.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/RicePasteM/Dome-DETR
+             commit 2dde3bc1946a3e9fad9abd0612b59fc39bd6b861
+             The upstream LICENSE is the standard Apache-2.0 text but leaves
+             the copyright line as the "[yyyy] [name of copyright owner]"
+             placeholder, so there is no named holder to record. Source
+             headers carry "Copyright (c) 2025 The Dome-DETR Authors".
+
+    The DeFE density head, the MWAS window processor, and the PAQI query
+    initialiser are ported from src/zoo/dome/. The MWAS static-shape path
+    follows the same repository's onnx-export branch. Everything the port
+    shares with D-FINE (HGNetv2, the CSP encoder blocks, the FDR decoder
+    stack, MS-deformable attention) is imported from libreyolo/models/dfine/
+    rather than re-vendored, so the D-FINE entry above continues to cover it.
+
+    Model weights are NOT redistributed by LibreYOLO. The upstream model
+    card at https://huggingface.co/RicePasteM/Dome-DETR states no license in
+    its card metadata, and its prose simultaneously claims Apache-2.0 and
+    restricts use to "academic research purposes only". Users download from
+    upstream and convert locally.
+
 D-FINE-seg (Apache License 2.0)
     Path:    libreyolo/models/dfine/, libreyolo/postprocess/dfine.py
     Source:  https://github.com/ArgoHA/D-FINE-seg

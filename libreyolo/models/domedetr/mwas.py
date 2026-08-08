@@ -1,6 +1,7 @@
 """MWAS: Masked Window Attention Sparsification.
 
-Ported from Dome-DETR (https://github.com/RicePasteM/Dome-DETR).
+Ported from Dome-DETR (https://github.com/RicePasteM/Dome-DETR),
+commit 2dde3bc1946a3e9fad9abd0612b59fc39bd6b861, Apache License 2.0.
 Copyright (c) 2025 The Dome-DETR Authors. All Rights Reserved.
 
 The stride-8 feature map is tiled into ``window_size`` x ``window_size``
@@ -23,7 +24,7 @@ windows attend over algebraically the same set in both paths: this is a
 reformulation, not a reduced-accuracy fallback. It is not bit-identical
 though. Softmax over a padded key set and the larger fused matmuls reassociate
 the floating-point sums, which measures at ~1e-5 max abs difference on the
-encoder output (see ``tests/unit/test_domedetr_mwas.py``, which pins the gap
+encoder output (see ``tests/unit/test_domedetr.py``, which pins the gap
 rather than asserting zero). That is the same order as ONNX Runtime's own
 divergence from PyTorch, so it does not widen the export error budget.
 

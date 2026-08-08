@@ -1,6 +1,7 @@
 """Dome-DETR decoder: D-FINE's FDR decoder plus PAQI query initialisation.
 
-Ported from Dome-DETR (https://github.com/RicePasteM/Dome-DETR).
+Ported from Dome-DETR (https://github.com/RicePasteM/Dome-DETR),
+commit 2dde3bc1946a3e9fad9abd0612b59fc39bd6b861, Apache License 2.0.
 Copyright (c) 2025 The Dome-DETR Authors. All Rights Reserved.
 Modified from D-FINE (https://github.com/Peterande/D-FINE).
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.

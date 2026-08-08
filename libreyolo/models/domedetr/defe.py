@@ -1,6 +1,7 @@
 """DeFE: the Density-Focal Extractor head.
 
-Ported from Dome-DETR (https://github.com/RicePasteM/Dome-DETR).
+Ported from Dome-DETR (https://github.com/RicePasteM/Dome-DETR),
+commit 2dde3bc1946a3e9fad9abd0612b59fc39bd6b861, Apache License 2.0.
 Copyright (c) 2025 The Dome-DETR Authors. All Rights Reserved.
 
 A lightweight depthwise-separable stack over the stride-4 projected feature
