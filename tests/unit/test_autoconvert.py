@@ -6,6 +6,8 @@ tests stay fast and need no external weights.
 """
 
 import argparse
+import os
+import stat
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -188,6 +190,29 @@ class TestAutoconvertOrchestration:
         assert all(path.parent == destination.parent for path in staged_paths)
         assert all(not path.exists() for path in staged_paths)
         assert torch.load(destination, weights_only=True)["writer"].item() in {0, 1}
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+    def test_first_conversion_inherits_source_mode(self, tmp_path):
+        src = tmp_path / "v9-t.pt"
+        torch.save({"model": _synthetic_upstream_yolo9(nc=2)}, src)
+        src.chmod(0o640)
+
+        out = Path(autoconvert_upstream_checkpoint(str(src)))
+
+        assert stat.S_IMODE(out.stat().st_mode) == 0o640
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+    def test_reconversion_preserves_destination_mode(self, tmp_path):
+        src = tmp_path / "v9-t.pt"
+        destination = tmp_path / "v9-t-LibreYOLO9t.pt"
+        torch.save({"model": _synthetic_upstream_yolo9(nc=2)}, src)
+        destination.write_bytes(b"old conversion")
+        destination.chmod(0o660)
+
+        out = Path(autoconvert_upstream_checkpoint(str(src)))
+
+        assert out == destination
+        assert stat.S_IMODE(out.stat().st_mode) == 0o660
 
     def test_converts_upstream_yolo9_with_custom_nc(self, tmp_path):
         src = tmp_path / "v9-t.pt"
