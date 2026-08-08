@@ -5,10 +5,15 @@ import queue
 import time
 from pathlib import Path
 
-import requests
 import pytest
+import requests
+import torch
 
 from libreyolo.models.base.model import BaseModel
+from libreyolo.models.deim.model import LibreDEIM
+from libreyolo.models.deimv2.model import LibreDEIMv2
+from libreyolo.models.dfine.model import LibreDFINE
+from libreyolo.models.ec.model import LibreEC
 from libreyolo.utils import download
 
 pytestmark = pytest.mark.unit
@@ -321,3 +326,36 @@ def test_factory_reports_and_chains_download_failure(monkeypatch, tmp_path):
         models.LibreYOLO("LibreYOLO9t.pt")
 
     assert exc_info.value.__cause__ is failure
+
+
+@pytest.mark.parametrize(
+    ("model_cls", "filename", "size"),
+    [
+        (LibreDFINE, "LibreDFINEn.pt", "n"),
+        (LibreDEIM, "LibreDEIMn.pt", "n"),
+        (LibreDEIMv2, "LibreDEIMv2atto.pt", "atto"),
+        (LibreEC, "LibreECs.pt", "s"),
+    ],
+    ids=("dfine", "deim", "deimv2", "ec"),
+)
+def test_direct_constructor_attempts_autodownload(
+    model_cls, filename, size, monkeypatch, tmp_path
+):
+    monkeypatch.chdir(tmp_path)
+    target = Path("weights") / filename
+    calls = []
+
+    class DownloadTriggered(RuntimeError):
+        pass
+
+    def fake_download(model_path, requested_size):
+        calls.append((Path(model_path), requested_size))
+        raise DownloadTriggered
+
+    monkeypatch.setattr(model_cls, "_init_model", lambda _self: torch.nn.Identity())
+    monkeypatch.setattr(download, "download_weights", fake_download)
+
+    with pytest.raises(DownloadTriggered):
+        model_cls(filename, size=size, device="cpu")
+
+    assert calls == [(target, size)]

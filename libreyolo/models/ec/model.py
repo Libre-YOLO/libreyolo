@@ -579,7 +579,13 @@ class LibreEC(BaseModel):
         return results
 
     def _load_weights(self, model_path: str):
-        if not Path(model_path).exists():
+        model_path = self._resolve_weights_path(model_path)
+        path = Path(model_path)
+        if not path.exists():
+            from ...utils.download import download_weights
+
+            download_weights(model_path, self.size)
+        if not path.exists():
             raise FileNotFoundError(f"EC weights file not found: {model_path}")
 
         try:
