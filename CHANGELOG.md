@@ -9,13 +9,20 @@ before 1.4.0 are documented in the
 
 ### Added
 
-- **Dome-DETR** (`domedetr`) as an inference-only detect family: a
+- **Dome-DETR** (`domedetr`) as a trainable detect family: a
   tiny-object specialist for aerial, drone and remote-sensing imagery, ported
   from [Dome-DETR](https://github.com/RicePasteM/Dome-DETR) (Apache-2.0, ACM
   Multimedia 2025). It is D-FINE plus DeFE (a density head), MWAS (encoder
   attention restricted to occupied windows) and PAQI (query count set by local
   density instead of a fixed 300). Sizes s/m/l, 800x800, `max_abs_diff == 0.0`
   against upstream on all six published checkpoints.
+
+  Training is wired against upstream's full objective: the D-FINE losses plus
+  DeFE density and count supervision, padded queries masked out of the
+  classification terms, and per-image denoising attention masks (PAQI gives
+  each image its own query count, so a batch is padded to its widest member).
+  Upstream's published 160-epoch `MultiStepLR` schedule has not been
+  reproduced here, so the paper's AP numbers are unverified.
 
   Three things to know before reaching for it. Its advantage narrows as
   objects grow, so it sits beside D-FINE rather than replacing it. There is no

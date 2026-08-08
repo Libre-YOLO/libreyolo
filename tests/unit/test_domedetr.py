@@ -220,10 +220,113 @@ def test_mwas_static_path_matches_gather_path():
 # -- scope --------------------------------------------------------------------
 
 
-def test_training_raises_with_a_reason():
-    model = LibreDOMEDETR(model_path=None, size="s", nb_classes=9)
-    with pytest.raises(NotImplementedError, match="inference-only"):
-        model.train(data="coco128.yaml")
+def test_train_config_is_wired():
+    from libreyolo.training.config import DOMEDETRConfig
+
+    assert LibreDOMEDETR.TRAIN_CONFIG is DOMEDETRConfig
+    cfg = DOMEDETRConfig(num_classes=12)
+    assert cfg.imgsz == 800
+    # MWAS needs the stride-8 map divisible by the window size, so a random
+    # per-batch resize would break the forward outright.
+    assert cfg.multi_scale is False
+    # Upstream runs the backbone at 2e-5 against a 2e-4 base.
+    assert cfg.backbone_lr_mult == pytest.approx(0.1)
+
+
+def test_training_forward_emits_full_objective():
+    """A training step must produce every term the criterion consumes."""
+    torch.manual_seed(0)
+    model = LibreDOMEDETRModel(config="s", nb_classes=12, variant="visdrone").train()
+    targets = [
+        {"labels": torch.randint(0, 12, (5,)), "boxes": torch.rand(5, 4) * 0.2 + 0.4},
+        {"labels": torch.randint(0, 12, (9,)), "boxes": torch.rand(9, 4) * 0.2 + 0.4},
+    ]
+    out = model(torch.randn(2, 3, 800, 800), targets=targets)
+
+    for key in ("pred_logits", "pred_boxes", "pred_corners", "aux_outputs",
+                "dn_outputs", "dn_meta", "enc_aux_outputs", "defe"):
+        assert key in out, f"missing {key}"
+    # The density target DeFE is supervised against.
+    assert out["defe"]["gt_density_map"].shape[-2:] == (800, 800)
+    # The criterion reads these back to build the count-regression target.
+    assert out["defe"]["min_num_select"] == 250
+    assert out["defe"]["max_num_select"] == 500
+
+
+def test_criterion_emits_defe_losses():
+    """Both DeFE terms must be live, not silently absent."""
+    from libreyolo.models.dfine.matcher import HungarianMatcher
+    from libreyolo.models.domedetr.loss import DomeCriterion
+
+    torch.manual_seed(0)
+    model = LibreDOMEDETRModel(config="s", nb_classes=12, variant="visdrone").train()
+    targets = [{"labels": torch.randint(0, 12, (7,)), "boxes": torch.rand(7, 4) * 0.2 + 0.4}]
+    out = model(torch.randn(1, 3, 800, 800), targets=targets)
+
+    criterion = DomeCriterion(
+        matcher=HungarianMatcher(
+            weight_dict={"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0},
+            use_focal_loss=True,
+            alpha=0.25,
+            gamma=2.0,
+        ),
+        weight_dict={"loss_vfl": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0,
+                     "loss_fgl": 0.15, "loss_ddf": 1.5},
+        losses=["vfl", "boxes", "local"],
+        alpha=0.75,
+        gamma=2.0,
+        num_classes=12,
+        reg_max=32,
+    )
+    losses = {k: v.detach() for k, v in criterion(out, targets).items()}
+
+    assert "loss_defe_density" in losses
+    assert "loss_defe_reg" in losses
+    assert float(losses["loss_defe_density"]) > 0
+    assert torch.isfinite(losses["loss_defe_density"])
+    # Randomly-initialised reg head sits near sigmoid(0)=0.5 against a target
+    # of 0, so this must be clearly non-zero on a fresh model.
+    assert float(losses["loss_defe_reg"]) > 0
+    assert all(torch.isfinite(v).all() for v in losses.values())
+
+
+def test_denoising_mask_isolates_each_image_padding():
+    """Padded queries must not exchange attention with real ones, per image."""
+    from libreyolo.models.domedetr.denoising import (
+        get_contrastive_denoising_training_group,
+    )
+
+    torch.manual_seed(0)
+    num_classes, num_queries, num_heads = 12, 40, 8
+    embed = torch.nn.Embedding(num_classes + 1, 16, padding_idx=num_classes)
+    targets = [
+        {"labels": torch.randint(0, num_classes, (3,)), "boxes": torch.rand(3, 4) * 0.2 + 0.4},
+        {"labels": torch.randint(0, num_classes, (2,)), "boxes": torch.rand(2, 4) * 0.2 + 0.4},
+    ]
+    batch_queries_num = [40, 25]  # image 1 is padded from 25 up to 40
+
+    _, _, attn_mask, dn_meta = get_contrastive_denoising_training_group(
+        targets, num_classes, num_queries, embed,
+        num_denoising=20, batch_queries_num=batch_queries_num, num_heads=num_heads,
+    )
+
+    bs = len(batch_queries_num)
+    dn_len = int(dn_meta["dn_num_split"][0])
+    assert attn_mask.shape == (bs * num_heads, dn_len + num_queries, dn_len + num_queries)
+
+    # Image 0 is full width: no padding to mask beyond D-FINE's own blocks.
+    pad_start = dn_len + batch_queries_num[1]
+    head0, head1 = 0, num_heads
+    assert bool(attn_mask[head1:, :pad_start, pad_start:].all()), "real -> pad not masked"
+    assert bool(attn_mask[head1:, pad_start:, :pad_start].all()), "pad -> real not masked"
+    # A fully masked row makes softmax NaN, so padded rows keep seeing themselves.
+    assert not bool(attn_mask[head1:, pad_start:, pad_start:].all())
+
+
+def test_group_is_supporting_trainable():
+    from libreyolo.models.registry import MODEL_GROUPS
+
+    assert MODEL_GROUPS["domedetr"] == "g2"
 
 
 def test_export_is_blocked_with_a_reason():
@@ -231,12 +334,6 @@ def test_export_is_blocked_with_a_reason():
     model = LibreDOMEDETR(model_path=None, size="s", nb_classes=9)
     with pytest.raises(NotImplementedError, match="query count per image"):
         model.export(format="onnx")
-
-
-def test_enrolled_in_a_rollout_group():
-    from libreyolo.models.registry import MODEL_GROUPS
-
-    assert MODEL_GROUPS["domedetr"] == "g3"
 
 
 def test_is_nms_free_family():

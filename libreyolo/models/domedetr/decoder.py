@@ -36,6 +36,7 @@ import torch.nn.init as init
 
 from ..dfine.decoder import MLP, Integral, TransformerDecoder, TransformerDecoderLayer
 from ..dfine.ms_deform import bias_init_with_prob
+from .denoising import get_contrastive_denoising_training_group
 from .dynamic_nms import dynamic_nms
 
 
@@ -445,39 +446,153 @@ class DomeTransformer(nn.Module):
         return content, padded_bbox_unact.detach(), padded_logits, total_per_batch
 
     def forward(self, encoder_out, targets=None):
-        if self.training:
-            raise NotImplementedError(
-                "LibreDOMEDETR ships inference-only; Dome-DETR training is not wired."
-            )
-        del targets
-
         feats = encoder_out["feats"]
         memory, spatial_shapes = self._get_encoder_input(feats)
 
         defe = encoder_out.get("defe")
         defe_window_mask = defe.get("defe_window_mask") if defe else None
         defe_feature = defe.get("density_map_pooled") if defe else None
+        if defe is not None:
+            # The criterion reads these back to build the count-regression target.
+            defe["min_num_select"] = self.min_num_select
+            defe["max_num_select"] = self.max_num_select
 
-        init_ref_contents, init_ref_points_unact, _, batch_queries_num = self._get_decoder_input(
-            memory, spatial_shapes, defe_window_mask, defe_feature
-        )
-
-        out_bboxes, out_logits, *_ = self.decoder(
+        (
             init_ref_contents,
             init_ref_points_unact,
-            memory,
-            spatial_shapes,
-            self.dec_bbox_head,
-            self.dec_score_head,
-            self.query_pos_head,
-            self.pre_bbox_head,
-            self.integral,
-            self.up,
-            self.reg_scale,
+            enc_topk_logits,
+            batch_queries_num,
+        ) = self._get_decoder_input(memory, spatial_shapes, defe_window_mask, defe_feature)
+
+        num_queries = max(batch_queries_num)
+        enc_topk_bboxes = F.sigmoid(init_ref_points_unact)
+
+        # Denoising has to know each image's real query count: the batch is
+        # padded to the widest one, and padded rows must not exchange attention
+        # with real queries in either direction.
+        if self.training and self.num_denoising > 0 and targets is not None:
+            denoising_logits, denoising_bbox_unact, attn_mask, dn_meta = (
+                get_contrastive_denoising_training_group(
+                    targets,
+                    self.num_classes,
+                    num_queries,
+                    self.denoising_class_embed,
+                    num_denoising=self.num_denoising,
+                    label_noise_ratio=self.label_noise_ratio,
+                    box_noise_scale=self.box_noise_scale,
+                    batch_queries_num=batch_queries_num,
+                    num_heads=self.nhead,
+                )
+            )
+        else:
+            denoising_logits = denoising_bbox_unact = attn_mask = dn_meta = None
+
+        if denoising_bbox_unact is not None:
+            init_ref_points_unact = torch.concat(
+                [denoising_bbox_unact, init_ref_points_unact], dim=1
+            )
+            init_ref_contents = torch.concat([denoising_logits, init_ref_contents], dim=1)
+
+        out_bboxes, out_logits, out_corners, out_refs, pre_bboxes, pre_logits, _ = (
+            self.decoder(
+                init_ref_contents,
+                init_ref_points_unact,
+                memory,
+                spatial_shapes,
+                self.dec_bbox_head,
+                self.dec_score_head,
+                self.query_pos_head,
+                self.pre_bbox_head,
+                self.integral,
+                self.up,
+                self.reg_scale,
+                attn_mask=attn_mask,
+                dn_meta=dn_meta,
+            )
         )
 
-        return {
+        if not self.training:
+            return {
+                "pred_logits": out_logits[-1],
+                "pred_boxes": out_bboxes[-1],
+                "batch_queries_num": batch_queries_num,
+            }
+
+        if dn_meta is not None:
+            dn_pre_logits, pre_logits = torch.split(pre_logits, dn_meta["dn_num_split"], dim=1)
+            dn_pre_bboxes, pre_bboxes = torch.split(pre_bboxes, dn_meta["dn_num_split"], dim=1)
+            dn_out_bboxes, out_bboxes = torch.split(out_bboxes, dn_meta["dn_num_split"], dim=2)
+            dn_out_logits, out_logits = torch.split(out_logits, dn_meta["dn_num_split"], dim=2)
+            dn_out_corners, out_corners = torch.split(out_corners, dn_meta["dn_num_split"], dim=2)
+            dn_out_refs, out_refs = torch.split(out_refs, dn_meta["dn_num_split"], dim=2)
+
+        out = {
             "pred_logits": out_logits[-1],
             "pred_boxes": out_bboxes[-1],
+            "pred_corners": out_corners[-1],
+            "ref_points": out_refs[-1],
+            "up": self.up,
+            "reg_scale": self.reg_scale,
             "batch_queries_num": batch_queries_num,
         }
+
+        if self.aux_loss:
+            out["aux_outputs"] = self._set_aux_loss2(
+                out_logits[:-1],
+                out_bboxes[:-1],
+                out_corners[:-1],
+                out_refs[:-1],
+                out_corners[-1],
+                out_logits[-1],
+            )
+            out["enc_aux_outputs"] = self._set_aux_loss([enc_topk_logits], [enc_topk_bboxes])
+            out["pre_outputs"] = {"pred_logits": pre_logits, "pred_boxes": pre_bboxes}
+            out["enc_meta"] = {"class_agnostic": self.query_select_method == "agnostic"}
+
+            if dn_meta is not None:
+                out["dn_outputs"] = self._set_aux_loss2(
+                    dn_out_logits,
+                    dn_out_bboxes,
+                    dn_out_corners,
+                    dn_out_refs,
+                    dn_out_corners[-1],
+                    dn_out_logits[-1],
+                )
+                out["dn_pre_outputs"] = {
+                    "pred_logits": dn_pre_logits,
+                    "pred_boxes": dn_pre_bboxes,
+                }
+                out["dn_meta"] = dn_meta
+
+        # DeFE tensors ride along for the density and count losses.
+        if defe is not None:
+            out["defe"] = defe
+        return out
+
+    def _set_aux_loss(self, outputs_class, outputs_coord):
+        return [
+            {"pred_logits": a, "pred_boxes": b}
+            for a, b in zip(outputs_class, outputs_coord)
+        ]
+
+    @torch.jit.unused
+    def _set_aux_loss2(
+        self,
+        outputs_class,
+        outputs_coord,
+        outputs_corners,
+        outputs_ref,
+        teacher_corners=None,
+        teacher_logits=None,
+    ):
+        return [
+            {
+                "pred_logits": a,
+                "pred_boxes": b,
+                "pred_corners": c,
+                "ref_points": d,
+                "teacher_corners": teacher_corners,
+                "teacher_logits": teacher_logits,
+            }
+            for a, b, c, d in zip(outputs_class, outputs_coord, outputs_corners, outputs_ref)
+        ]

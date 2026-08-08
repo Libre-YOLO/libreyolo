@@ -456,6 +456,43 @@ class DFINEConfig(TrainConfig):
 
 
 @dataclass(kw_only=True)
+class DOMEDETRConfig(DFINEConfig):
+    """Dome-DETR fine-tuning defaults.
+
+    Inherits D-FINE's recipe (that is what upstream builds on) and changes only
+    what Dome-DETR's own configs change:
+
+    - ``imgsz=800``: every shipped Dome-DETR config evaluates at 800x800.
+    - ``lr0``/``weight_decay``/``backbone_lr_mult`` from
+      ``configs/dome/Dome-*-*.yml``: backbone at 2e-5 against a 2e-4 base is a
+      0.1x multiplier, tighter than D-FINE's 0.5x.
+    - ``multi_scale=False``: MWAS requires the stride-8 map to divide evenly by
+      the window size, so a random per-batch resize would break the forward.
+
+    Upstream trains 160 epochs with ``MultiStepLR(milestones=[80, 120],
+    gamma=0.8)``. That is a from-scratch schedule; these defaults target
+    fine-tuning and keep D-FINE's flat-cosine, so reproducing the paper's
+    numbers needs the upstream schedule, not this config.
+    """
+
+    imgsz: int = 800
+    lr0: float = 2e-4
+    weight_decay: float = 6.5e-5
+    backbone_lr_mult: float = 0.1
+    multi_scale: bool = False
+    base_size_repeat: Optional[int] = None
+
+    # DeFE supervision weights, from configs/dome/include/dome_hgnetv2.yml
+    # (defe_density_map_weight) and the DomeCriterion defaults.
+    defe_density_map_weight: float = 1.0
+    density_recall_penalty: float = 0.3
+    defe_reg_loss_weight: float = 1.0
+
+    epochs: int = 160
+    name: str = "domedetr_exp"
+
+
+@dataclass(kw_only=True)
 class DEIMConfig(TrainConfig):
     """DEIM-D-FINE fine-tuning defaults.
 

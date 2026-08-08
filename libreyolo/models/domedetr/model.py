@@ -9,7 +9,11 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from libreyolo.training.ddp_spawn import ddp_aware
+
 from ...postprocess.domedetr import postprocess
+from ...training.callbacks import TrainCallbacks
+from ...training.config import DOMEDETRConfig
 from ...utils.image_loader import ImageInput
 from ...validation.preprocessors import DOMEDETRValPreprocessor
 from ..base import BaseModel
@@ -44,10 +48,12 @@ class LibreDOMEDETR(BaseModel):
     - **The advantage narrows as objects grow.** Upstream's own ablation moves
       AP-verytiny 14.0 -> 17.8 but AP-medium only 45.4 -> 46.4. It sits beside
       D-FINE rather than replacing it.
-    - **Inference-only in LibreYOLO today.** Upstream ships an Apache-2.0
-      training recipe, so a gated-experimental trainer is portable, but it
-      needs the density-map criterion and a VisDrone convergence run that this
-      port does not yet include.
+    - **Training is wired.** The full upstream objective is ported: the
+      D-FINE losses plus DeFE density and count supervision, padded queries
+      masked out of the classification terms, and per-image denoising
+      attention masks. Convergence against upstream's published 160-epoch
+      schedule has not been reproduced here, so treat the paper's AP numbers
+      as unverified rather than as a promise this recipe reaches them.
     - **Weights are not rehosted.** The upstream model card states no license,
       so they are linked, not mirrored (the YOLO-NAS precedent).
     """
@@ -58,7 +64,7 @@ class LibreDOMEDETR(BaseModel):
     SUPPORTED_TASKS = ("detect",)
     DEFAULT_TASK = "detect"
     TASK_INPUT_SIZES = {"detect": INPUT_SIZES}
-    TRAIN_CONFIG = None
+    TRAIN_CONFIG = DOMEDETRConfig
     WEIGHT_VARIANTS = ("aitod", "visdrone")
     val_preprocessor_class = DOMEDETRValPreprocessor
     TTA_FIXED_SIZE = True  # fixed square resize; multi-scale TTA is a no-op
@@ -220,12 +226,110 @@ class LibreDOMEDETR(BaseModel):
     def unwrap_checkpoint(checkpoint):
         return unwrap_domedetr_checkpoint(checkpoint)
 
-    def train(self, *args, **kwargs):
-        raise NotImplementedError(
-            "LibreDOMEDETR is inference-only in LibreYOLO. Upstream ships an "
-            "Apache-2.0 training recipe (loss, matcher, density supervision), so "
-            "a gated-experimental trainer is portable, but it is not wired here: "
-            "it needs the DeFE density-map criterion plus a VisDrone convergence "
-            "run before it could be trusted. Use LibreDFINE to train a detector "
-            "on your own data."
+    @ddp_aware()
+    def train(
+        self,
+        data: str,
+        *,
+        epochs: int = 160,
+        batch: int = 4,
+        imgsz: int = 800,
+        lr0: float = 2e-4,
+        device: str = "",
+        workers: int = 4,
+        seed: int = 0,
+        project: str = "runs/train",
+        name: str = "domedetr_exp",
+        exist_ok: bool = False,
+        resume: bool = False,
+        amp: bool = False,
+        patience: int = 50,
+        callbacks: TrainCallbacks = None,
+        loggers=None,
+        **kwargs,
+    ) -> dict:
+        """Fine-tune Dome-DETR on a YOLO-format dataset config.
+
+        Trains against upstream's full objective: the D-FINE losses plus
+        DeFE density and count supervision, padded queries masked out of the
+        classification terms, and per-image denoising attention masks.
+
+        Two things worth knowing before a long run. Upstream trains 160 epochs
+        with ``MultiStepLR(milestones=[80, 120], gamma=0.8)`` while these
+        defaults use D-FINE's flat-cosine, so reproducing the paper's numbers
+        means supplying the upstream schedule rather than taking these as is.
+        And PAQI makes the query count vary per image, so a batch is padded to
+        its widest member: memory tracks the busiest image in each batch, not
+        the average, which is why ``batch`` defaults lower than D-FINE's.
+
+        Args:
+            data: Path to the dataset YAML file.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers.
+        """
+        from libreyolo.data import load_data_config
+
+        from .trainer import DOMEDETRTrainer
+
+        try:
+            data_config = load_data_config(data, autodownload=True)
+            data = data_config.get("yaml_file", data)
+        except Exception as e:
+            raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")
+
+        yaml_nc = data_config.get("nc")
+        yaml_names = data_config.get("names")
+        if yaml_nc is not None and yaml_nc != self.nb_classes:
+            self._rebuild_for_new_classes(yaml_nc)
+        if yaml_names is not None:
+            if isinstance(yaml_names, list):
+                yaml_names = {i: n for i, n in enumerate(yaml_names)}
+            self.names = self._sanitize_names(yaml_names, self.nb_classes)
+
+        if seed >= 0:
+            import random
+
+            import numpy as np
+
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+
+        trainer = DOMEDETRTrainer(
+            model=self.model,
+            wrapper_model=self,
+            size=self.size,
+            num_classes=self.nb_classes,
+            data=data,
+            epochs=epochs,
+            batch=batch,
+            imgsz=imgsz,
+            lr0=lr0,
+            device=device if device else "auto",
+            workers=workers,
+            seed=seed,
+            project=project,
+            name=name,
+            exist_ok=exist_ok,
+            resume=resume,
+            amp=amp,
+            patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
+            **kwargs,
         )
+
+        if resume:
+            if not self.model_path:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreYOLO('LibreDOMEDETRs-visdrone.pt'); "
+                    "model.train(data=..., resume=True)"
+                )
+            trainer.setup()
+            trainer.resume(str(self.model_path))
+            return trainer.train()
+
+        return trainer.train()

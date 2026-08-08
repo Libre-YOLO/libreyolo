@@ -40,7 +40,7 @@ from ..dfine.encoder import (
     TransformerEncoder,
     TransformerEncoderLayer,
 )
-from .defe import LiteDeFE
+from .defe import GaussHeatmapGenerator, LiteDeFE
 from .mwas import WindowProcessor
 
 
@@ -218,6 +218,20 @@ class DomeHybridEncoder(nn.Module):
                     break
         return mask
 
+    @staticmethod
+    def _gt_density_map(targets, img_inputs: torch.Tensor) -> torch.Tensor:
+        """Rasterise each image's boxes into the density target DeFE is trained on.
+
+        Boxes must be ``cxcywh`` normalised to ``[0, 1]``, which is the target
+        contract every DETR family here uses. Upstream additionally carries an
+        eval-mode branch that converts xyxy in place; it mutates the caller's
+        targets and is not reachable from this trainer, so it is not ported.
+        """
+        _, _, height, width = img_inputs.shape
+        generator = GaussHeatmapGenerator(img_size=(height, width))
+        maps = [generator(target["boxes"].detach().cpu()) for target in targets]
+        return torch.stack(maps).to(img_inputs.device)
+
     def forward(self, feats, img_inputs=None, targets=None):
         """Project, densify, sparsify, then fuse.
 
@@ -268,6 +282,9 @@ class DomeHybridEncoder(nn.Module):
                 )
                 proj_feats[1] = enhanced_memory
                 out["defe"]["defe_window_mask"] = defe_window_mask
+
+            if targets is not None and img_inputs is not None:
+                out["defe"]["gt_density_map"] = self._gt_density_map(targets, img_inputs)
 
         if self.num_encoder_layers > 0:
             for i, enc_ind in enumerate(self.use_encoder_idx):
