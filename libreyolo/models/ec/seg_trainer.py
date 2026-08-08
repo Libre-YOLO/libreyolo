@@ -1,4 +1,4 @@
-"""ECSegTrainer — native EC instance-segmentation fine-tuning (EXPERIMENTAL).
+"""ECSegTrainer — native EC instance-segmentation fine-tuning.
 
 EC's seg model shares the detect backbone/encoder/decoder and adds a mask head.
 The training recipe therefore reuses the EC detect recipe (AdamW, FlatCosine,
@@ -27,7 +27,7 @@ from .seg_loss import ECSegCriterion, ECSegHungarianMatcher
 
 
 class ECSegTrainer(BaseTrainer):
-    """Trainer for EC segmentation models (experimental)."""
+    """Trainer for EC segmentation models."""
 
     artifact_model_families = ("ec",)
     # max GT instances per image carried as rasterized target masks.

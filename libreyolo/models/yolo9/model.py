@@ -54,7 +54,6 @@ class LibreYOLO9(BaseModel):
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,
     }
-    EXPERIMENTAL_WEIGHT_FILENAMES: frozenset = frozenset()
     TRAIN_CONFIG = YOLO9Config
     val_preprocessor_class = YOLO9ValPreprocessor
     # The detection forward is pure tensor work with no host sync, so it

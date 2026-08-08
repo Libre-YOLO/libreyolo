@@ -30,7 +30,7 @@ class LibreDFINE(BaseModel):
     inference, fine-tuning (via ``DFINETrainer``), validation, and export
     (ONNX / TensorRT / OpenVINO).
 
-    ``task='segment'`` adds the D-FINE-seg mask head (experimental).
+    ``task='segment'`` adds the D-FINE-seg mask head.
     COCO-pretrained ``LibreDFINE{n,s,m,l,x}-seg.pt`` weights auto-download from
     the LibreYOLO Hugging Face org (converted from ArgoSA/D-FINE-seg,
     Apache-2.0). Fine-tuning from detect weights instead requires an explicit

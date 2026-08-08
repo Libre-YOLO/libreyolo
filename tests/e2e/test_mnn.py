@@ -41,7 +41,7 @@ _TRAINED_DETECTORS = [
     pytest.param(
         "deimv2",
         "atto",
-        marks=(pytest.mark.deimv2, pytest.mark.experimental_backend),
+        marks=(pytest.mark.deimv2, pytest.mark.extended_backend),
     ),
     pytest.param("yolonas", "s", marks=pytest.mark.yolonas),
 ]

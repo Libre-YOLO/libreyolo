@@ -80,8 +80,8 @@ CASES = [
     ("yolo9_p2", "LibreYOLO9P2", "t", 320, "detect", 0.0, {}),
     ("yolo9_e2e", "LibreYOLO9E2E", "t", 320, "detect", 0.0, {}),
     ("yolox", "LibreYOLOX", "t", 320, "detect", 0.0, {}),
-    ("picodet", "LibrePICODET", "s", 320, "detect", 0.0, {"allow_experimental": True}),
-    ("yolo7", "LibreYOLO7", "b", 320, "detect", 0.0, {"allow_experimental": True}),
+    ("picodet", "LibrePICODET", "s", 320, "detect", 0.0, {}),
+    ("yolo7", "LibreYOLO7", "b", 320, "detect", 0.0, {}),
     # YOLO-NAS captures bit-identically on a fixed batch (the unit suite gates
     # that), but its affine/mixup pipeline draws from generators the training
     # seed does not reach, so two eager train() runs already differ.
@@ -92,7 +92,7 @@ CASES = [
     # autograd and the graphed backward sum them in a different order, which
     # under fp16 differs in the last bits — 137 of 139 gradients are still
     # bit-identical — and the dynamic assigner's discrete choices amplify it.
-    ("rtmdet", "LibreRTMDet", "t", 320, "detect", 0.05, {"allow_experimental": True}),
+    ("rtmdet", "LibreRTMDet", "t", 320, "detect", 0.05, {}),
     # Encoder-boundary capture. None of these reproduce their own eager run:
     # deformable attention accumulates its backward with atomics.
     # multi_scale=False because they resize every batch by default and a graph
@@ -111,7 +111,7 @@ CASES = [
         320,
         "detect",
         0.01,
-        {"allow_experimental": True, "multi_scale": False},
+        {"multi_scale": False},
     ),
 ]
 
@@ -378,8 +378,7 @@ NON_DETECT_CASES = [
     # unit suite gate that); its coupled crop/flip augmentation is what makes
     # two eager train() runs differ.
     ("nafnet", "LibreNAFNet", "s", 256, "restore", "restore_dataset", 0.01, {}),
-    ("fomo", "LibreFOMO", "s", 96, "point", "detect_dataset", 0.01,
-     {"allow_experimental": True}),
+    ("fomo", "LibreFOMO", "s", 96, "point", "detect_dataset", 0.01, {}),
     (
         "lingbotvision",
         "LibreLingBotVision",

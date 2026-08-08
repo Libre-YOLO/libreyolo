@@ -16,7 +16,7 @@ from .test_tensorrt_round11 import _align_outputs
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
 ]
 
 
@@ -168,7 +168,7 @@ def test_round25_export_predict_parity(tmp_path, monkeypatch, case):
     monkeypatch.setitem(
         SUPPORT,
         (case.family, "embed", case.format),
-        SupportEntry("experimental", "Round 25 measured embedding probe."),
+        SupportEntry("available", "Round 25 measured embedding probe."),
     )
     torch.manual_seed(25)
     device = torch.device("cuda" if case.format == "tensorrt" else "cpu")

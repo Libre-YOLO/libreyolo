@@ -1,4 +1,4 @@
-"""End-to-end Paddle export and CPU inference parity for supported G0/G1 cells."""
+"""End-to-end Paddle export and CPU inference parity for supported cells."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ requires_paddle = pytest.mark.skipif(
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.external_data,
     pytest.mark.network,
     pytest.mark.paddle,

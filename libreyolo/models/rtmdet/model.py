@@ -4,9 +4,8 @@ Port of RTMDet (Lyu et al., 2022) from open-mmlab/mmdetection
 (Apache-2.0). Sizes: t / s / m / l / x. Supports detection and RTMDet-Ins
 instance segmentation inference and validation.
 
-Detection training is wired but experimental via ``allow_experimental=True``.
-RTMDet-Ins training is not implemented. Inference is compatible with official
-mmdetection checkpoints.
+Detection training is implemented. RTMDet-Ins training is not implemented.
+Inference is compatible with official mmdetection checkpoints.
 """
 
 from __future__ import annotations
@@ -234,15 +233,14 @@ class LibreRTMDet(BaseModel):
         )
 
     # =========================================================================
-    # Training (experimental)
+    # Training
     # =========================================================================
 
-    @ddp_aware(experimental_key="allow_experimental")
+    @ddp_aware()
     def train(
         self,
         data: str,
         *,
-        allow_experimental: bool = False,
         epochs: int = _TRAIN_DEFAULTS.epochs,
         batch: int = _TRAIN_DEFAULTS.batch,
         imgsz: int | None = None,
@@ -265,9 +263,9 @@ class LibreRTMDet(BaseModel):
     ) -> dict:
         """Fine-tune LibreRTMDet on a YOLO-format dataset.
 
-        **EXPERIMENTAL.** The QualityFocalLoss + GIoU + DynamicSoftLabelAssigner
-        components are ported from mmdetection (Apache-2.0) and the trainer
-        runs end-to-end. What is NOT validated:
+        The QualityFocalLoss + GIoU + DynamicSoftLabelAssigner components are
+        ported from mmdetection (Apache-2.0) and the trainer runs end-to-end.
+        The following have not been validated:
 
         - small-dataset fine-tune convergence (RF1-floor parity)
         - paper-parity training-from-scratch (reproducing the 41.1 val mAP)
@@ -280,8 +278,6 @@ class LibreRTMDet(BaseModel):
         mmdet, postprocess matches mmdet's output to within 0.001 mAP on
         val2017 subsets. See the family docstring for the full contract.
 
-        Pass ``allow_experimental=True`` to acknowledge.
-
         Args:
             callbacks: Optional training callback or iterable of callbacks.
             loggers: Optional built-in experiment loggers: a registered name,
@@ -291,19 +287,6 @@ class LibreRTMDet(BaseModel):
             raise NotImplementedError(
                 "RTMDet-Ins training is not implemented yet. Instance "
                 "segmentation currently supports inference and validation."
-            )
-        if not allow_experimental:
-            raise RuntimeError(
-                "RTMDet training is experimental. The loss + assigner follow "
-                "mmdetection's DynamicSoftLabelAssigner + QualityFocalLoss + "
-                "GIoULoss recipe and the trainer runs end-to-end, but small-"
-                "dataset fine-tune convergence and from-scratch paper parity "
-                "have NOT been verified. Pass allow_experimental=True to "
-                "proceed.\n"
-                "Validated: inference, ONNX export, bit-equivalent to upstream "
-                "mmdet on val2017 subsets within 0.001 mAP. "
-                "Not validated: training convergence, multi-GPU, the strict "
-                "two-stage pipeline switch, cached Mosaic/MixUp throughput."
             )
         from libreyolo.data import load_data_config
 

@@ -452,7 +452,7 @@ def quantize_model(
         # Measured on coco128: multi-batch min/max beats percentile clipping
         # for every tested model, and percentile collapses transformer
         # activations (their outliers are load-bearing). minmax is the
-        # default; percentile stays available as an experimental estimator.
+        # default; percentile remains selectable for workloads where it helps.
         algorithm = "minmax"
     if algorithm == "percentile" and family == "rfdetr":
         logger.warning(

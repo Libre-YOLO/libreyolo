@@ -21,7 +21,7 @@ from .conftest import requires_tensorrt
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.tensorrt,
     pytest.mark.trt,
 ]
@@ -41,7 +41,7 @@ ROUND10_VALIDATED_CASES = (
     TensorRTRound10Case("LibreYOLO4", "t", 416),
 )
 
-ROUND10_EXPERIMENTAL_CASES = (
+ROUND10_AVAILABLE_CASES = (
     TensorRTRound10Case("LibreYOLO1", "t", 448, 20),
     TensorRTRound10Case("LibreYOLO7", "b", 128),
     TensorRTRound10Case("LibreYOLO9E2E", "t", 128),
@@ -259,8 +259,8 @@ def test_tensorrt_round10_raw_and_predict_parity(tmp_path, case):
 )
 @pytest.mark.parametrize(
     "case",
-    ROUND10_EXPERIMENTAL_CASES,
+    ROUND10_AVAILABLE_CASES,
     ids=lambda case: case.class_name,
 )
-def test_tensorrt_round10_measured_experimental(tmp_path, case):
+def test_tensorrt_round10_measured_available(tmp_path, case):
     _run_tensorrt_case(tmp_path, case)

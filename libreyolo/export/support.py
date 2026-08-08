@@ -8,7 +8,7 @@ from typing import Literal
 
 from ..tasks import TASKS
 
-Tier = Literal["validated", "experimental", "blocked"]
+Tier = Literal["validated", "available", "blocked"]
 EXPORT_FORMATS = (
     "onnx",
     "torchscript",
@@ -293,20 +293,20 @@ _add(
     constraint="MNN 3.6.1, CPU, FP32, batch 1, fixed NCHW input shape",
 )
 _add(
-    "experimental",
+    "available",
     ("deimv2",),
     ("detect",),
     ("mnn",),
     reason=(
         "The trained atto checkpoint converts, reloads, executes on MNN CPU, "
         "and preserves post-NMS detections, but the intermediate ONNX route "
-        "remains experimental because query-level score parity is incomplete."
+        "has incomplete query-level score parity."
     ),
     since="1.6",
     constraint="MNN 3.6.1, CPU, FP32, batch 1, fixed NCHW input shape",
 )
 _add(
-    "experimental",
+    "available",
     ("yolo9", "yolo9_e2e", "yolonas", "picodet"),
     ("detect",),
     ("rknn",),
@@ -386,7 +386,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("rtmdet",),
     ("detect",),
     ("executorch",),
@@ -575,7 +575,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("dinov2",),
     ("embed",),
     ("executorch",),
@@ -666,7 +666,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("moge2",),
     ("normal",),
     ("ncnn",),
@@ -1114,7 +1114,7 @@ _add(
     constraint="OpenVINO 2026.2 CPU FP32, batch 1, fixed 224x224 input",
 )
 _add(
-    "experimental",
+    "available",
     ("dinov2",),
     ("classify",),
     ("tensorrt",),
@@ -1219,7 +1219,7 @@ _add(
     constraint="FP32, batch 1, fixed 224x224 input",
 )
 _add(
-    "experimental",
+    "available",
     ("dinov2",),
     ("embed",),
     ("openvino",),
@@ -1229,7 +1229,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("dinov2",),
     ("embed",),
     ("tensorrt",),
@@ -1289,7 +1289,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "blocked",
     ("feynobg",),
     ("matte",),
     ("executorch",),
@@ -1312,7 +1312,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("birefnet", "feynobg"),
     ("matte",),
     ("onnx",),
@@ -1359,7 +1359,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("yolox", "yolo9", "rtdetr", "rfdetr"),
     ("detect",),
     ("coreml",),
@@ -1382,7 +1382,7 @@ _add(
     constraint="FP32 with a fixed family-native export canvas",
 )
 _add(
-    "experimental",
+    "available",
     ("lingbotvision",),
     ("semantic",),
     ("tensorrt",),
@@ -1393,7 +1393,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("pidnet",),
     ("semantic",),
     ("tensorrt",),
@@ -1763,7 +1763,7 @@ _add(
     constraint="fixed-resolution export canvas",
 )
 _add(
-    "experimental",
+    "available",
     ("zipdepth",),
     ("depth",),
     ("tensorrt",),
@@ -1838,7 +1838,7 @@ _add(
     constraint="TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448",
 )
 _add(
-    "experimental",
+    "available",
     ("yolo7",),
     ("detect",),
     ("tensorrt",),
@@ -1848,7 +1848,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("yolo9_e2e",),
     ("detect",),
     ("tensorrt",),
@@ -1859,7 +1859,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("yolo9_p2",),
     ("detect",),
     ("tensorrt",),
@@ -1869,7 +1869,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("yolox",),
     ("detect",),
     ("tensorrt",),
@@ -1880,7 +1880,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("rtdetr",),
     ("detect",),
     ("tensorrt",),
@@ -1891,7 +1891,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("yolonas",),
     ("detect",),
     ("tensorrt",),
@@ -1902,7 +1902,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("yolonas",),
     ("pose",),
     ("tensorrt",),
@@ -1913,7 +1913,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("dfine",),
     ("detect",),
     ("tensorrt",),
@@ -1924,7 +1924,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("dfine",),
     ("segment",),
     ("tensorrt",),
@@ -1935,7 +1935,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("deim",),
     ("detect",),
     ("tensorrt",),
@@ -1946,7 +1946,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("rtdetrv2",),
     ("detect",),
     ("tensorrt",),
@@ -1956,7 +1956,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("rtdetrv4",),
     ("detect",),
     ("tensorrt",),
@@ -1968,7 +1968,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("ec",),
     ("detect",),
     ("tensorrt",),
@@ -1979,7 +1979,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("ec",),
     ("pose",),
     ("tensorrt",),
@@ -1990,7 +1990,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("ec",),
     ("segment",),
     ("tensorrt",),
@@ -2000,7 +2000,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("rfdetr",),
     ("segment",),
     ("tensorrt",),
@@ -2010,7 +2010,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("rfdetr",),
     ("pose",),
     ("tensorrt",),
@@ -2021,7 +2021,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("rfdetr",),
     ("obb",),
     ("tensorrt",),
@@ -2043,7 +2043,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "blocked",
     ("yolo2",),
     ("detect",),
     ("ncnn",),
@@ -2118,7 +2118,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("yolo9_p2",),
     ("detect",),
     ("ncnn",),
@@ -2501,7 +2501,7 @@ _add(
     constraint="FP32, batch 1, out-of-graph aspect resize, variable padded H/W",
 )
 _add(
-    "experimental",
+    "available",
     ("fcos",),
     ("detect",),
     ("openvino",),
@@ -2578,7 +2578,7 @@ _add(
     constraint="fixed export canvas",
 )
 _add(
-    "experimental",
+    "available",
     ("deim",),
     ("detect",),
     ("openvino",),
@@ -2589,7 +2589,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("deimv2",),
     ("detect",),
     ("openvino",),
@@ -2599,7 +2599,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("rtdetrv2",),
     ("detect",),
     ("openvino",),
@@ -2609,7 +2609,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("deimv2",),
     ("detect",),
     ("onnx",),
@@ -2662,7 +2662,7 @@ _add(
     constraint="fixed 640x640 input",
 )
 _add(
-    "experimental",
+    "available",
     ("ec",),
     ("pose",),
     ("openvino",),
@@ -2680,7 +2680,7 @@ _add(
     constraint="fixed task-native input resolution",
 )
 _add(
-    "experimental",
+    "available",
     ("rfdetr",),
     ("segment", "pose", "obb"),
     ("openvino",),
@@ -2983,7 +2983,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("dinov2",),
     ("classify",),
     ("coreai",),
@@ -3574,7 +3574,7 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
     if fmt == "mnn":
         return SupportEntry(
             "blocked",
-            "MNN v1 supports G0/G1 detection exports only.",
+            "MNN v1 has no implemented runtime contract for this family and task.",
         )
     if fmt == "rknn":
         return SupportEntry(
@@ -3585,7 +3585,7 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
     if fmt in {"tensorrt", "openvino"}:
         runtime = "TensorRT" if fmt == "tensorrt" else "OpenVINO"
         return SupportEntry(
-            "experimental",
+            "available",
             f"The converter path is available, but the project has not yet "
             f"recorded {runtime} runtime parity for this family and task.",
         )
@@ -3611,8 +3611,9 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
             "This family and task are not covered by the family-aware CoreML wrapper.",
         )
     return SupportEntry(
-        "experimental",
-        "This combination exports without a numeric parity guarantee.",
+        "available",
+        "Conversion is implemented; numeric runtime parity has not been recorded "
+        "for this combination.",
     )
 
 

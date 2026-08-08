@@ -194,21 +194,14 @@ def test_export_mode_returns_flat_tensor():
     assert out.shape == (1, 8400, 84)  # 80*80 + 40*40 + 20*20 = 8400; 4 box + 80 cls
 
 
-def test_train_gated_without_allow_experimental():
-    """``model.train(...)`` raises a clear error unless allow_experimental=True."""
-    m = LibreRTMDet(size="t", nb_classes=80)
-    with pytest.raises(RuntimeError, match="experimental"):
-        m.train(data="coco128.yaml", epochs=1)
-
-
-def test_config_docstring_matches_experimental_training_status():
-    """RTMDet config docs should not claim training is unimplemented."""
+def test_config_docstring_records_training_evidence():
+    """RTMDet config docs distinguish implementation from missing evidence."""
     from libreyolo.training.config import RTMDetConfig
 
-    doc = RTMDetConfig.__doc__ or ""
-    assert "implemented but experimental" in doc
-    assert "NOT yet implemented" not in doc
-    assert "NotImplementedError" not in doc
+    doc = " ".join((RTMDetConfig.__doc__ or "").split())
+    assert "Detection training is implemented" in doc
+    assert "Small-dataset fine-tune convergence" in doc
+    assert "have not yet been validated" in doc
 
 
 def test_trainer_filters_targets_by_width_and_height():

@@ -26,7 +26,7 @@ from .test_ncnn_round17 import _native_outputs
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.ncnn,
     pytest.mark.slow,
     pytest.mark.skipif(

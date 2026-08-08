@@ -110,49 +110,44 @@ identifiers you are claiming do not collide, and list the families whose
 `can_load` could steal your checkpoints, so the PRD can require bidirectional
 rejection tests.
 
-## 4. Scope and maturity
+## 4. Scope and evidence
 
 Say which tasks are in scope and declare `SUPPORTED_TASKS` explicitly. Then pick
-a maturity target from `libreyolo-port-model` section 2, and remember that
+an implementation and evidence target from `libreyolo-port-model` section 2, and remember that
 **inference-only is a legitimate ship state**. A PRD that gates delivery on a
 working trainer will usually stall. Make the trainer a follow-up unless training
 is the point of the port.
 
-Whether the PRD requires a trainer is a three-gate test, not taste:
+Whether the PRD requires a trainer follows two implementation facts:
 
 1. **Task shape.** The task is closed-set and label-supervised: the user's
    dataset is images plus plain labels the existing pipeline already carries
    (boxes, masks, keypoints, class ids). Prompt-driven, text-conditioned,
    zero-shot and multimodal models (SAM, VLMs, CLIP, open-vocab detectors,
-   foundation backbones) fail this gate and never ship training code: their
+   foundation backbones) do not use the ordinary supervised trainer surface: their
    "training" is web-scale pretraining, not user fine-tuning.
 2. **Upstream recipe.** Upstream ships a permissively licensed *fine-tuning*
    implementation (loss, assignment, recipe) that converges on a small dataset
    on a single GPU. A pretraining pipeline needing multi-node or web-scale
    data does not count (Depth Anything V2's teacher-student distillation is
    the precedent: supervised task, no user-facing recipe, inference-only).
-3. **Audience.** The port is meant for practitioners to fine-tune (headed for
-   `g2` or better). Museum/historic ports and inference-only specialists
-   (`g3`/`g4` candidates: original DETR, Faster R-CNN) ship inference-only
-   even for classical detection; the trainer is an optional follow-up.
-
-All three pass: the PRD requires a trainer (production-grade when e2e
-convergence is validated, otherwise gated experimental behind
-`allow_experimental=True`). Any gate fails: inference-only, and the PRD names
-the failed gate. Genuinely unsure: write "maturity: maintainer call" in the
-PRD and ask, instead of guessing.
+Both facts support a normal fine-tuning path: the PRD requires a trainer and
+states the completed checks and remaining validation work. Otherwise the PRD
+states the concrete missing implementation or recipe. Genuinely unsure: write
+"implementation scope: maintainer call" in the PRD and ask, instead of
+guessing.
 
 The one-line intuition: ship a trainer when a real user could run
 `model.train(data="their_small_dataset.yaml")` on one GPU and expect a better
 model; ship inference-only when "training" really means "pretraining nobody
 can reproduce".
 
-Also name the **rollout group** the family enters (`MODEL_GROUPS` in
+Also name the **coverage group** the family enters (`MODEL_GROUPS` in
 `libreyolo/models/registry.py`; semantics in `docs/nomenclature.md`, "Model
-groups"). New ports normally enter `g2` (trainable) or `g3` (inference-only);
-`g0`/`g1` placement needs maintainer sign-off. The implementer copies this
-into the registry at commit 1, and `tests/unit/test_model_registry.py` blocks
-merge until they do.
+groups"). Group membership mirrors the implemented surface and selects
+cross-family tests; it never grants or removes a capability. The implementer
+copies the selected group into the registry at commit 1, and
+`tests/unit/test_model_registry.py` blocks merge until they do.
 
 ## 5. The PRD document
 
@@ -171,7 +166,7 @@ review, and a consistent shape is what lets an implementing agent trust it.
 ## 3. Why we did not add it before
 ## 4. Why we are adding it now
 ## 5. Head start already in-tree (closest scaffold, and its traps)
-## 6. Scope and maturity
+## 6. Scope and evidence
 ## 7. Implementation pointers  (family id, can_load, converter, export contract)
 ## 8. Definition of done       (checklist mirroring section 0)
 ```

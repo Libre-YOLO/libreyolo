@@ -1,7 +1,7 @@
 # PaddlePaddle export
 
 LibreYOLO supports a narrow PaddlePaddle export and CPU inference path for the
-parity-backed G0/G1 cells listed below. The graph is exported to static ONNX
+parity-backed family/task cells listed below. The graph is exported to static ONNX
 opset 15, converted with X2Paddle, and packaged with LibreYOLO metadata so the
 exported directory can be loaded through the same factory as other runtimes.
 

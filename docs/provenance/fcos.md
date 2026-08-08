@@ -99,7 +99,8 @@ load with `strict=True` and no remapping.
   drift is `1.103e-6`. TorchScript is bit-exact for the same input.
 - OpenVINO CPU FP32 passes raw-output tolerances and high-confidence public
   prediction parity. Small numerical drift can reorder low-confidence NMS
-  survivors, so OpenVINO is recorded as experimental rather than validated.
+  survivors, so validation is limited to raw outputs and high-confidence
+  predictions.
 - TensorRT is blocked for this family because the current LibreYOLO TensorRT
   runtime profiles dynamic batch only, while FCOS requires dynamic padded
   height and width to preserve its aspect-resize contract.

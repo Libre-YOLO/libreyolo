@@ -1,9 +1,9 @@
 """RTMDet trainer.
 
-Experimental trainer subclassing :class:`BaseTrainer`. Reuses the shared
-mosaic+mixup augmentation pipeline. Documented gaps vs upstream
-mmdet/mmyolo (these matter for full-paper-parity, not for the
-fine-tune-from-pretrained path that ``allow_experimental=True`` gates):
+This trainer subclasses :class:`BaseTrainer` and reuses the shared mosaic and
+mixup augmentation pipeline. Documented gaps versus upstream mmdet/mmyolo
+(these matter for full-paper parity, not for fine-tuning from pretrained
+weights):
 
 - mmdet uses ``CachedMosaic`` / ``CachedMixUp`` (FIFO of decoded images) for
   throughput; we use the standard non-cached pair.
@@ -59,7 +59,7 @@ class RTMDetTrainTransform(TrainTransform):
 
 
 class RTMDetTrainer(BaseTrainer):
-    """RTMDet detection trainer (experimental)."""
+    """RTMDet detection trainer."""
 
     @classmethod
     def _config_class(cls) -> Type[TrainConfig]:

@@ -52,7 +52,7 @@ RKNN_SIMULATOR_VALIDATED_TARGETS = frozenset({DEFAULT_RKNN_TARGET})
 # Toolkit2's floating build commonly lowers internal tensors to float16, so
 # decoded detector tensors are not elementwise-allclose to ONNX Runtime even
 # when final boxes/classes remain stable. These output-scale-independent gates
-# separated every validated detector above from the failed G0/G1 candidates.
+# separated every validated detector above from the other measured candidates.
 DEFAULT_RKNN_MIN_COSINE = 0.9999
 DEFAULT_RKNN_MAX_NORMALIZED_RMSE = 0.02
 

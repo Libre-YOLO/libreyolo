@@ -136,7 +136,7 @@ def test_export_support_is_explicit_for_every_format() -> None:
     entries = {fmt: get_support("fcos", "detect", fmt) for fmt in EXPORT_FORMATS}
     assert entries["onnx"].tier == "validated"
     assert entries["torchscript"].tier == "validated"
-    assert entries["openvino"].tier == "experimental"
+    assert entries["openvino"].tier == "available"
     assert all(
         entry.tier == "blocked"
         for fmt, entry in entries.items()

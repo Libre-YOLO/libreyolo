@@ -179,15 +179,14 @@ class LibreFOMO(BaseModel):
         return validator.parse_gt_points_from_boxes(gt_row, orig_h, orig_w)
 
     # -------------------------------------------------------------------------
-    # Training (experimental — requires allow_experimental=True)
+    # Training
     # -------------------------------------------------------------------------
 
-    @ddp_aware(experimental_key="allow_experimental")
+    @ddp_aware()
     def train(
         self,
         data: str,
         *,
-        allow_experimental: bool = False,
         callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs: Any,
@@ -199,12 +198,6 @@ class LibreFOMO(BaseModel):
             loggers: Optional built-in experiment loggers: a registered name,
                 a configured logger instance, or an iterable mixing both.
         """
-        if not allow_experimental:
-            raise NotImplementedError(
-                "LibreFOMO training is experimental in this version. "
-                "Pass allow_experimental=True to model.train() to enable it."
-            )
-
         from .trainer import FOMOTrainer
 
         if "imgsz" not in kwargs:
