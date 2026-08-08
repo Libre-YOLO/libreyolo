@@ -23,7 +23,7 @@ from .test_tensorrt_round11 import _align_outputs, _match_detection_rows, _rms
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.tensorrt,
     pytest.mark.trt,
 ]
@@ -336,5 +336,5 @@ def _run_tensorrt_case(tmp_path, case: TensorRTRound12Case) -> None:
     ROUND12_CASES,
     ids=lambda case: f"{case.family}-{case.task}",
 )
-def test_tensorrt_round12_measured_experimental(tmp_path, case):
+def test_tensorrt_round12_measured_available(tmp_path, case):
     _run_tensorrt_case(tmp_path, case)

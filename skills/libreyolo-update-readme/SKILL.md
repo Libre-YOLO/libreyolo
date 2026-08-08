@@ -23,7 +23,7 @@ favor.
 - The only unprompted reason to propose a README change is a **real error or
   inconsistency**: a command that no longer runs, a weight or class name that
   does not exist, a compatibility-table cell that contradicts
-  `SUPPORTED_TASKS` or a maturity gate, a dead link.
+  `SUPPORTED_TASKS` or the callable API, a dead link.
 - Even then, **propose first**: show the user the exact diff and the evidence
   (what you ran, what the code says), and land it only after their approval.
 - A new feature landing in the library is NOT by itself a reason to grow the
@@ -64,9 +64,9 @@ The README sells the project honestly and gets a developer to a working
 - Every command must run as pasted. Actually run it before proposing it.
 - Model classes and weight filenames come from `docs/nomenclature.md` and
   `libreyolo models`, never from memory.
-- Compatibility/maturity claims must match the code's gates: a family whose
-  training is experimental-gated or on the RF1 skip list must not be
-  presented as trainable GA (same discipline as the release process).
+- Compatibility claims must match the callable API. Mark training as supported
+  when an ordinary `train()` call reaches the trainer; keep RF1 evidence and
+  known limits in the detailed documentation.
 - Mind the version gap: the GitHub README is read by PyPI users of the
   released package, but it renders from `dev`. If a claim is true on dev and
   false on the released version, say so to the user and let them decide

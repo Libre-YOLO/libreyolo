@@ -45,8 +45,8 @@ signpost rather than diverging.
 - A release: the release process (`skills/libreyolo-release/` Gate G) lists
   headline changelog items with no doc mention; each needs a site update or
   the user's explicit "ship without docs" per item.
-- Experimental features go on the experimental docs page with their gating
-  caveats stated, not presented as GA.
+- For features without full validation, state the exact completed checks and
+  known limits without changing whether the implemented API is shown as available.
 
 When a feature ships without its docs, say so in the PR/release handoff
 rather than letting it be discovered.

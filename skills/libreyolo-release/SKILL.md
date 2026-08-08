@@ -171,9 +171,9 @@ attributed as "issue #N" or "commit `<sha>`", **not** "PR #N". Mark each
 fact `verified` or `struck (reason)`. Only verified facts may appear in the
 changelog.
 
-Also tag each surviving capability **GA** vs **experimental/gated** (check
-whether it is on the RF1 skip-list or otherwise fenced). The changelog must
-not present a gated-experimental feature as generally available.
+Also record each surviving capability's validation evidence, including any
+RF1 exclusion and its exact reason. The changelog must describe callable
+behavior and known limits separately.
 
 Out of scope for the changelog (do not spend the pass on these): raw
 performance/throughput deltas and docs/website prose content. Everything
@@ -406,7 +406,7 @@ the user to post by hand.
   internal backbone as a shipped user-facing family. Verify it's exported
   and reachable first.
 - Shipping the changelog without the false-positive fact-check pass.
-- Presenting a gated-experimental feature as generally available.
+- Replacing exact validation evidence with a blanket capability label.
 - Attributing a direct-commit change as "PR #N" when it has no merge-PR.
 - Inferring the version number from the diff size instead of asking; the
   label is the human's call.

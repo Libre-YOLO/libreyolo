@@ -191,7 +191,7 @@ def test_moge2_export_support_matches_validated_runtimes():
     }
     for format_name in validated:
         assert get_support("moge2", "normal", format_name).tier == "validated"
-    assert get_support("moge2", "normal", "ncnn").tier == "experimental"
+    assert get_support("moge2", "normal", "ncnn").tier == "available"
     for format_name in set(EXPORT_FORMATS) - validated - {"ncnn"}:
         assert get_support("moge2", "normal", format_name).tier == "blocked"
 

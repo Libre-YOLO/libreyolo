@@ -40,6 +40,8 @@ LibreYOLO is MIT. That only stays true if every contribution is clean:
 - Changes that add, remove, or reinterpret checkpoint metadata must update
   `docs/checkpoint_schema.md` and the shared helpers in
   `libreyolo/utils/serialization.py`.
+- Describe user-facing workflows in terms of the validation evidence they have;
+  keep known limits separate from the callable API contract.
 
 ## LLM policy
 

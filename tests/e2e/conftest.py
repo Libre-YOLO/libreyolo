@@ -455,7 +455,7 @@ def reset_gpu_state():
 #     gated on LIBREYOLO1B_CKPT). Its pretrained tiny weights are unrecoverable
 #     upstream, so there is no auto-download route to gate on at all.
 #   - yolo2/3/4 are inference-only conversions, and yolo7 (trainable via the
-#     experimental SimOTA recipe) has no HF auto-download route either; all are
+#     alternate SimOTA recipe) has no HF auto-download route either; all are
 #     covered by the offline synthetic-weight unit suites
 #     (tests/unit/test_darknet_families.py, tests/unit/test_yolo1.py,
 #     tests/unit/test_yolo7.py) plus the external numeric-parity scripts

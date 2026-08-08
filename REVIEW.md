@@ -64,6 +64,7 @@ evidence-based, and scoped to the PR under review.
 - Flag metadata behavior that bypasses `/docs`.
 - Flag filename heuristics replacing metadata contracts.
 - Flag API behavior that silently accepts ignored options.
+- Flag acknowledgement flags that replace a directly callable user workflow.
 - Flag changes that weaken normal single-GPU training.
 - Flag DDP fixes that regress non-DDP paths.
 - Flag CI marker changes that hide tests.

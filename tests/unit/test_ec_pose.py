@@ -101,18 +101,12 @@ class TestPoseFamilyClassWiring:
         with pytest.raises(ValueError, match="not supported"):
             LibreEC(model_path=None, size="s", task="classify")
 
-    def test_train_pose_requires_allow_experimental(self):
-        # Pose training is implemented but gated behind the experimental flag.
-        m = LibreEC(model_path=None, size="s", task="pose")
-        with pytest.raises(RuntimeError, match="experimental"):
-            m.train(data="dummy.yaml")
-
-    def test_train_pose_selects_pose_trainer(self):
-        # With the flag set, the pose task dispatches to the pose path (it fails
-        # only later, on the missing dummy dataset — not with NotImplementedError).
+    def test_train_pose_selects_pose_path_without_opt_in(self):
+        # The ordinary call reaches pose dataset validation rather than an
+        # acknowledgement gate or an unavailable-task error.
         m = LibreEC(model_path=None, size="s", task="pose")
         with pytest.raises(FileNotFoundError):
-            m.train(data="definitely_missing.yaml", allow_experimental=True)
+            m.train(data="definitely_missing.yaml")
 
     def test_train_pose_rejects_multiclass_yaml(self, tmp_path):
         data_yaml = tmp_path / "pose.yaml"
@@ -131,12 +125,12 @@ class TestPoseFamilyClassWiring:
 
         m = LibreEC(model_path=None, size="s", task="pose")
         with pytest.raises(ValueError, match="single-class pose datasets"):
-            m.train(data=str(data_yaml), allow_experimental=True)
+            m.train(data=str(data_yaml))
 
     def test_train_pose_rejects_non_native_imgsz(self):
         m = LibreEC(model_path=None, size="s", task="pose")
         with pytest.raises(ValueError, match="imgsz=640"):
-            m.train(data="dummy.yaml", allow_experimental=True, imgsz=320)
+            m.train(data="dummy.yaml", imgsz=320)
 
     def test_train_pose_explicit_flip_idx_overrides_yaml(self, tmp_path, monkeypatch):
         data_yaml = tmp_path / "pose.yaml"
@@ -168,7 +162,6 @@ class TestPoseFamilyClassWiring:
         m = LibreEC(model_path=None, size="s", task="pose")
         m.train(
             data=str(data_yaml),
-            allow_experimental=True,
             workers=0,
             flip_idx=explicit_flip_idx,
         )

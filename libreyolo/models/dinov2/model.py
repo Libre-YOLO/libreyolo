@@ -260,8 +260,6 @@ class LibreDINOv2(BaseModel):
     semantic_resize_mode: ClassVar[str] = "stretch"
     semantic_imgsz_divisor: ClassVar[int] = 14
 
-    EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset] = frozenset()
-
     # =========================================================================
     # Registry classmethods
     # =========================================================================

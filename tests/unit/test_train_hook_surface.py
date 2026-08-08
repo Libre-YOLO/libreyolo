@@ -24,6 +24,7 @@ from libreyolo.models.yolo9.model import LibreYOLO9
 from libreyolo.models.yolo9_e2e.model import LibreYOLO9E2E
 from libreyolo.models.yolonas.model import LibreYOLONAS
 from libreyolo.models.yolox.model import LibreYOLOX
+from libreyolo.training.ddp_spawn import ddp_aware
 
 pytestmark = pytest.mark.unit
 
@@ -62,6 +63,22 @@ def test_trainable_models_expose_callbacks_and_loggers(model_cls: type) -> None:
 
 
 @pytest.mark.parametrize(
+    "model_cls",
+    TRAINABLE_MODEL_CLASSES,
+    ids=lambda cls: cls.__name__,
+)
+def test_trainable_models_have_no_acknowledgement_parameter(model_cls: type) -> None:
+    signature = inspect.signature(model_cls.train)
+    legacy_parameter = "allow_" + "experi" + "mental"
+
+    assert legacy_parameter not in signature.parameters
+
+
+def test_ddp_decorator_only_configures_batch_key() -> None:
+    assert tuple(inspect.signature(ddp_aware).parameters) == ("batch_key",)
+
+
+@pytest.mark.parametrize(
     "module_path,class_name",
     [
         ("libreyolo.models.sam.model", "LibreSAM1"),
@@ -93,7 +110,6 @@ class _StopTraining(RuntimeError):
 class ForwardingCase:
     model_factory: Callable[[], Any]
     trainer_target: str
-    train_kwargs: dict[str, Any] | None = None
     data_config: dict[str, Any] | None = None
 
 
@@ -172,32 +188,26 @@ FORWARDING_CASES = {
     "rtmdet": ForwardingCase(
         lambda: LibreRTMDet(None, size="t", nb_classes=2, device="cpu"),
         "libreyolo.models.rtmdet.trainer.RTMDetTrainer",
-        train_kwargs={"allow_experimental": True},
     ),
     "picodet": ForwardingCase(
         lambda: LibrePICODET(None, size="s", nb_classes=2, device="cpu"),
         "libreyolo.models.picodet.trainer.PICODETTrainer",
-        train_kwargs={"allow_experimental": True},
     ),
     "fomo": ForwardingCase(
         lambda: LibreFOMO(None, size="s", nb_classes=2, device="cpu"),
         "libreyolo.models.fomo.trainer.FOMOTrainer",
-        train_kwargs={"allow_experimental": True},
     ),
     "ec_detect": ForwardingCase(
         lambda: LibreEC(None, size="s", nb_classes=2, device="cpu"),
         "libreyolo.models.ec.trainer.ECTrainer",
-        train_kwargs={"allow_experimental": True},
     ),
     "ec_segment": ForwardingCase(
         lambda: LibreEC(None, size="s", nb_classes=2, device="cpu", task="segment"),
         "libreyolo.models.ec.seg_trainer.ECSegTrainer",
-        train_kwargs={"allow_experimental": True},
     ),
     "ec_pose": ForwardingCase(
         lambda: LibreEC(None, size="s", device="cpu", task="pose"),
         "libreyolo.models.ec.pose_trainer.ECPoseTrainer",
-        train_kwargs={"allow_experimental": True},
         data_config=_pose_data_config(),
     ),
 }
@@ -235,8 +245,6 @@ def test_train_hooks_reach_family_trainer(
     )
 
     model = case.model_factory()
-    train_kwargs = dict(case.train_kwargs or {})
-
     with pytest.raises(_StopTraining):
         model.train(
             "dummy.yaml",
@@ -245,7 +253,6 @@ def test_train_hooks_reach_family_trainer(
             device="cpu",
             callbacks=callback,
             loggers="mlflow",
-            **train_kwargs,
         )
 
     assert captured["kwargs"]["callbacks"] is callback

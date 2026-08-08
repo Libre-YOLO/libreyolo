@@ -42,9 +42,8 @@ point, classify, semantic, restore). That includes the DFINE/DEIM-family
 trainers, whose copied training loops carry the same hooks as the base loop.
 `tests/e2e/test_profile_training_families.py` runs a real profiled training
 per family and is kept in lockstep with the registry, so a family cannot join
-a trainable group without profiler coverage. Families whose training is gated
-behind `allow_experimental=True` (ec, yolo7, rtmdet, picodet, fomo) need that
-flag alongside `profile=True` — or `--allow-experimental` on the CLI.
+a trainable group without profiler coverage. Every trainable family uses the
+same direct `profile=True` call.
 
 **Inference** profiling (`libreyolo profile infer`) drives the shared
 predict-stage contract, verified per family for every g0/g1 family plus the
@@ -135,10 +134,8 @@ libreyolo profile compare <before.json> <after.json>   # did it help? img/s + ms
 Every command takes either the **self-contained `profile.json`** (recommended — copy
 it freely) or a raw `profile_trace.json`. `get <file>` with no field lists every
 metric. `run` follows normal training defaults, including AMP on supported CUDA
-devices; pass `--no-amp` to force fp32. For families whose training is gated as
-experimental (e.g. ec), pass **`--allow-experimental`**: a profile run trains a
-few steps and writes no checkpoint, so the unvalidated-convergence caveat
-behind the gate does not apply. Use **`run --repeat N`** for mean±stdev
+devices; pass `--no-amp` to force fp32. A profile run trains a few steps and
+writes no checkpoint. Use **`run --repeat N`** for mean±stdev
 img/s — a single run *lies* when the step is launch-bound (the bottleneck itself
 makes the step time noisy). Repeated runs emit an aggregate `profile_repeat.json`
 for `compare`, plus per-trial `prof_*/profile.json` files for drill-down.

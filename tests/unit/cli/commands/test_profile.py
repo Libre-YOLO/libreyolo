@@ -147,9 +147,8 @@ def test_compare_significance_note(tmp_path):
     assert "ms/image" in r.stdout
 
 
-def test_run_forwards_allow_experimental(tmp_path, monkeypatch):
-    """--allow-experimental reaches model.train(); without the flag the kwarg
-    is absent entirely (non-gated families don't accept it)."""
+def test_run_forwards_profile_settings(tmp_path, monkeypatch):
+    """The profile command reaches the ordinary public training path."""
     import libreyolo
 
     calls: list[dict] = []
@@ -164,17 +163,8 @@ def test_run_forwards_allow_experimental(tmp_path, monkeypatch):
     monkeypatch.setattr(libreyolo, "LibreYOLO", _StubModel)
 
     r = runner.invoke(_app(), ["profile", "run", "coco128",
-                               "--project", str(tmp_path),
-                               "--allow-experimental"])
+                               "--project", str(tmp_path)])
     assert r.exit_code == 3  # stub trains but produces no profile.json
     assert calls
-    assert calls[0]["allow_experimental"] is True
     assert calls[0]["profile"] is True
     assert calls[0]["profile_then_stop"] is True
-
-    calls.clear()
-    r = runner.invoke(_app(), ["profile", "run", "coco128",
-                               "--project", str(tmp_path)])
-    assert r.exit_code == 3
-    assert calls
-    assert "allow_experimental" not in calls[0]

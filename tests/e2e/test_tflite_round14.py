@@ -35,7 +35,7 @@ from .test_tflite_round13 import _native_outputs
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.slow,
     pytest.mark.skipif(
         importlib.util.find_spec("onnx2tf") is None
@@ -175,7 +175,7 @@ def _run_tflite_case(tmp_path, monkeypatch, case: TFLiteRound14Case) -> None:
         SUPPORT,
         (case.family, case.task, "tflite"),
         SupportEntry(
-            "experimental",
+            "available",
             "Round 14 measured probe bypasses the recorded conversion hold.",
         ),
     )

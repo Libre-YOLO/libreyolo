@@ -471,7 +471,7 @@ def test_detection_flagship_raw_parity_and_predict(
     assert result.boxes is not None
 
 
-@pytest.mark.experimental_backend
+@pytest.mark.extended_backend
 @pytest.mark.parametrize(
     ("family", "class_name", "size"),
     [
@@ -529,7 +529,7 @@ def test_edge_map_runtime_parity(
     assert runtime.imgsz == 64
 
 
-@pytest.mark.experimental_backend
+@pytest.mark.extended_backend
 @pytest.mark.network
 def test_dinov2_semantic_runtime_parity(tmp_path, monkeypatch):
     """Cover the real DINOv2 backbone and dense semantic output contract."""
@@ -591,7 +591,7 @@ def test_dinov2_semantic_runtime_parity(tmp_path, monkeypatch):
     assert float(np.mean(actual_mask == expected_mask)) > 0.95
 
 
-@pytest.mark.experimental_backend
+@pytest.mark.extended_backend
 @pytest.mark.network
 def test_dinov2_classification_runtime_parity(tmp_path, monkeypatch):
     """Cover the real DINOv2 backbone and classification logits contract."""
@@ -644,7 +644,7 @@ def test_dinov2_classification_runtime_parity(tmp_path, monkeypatch):
     assert runtime.predict(np.zeros((224, 224, 3), dtype=np.uint8)).probs is not None
 
 
-@pytest.mark.experimental_backend
+@pytest.mark.extended_backend
 @pytest.mark.network
 def test_dinov2_embedding_runtime_parity(tmp_path, monkeypatch):
     """Cover the real DINOv2 backbone and normalized embedding contract."""
@@ -695,7 +695,7 @@ def test_dinov2_embedding_runtime_parity(tmp_path, monkeypatch):
     )
 
 
-@pytest.mark.experimental_backend
+@pytest.mark.extended_backend
 @pytest.mark.parametrize("family", ["rtmdet", "yolonas", "yolo9_p2"])
 def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     """Cover detector families lacking redistributable trained parity data."""
@@ -798,7 +798,7 @@ def test_additional_detection_raw_parity(tmp_path, monkeypatch, family):
     assert runtime.imgsz == 64
 
 
-@pytest.mark.experimental_backend
+@pytest.mark.extended_backend
 @pytest.mark.parametrize(
     ("case", "imgsz"),
     [

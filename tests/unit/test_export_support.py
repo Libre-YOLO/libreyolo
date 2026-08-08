@@ -7,12 +7,13 @@ import json
 import os
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from libreyolo.export.exporter import NcnnExporter, OnnxExporter
+from libreyolo.export.exporter import ExecuTorchExporter, NcnnExporter, OnnxExporter
 from libreyolo.export.support import EXPORT_FORMATS, SUPPORT, get_support
 from libreyolo.models.inventory import collect_model_inventory
 from libreyolo.tasks import TASKS, task_to_suffix
@@ -39,6 +40,14 @@ def test_matrix_keys_use_canonical_registry_values():
         assert fmt in EXPORT_FORMATS
 
 
+def test_matrix_uses_capability_statuses_only():
+    assert {entry.tier for entry in SUPPORT.values()} == {
+        "validated",
+        "available",
+        "blocked",
+    }
+
+
 def test_matrix_rejects_duplicate_explicit_keys():
     from libreyolo.export import support
 
@@ -59,16 +68,38 @@ def test_ncnn_detr_families_fail_in_preflight(family):
         exporter._preflight(half=False, int8=False, data=None)
 
 
-def test_experimental_export_warns_in_preflight():
+def test_available_export_proceeds_without_blanket_warning():
     exporter = OnnxExporter(_wrapper("deimv2"))
-    with pytest.warns(RuntimeWarning, match="experimental"):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        exporter._preflight(half=False, int8=False, data=None)
+    assert not caught
+
+
+@pytest.mark.parametrize(
+    "exporter_cls,family,task,reason",
+    [
+        (
+            ExecuTorchExporter,
+            "feynobg",
+            "matte",
+            r"no \.pte artifact was produced",
+        ),
+        (NcnnExporter, "yolo2", "detect", "integer divide-by-zero"),
+    ],
+)
+def test_non_runnable_exports_are_blocked_in_preflight(
+    exporter_cls, family, task, reason
+):
+    exporter = exporter_cls(_wrapper(family, task))
+    with pytest.raises(NotImplementedError, match=reason):
         exporter._preflight(half=False, int8=False, data=None)
 
 
 @pytest.mark.parametrize("family", ["yolo9", "yolo9_e2e", "yolonas", "picodet"])
-def test_rknn_retained_families_are_experimental(family):
+def test_rknn_retained_families_are_available(family):
     entry = get_support(family, "detect", "rknn")
-    assert entry.tier == "experimental"
+    assert entry.tier == "available"
     assert "RK3588 PC-simulator" in entry.reason
 
 
@@ -139,15 +170,15 @@ def test_executorch_realtime_support_is_evidence_backed():
     for family, task in validated:
         assert get_support(family, task, "executorch").tier == "validated"
 
-    assert get_support("rtmdet", "detect", "executorch").tier == "experimental"
+    assert get_support("rtmdet", "detect", "executorch").tier == "available"
     assert get_support("dfine", "detect", "executorch").tier == "blocked"
     assert get_support("deim", "detect", "executorch").tier == "blocked"
     assert get_support("deimv2", "detect", "executorch").tier == "blocked"
     assert get_support("swinir", "restore", "executorch").tier == "blocked"
-    assert get_support("dinov2", "embed", "executorch").tier == "experimental"
+    assert get_support("dinov2", "embed", "executorch").tier == "available"
     assert get_support("eomt", "semantic", "executorch").tier == "blocked"
     assert get_support("birefnet", "matte", "executorch").tier == "blocked"
-    assert get_support("feynobg", "matte", "executorch").tier == "experimental"
+    assert get_support("feynobg", "matte", "executorch").tier == "blocked"
 
 
 def test_tflite_support_keys_use_canonical_tasks():
@@ -230,7 +261,7 @@ def test_yolonas_detect_tflite_is_validated():
     assert get_support("yolonas", "detect", "tflite").tier == "validated"
 
 
-def test_paddle_support_matches_measured_g0_g1_matrix():
+def test_paddle_support_matches_measured_family_task_matrix():
     validated = {
         ("yolo9", "detect"),
         ("yolo9_e2e", "detect"),
@@ -297,7 +328,7 @@ def test_round8_tensorrt_fp32_parity_promotes_nine_cells():
         assert "FP32" in entry.constraint
 
     pidnet = get_support("pidnet", "semantic", "tensorrt")
-    assert pidnet.tier == "experimental"
+    assert pidnet.tier == "available"
     assert "0.9970" in pidnet.reason
 
 
@@ -323,11 +354,11 @@ def test_round9_promotes_three_parity_cells_and_records_seven_gaps():
         assert "FP32" in entry.constraint
 
     lingbot = get_support("lingbotvision", "semantic", "tensorrt")
-    assert lingbot.tier == "experimental"
+    assert lingbot.tier == "available"
     assert "0.9842" in lingbot.reason
 
     zipdepth = get_support("zipdepth", "depth", "tensorrt")
-    assert zipdepth.tier == "experimental"
+    assert zipdepth.tier == "available"
     assert "30.27 dB" in zipdepth.reason
 
     expected_gaps = {
@@ -335,7 +366,7 @@ def test_round9_promotes_three_parity_cells_and_records_seven_gaps():
     }
     for family, measured in expected_gaps.items():
         entry = get_support(family, "detect", "onnx")
-        assert entry.tier == "experimental"
+        assert entry.tier == "available"
         assert measured in entry.reason
 
     for family in ("birefnet", "feynobg"):
@@ -391,11 +422,11 @@ def test_round18_records_nine_ncnn_parity_cells_and_two_holds():
         assert "public predict parity" in entry.constraint
 
     yolo2 = get_support("yolo2", "detect", "ncnn")
-    assert yolo2.tier == "experimental"
+    assert yolo2.tier == "blocked"
     assert "integer divide-by-zero" in yolo2.reason
 
     yolo9_p2 = get_support("yolo9_p2", "detect", "ncnn")
-    assert yolo9_p2.tier == "experimental"
+    assert yolo9_p2.tier == "available"
     assert "no detections above 0.05" in yolo9_p2.reason
 
 
@@ -423,7 +454,7 @@ def test_round11_promotes_three_trained_tensorrt_detectors_and_records_holds():
     }
     for (family, task), reason_fragment in measured_holds.items():
         entry = get_support(family, task, "tensorrt")
-        assert entry.tier == "experimental"
+        assert entry.tier == "available"
         assert reason_fragment in entry.reason
 
 
@@ -442,13 +473,13 @@ def test_round12_records_ten_measured_tensorrt_holds():
     }
     for (family, task), reason_fragment in measured_holds.items():
         entry = get_support(family, task, "tensorrt")
-        assert entry.tier == "experimental"
+        assert entry.tier == "available"
         assert reason_fragment in entry.reason
 
 
 def test_round15_records_rtdetrv4_tensorrt_hold():
     entry = get_support("rtdetrv4", "detect", "tensorrt")
-    assert entry.tier == "experimental"
+    assert entry.tier == "available"
     assert "50.4-pixel" in entry.reason
 
 
@@ -463,7 +494,7 @@ def test_round21_records_six_trained_openvino_holds():
     }
     for (family, task), reason_fragment in measured_holds.items():
         entry = get_support(family, task, "openvino")
-        assert entry.tier == "experimental"
+        assert entry.tier == "available"
         assert reason_fragment in entry.reason
 
 
@@ -485,7 +516,7 @@ def test_round22_promotes_nine_edge_gaze_and_classify_cells():
         assert "parity" in entry.reason
 
     hold = get_support("dinov2", "classify", "tensorrt")
-    assert hold.tier == "experimental"
+    assert hold.tier == "available"
     assert "2.2x" in hold.reason
 
 
@@ -507,7 +538,7 @@ def test_round23_promotes_nine_normal_semantic_depth_and_edge_cells():
         assert "parity" in entry.reason
 
     hold = get_support("rtmdet", "detect", "executorch")
-    assert hold.tier == "experimental"
+    assert hold.tier == "available"
     assert "detection parsing" in hold.reason
 
 
@@ -523,9 +554,9 @@ def test_round24_promotes_six_embedding_and_depth_cells():
     for family, task, format in validated:
         assert get_support(family, task, format).tier == "validated"
 
-    assert get_support("dinov2", "embed", "openvino").tier == "experimental"
-    assert get_support("dinov2", "embed", "tensorrt").tier == "experimental"
-    assert get_support("moge2", "normal", "ncnn").tier == "experimental"
+    assert get_support("dinov2", "embed", "openvino").tier == "available"
+    assert get_support("dinov2", "embed", "tensorrt").tier == "available"
+    assert get_support("moge2", "normal", "ncnn").tier == "available"
     assert get_support("moge2", "normal", "tflite").tier == "blocked"
 
 
@@ -718,10 +749,12 @@ def test_compat_table_paths_do_not_depend_on_working_directory(tmp_path, monkeyp
 
     monkeypatch.chdir(tmp_path)
     assert gen_compat_table.INVENTORY_PATH.exists()
-    rows, _, _ = gen_compat_table._rows()
+    rows, _, _, _ = gen_compat_table._rows()
     assert rows
     # The full matrix lives in docs/export_support.md; the README is curated.
-    assert gen_compat_table.render_docs().startswith("# Export support")
+    rendered = gen_compat_table.render_docs()
+    assert rendered.startswith("# Export support")
+    assert "## Available combinations" in rendered
 
 
 def test_dump_inventory_refuses_partial_overwrite(tmp_path):

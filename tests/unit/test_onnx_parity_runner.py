@@ -162,7 +162,7 @@ def test_ensure_case_weights_available_downloads_canonical_path(tmp_path):
             size="s",
             task="detect",
             weights="missing.pt",
-            onnx_claim="experimental",
+            onnx_claim="available",
         ),
         resolve_weights_path=lambda _name: str(weight_path),
         downloader=lambda path, size: seen.update({"path": path, "size": size}),
@@ -183,7 +183,7 @@ def test_ensure_case_weights_available_skips_existing_file(tmp_path):
             size="s",
             task="detect",
             weights="exists.pt",
-            onnx_claim="experimental",
+            onnx_claim="available",
         ),
         resolve_weights_path=lambda _name: str(weight_path),
         downloader=lambda _path, _size: pytest.fail("download should not run"),
@@ -199,7 +199,7 @@ def test_preflight_case_weights_raises_unavailable_for_weight_download_failure(m
         size="s",
         task="detect",
         weights="missing.pt",
-        onnx_claim="experimental",
+        onnx_claim="available",
     )
     monkeypatch.setattr(
         parity,
@@ -225,7 +225,7 @@ def test_preflight_case_weights_does_not_hide_unrelated_file_errors(monkeypatch)
         size="s",
         task="detect",
         weights="exists.pt",
-        onnx_claim="experimental",
+        onnx_claim="available",
     )
     monkeypatch.setattr(
         parity,
@@ -327,7 +327,7 @@ def test_write_summary_counts_unavailable_cases(tmp_path):
                 "family": "family",
                 "size": "s",
                 "task": "detect",
-                "onnx_claim": "experimental",
+                "onnx_claim": "available",
                 "notes": "",
             },
             "status": "unavailable",
@@ -356,7 +356,7 @@ def test_filter_cases_by_family_task_and_claim():
         DEFAULT_CASES,
         families=["ec"],
         tasks=["pose"],
-        claims=["experimental"],
+        claims=["available"],
     )
 
     assert {case.id for case in selected} == {

@@ -59,23 +59,17 @@ class TestSegFamilyClassWiring:
         assert m.family == "ec"
         assert isinstance(m.model, LibreECSegModel)
 
-    def test_train_seg_requires_allow_experimental(self):
-        # Seg training is implemented but gated behind the experimental flag.
-        m = LibreEC(model_path=None, size="s", task="segment")
-        with pytest.raises(RuntimeError, match="experimental"):
-            m.train(data="dummy.yaml")
-
-    def test_train_seg_selects_seg_trainer(self):
-        # With the flag set, the seg task dispatches to ECSegTrainer (it fails
-        # only later, on the missing dummy dataset — not with NotImplementedError).
+    def test_train_seg_selects_seg_path_without_opt_in(self):
+        # The ordinary call reaches dataset validation rather than an
+        # acknowledgement gate or an unavailable-task error.
         m = LibreEC(model_path=None, size="s", task="segment")
         with pytest.raises(FileNotFoundError):
-            m.train(data="definitely_missing.yaml", allow_experimental=True)
+            m.train(data="definitely_missing.yaml")
 
     def test_train_seg_rejects_non_native_imgsz(self):
         m = LibreEC(model_path=None, size="s", task="segment")
         with pytest.raises(ValueError, match="imgsz=640"):
-            m.train(data="dummy.yaml", allow_experimental=True, imgsz=320)
+            m.train(data="dummy.yaml", imgsz=320)
 
 
 class TestSegForwardAndPostprocess:
