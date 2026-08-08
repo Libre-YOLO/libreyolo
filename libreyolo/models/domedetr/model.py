@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -88,29 +89,63 @@ class LibreDOMEDETR(BaseModel):
             return None
         return int(weights_dict[key].shape[0])
 
+    def __init__(
+        self,
+        model_path,
+        size: str,
+        nb_classes: int = 80,
+        device: str = "auto",
+        task: str | None = None,
+        **kwargs,
+    ):
+        # The variant has to be known before ``_init_model`` runs: it selects
+        # the PAQI query budget *and* the decoder depth for L (4 layers on
+        # AI-TOD-V2, 6 on VisDrone), so it changes the module tree, not just a
+        # label. Resolve it from the most explicit signal available.
+        kwargs["weight_variant"] = self._resolve_weight_variant(
+            explicit=kwargs.pop("weight_variant", None),
+            model_path=model_path,
+            nb_classes=nb_classes,
+        )
+        if isinstance(model_path, dict):
+            model_path = unwrap_domedetr_checkpoint(model_path)
+        super().__init__(
+            model_path=model_path,
+            size=size,
+            nb_classes=nb_classes,
+            device=device,
+            task=task,
+            **kwargs,
+        )
+        if isinstance(model_path, str):
+            self._load_weights(model_path)
+
     @classmethod
-    def detect_weight_variant(
-        cls, weights_dict: dict, checkpoint: dict | None = None
+    def _resolve_weight_variant(
+        cls, explicit: str | None, model_path: Any, nb_classes: int
     ) -> str:
-        """Resolve the dataset variant, which sets the PAQI query budget.
+        """Pick the dataset variant: explicit > filename suffix > class count."""
+        if explicit is not None:
+            if explicit not in VARIANT_QUERY_BUDGET:
+                raise ValueError(
+                    f"Unknown weight_variant {explicit!r}; "
+                    f"expected one of {tuple(VARIANT_QUERY_BUDGET)}"
+                )
+            return explicit
 
-        AI-TOD-V2 runs 300..1500 queries, VisDrone 250..500, so getting this
-        wrong changes the proposal set rather than just a label. Prefer the
-        explicit marker the converter writes; fall back to the class count.
-        """
-        if checkpoint:
-            marker = checkpoint.get("weight_variant")
-            if marker in VARIANT_QUERY_BUDGET:
-                return marker
+        if isinstance(model_path, (str, Path)):
+            name = Path(model_path).name.lower()
+            for variant in cls.WEIGHT_VARIANTS:
+                if f"-{variant}" in name:
+                    return variant
 
-        nc = cls.detect_nb_classes(weights_dict)
-        variant = _NC_TO_VARIANT.get(nc)
+        variant = _NC_TO_VARIANT.get(nb_classes)
         if variant is None:
             logger.warning(
-                "Dome-DETR checkpoint carries no weight_variant marker and nc=%s "
-                "matches neither AI-TOD-V2 (9) nor VisDrone (12); defaulting to "
-                "the %r query budget.",
-                nc,
+                "Dome-DETR checkpoint has no -aitod/-visdrone filename suffix and "
+                "nc=%s matches neither AI-TOD-V2 (9) nor VisDrone (12); falling back "
+                "to the %r query budget. Pass weight_variant= to be explicit.",
+                nb_classes,
                 DEFAULT_VARIANT,
             )
             return DEFAULT_VARIANT
