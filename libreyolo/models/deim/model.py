@@ -317,11 +317,20 @@ class LibreDEIM(BaseModel):
     def _load_weights(self, model_path: str):
         model_path = self._resolve_weights_path(model_path)
         path = Path(model_path)
+        download_error = None
         if not path.exists():
             from ...utils.download import download_weights
 
-            download_weights(model_path, self.size)
+            try:
+                download_weights(model_path, self.size)
+            except Exception as exc:
+                download_error = exc
         if not path.exists():
+            if download_error is not None:
+                raise FileNotFoundError(
+                    f"DEIM weights file not found: {model_path}\n"
+                    f"Auto-download failed: {download_error}"
+                ) from download_error
             raise FileNotFoundError(f"DEIM weights file not found: {model_path}")
 
         try:

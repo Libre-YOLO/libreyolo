@@ -345,17 +345,20 @@ def test_direct_constructor_attempts_autodownload(
     target = Path("weights") / filename
     calls = []
 
-    class DownloadTriggered(RuntimeError):
-        pass
+    failure = RuntimeError("connection reset while fetching checkpoint")
 
     def fake_download(model_path, requested_size):
         calls.append((Path(model_path), requested_size))
-        raise DownloadTriggered
+        raise failure
 
     monkeypatch.setattr(model_cls, "_init_model", lambda _self: torch.nn.Identity())
     monkeypatch.setattr(download, "download_weights", fake_download)
 
-    with pytest.raises(DownloadTriggered):
+    with pytest.raises(
+        FileNotFoundError,
+        match="Auto-download failed: connection reset while fetching checkpoint",
+    ) as exc_info:
         model_cls(filename, size=size, device="cpu")
 
     assert calls == [(target, size)]
+    assert exc_info.value.__cause__ is failure
