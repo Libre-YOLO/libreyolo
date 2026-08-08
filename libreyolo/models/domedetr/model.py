@@ -172,8 +172,15 @@ class LibreDOMEDETR(BaseModel):
         sends people looking for a network problem. Raise instead.
         """
         name = Path(filename).name
+        size = cls.detect_size_from_filename(name)
+        if size is None:
+            # Not one of ours. ``download_weights`` asks every registered
+            # family in turn and takes the first non-None answer, so raising
+            # here would hijack every other family's download with a
+            # Dome-DETR error message.
+            return None
+
         variant = cls.detect_variant_from_filename(name)
-        size = cls.detect_size_from_filename(name) or "s"
         if variant is None:
             hint = (
                 f"{name} has no dataset suffix. Dome-DETR has no COCO checkpoint, "

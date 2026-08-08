@@ -348,6 +348,22 @@ def test_suffixed_filename_download_points_upstream():
     assert "RicePasteM/Dome-DETR" in message
 
 
+@pytest.mark.parametrize(
+    "foreign",
+    ["LibreTEEDt-edge.pt", "LibreDexiNedb-edge.pt", "LibreDFINEs.pt",
+     "LibreYOLO9t.pt", "LibreRFDETRs.pt"],
+)
+def test_download_hook_ignores_other_families(foreign):
+    """The hook must claim only Dome-DETR filenames.
+
+    ``download_weights`` asks every registered family in turn and takes the
+    first non-None answer, so a hook that raises unconditionally hijacks every
+    other family's download with the wrong error. Returning None hands the
+    filename to its real owner.
+    """
+    assert LibreDOMEDETR.get_download_url(foreign) is None
+
+
 def test_group_is_supporting_trainable():
     from libreyolo.models.registry import MODEL_GROUPS
 
