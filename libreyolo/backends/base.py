@@ -32,6 +32,7 @@ from ..postprocess.yolonas import (
     YOLO_NAS_POSE_RESIZE_SIZE,
     YOLO_NAS_RESIZE_SIZE,
 )
+from ..preprocess import as_batched_input, as_input
 from ..preprocess.yolo9 import preprocess_image
 from ..preprocess.yolonas import (
     preprocess_image as yolonas_preprocess_image,
@@ -966,7 +967,7 @@ class BaseBackend(ABC):
     @staticmethod
     def _preprocess_rfdetr(image, input_size, color_format, task=None):
         """RF-DETR preprocessing: direct resize + ImageNet normalization."""
-        from ..models.rfdetr.utils import (
+        from ..preprocess.rfdetr import (
             IMAGENET_MEAN,
             IMAGENET_STD,
             preprocess_numpy as rfdetr_preprocess_numpy,
@@ -992,7 +993,7 @@ class BaseBackend(ABC):
             return (img_tensor - mean) / std, original_img, original_size
 
         img_chw, _ = rfdetr_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
         return img_tensor, original_img, original_size
 
     @staticmethod
@@ -1005,7 +1006,7 @@ class BaseBackend(ABC):
         original_img = img.copy()
 
         img_chw, _ = lwdetr_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
 
         return img_tensor, original_img, original_size
 
@@ -1059,7 +1060,7 @@ class BaseBackend(ABC):
         original_img = img.copy()
 
         img_chw, _ = preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
         return img_tensor, original_img, original_size
 
     @staticmethod
@@ -1084,43 +1085,43 @@ class BaseBackend(ABC):
         original_img = img.copy()
 
         img_chw, _ = detr_preprocess_numpy(np.asarray(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
 
         return img_tensor, original_img, original_size
 
     @staticmethod
     def _preprocess_dfine(image, input_size, color_format):
         """D-FINE preprocessing: plain resize + RGB + /255, no ImageNet norm."""
-        from ..models.dfine.utils import preprocess_numpy as dfine_preprocess_numpy
+        from ..preprocess.dfine import preprocess_numpy as dfine_preprocess_numpy
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
         original_img = img.copy()
 
         img_chw, _ = dfine_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
 
         return img_tensor, original_img, original_size
 
     @staticmethod
     def _preprocess_deim(image, input_size, color_format):
         """DEIM-D-FINE preprocessing: plain resize + RGB + /255."""
-        from ..models.deim.utils import preprocess_numpy as deim_preprocess_numpy
+        from ..preprocess.deim import preprocess_numpy as deim_preprocess_numpy
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
         original_img = img.copy()
 
         img_chw, _ = deim_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
 
         return img_tensor, original_img, original_size
 
     @staticmethod
     def _preprocess_deimv2(image, input_size, color_format, model_size=None):
         """DEIMv2 preprocessing; DINO-backed sizes use ImageNet normalization."""
-        from ..models.deimv2.nn import DINO_SIZES
-        from ..models.deimv2.utils import preprocess_numpy as deimv2_preprocess_numpy
+        from ..preprocess.deimv2 import DINO_SIZES
+        from ..preprocess.deimv2 import preprocess_numpy as deimv2_preprocess_numpy
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
@@ -1129,23 +1130,21 @@ class BaseBackend(ABC):
         img_chw, _ = deimv2_preprocess_numpy(
             np.array(img), input_size, imagenet_norm=model_size in DINO_SIZES
         )
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
 
         return img_tensor, original_img, original_size
 
     @staticmethod
     def _preprocess_ec(image, input_size, color_format):
         """EC preprocessing: plain resize + RGB + /255 + ImageNet (mean, std)."""
-        from ..models.ec.postprocess import (
-            preprocess_numpy as ec_preprocess_numpy,
-        )
+        from ..preprocess.ec import preprocess_numpy as ec_preprocess_numpy
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
         original_img = img.copy()
 
         img_chw, _ = ec_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
         return img_tensor, original_img, original_size
 
     @staticmethod
@@ -1158,7 +1157,7 @@ class BaseBackend(ABC):
         original_img = img.copy()
 
         img_chw, _ = picodet_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
         return img_tensor, original_img, original_size
 
     @staticmethod
@@ -1178,20 +1177,20 @@ class BaseBackend(ABC):
         original_img = img.copy()
 
         img_chw, ratio = rtmdet_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
+        img_tensor = as_batched_input(img_chw)
         return img_tensor, original_img, original_size, ratio
 
     @staticmethod
     def _preprocess_rtdetr(image, input_size, color_format):
         """RT-DETR preprocessing: direct resize + normalize to [0,1]."""
-        from ..models.rtdetr.utils import preprocess_numpy as rtdetr_preprocess_numpy
+        from ..preprocess.rtdetr import preprocess_numpy as rtdetr_preprocess_numpy
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size  # (W, H)
         original_img = img.copy()
 
         img_chw, _ = rtdetr_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw)
+        img_tensor = as_input(img_chw)
         return img_tensor, original_img, original_size
 
     # =========================================================================

@@ -241,3 +241,68 @@ def test_onnx_predict_matches_torch_path_end_to_end(tmp_path, classes):
     assert free["boxes"] == ref["boxes"]
     assert free["conf"] == ref["conf"]
     assert free["cls"] == ref["cls"]
+
+
+# One family per distinct torch-conversion shape on the ONNX path:
+#   yolo9  - NMS path, preprocess_numpy returns CHW
+#   rtdetr - preprocess_numpy already returns NCHW (as_input, not as_batched_input)
+#   dfine  - DETR lineage, NMS-free postprocess
+#   rfdetr - ImageNet normalisation constants moved alongside the recipe
+_FAMILY_CASES = [
+    ("yolo9", "t", 128),
+    ("rtdetr", "r18", 128),
+    ("dfine", "n", 640),
+    ("rfdetr", "n", 128),
+]
+
+
+@pytest.mark.onnx
+@pytest.mark.parametrize("family,size,imgsz", _FAMILY_CASES)
+def test_g0_g1_families_predict_without_torch(family, size, imgsz):
+    """Each G0/G1 preprocess shape must run ONNX detect torch-free, and match.
+
+    All twelve G0/G1 families were verified by hand; these four cover the
+    distinct torch-conversion shapes so a regression in any of them is caught
+    without exporting twelve models on every run.
+    """
+    pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
+
+    from libreyolo.cli.config import get_model_class
+
+    model = get_model_class(family)(model_path=None, size=size, device="cpu")
+    onnx_path = Path(model.export(format="onnx", imgsz=imgsz)).resolve()
+
+    body = f"""
+        import json
+        import numpy as np
+        import libreyolo
+        from libreyolo.backends.onnx import OnnxBackend
+
+        res = OnnxBackend(r"{onnx_path}").predict(
+            libreyolo.SAMPLE_IMAGE, imgsz={imgsz}, conf=0.0, max_det=10
+        )
+        res = res[0] if isinstance(res, list) else res
+        print("RESULT" + json.dumps({{
+            "boxes": np.asarray(res.boxes.xyxy).round(3).tolist(),
+            "conf": np.asarray(res.boxes.conf).round(5).tolist(),
+            "cls": np.asarray(res.boxes.cls).tolist(),
+            "torch": "torch" in sys.modules,
+        }}))
+        """
+
+    free = json.loads(_assert_ok(run_without_torch(body)).split("RESULT")[1])
+    assert free["torch"] is False, f"{family}: the torch-free run imported torch"
+    assert free["boxes"], f"{family}: expected detections to compare against"
+
+    import libreyolo
+    from libreyolo.backends.onnx import OnnxBackend
+
+    res = OnnxBackend(str(onnx_path)).predict(
+        libreyolo.SAMPLE_IMAGE, imgsz=imgsz, conf=0.0, max_det=10
+    )
+    res = res[0] if isinstance(res, list) else res
+
+    assert free["boxes"] == np.asarray(res.boxes.xyxy).round(3).tolist()
+    assert free["conf"] == np.asarray(res.boxes.conf).round(5).tolist()
+    assert free["cls"] == np.asarray(res.boxes.cls).tolist()

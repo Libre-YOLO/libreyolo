@@ -26,6 +26,18 @@ from ..utils.lazy import lazy_module, module_available
 torch = lazy_module("torch")
 
 
+def as_input(img_nchw: np.ndarray):
+    """Wrap an already-batched array, as a ``torch.Tensor`` if torch is installed.
+
+    Counterpart to :func:`as_batched_input` for the recipes whose
+    ``preprocess_numpy`` already returns NCHW (RT-DETR), so no batch dim is
+    added here.
+    """
+    if module_available("torch"):
+        return torch.from_numpy(img_nchw)
+    return img_nchw
+
+
 def as_batched_input(img_chw: np.ndarray):
     """Add a batch dim, as a ``torch.Tensor`` if torch is installed.
 
@@ -40,4 +52,4 @@ def as_batched_input(img_chw: np.ndarray):
     return img_chw[None, ...]
 
 
-__all__ = ["as_batched_input"]
+__all__ = ["as_batched_input", "as_input"]

@@ -21,6 +21,11 @@ from ...postprocess.ec import (  # noqa: F401  (backward-compatible re-exports)
     postprocess_seg,
 )
 from ...utils.image_loader import ImageInput, ImageLoader
+from ...preprocess.ec import (  # noqa: F401  (moved; re-exported for backward compatibility)
+    _IMAGENET_MEAN,
+    _IMAGENET_STD,
+    preprocess_numpy,
+)
 
 
 def unwrap_ec_checkpoint(checkpoint: Mapping | Any):
@@ -39,25 +44,8 @@ def unwrap_ec_checkpoint(checkpoint: Mapping | Any):
     return checkpoint
 
 
-_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
-def preprocess_numpy(
-    img_rgb_hwc: np.ndarray, input_size: int = 640
-) -> Tuple[np.ndarray, float]:
-    """EC preprocess: square resize + /255 + ImageNet (mean, std).
-
-    Mirrors upstream val transforms (`Resize -> ConvertPILImage(scale=True) ->
-    Normalize(IMAGENET)`). The ImageNet normalization is what distinguishes
-    EC's preprocess from D-FINE's; missing it costs ~2 mAP on COCO val.
-    """
-    img_resized = Image.fromarray(img_rgb_hwc).resize(
-        (input_size, input_size), Image.Resampling.BILINEAR
-    )
-    arr = np.array(img_resized, dtype=np.float32) / 255.0
-    arr = (arr - _IMAGENET_MEAN) / _IMAGENET_STD
-    return arr.transpose(2, 0, 1), 1.0
 
 
 def preprocess_image(

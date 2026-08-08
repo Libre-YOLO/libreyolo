@@ -5,9 +5,7 @@ Provides preprocessing, postprocessing, and core attention functions.
 """
 
 import math
-from typing import Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,6 +14,9 @@ from ...kernels.attention.ms_deform_attn import (
     maybe_ms_deform_attn,
     ms_deform_attn_available,
     spatial_shapes_tensor,
+)
+from ...preprocess.rtdetr import (  # noqa: F401  (moved; re-exported for backward compatibility)
+    preprocess_numpy,
 )
 
 
@@ -133,22 +134,3 @@ def deformable_attention_core_func(
 # =============================================================================
 
 
-def preprocess_numpy(
-    img_rgb_hwc: np.ndarray, input_size: int
-) -> Tuple[np.ndarray, Tuple[int, int]]:
-    """Resize and normalize image for RTDETR inference. Returns float32 NCHW array.
-
-    Args:
-        img_rgb_hwc: Input image in RGB format, HWC layout
-        input_size: Target input size (square)
-
-    Returns:
-        Tuple of (preprocessed image as float32 NCHW array, original size (h, w))
-    """
-    import cv2
-
-    h, w = img_rgb_hwc.shape[:2]
-    img = cv2.resize(img_rgb_hwc, (input_size, input_size))
-    img = img.astype(np.float32) / 255.0
-    img = img.transpose(2, 0, 1)[np.newaxis]  # HWC -> NCHW
-    return img, (h, w)
