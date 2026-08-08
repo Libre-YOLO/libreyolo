@@ -609,8 +609,8 @@ DEEPLABV3_SMOKE_MODELS = [
 
 # OBB checkpoints do not belong in MODEL_CATALOG because that matrix feeds the
 # COCO detection mAP and training gates. Keep the task-appropriate smoke case
-# separate, as for the semantic-only matrices above. This case is locally
-# staged until maintainers make the separate weight-rehosting decision.
+# separate, as for the semantic-only matrices above. The representative N
+# checkpoint has a public LibreYOLO auto-download route.
 RTDETRV2_OBB_MODELS = [
     ("rtdetrv2", "n", "LibreRTDETRv2n-obb.pt"),
 ]

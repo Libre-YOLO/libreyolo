@@ -13,8 +13,10 @@ The RT-DETRv2 OBB encoder and decoder are adapted from:
 
 The official DOTA 1.0 checkpoints used for compatibility and parity testing
 come from RicePasteM/RT-DETR-OBB at immutable revision
-f376e9dcedfb9a47a21ac71ef61ad99f8b545698. They are not bundled with this
-repository and are not rehosted by LibreYOLO. Users may convert a locally
+f376e9dcedfb9a47a21ac71ef61ad99f8b545698. Converted mirrors are published
+as LibreYOLO/LibreRTDETRv2{n,s,m,l,x}-obb. Every weight repository carries
+the upstream Apache License 2.0 text and attribution notice. The checkpoints
+are not bundled with this source repository; users may also convert a locally
 supplied official checkpoint with weights/convert_rtdetrv2_weights.py.
 
 Validated official checkpoint SHA-256 digests:

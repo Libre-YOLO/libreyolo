@@ -2948,7 +2948,18 @@ class BaseBackend(ABC):
         """Parse five-coordinate RT-DETRv2 OBB output without NMS."""
         first = np.asarray(all_outputs[0][0], dtype=np.float32)
         second = np.asarray(all_outputs[1][0], dtype=np.float32)
-        if first.shape[-1] == 5 and second.shape[-1] != 5:
+        if first.ndim != 2 or second.ndim != 2 or first.shape[0] != second.shape[0]:
+            raise ValueError(
+                "RT-DETRv2 OBB export must return matching [Q,C] logits and "
+                f"[Q,5] boxes, got {first.shape} and {second.shape}"
+            )
+
+        if first.shape[-1] == second.shape[-1] == 5:
+            # LibreYOLO's export wrapper defines the equal-width case as
+            # (pred_logits, pred_boxes). Shape alone cannot distinguish a
+            # five-class checkpoint from its five-coordinate OBB output.
+            logits, boxes_raw = first, second
+        elif first.shape[-1] == 5 and second.shape[-1] != 5:
             boxes_raw, logits = first, second
         elif second.shape[-1] == 5 and first.shape[-1] != 5:
             boxes_raw, logits = second, first

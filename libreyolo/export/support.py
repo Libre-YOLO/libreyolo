@@ -240,9 +240,7 @@ _add(
         "covered by its external-data flagship test."
     ),
     since="1.3",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "validated",
@@ -346,9 +344,7 @@ _add(
         "test in tests/e2e/test_executorch.py."
     ),
     since="1.3",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "blocked",
@@ -396,9 +392,7 @@ _add(
         "conversion, runtime execution, input sensitivity, deterministic "
         "random-weight raw parity, and detection parsing are covered."
     ),
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "blocked",
@@ -421,9 +415,7 @@ _add(
         "public post-NMS detection parity."
     ),
     since="1.6",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "validated",
@@ -436,9 +428,7 @@ _add(
         "postprocessing parity for boxes plus keypoints."
     ),
     since="1.6",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "validated",
@@ -467,9 +457,7 @@ _add(
         "public box and keypoint parity."
     ),
     since="1.6",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "validated",
@@ -482,9 +470,7 @@ _add(
         "probability cosine plus top-1 parity."
     ),
     since="1.6",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "validated",
@@ -497,9 +483,7 @@ _add(
         "restored-image parity above 40 dB PSNR."
     ),
     since="1.6",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "validated",
@@ -526,9 +510,7 @@ _add(
         "by the external-data flagship test in tests/e2e/test_executorch.py."
     ),
     since="1.3",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "validated",
@@ -540,9 +522,7 @@ _add(
         "external-data flagship test in tests/e2e/test_executorch.py."
     ),
     since="1.3",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "validated",
@@ -554,9 +534,7 @@ _add(
         "external-data flagship test in tests/e2e/test_executorch.py."
     ),
     since="1.4",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "validated",
@@ -602,8 +580,7 @@ _add(
     ),
     since="1.6",
     constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape "
-        "divisible by 32"
+        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape divisible by 32"
     ),
 )
 _add(
@@ -1135,9 +1112,7 @@ _add(
         "cosine plus top-1 parity."
     ),
     since="1.6",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "validated",
@@ -1436,9 +1411,7 @@ _add(
         "pitch/yaw parity for the fixed face-crop contract."
     ),
     since="1.6",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 448x448 face crop"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed 448x448 face crop"),
 )
 _add(
     "validated",
@@ -1679,9 +1652,7 @@ _add(
         "runtime execution, two-image edge-probability parity, and metadata."
     ),
     since="1.6",
-    constraint=(
-        "ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"
-    ),
+    constraint=("ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape"),
 )
 _add(
     "blocked",
@@ -1698,9 +1669,7 @@ _add(
     ("teed", "dexined"),
     ("edge",),
     ("coreai", "coreml"),
-    reason=(
-        "This edge runtime has no parity-valid artifact for the requested format."
-    ),
+    reason=("This edge runtime has no parity-valid artifact for the requested format."),
 )
 _add(
     "validated",
@@ -2644,7 +2613,7 @@ _add(
     constraint="FP32, batch 1, fixed 1024x1024 input canvas",
 )
 _add(
-    "experimental",
+    "available",
     ("rtdetrv2",),
     ("obb",),
     ("openvino",),
@@ -2660,7 +2629,7 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "available",
     ("rtdetrv2",),
     ("obb",),
     ("tensorrt",),
@@ -2777,9 +2746,7 @@ _add(
         "parity, input-sensitivity, metadata, and public-mask coverage."
     ),
     since="1.5",
-    constraint=(
-        "TensorRT 10.16 FP32, batch 1, fixed square input divisible by 8"
-    ),
+    constraint=("TensorRT 10.16 FP32, batch 1, fixed square input divisible by 8"),
 )
 _add(
     "blocked",
@@ -2826,9 +2793,7 @@ _add(
         "above 95% pixel agreement."
     ),
     since="1.6",
-    constraint=(
-        "TensorRT 10.16 FP32, batch 1, fixed square input divisible by 32"
-    ),
+    constraint=("TensorRT 10.16 FP32, batch 1, fixed square input divisible by 32"),
 )
 _add(
     "blocked",
@@ -3492,9 +3457,7 @@ _add(
         "99.985% public-mask agreement on the validated GPU."
     ),
     since="1.5",
-    constraint=(
-        "TensorRT 10.16 FP32, RTX 5070 Ti, batch 1, fixed 520x520 input"
-    ),
+    constraint=("TensorRT 10.16 FP32, RTX 5070 Ti, batch 1, fixed 520x520 input"),
 )
 _add(
     "validated",

@@ -32,7 +32,10 @@ def test_rtdetrv2_obb_checkpoint_recognition_and_nomenclature():
     assert LibreRTDETRv2.detect_size(state) == "n"
     assert LibreRTDETRv2.detect_size_from_filename("LibreRTDETRv2x-obb.pt") == "x"
     assert LibreRTDETRv2.default_checkpoint_names(15)[0] == "plane"
-    assert LibreRTDETRv2.get_download_url("LibreRTDETRv2n-obb.pt") is None
+    assert LibreRTDETRv2.get_download_url("LibreRTDETRv2n-obb.pt") == (
+        "https://huggingface.co/LibreYOLO/LibreRTDETRv2n-obb/resolve/main/"
+        "LibreRTDETRv2n-obb.pt"
+    )
 
 
 @pytest.mark.parametrize(
@@ -215,6 +218,41 @@ def test_rtdetrv2_obb_exported_parser_matches_native_postprocess():
         max_det=2,
     )
     boxes, scores, classes, masks, obb = parsed
+
+    assert masks is None
+    np.testing.assert_allclose(boxes, native["boxes"].numpy(), rtol=0, atol=1e-5)
+    np.testing.assert_allclose(scores, native["scores"].numpy(), rtol=0, atol=1e-7)
+    np.testing.assert_array_equal(classes, native["classes"].numpy())
+    np.testing.assert_allclose(obb, native["obb"].numpy(), rtol=0, atol=1e-5)
+
+
+def test_rtdetrv2_obb_exported_parser_supports_five_classes():
+    from libreyolo.backends.base import BaseBackend
+    from libreyolo.postprocess.rtdetr import postprocess_obb
+
+    output = {
+        "pred_logits": torch.tensor(
+            [[[8.0, 7.0, 6.0, 5.0, 4.0], [-4.0, -5.0, -6.0, -7.0, -8.0]]]
+        ),
+        "pred_boxes": torch.tensor(
+            [[[0.5, 0.25, 0.2, 0.1, 0.25], [0.1, 0.1, 0.1, 0.1, 0.0]]]
+        ),
+    }
+    native = postprocess_obb(
+        output,
+        conf_thres=0.0,
+        iou_thres=0.0,
+        original_size=(200, 100),
+        max_det=3,
+    )
+    boxes, scores, classes, masks, obb = BaseBackend._parse_rtdetr_obb(
+        [output["pred_logits"].numpy(), output["pred_boxes"].numpy()],
+        1024,
+        200,
+        100,
+        0.0,
+        max_det=3,
+    )
 
     assert masks is None
     np.testing.assert_allclose(boxes, native["boxes"].numpy(), rtol=0, atol=1e-5)

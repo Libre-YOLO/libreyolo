@@ -494,6 +494,9 @@ These converter paths are callable with the recorded validation context.
 - `rtdetr` / `detect` / `coreml`: Conversion is available, but runtime parity requires a macOS runner.
 - `rtdetrv2` / `detect` / `tensorrt`: A deterministic synthetic fixture exports and reloads, but matched public boxes drift by at least 8 pixels and fall to 0.231 IoU.
 - `rtdetrv2` / `detect` / `openvino`: After Hungarian query alignment, only 93.94% of trained raw elements meet the converted-runtime tolerance.
+- `rtdetrv2` / `obb` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `rtdetrv2` / `obb` / `tensorrt`: The official N checkpoint builds, reloads, and preserves the top public OBB within 0.057 pixels, but matched raw queries still drift by up to 0.078 in logits and 0.034 in normalized box coordinates. Constraint: TensorRT 10.16 FP32 on RTX 5070 Ti, batch 1, fixed 1024x1024 input canvas; export the ONNX intermediate on CPU
+- `rtdetrv2` / `obb` / `openvino`: The official N checkpoint exports, reloads, and preserves the top public OBB within 0.041 pixels, but the complete decoder query set does not meet raw-output parity after matching. Constraint: OpenVINO 2026.2 CPU, FP32, batch 1, fixed 1024x1024 input canvas; export the ONNX intermediate on CPU
 - `rtdetrv4` / `detect` / `tensorrt`: A deterministic synthetic fixture exports, reloads, and predicts, but repeated TensorRT 10.16 FP32 builds change public top-k class membership or box geometry; a measured reconstruction reached 0 IoU with 50.4-pixel coordinate drift.
 - `rtmdet` / `detect` / `executorch`: The export-only graph unshares RTMDet's cross-level head convolutions to avoid duplicate XNNPACK batch-norm fusion parameter names. Full conversion, runtime execution, input sensitivity, deterministic random-weight raw parity, and detection parsing are covered. Constraint: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `swin` / `classify` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
@@ -1082,7 +1085,7 @@ These converter paths are callable with the recorded validation context.
 - `rtdetrv2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtdetrv2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rtdetrv2` / `obb` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
-- `rtdetrv2` / `obb` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `rtdetrv2` / `obb` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `rtdetrv2` / `obb` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `rtdetrv2` / `obb` / `ncnn`: NCNN export is not supported for RT-DETRv2: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rtdetrv2` / `obb` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.

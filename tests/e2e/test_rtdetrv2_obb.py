@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pytest
 from PIL import Image
@@ -14,18 +11,12 @@ from libreyolo import LibreYOLO
 from .conftest import RTDETRV2_OBB_PARAMS
 
 
-pytestmark = [pytest.mark.e2e, pytest.mark.rtdetrv2]
+pytestmark = [pytest.mark.e2e, pytest.mark.network, pytest.mark.rtdetrv2]
 
 
 @pytest.mark.parametrize("family,size,weights", RTDETRV2_OBB_PARAMS)
 def test_rtdetrv2_obb_trained_checkpoint_smoke(family, size, weights):
-    staged = Path(os.getenv("LIBREYOLO_RTDETRV2_OBB_WEIGHTS", weights))
-    if not staged.is_file():
-        pytest.skip(
-            "stage a converted official checkpoint with LIBREYOLO_RTDETRV2_OBB_WEIGHTS"
-        )
-
-    model = LibreYOLO(str(staged), device="cuda")
+    model = LibreYOLO(weights, device="cuda")
     assert (model.FAMILY, model.size, model.task) == (family, size, "obb")
 
     image = Image.fromarray(np.full((480, 800, 3), 127, dtype=np.uint8))

@@ -296,10 +296,11 @@ Used for: the inference-only RT-DETRv2 OBB encoder and decoder in
           The port adapts engine/rtv4/hybrid_encoder.py and
           engine/rtv4/rtdetrv2_obb_decoder.py. The official DOTA 1.0
           checkpoints were validated from RicePasteM/RT-DETR-OBB at
-          revision f376e9dcedfb9a47a21ac71ef61ad99f8b545698. LibreYOLO
-          does not bundle or rehost those checkpoints; users convert a
-          locally supplied official checkpoint with
-          weights/convert_rtdetrv2_weights.py.
+          revision f376e9dcedfb9a47a21ac71ef61ad99f8b545698. Converted
+          mirrors are published as LibreYOLO/LibreRTDETRv2{n,s,m,l,x}-obb;
+          every repository carries the upstream Apache License 2.0 and
+          attribution notice. Users may also convert a locally supplied
+          official checkpoint with weights/convert_rtdetrv2_weights.py.
 
 --------------------------------------------------------------------
 RF-DETR (Roboflow)

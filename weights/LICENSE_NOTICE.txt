@@ -215,11 +215,11 @@ project the weights were derived from. Per-family summary:
                22d5232a4e0df6ac4bc26ed1c8aac8b4060449c7
              official DOTA 1.0 checkpoints: RicePasteM/RT-DETR-OBB at
                revision f376e9dcedfb9a47a21ac71ef61ad99f8b545698
-             LibreYOLO does not bundle or rehost these checkpoints pending
-             a maintainer distribution decision. Convert a locally supplied
-             official checkpoint with weights/convert_rtdetrv2_weights.py;
-             conversion preserves learned tensors and adds only LibreYOLO
-             checkpoint metadata.
+             converted mirrors: LibreYOLO/LibreRTDETRv2{n,s,m,l,x}-obb
+             Each mirror carries the upstream Apache License 2.0 and NOTICE.
+             Convert a locally supplied official checkpoint with
+             weights/convert_rtdetrv2_weights.py; conversion preserves learned
+             tensors and adds only LibreYOLO checkpoint metadata.
 
     DETR     (LibreDETR{r50,r50dc5,r101,r101dc5})      Apache-2.0
              upstream: facebookresearch/detr, commit

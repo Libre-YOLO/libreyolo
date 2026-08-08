@@ -150,14 +150,6 @@ class LibreRTDETRv2(LibreRTDETR):
         return dict(RTDETRV2_OBB_NAMES) if nc == 15 else None
 
     @classmethod
-    def get_download_url(cls, filename: str) -> Optional[str]:
-        # The first OBB port intentionally requires a user-supplied official
-        # checkpoint until maintainers make a separate rehosting decision.
-        if cls.detect_task_from_filename(filename) == "obb":
-            return None
-        return super().get_download_url(filename)
-
-    @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
         if cls.is_obb_state_dict(weights_dict):
             return True
