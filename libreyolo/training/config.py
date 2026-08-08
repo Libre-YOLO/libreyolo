@@ -482,8 +482,10 @@ class DOMEDETRConfig(DFINEConfig):
     multi_scale: bool = False
     base_size_repeat: Optional[int] = None
 
-    # DeFE supervision weights, from configs/dome/include/dome_hgnetv2.yml
-    # (defe_density_map_weight) and the DomeCriterion defaults.
+    # DeFE supervision weights. Note upstream's DomeCriterion *code* default
+    # for defe_density_map_weight is 4, but every shipped config in
+    # configs/dome/ overrides it to 1, so 1 is what the released
+    # checkpoints were trained with and what reproduces their loss values.
     defe_density_map_weight: float = 1.0
     density_recall_penalty: float = 0.3
     defe_reg_loss_weight: float = 1.0
