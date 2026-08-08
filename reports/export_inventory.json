@@ -417,6 +417,34 @@
     "available": true,
     "group": "g2"
   },
+  "domedetr": {
+    "class": "libreyolo.models.domedetr.model.LibreDOMEDETR",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "s": 800,
+      "m": 800,
+      "l": 800
+    },
+    "default_imgsz": {
+      "s": 800,
+      "m": 800,
+      "l": 800
+    },
+    "task_sizes": {
+      "detect": {
+        "s": 800,
+        "m": 800,
+        "l": 800
+      }
+    },
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "ec": {
     "class": "libreyolo.models.ec.model.LibreEC",
     "tasks": [

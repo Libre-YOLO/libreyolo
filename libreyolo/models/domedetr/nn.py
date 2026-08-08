@@ -143,23 +143,3 @@ class LibreDOMEDETRModel(nn.Module):
             if hasattr(m, "convert_to_deploy") and m is not self:
                 m.convert_to_deploy()
         return self
-
-
-class DOMEDETRExportWrapper(nn.Module):
-    """Tracing-friendly wrapper: deploys once and flattens the output dict.
-
-    Also pins MWAS onto its static-shape path so the traced graph does not
-    bake in the window count of whichever image was used for tracing.
-    """
-
-    def __init__(self, model: LibreDOMEDETRModel):
-        super().__init__()
-        self.model = model
-        self.model.deploy()
-        for module in self.model.modules():
-            if hasattr(module, "force_static_path"):
-                module.force_static_path = True
-
-    def forward(self, x):
-        out = self.model(x)
-        return out["pred_logits"], out["pred_boxes"]

@@ -690,6 +690,7 @@ FAMILY_MARKERS = {
     "dinodetr": pytest.mark.dinodetr,
     "hrnet": pytest.mark.hrnet,
     "dfine": pytest.mark.dfine,
+    "domedetr": pytest.mark.domedetr,
     "deim": pytest.mark.deim,
     "deimv2": pytest.mark.deimv2,
     "ec": pytest.mark.ec,

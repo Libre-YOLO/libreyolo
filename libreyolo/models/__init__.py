@@ -52,7 +52,7 @@ from .yolo9.model import LibreYOLO9  # noqa: E402
 from .yolonas.model import LibreYOLONAS  # noqa: E402
 from .deimv2.model import LibreDEIMv2  # noqa: E402
 from .rtdetrv4.model import LibreRTDETRv4  # noqa: E402  (must precede LibreDFINE — sibling arch, more-specific can_load)
-from .domedetr.model import LibreDOMEDETR  # noqa: E402  (must precede LibreDFINE — D-FINE derivative, more-specific can_load on encoder.DeFE.)
+from .domedetr.model import LibreDOMEDETR  # noqa: E402  (D-FINE derivative; routing is enforced by can_load on encoder.DeFE. in both directions, not by this line — importing it pulls in models.dfine first, so it registers *after* LibreDFINE regardless of position here)
 from .dfine.model import LibreDFINE  # noqa: E402
 from .deim.model import LibreDEIM  # noqa: E402
 

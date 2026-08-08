@@ -9,6 +9,29 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **Dome-DETR** (`domedetr`) as an inference-only detect family: a
+  tiny-object specialist for aerial, drone and remote-sensing imagery, ported
+  from [Dome-DETR](https://github.com/RicePasteM/Dome-DETR) (Apache-2.0, ACM
+  Multimedia 2025). It is D-FINE plus DeFE (a density head), MWAS (encoder
+  attention restricted to occupied windows) and PAQI (query count set by local
+  density instead of a fixed 300). Sizes s/m/l, 800x800, `max_abs_diff == 0.0`
+  against upstream on all six published checkpoints.
+
+  Three things to know before reaching for it. Its advantage narrows as
+  objects grow, so it sits beside D-FINE rather than replacing it. There is no
+  COCO checkpoint upstream, only AI-TOD-V2 (9 classes) and VisDrone (12), so
+  canonical filenames always carry a dataset suffix
+  (`LibreDOMEDETRs-visdrone.pt`) and class names come from checkpoint
+  metadata. And export is unsupported: PAQI's per-image query count makes a
+  traced graph valid only for the image it was traced on, so `export()` raises
+  rather than emitting one that silently returns wrong results.
+
+  Weights are not rehosted. The upstream model card states no license (its
+  prose claims Apache-2.0 while also restricting use to academic research), so
+  they are linked upstream pending clarification, following the YOLO-NAS
+  precedent. Convert them yourself with
+  `weights/convert_domedetr_weights.py`.
+
 - Built-in Comet, ClearML, Neptune (`neptune-scale`) and DVC/DVCLive training
   loggers, with the same canonical metrics and failure-isolation contract as
   the existing TensorBoard, MLflow and Weights & Biases integrations.

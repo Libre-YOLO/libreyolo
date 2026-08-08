@@ -29,6 +29,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | dinov2 | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |
 | dinov2 | classify | ✓ | ✓ | ✓ | exp | ✓ |  |  |  |  |  |  | exp |
 | dinov2 | embed | ✓ | ✓ | exp | exp | exp |  |  |  |  | ✓ |  |  |
+| domedetr | detect | exp | exp | exp | exp | exp |  |  |  | exp |  |  |  |
 | ec | detect | ✓ | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | ✓ | exp | exp | ✓ |  |  |  |  |  |  |
 | ec | segment | ✓ | ✓ | ✓ | exp | ✓ | ✓ |  |  |  |  |  |  |
@@ -563,6 +564,12 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `embed` / `ncnn`: PNNX 20260526 cannot lower the DINOv2 attention graph's batch-axis broadcasts and leaves an unsupported pnnx.Expression node.
 - `dinov2` / `embed` / `coreml`: No parity-valid embedding artifact is available for this runtime.
 - `dinov2` / `embed` / `coreai`: No parity-valid embedding artifact is available for this runtime.
+- `domedetr` / `detect` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
+- `domedetr` / `detect` / `mnn`: MNN v1 supports G0/G1 detection exports only.
+- `domedetr` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
+- `domedetr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `domedetr` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `domedetr` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `ec` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `ec` / `detect` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `detect` / `tflite`: onnx2tf 2.6.7 emits an ONNX_LAYERNORMALIZATION custom operation that LiteRT 2.1.2 cannot prepare.

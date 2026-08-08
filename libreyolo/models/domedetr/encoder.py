@@ -237,7 +237,10 @@ class DomeHybridEncoder(nn.Module):
 
         if self.use_defe:
             defe_feature, reg_value = self.DeFE(proj_feats[0])
-            h, w = proj_feats[1].shape[2:]
+            # int() so the window grid is a graph constant rather than a traced
+            # shape read: ONNX rejects adaptive pooling whose output_size is not
+            # constant. Safe because this family exports at a fixed square size.
+            h, w = int(proj_feats[1].shape[2]), int(proj_feats[1].shape[3])
             defe_feature_pooled = F.adaptive_max_pool2d(
                 defe_feature, (h // self.mwas_window_size, w // self.mwas_window_size)
             )

@@ -19,9 +19,15 @@ Two forward paths, same numerics:
   resolution alone, which is what ONNX needs.
 
 Because the empty windows are masked out of the attention *keys*, the occupied
-windows attend over exactly the same set in both paths, so the static path is
-not an approximation. ``tests/unit/test_domedetr_mwas.py`` pins the two
-together. This mirrors the approach on upstream's own ``onnx-export`` branch.
+windows attend over algebraically the same set in both paths: this is a
+reformulation, not a reduced-accuracy fallback. It is not bit-identical
+though. Softmax over a padded key set and the larger fused matmuls reassociate
+the floating-point sums, which measures at ~1e-5 max abs difference on the
+encoder output (see ``tests/unit/test_domedetr_mwas.py``, which pins the gap
+rather than asserting zero). That is the same order as ONNX Runtime's own
+divergence from PyTorch, so it does not widen the export error budget.
+
+This mirrors the approach on upstream's own ``onnx-export`` branch.
 """
 
 from __future__ import annotations
