@@ -209,9 +209,15 @@ Reading the cache correctly matters, because a skipped run is still green:
   not that the target was tested in that run. Every run states which it was in
   its step summary, and a skipping run shows a `Skipped (...)` job instead of
   the `e2e` job.
-- To answer "was this exact commit tested?", look for the run whose artifact is
-  named `modal-nightly-<sha>`. Only a run that really executed the suite
-  produces one. The run list alone cannot answer the question.
+- To answer "was this exact commit tested, and did it pass?", read the `e2e`
+  job's conclusion, not the run's. A skipped run still lists the `e2e` job with
+  conclusion `skipped`, while the overall run reports success. Only
+  `e2e` concluding `success` means the suite ran and passed.
+- The `dev` workflow additionally uploads `modal-nightly-<sha>`, but that upload
+  is `if: always()`, so the artifact exists for failed and timed-out runs too.
+  Its name proves the suite executed on that SHA, not that it passed; the pass
+  is `"status": "passed"` inside `modal-nightly-result.json`. The release and
+  PyPI workflows upload no artifact at all.
 
 The Modal-backed `dev` run is serialized with a GitHub Actions concurrency group
 because it writes a shared Modal volume. The remote GPU function has a 180 minute
