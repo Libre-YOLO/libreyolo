@@ -236,10 +236,24 @@ uvx modal run tools/ci/modal_nightly.py --ref <candidate-sha> --target test_nigh
 ```
 
 Both print a `MODAL_NIGHTLY_RESULT {json}` line with `status`, runtime, and
-estimated GPU cost; record status **and cost** on the scoreboard. If the
-last successful nightly already ran on the candidate SHA (check the run's
-step summary for the ref), count it and skip the re-run; that is the whole
-point of reusing the nightly.
+estimated GPU cost; record status **and cost** on the scoreboard.
+
+**A green nightly in the run list does not mean the candidate was tested.**
+The workflow skips when the target already passed this week, and a skipped run
+still reports success. Establish what was actually covered before deciding:
+
+```bash
+# Which runs really executed the suite? Only those have this artifact.
+gh api repos/LibreYOLO/libreyolo/actions/runs/<run-id>/artifacts \
+  --jq '.artifacts[].name'      # -> modal-nightly-<sha> on a real run, empty on a skip
+```
+
+A run whose artifact is `modal-nightly-<candidate-sha>` is a genuine pass on
+the candidate: count it and skip the re-run, that is the point of reusing the
+nightly. Anything else, including three consecutive green runs, is not
+evidence about the candidate. Two quick tells for a skip: the run finished in
+seconds rather than tens of minutes, and its job list shows
+`Skipped (dev already tested)` instead of `e2e (dev)`.
 
 For gates beyond the nightly contract (RF5 training benchmark, a heavier
 suite, a specific GPU), use the `launch-serverless-gpu-job` skill
@@ -413,6 +427,9 @@ the user to post by hand.
 - Treating the empty checks list on the `dev -> release` PR as green.
 - Re-running a 3-hour Modal nightly when the last green run already tested
   the candidate SHA.
+- Reading a green nightly as a pass on the candidate without checking that the
+  run produced a `modal-nightly-<candidate-sha>` artifact. Skipped runs are
+  green too.
 - Squash-merging the release PR.
 - Bumping the version on dev instead of on the release-PR branch.
 - Skipping Phase 4 because "publish.yml was green" (green publish and a
