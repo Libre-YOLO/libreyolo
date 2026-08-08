@@ -323,6 +323,31 @@ def test_denoising_mask_isolates_each_image_padding():
     assert not bool(attn_mask[head1:, pad_start:, pad_start:].all())
 
 
+def test_bare_filename_download_explains_itself():
+    """No COCO checkpoint exists, so the bare name must say so, not 404.
+
+    Left to the base implementation this retries a never-to-exist HF repo
+    three times and ends in a generic "file not found", which sends people
+    hunting for a network fault.
+    """
+    with pytest.raises(FileNotFoundError) as excinfo:
+        LibreDOMEDETR.get_download_url("LibreDOMEDETRs.pt")
+    message = str(excinfo.value)
+    assert "no dataset suffix" in message
+    assert "LibreDOMEDETRs-aitod.pt" in message
+    assert "LibreDOMEDETRs-visdrone.pt" in message
+    assert "convert_domedetr_weights.py" in message
+
+
+def test_suffixed_filename_download_points_upstream():
+    """Even a canonical name is not hosted: say why and how to get it."""
+    with pytest.raises(FileNotFoundError) as excinfo:
+        LibreDOMEDETR.get_download_url("LibreDOMEDETRm-visdrone.pt")
+    message = str(excinfo.value)
+    assert "not rehosted" in message
+    assert "RicePasteM/Dome-DETR" in message
+
+
 def test_group_is_supporting_trainable():
     from libreyolo.models.registry import MODEL_GROUPS
 

@@ -157,6 +157,48 @@ class LibreDOMEDETR(BaseModel):
             return DEFAULT_VARIANT
         return variant
 
+    @classmethod
+    def get_download_url(cls, filename: str) -> Optional[str]:
+        """Refuse to auto-download, with the reason.
+
+        Two separate things would otherwise go wrong here. Nothing is hosted
+        under ``LibreYOLO/`` for this family at all, because the upstream
+        weight license is unresolved. And there is no COCO checkpoint even
+        upstream, so a bare ``LibreDOMEDETRs.pt`` names a file that cannot
+        exist in any world: the canonical names all carry a dataset suffix.
+
+        Left to the base implementation this 404s three times against a
+        never-to-exist repo and ends in a generic "file not found", which
+        sends people looking for a network problem. Raise instead.
+        """
+        name = Path(filename).name
+        variant = cls.detect_variant_from_filename(name)
+        size = cls.detect_size_from_filename(name) or "s"
+        if variant is None:
+            hint = (
+                f"{name} has no dataset suffix. Dome-DETR has no COCO checkpoint, "
+                f"so there is no bare {cls.FILENAME_PREFIX}{size}.pt -- the canonical "
+                f"names are {cls.FILENAME_PREFIX}{size}-aitod.pt (AI-TOD-V2, 9 classes) "
+                f"and {cls.FILENAME_PREFIX}{size}-visdrone.pt (VisDrone, 12 classes). "
+                "Pick the one matching your data."
+            )
+        else:
+            hint = f"{name} is a valid Dome-DETR name, but LibreYOLO does not host it."
+
+        raise FileNotFoundError(
+            f"{hint}\n\n"
+            "Dome-DETR weights are not rehosted under the LibreYOLO org: the "
+            "upstream model card states no license (its prose claims Apache-2.0 "
+            "while also restricting use to academic research), so there is no "
+            "redistribution grant to rely on. Download from upstream and convert:\n\n"
+            "  hf download RicePasteM/Dome-DETR --include 'best_ckpts_dome_2026/*' "
+            "--local-dir dome-ckpts\n"
+            "  python weights/convert_domedetr_weights.py \\\n"
+            f"      dome-ckpts/best_ckpts_dome_2026/aitod-{size}-best.pth \\\n"
+            f"      weights/{cls.FILENAME_PREFIX}{size}-aitod.pt --size {size} --variant aitod\n\n"
+            "See weights/LICENSE_NOTICE.txt."
+        )
+
     def _init_model(self) -> nn.Module:
         return LibreDOMEDETRModel(
             config=self.size,
