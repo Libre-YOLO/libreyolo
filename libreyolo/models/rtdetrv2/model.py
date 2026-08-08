@@ -308,7 +308,7 @@ class LibreRTDETRv2(LibreRTDETR):
 
     @wraps(LibreRTDETR.train)
     def train(self, *args, **kwargs):
-        if self.task == "obb":
+        if getattr(self, "task", "detect") == "obb":
             raise NotImplementedError(
                 "RT-DETRv2 OBB is inference-only in LibreYOLO; training is not implemented"
             )
