@@ -7,9 +7,10 @@ description: >-
   for X", "what would it take to add X"), when triaging a model-request issue,
   or when building a batch of candidates for the museum tier. Covers the
   already-in-the-tree check, the license gate, choosing the port source and
-  scaffold, the fixed PRD section template, and publishing the result to a
-  gist registered in issue #637. This is the planning half; the execution half
-  is `libreyolo-port-model`.
+  scaffold, the fixed PRD section template, and saving the result locally under
+  the user's Documents/handoffs directory. Never publish or register the
+  handoff remotely. This is the planning half; the execution half is
+  `libreyolo-port-model`.
 ---
 
 # Write a PRD for adding a model to LibreYOLO
@@ -55,7 +56,7 @@ Check four things, not one:
 
 If it already exists, **stop and write a short note instead of a PRD**: what is
 shipped, what is genuinely missing, and the one or two residual tasks worth
-doing. Register that note the same way (section 6). A PRD for a shipped model
+doing. Save that note the same way (section 6). A PRD for a shipped model
 wastes an entire implementation cycle.
 
 ## 2. License gate
@@ -197,30 +198,26 @@ Style: no em dashes or en dashes, no personal names, no machine-specific paths.
 State only what you verified, and tell the implementer to verify at port time
 where you could not.
 
-## 6. Publish and register
+## 6. Save locally
 
-A PRD nobody can find is lost work.
+A model-port handoff is a local working artifact, not a public artifact.
 
-1. Publish it as a **public gist** (`gh gist create <file> --public --desc "..."`).
-   Per-file anchors are the filename lowercased with dots turned into hyphens,
-   for example `#file-handoff_detr_detect-md`.
-2. Register it in **issue #637, "Model candidates to be added to the library"**:
-   https://github.com/LibreYOLO/libreyolo/issues/637
-   Edit the issue body, put the model under its task category (Detection,
-   Instance segmentation, Classification, Semantic segmentation, Keypoint/pose,
-   Depth), and follow the existing line format:
-
-   ```
-   - <Model>: <paper or repo url> (<license summary>). Handoff: <gist anchor url>
-   ```
-
-   Models already shipped go in the `ADDED` section at the bottom with their
-   family name, not in the candidate list.
-3. Before publishing anything, scan for leakage: no real names, usernames,
-   emails, absolute machine paths, or credentials. Repo-relative paths only.
-
-Keep the issue and the gist in sync. The issue is the index; the gist is the
-content.
+1. Resolve the current user's Documents directory. On Windows, prefer the
+   operating system's `MyDocuments` location. On other platforms, use the
+   configured documents directory or fall back to `~/Documents`.
+2. Create a `handoffs` directory inside it when needed.
+3. Save the document as
+   `<Documents>/handoffs/HANDOFF_<family>_<task>.md`, using lowercase family and
+   task slugs with underscores only where separators are needed.
+4. Keep the handoff outside every repository worktree so it cannot be staged or
+   committed accidentally.
+5. Never upload the handoff as a Gist, publish it through another remote
+   service, or edit a GitHub issue or pull request to register it.
+6. Before saving, scan for leakage: no credentials, real names, usernames,
+   email addresses, or machine-specific paths inside the document. Use
+   repository-relative paths in the handoff body.
+7. Return the absolute local file path to the user. Do not return or create a
+   public URL.
 
 ## 7. Facts PRD authors get wrong
 
