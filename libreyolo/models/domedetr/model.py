@@ -212,6 +212,7 @@ class LibreDOMEDETR(BaseModel):
             nb_classes=self.nb_classes,
             variant=getattr(self, "weight_variant", DEFAULT_VARIANT),
             eval_spatial_size=(self.input_size, self.input_size),
+            train_from_scratch=self._is_scratch_build(),
         )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:

@@ -169,9 +169,10 @@ def _iter_model_classes():
             seen.add(cls)
             yield cls
 
-    rfcls = try_ensure_rfdetr()
-    if rfcls is not None and rfcls not in seen:
-        yield rfcls
+    try_ensure_rfdetr()
+    for cls in BaseModel._registry:
+        if cls not in seen:
+            yield cls
 
 
 def get_model_class(family: str | None):

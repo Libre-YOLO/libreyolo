@@ -82,6 +82,7 @@ class LibreDOMEDETRModel(nn.Module):
         variant: str = DEFAULT_VARIANT,
         eval_spatial_size: tuple[int, int] | None = EVAL_SPATIAL_SIZE,
         activation: str = "relu",
+        train_from_scratch: bool = False,
     ):
         super().__init__()
         if config not in SIZE_CONFIGS:
@@ -99,9 +100,9 @@ class LibreDOMEDETRModel(nn.Module):
             name=cfg["backbone"],
             use_lab=cfg["use_lab"],
             return_idx=(0, 1, 2, 3),
-            freeze_stem_only=True,
+            freeze_stem_only=not train_from_scratch,
             freeze_at=-1,
-            freeze_norm=cfg["freeze_norm"],
+            freeze_norm=False if train_from_scratch else cfg["freeze_norm"],
             pretrained=False,
         )
         self.encoder = DomeHybridEncoder(
