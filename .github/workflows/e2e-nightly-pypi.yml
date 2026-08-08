@@ -21,6 +21,7 @@ jobs:
     outputs:
       should_run: ${{ steps.diff.outputs.should_run }}
       pypi_ver: ${{ steps.resolve.outputs.pypi_ver }}
+      cache_key: ${{ steps.resolve.outputs.cache_key }}
       cache_hit: ${{ steps.cache-target.outputs.cache-hit }}
     steps:
       - id: resolve
@@ -28,31 +29,83 @@ jobs:
         run: |
           set -euo pipefail
           PYPI_VER=$(curl -fsSL https://pypi.org/pypi/libreyolo/json | jq -r .info.version)
+          # The cache key carries an ISO week so a published version is still
+          # retested once a week. A version-only key means the released wheel
+          # is tested exactly once ever, and the environment underneath it
+          # (published weights, transitive deps, driver stack) drifts untested.
+          # This is the target where that matters most: it is what users get.
+          WINDOW=$(date -u +%G-W%V)
           echo "pypi_ver=$PYPI_VER" >> "$GITHUB_OUTPUT"
-          echo "Resolved: pypi=$PYPI_VER"
+          echo "window=$WINDOW" >> "$GITHUB_OUTPUT"
+          echo "cache_key=last-tested-nightly-pypi-$PYPI_VER-$WINDOW" >> "$GITHUB_OUTPUT"
+          echo "Resolved: pypi=$PYPI_VER window=$WINDOW"
 
+      # restore, not cache: this job never creates the marker file, so the
+      # save-on-post of actions/cache would warn every run and could claim the
+      # key with nothing in it.
       - id: cache-target
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .last-pypi
-          key: last-tested-nightly-pypi-${{ steps.resolve.outputs.pypi_ver }}
+          key: ${{ steps.resolve.outputs.cache_key }}
 
       - id: diff
         name: Decide whether PyPI needs testing
         env:
           FORCE: ${{ inputs.force }}
           HIT_TARGET: ${{ steps.cache-target.outputs.cache-hit }}
+          PYPI_VER: ${{ steps.resolve.outputs.pypi_ver }}
+          WINDOW: ${{ steps.resolve.outputs.window }}
         run: |
           set -euo pipefail
           if [ "${FORCE:-false}" = "true" ]; then
             SHOULD_RUN=true
+            REASON="forced by workflow_dispatch input"
           elif [ "${HIT_TARGET:-}" = "true" ]; then
             SHOULD_RUN=false
+            REASON="libreyolo==${PYPI_VER} already passed a nightly in week ${WINDOW}"
           else
             SHOULD_RUN=true
+            REASON="no passing nightly recorded for libreyolo==${PYPI_VER} in week ${WINDOW}"
           fi
           echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
-          echo "Should run PyPI: $SHOULD_RUN"
+          echo "Should run PyPI: $SHOULD_RUN ($REASON)"
+
+          # Every run says, in its own summary, which version it covers and
+          # whether it actually tested it. A skipped run is green; without this
+          # line it is indistinguishable from a pass in the run list.
+          if [ "$SHOULD_RUN" = "true" ]; then
+            VERDICT="RUNNING the GPU suite"
+          else
+            VERDICT="SKIPPED, no GPU suite ran in this run"
+          fi
+          {
+            echo "### Nightly guard: $VERDICT"
+            echo
+            echo "- Target: \`libreyolo==${PYPI_VER}\`"
+            echo "- Week window: \`${WINDOW}\`"
+            echo "- Reason: ${REASON}"
+            echo
+            if [ "$SHOULD_RUN" != "true" ]; then
+              echo "This run did **not** execute the GPU suite. The green tick"
+              echo "means the guard resolved cleanly, not that this version was"
+              echo "tested in this run. The pass it is standing on is an earlier"
+              echo "run against the same version."
+              echo
+              echo "To test it anyway: re-dispatch with \`force=true\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  skipped:
+    name: Skipped (PyPI version already tested)
+    needs: guard
+    if: needs.guard.outputs.should_run == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain the skip
+        run: |
+          echo "No GPU suite ran. libreyolo==${{ needs.guard.outputs.pypi_ver }} already"
+          echo "passed a nightly this week. Re-dispatch with force=true to retest."
 
   e2e:
     name: e2e (pypi)
@@ -133,4 +186,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .last-pypi
-          key: last-tested-nightly-pypi-${{ needs.guard.outputs.pypi_ver }}
+          key: ${{ needs.guard.outputs.cache_key }}

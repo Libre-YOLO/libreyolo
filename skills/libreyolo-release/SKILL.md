@@ -236,10 +236,44 @@ uvx modal run tools/ci/modal_nightly.py --ref <candidate-sha> --target test_nigh
 ```
 
 Both print a `MODAL_NIGHTLY_RESULT {json}` line with `status`, runtime, and
-estimated GPU cost; record status **and cost** on the scoreboard. If the
-last successful nightly already ran on the candidate SHA (check the run's
-step summary for the ref), count it and skip the re-run; that is the whole
-point of reusing the nightly.
+estimated GPU cost; record status **and cost** on the scoreboard.
+
+**A green nightly in the run list does not mean the candidate was tested.**
+The workflow skips when the target already passed this week, and a skipped run
+still reports success. Counting a skip as a pass is how an untested commit
+ships. Two questions, in order, and both must be answered from the run itself:
+
+**1. Did the suite run at all, on this SHA?** Read the `e2e` job's
+**conclusion**, not whether the job is listed: a skipped run still lists
+`e2e (dev)`, with conclusion `skipped`. The guard's step summary on every run
+names the target it resolved.
+
+```bash
+gh api repos/LibreYOLO/libreyolo/actions/runs/<run-id>/jobs \
+  --jq '.jobs[] | "\(.name) \(.conclusion)"'
+# e2e (dev) success  -> the suite ran and the job passed
+# e2e (dev) skipped  -> it never ran; this run is not evidence about any SHA
+#                       (a companion "Skipped (dev already tested)" job says so)
+```
+
+**2. Did it pass?** For the dev workflow, do not stop at the artifact name.
+The upload is `if: always()`, so `modal-nightly-<sha>` also exists for failed,
+timed-out, and unknown-status runs. Read the status out of it:
+
+```bash
+gh run download <run-id> -R LibreYOLO/libreyolo \
+  -n modal-nightly-<candidate-sha> -D /tmp/nightly
+jq -r '.status, .ref, .estimated_gpu_cost_usd' /tmp/nightly/modal-nightly-result.json
+# status must be exactly "passed", and ref must be the candidate SHA
+```
+
+Only `status == "passed"` on the candidate SHA counts; then skip the re-run,
+that is the point of reusing the nightly. Anything else, including three
+consecutive green runs, is not evidence about the candidate.
+
+Note the artifact exists **only** for the dev workflow. The release and PyPI
+workflows run on the self-hosted runner and upload nothing, so for those the
+evidence is the job list plus the run conclusion from question 1.
 
 For gates beyond the nightly contract (RF5 training benchmark, a heavier
 suite, a specific GPU), use the `launch-serverless-gpu-job` skill
@@ -413,6 +447,11 @@ the user to post by hand.
 - Treating the empty checks list on the `dev -> release` PR as green.
 - Re-running a 3-hour Modal nightly when the last green run already tested
   the candidate SHA.
+- Reading a green nightly as a pass on the candidate. Skipped runs are green
+  too, and the dev artifact is uploaded on failure as well, so neither the tick
+  nor the artifact name is the evidence. The evidence is an `e2e` job that
+  concluded `success`, plus `status == "passed"` inside
+  `modal-nightly-result.json`.
 - Squash-merging the release PR.
 - Bumping the version on dev instead of on the release-PR branch.
 - Skipping Phase 4 because "publish.yml was green" (green publish and a
