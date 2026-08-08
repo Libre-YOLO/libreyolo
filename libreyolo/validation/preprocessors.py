@@ -882,6 +882,48 @@ class RTDETRv2ValPreprocessor(BaseValPreprocessor):
         return resized, padded_targets
 
 
+class RTDETRv2OBBValPreprocessor(BaseValPreprocessor):
+    """Aspect-preserving, bottom/right-padded RT-DETRv2 OBB preprocessing."""
+
+    @property
+    def normalize(self) -> bool:
+        return True
+
+    @property
+    def uses_letterbox(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        scale = min(target_w / orig_w, target_h / orig_h)
+        new_w = max(1, int(round(orig_w * scale)))
+        new_h = max(1, int(round(orig_h * scale)))
+
+        rgb = img[:, :, ::-1]
+        resized = np.asarray(
+            Image.fromarray(rgb).resize((new_w, new_h), Image.Resampling.BILINEAR),
+            dtype=np.uint8,
+        )
+        padded = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+        padded[:new_h, :new_w] = resized
+        chw = np.ascontiguousarray(padded.astype(np.float32).transpose(2, 0, 1) / 255.0)
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets):
+            scaled = np.asarray(targets, dtype=np.float32).copy()
+            n = min(len(scaled), self.max_labels)
+            scaled[:n, :4] *= scale
+            padded_targets[:n] = scaled[:n]
+        return chw, padded_targets
+
+
 class RTDETRValPreprocessor(BaseValPreprocessor):
     """Preprocessor for RT-DETR validation: resize to fixed size, normalize to [0,1], no letterbox."""
 

@@ -607,6 +607,14 @@ DEEPLABV3_SMOKE_MODELS = [
     ("deeplabv3", "mv3", "LibreDeepLabv3mv3-sem.pt"),
 ]
 
+# OBB checkpoints do not belong in MODEL_CATALOG because that matrix feeds the
+# COCO detection mAP and training gates. Keep the task-appropriate smoke case
+# separate, as for the semantic-only matrices above. The representative N
+# checkpoint has a public LibreYOLO auto-download route.
+RTDETRV2_OBB_MODELS = [
+    ("rtdetrv2", "n", "LibreRTDETRv2n-obb.pt"),
+]
+
 # Derived lists (no manual maintenance)
 YOLOX_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "yolox"]
 YOLO9_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "yolo9"]
@@ -781,6 +789,10 @@ DEEPLABV3_SEMANTIC_PARAMS = model_cases(
 )
 DEEPLABV3_SMOKE_PARAMS = model_cases(
     DEEPLABV3_SMOKE_MODELS,
+    with_weights=True,
+)
+RTDETRV2_OBB_PARAMS = model_cases(
+    RTDETRV2_OBB_MODELS,
     with_weights=True,
 )
 

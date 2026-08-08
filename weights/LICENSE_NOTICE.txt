@@ -209,6 +209,18 @@ project the weights were derived from. Per-family summary:
              upstream: lyuwenyu/RT-DETR
              (backbone: PaddlePaddle/PaddleClas ResNet_vd, Apache-2.0)
 
+    RT-DETRv2 OBB                                      Apache-2.0
+             (LibreRTDETRv2{n,s,m,l,x}-obb)
+             upstream code: RicePasteM/RiO-DETR at commit
+               22d5232a4e0df6ac4bc26ed1c8aac8b4060449c7
+             official DOTA 1.0 checkpoints: RicePasteM/RT-DETR-OBB at
+               revision f376e9dcedfb9a47a21ac71ef61ad99f8b545698
+             converted mirrors: LibreYOLO/LibreRTDETRv2{n,s,m,l,x}-obb
+             Each mirror carries the upstream Apache License 2.0 and NOTICE.
+             Convert a locally supplied official checkpoint with
+             weights/convert_rtdetrv2_weights.py; conversion preserves learned
+             tensors and adds only LibreYOLO checkpoint metadata.
+
     DETR     (LibreDETR{r50,r50dc5,r101,r101dc5})      Apache-2.0
              upstream: facebookresearch/detr, commit
              29901c51d7fe8712168b8d0d64351170bc0f83e0.

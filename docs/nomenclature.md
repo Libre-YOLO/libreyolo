@@ -189,7 +189,7 @@ ships:
 | `deimv2`    | per-cfg (see `SIZE_CONFIGS`) |
 | `detr`      | `r50`, `r50dc5`, `r101`, `r101dc5` (ResNet depth plus optional dilated C5; all use a fixed 800 square) |
 | `rtdetr`    | `r18`, `r34`, `r50`, `r50m`, `r101`, `l`, `x` |
-| `rtdetrv2`  | `r18`, `r34`, `r50`, `r50m`, `r101` |
+| `rtdetrv2`  | detect: `r18`, `r34`, `r50`, `r50m`, `r101`; OBB: `n`, `s`, `m`, `l`, `x` (fixed 1024) |
 | `rtdetrv4`  | `s`, `m`, `l`, `x` |
 | `rtmdet`    | `t`, `s`, `m`, `l`, `x` |
 | `rfdetr`    | `n`, `s`, `m`, `l` |
@@ -455,7 +455,7 @@ Detector-factory family support follows:
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
 | `detr`      | `("detect",)`                       | detect | original DETR; inference-only (no trainer, `train()` raises); fixed 800 square |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
-| `rtdetrv2`  | `("detect",)` (default)             | detect | detect-only |
+| `rtdetrv2`  | `("detect", "obb")`               | detect | OBB uses the DOTA `n`/`s`/`m`/`l`/`x` graph and is inference-only; detect remains trainable |
 | `rtdetrv4`  | `("detect",)` (default)             | detect | detect-only |
 | `lwdetr`    | `("detect",)`                       | detect | detect-only; inference-only (no trainer, `train()` raises) |
 | `faster_rcnn` | `("detect",)`                     | detect | detect-only; inference-only native RPN + RoI graph; official COCO heads map sparse 91-way ids to contiguous COCO-80 |

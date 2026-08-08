@@ -7,6 +7,8 @@ import torch.nn as nn
 from ..rtdetr.backbone import PResNet
 from ..rtdetr.nn import HybridEncoder
 from .decoder import RTDETRTransformerv2
+from .obb_decoder import RTDETRTransformerv2OBB
+from .obb_encoder import RTDETRv2OBBHybridEncoder
 
 
 class RTDETRv2Model(nn.Module):
@@ -27,6 +29,9 @@ class RTDETRv2Model(nn.Module):
         decoder_hidden_dim: int | None = None,
         decoder_dim_feedforward: int | None = None,
         expansion: float = 0.5,
+        encoder_depth_mult: float = 1.0,
+        encoder_in_channels=None,
+        encoder_use_encoder_idx=(2,),
         dropout: float = 0.0,
         num_denoising: int = 100,
         num_decoder_points=4,
@@ -37,6 +42,8 @@ class RTDETRv2Model(nn.Module):
         eval_idx: int = -1,
         cross_attn_method: str = "default",
         query_select_method: str = "default",
+        obb: bool = False,
+        anchor_aspect_ratio: float = 1.0,
         **kwargs,
     ):
         super().__init__()
@@ -55,19 +62,28 @@ class RTDETRv2Model(nn.Module):
                 freeze_at=backbone_freeze_at,
             )
 
-        self.encoder = HybridEncoder(
-            in_channels=self.backbone.out_channels,
+        encoder_in_channels = (
+            list(encoder_in_channels)
+            if encoder_in_channels is not None
+            else self.backbone.out_channels
+        )
+        encoder_class = RTDETRv2OBBHybridEncoder if obb else HybridEncoder
+        self.encoder = encoder_class(
+            in_channels=encoder_in_channels,
             feat_strides=list(feat_strides),
             hidden_dim=hidden_dim,
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             expansion=expansion,
+            depth_mult=encoder_depth_mult,
+            use_encoder_idx=list(encoder_use_encoder_idx),
             dropout=dropout,
             eval_spatial_size=eval_spatial_size,
         )
 
-        encoder_out_channels = [hidden_dim] * len(self.backbone.out_channels)
-        self.decoder = RTDETRTransformerv2(
+        encoder_out_channels = [hidden_dim] * len(encoder_in_channels)
+        decoder_class = RTDETRTransformerv2OBB if obb else RTDETRTransformerv2
+        self.decoder = decoder_class(
             num_classes=num_classes,
             hidden_dim=decoder_hidden_dim,
             num_queries=num_queries,
@@ -85,6 +101,7 @@ class RTDETRv2Model(nn.Module):
             eval_idx=eval_idx,
             cross_attn_method=cross_attn_method,
             query_select_method=query_select_method,
+            **({"anchor_aspect_ratio": anchor_aspect_ratio} if obb else {}),
         )
 
     def forward(self, x, targets=None):

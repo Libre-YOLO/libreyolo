@@ -574,6 +574,10 @@ class BaseBackend(ABC):
             )
             return tensor, img, size, 1.0
         elif self.model_family in ("rtdetr", "rtdetrv2"):
+            if self.model_family == "rtdetrv2" and self.task == "obb":
+                return self._preprocess_rtdetrv2_obb(
+                    image, effective_imgsz, color_format
+                )
             tensor, img, size = self._preprocess_rtdetr(
                 image, effective_imgsz, color_format
             )
@@ -1118,6 +1122,26 @@ class BaseBackend(ABC):
         img_tensor = torch.from_numpy(img_chw)
         return img_tensor, original_img, original_size
 
+    @staticmethod
+    def _preprocess_rtdetrv2_obb(image, input_size, color_format):
+        """RT-DETRv2 OBB uniform resize with bottom/right zero padding."""
+        from PIL import Image
+
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+        orig_w, orig_h = original_size
+        target_h, target_w = _imgsz_hw(input_size)
+        ratio = min(target_w / orig_w, target_h / orig_h)
+        new_w = max(1, int(round(orig_w * ratio)))
+        new_h = max(1, int(round(orig_h * ratio)))
+        resized = img.resize((new_w, new_h), Image.Resampling.BILINEAR)
+        canvas = Image.new("RGB", (target_w, target_h), color=0)
+        canvas.paste(resized, (0, 0))
+        array = np.asarray(canvas, dtype=np.float32) / 255.0
+        tensor = torch.from_numpy(array.transpose(2, 0, 1).copy()).unsqueeze(0)
+        return tensor, original_img, original_size, ratio
+
     # =========================================================================
     # Output parsing
     # =========================================================================
@@ -1289,6 +1313,15 @@ class BaseBackend(ABC):
             )
             return boxes, scores, cls, None
         elif self.model_family in ("rtdetr", "rtdetrv2"):
+            if self.model_family == "rtdetrv2" and self.task == "obb":
+                return self._parse_rtdetr_obb(
+                    all_outputs,
+                    effective_imgsz,
+                    orig_w,
+                    orig_h,
+                    conf,
+                    max_det=max_det,
+                )
             boxes, scores, cls = self._parse_rtdetr(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
@@ -2903,6 +2936,99 @@ class BaseBackend(ABC):
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask]
 
+    @staticmethod
+    def _parse_rtdetr_obb(
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+        max_det: int = 300,
+    ):
+        """Parse five-coordinate RT-DETRv2 OBB output without NMS."""
+        first = np.asarray(all_outputs[0][0], dtype=np.float32)
+        second = np.asarray(all_outputs[1][0], dtype=np.float32)
+        if first.ndim != 2 or second.ndim != 2 or first.shape[0] != second.shape[0]:
+            raise ValueError(
+                "RT-DETRv2 OBB export must return matching [Q,C] logits and "
+                f"[Q,5] boxes, got {first.shape} and {second.shape}"
+            )
+
+        if first.shape[-1] == second.shape[-1] == 5:
+            # LibreYOLO's export wrapper defines the equal-width case as
+            # (pred_logits, pred_boxes). Shape alone cannot distinguish a
+            # five-class checkpoint from its five-coordinate OBB output.
+            logits, boxes_raw = first, second
+        elif first.shape[-1] == 5 and second.shape[-1] != 5:
+            boxes_raw, logits = first, second
+        elif second.shape[-1] == 5 and first.shape[-1] != 5:
+            boxes_raw, logits = second, first
+        else:
+            raise ValueError(
+                "RT-DETRv2 OBB export must return one [Q,5] box tensor and "
+                f"one [Q,C] logit tensor, got {first.shape} and {second.shape}"
+            )
+
+        prob = 1.0 / (1.0 + np.exp(-logits.astype(np.float64)))
+        flat = prob.astype(np.float32).reshape(-1)
+        k = min(max_det, flat.size)
+        if k == 0:
+            empty = np.zeros((0,), dtype=np.float32)
+            return (
+                np.zeros((0, 4), dtype=np.float32),
+                empty,
+                empty.astype(np.int64),
+                None,
+                np.zeros((0, 7), dtype=np.float32),
+            )
+        indexes = np.argpartition(-flat, k - 1)[:k]
+        indexes = indexes[np.argsort(-flat[indexes])]
+        scores = flat[indexes]
+        num_classes = logits.shape[-1]
+        query_indexes = indexes // num_classes
+        class_ids = indexes % num_classes
+
+        target_h, target_w = _imgsz_hw(effective_imgsz)
+        scale = min(target_w / orig_w, target_h / orig_h)
+        selected = boxes_raw[query_indexes]
+        xywh = (
+            selected[:, :4]
+            * np.asarray([target_w, target_h, target_w, target_h], dtype=np.float32)
+            / np.float32(scale)
+        )
+        angles = selected[:, 4] * np.float32(np.pi)
+        keep = scores > conf
+        xywh = xywh[keep]
+        angles = angles[keep]
+        scores = scores[keep]
+        class_ids = class_ids[keep]
+
+        half_w = xywh[:, 2] / 2
+        half_h = xywh[:, 3] / 2
+        cos = np.abs(np.cos(angles))
+        sin = np.abs(np.sin(angles))
+        extent_x = cos * half_w + sin * half_h
+        extent_y = sin * half_w + cos * half_h
+        boxes = np.stack(
+            [
+                xywh[:, 0] - extent_x,
+                xywh[:, 1] - extent_y,
+                xywh[:, 0] + extent_x,
+                xywh[:, 1] + extent_y,
+            ],
+            axis=-1,
+        )
+        obb = np.concatenate(
+            [
+                xywh,
+                angles[:, None],
+                scores[:, None],
+                class_ids.astype(np.float32)[:, None],
+            ],
+            axis=-1,
+        )
+        return boxes, scores, class_ids, None, obb
+
     # =========================================================================
     # Result building
     # =========================================================================
@@ -3642,6 +3768,7 @@ class BaseBackend(ABC):
             PICODETValPreprocessor,
             RFDETRValPreprocessor,
             RTDETRValPreprocessor,
+            RTDETRv2OBBValPreprocessor,
             RTDETRv2ValPreprocessor,
             RTMDetValPreprocessor,
             StandardValPreprocessor,
@@ -3675,7 +3802,11 @@ class BaseBackend(ABC):
             "picodet": PICODETValPreprocessor,
             "rfdetr": RFDETRValPreprocessor,
             "rtdetr": RTDETRValPreprocessor,
-            "rtdetrv2": RTDETRv2ValPreprocessor,
+            "rtdetrv2": (
+                RTDETRv2OBBValPreprocessor
+                if getattr(self, "task", "detect") == "obb"
+                else RTDETRv2ValPreprocessor
+            ),
             "rtdetrv4": DFINEValPreprocessor,
             "rtmdet": RTMDetValPreprocessor,
             "yolo9": YOLO9ValPreprocessor,

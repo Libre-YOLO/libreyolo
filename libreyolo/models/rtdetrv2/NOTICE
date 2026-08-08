@@ -1,0 +1,30 @@
+RT-DETRv2 OBB provenance
+========================
+
+The RT-DETRv2 OBB encoder and decoder are adapted from:
+
+  Repository: https://github.com/RicePasteM/RiO-DETR
+  Commit: 22d5232a4e0df6ac4bc26ed1c8aac8b4060449c7
+  License: Apache License 2.0
+  Source files: engine/rtv4/hybrid_encoder.py
+                engine/rtv4/rtdetrv2_obb_decoder.py
+  LibreYOLO files: obb_encoder.py
+                   obb_decoder.py
+
+The official DOTA 1.0 checkpoints used for compatibility and parity testing
+come from RicePasteM/RT-DETR-OBB at immutable revision
+f376e9dcedfb9a47a21ac71ef61ad99f8b545698. Converted mirrors are published
+as LibreYOLO/LibreRTDETRv2{n,s,m,l,x}-obb. Every weight repository carries
+the upstream Apache License 2.0 text and attribution notice. The checkpoints
+are not bundled with this source repository; users may also convert a locally
+supplied official checkpoint with weights/convert_rtdetrv2_weights.py.
+
+Validated official checkpoint SHA-256 digests:
+
+  n: b87de5d18f7abfa0ea83aaa27e5f7a4d6545553c6ee559afbff9ac95a7d41006
+  s: ef0c728aaeb4d85950134431617fb576b3ad6a9ac85878088ce97c0075df2026
+  m: 2cbfc60909a7d1209192f35881aed407f8790317fe9ce051cefa3e17ed88e0c6
+  l: 503b790952f1d8b3ad9773b5a61a175246b8ba81aae50dbf02f1fc3c5b792cdd
+  x: 9121e1da4c79e37fa204d8caaad3107e6edc4b8780d9d936f0747fd35330476d
+
+See licenses/Apache-2.0.txt for the Apache License 2.0 text.
