@@ -43,7 +43,7 @@ knowledge those two do not cover.
 | Eval thresholds | conf 0.001; NMS IoU 0.65 for NMS families, identical at selection and final eval; DETR families are NMS-free top-k | LibreYOLO policy |
 | Seed | 0 | LibreYOLO policy |
 | Recipes | one pinned JSON per family in the harness (`va_bench/recipes/rf100vl/`), sha recorded in every run, same recipe for all 100 datasets | LibreYOLO policy |
-| Execution (YOLO) | `cuda_graph: true` and `cache: "disk"` in the recipe protocol when the installed LibreYOLO supports them (bit-identical; covered by recipe hash) | measured 2026-08 |
+| Execution (YOLO) | `cuda_graph: true` and `cache: "disk"` in the recipe protocol when the installed LibreYOLO supports them (bit-identical; covered by recipe hash). Verify capture per family, per commit and per card: see "CUDA graphs and cache" | measured 2026-08 |
 | COCO evaluator | faster-coco-eval (Apache-2.0), now the LibreYOLO default; record the backend in artifacts | measured 2026-08 |
 
 Never report toolkit-native trapezoidal mAP; it inflates up to 2.7 AP on
@@ -293,6 +293,85 @@ libreyolo profile what-if ...  # projected gain from a fix
 High self-CPU on an op like `aten::max` with near-zero self-CUDA usually
 marks a GPU→CPU sync absorbing device wait, not a CPU bottleneck in that
 op. Total self-CUDA ≪ total self-CPU ⇒ launch-bound (CUDA graphs).
+
+**First check that the GPU counters attached at all.** On a rented box where
+CUPTI fails to load, the profiler still prints a full report, but every
+device-side number is zero and the VERDICT line is then an artifact rather
+than a measurement. Measured 2026-08 on an 8x RTX 5060 Ti box:
+
+```
+REAL step 362.3 ms = dataload 0.1 ms + compute 362.3 ms  ->  44.2 img/s
+GPU util 0%  (0 ms GPU-busy / 362 ms step)  |  0 kernels/step @ ~0us
+>> VERDICT: HOST/LAUNCH-BOUND - GPU only ~0% busy
+```
+
+That verdict was wrong: enabling CUDA graphs on the same model and batch
+changed the epoch time by nothing. `0 kernels/step` is the tell. When you see
+it, ignore the verdict and the "self-CUDA vs self-CPU" rule above, both of
+which are derived from the dead counters, and read the per-phase wall table
+instead, which is host-side timing and stays valid:
+
+```
+phase         gpu_ms  wall_ms  kernels     ops
+to_device        0.0      5.9        0       8
+forward          0.0    127.9        0    4562
+backward         0.0    222.9        0    5093
+optimizer        0.0      6.3        0    2800
+```
+
+### CUDA graphs and cache: prefer them, then verify both
+
+Keep `cuda_graph: true` and `cache: "disk"` as the default recipe protocol.
+Both are perf-only and covered by the recipe hash. Two things to verify
+before trusting either, because each has cost a campaign.
+
+**Capture is gated by family and by commit.** At an older pinned LibreYOLO
+only `yolo9` and `rfdetr` implemented the training capture hook; every other
+family took the eager fallback, so setting the flag did nothing but log a
+warning. Current dev covers far more families (`docs/training_cuda_graphs.md`
+holds the table and the per-family speedups). Check that table for the commit
+you actually pinned, not for `dev`, and confirm the run log says
+`cuda_graph: captured training forward/backward at input shape (...)`. Absent
+that line, the flag is decorative.
+
+**The speedup is batch-dependent, and can be zero.** The documented gains are
+measured at batch 8, where launch overhead is a large share of the step. At
+the protocol's batch 16 the same model can show nothing: yolonas-s measured
+83.4 / 78.9 s per epoch eager against 83.6 / 78.4 s graphed, with capture
+confirmed in the log. yolo9 still gains at batch 16. Measure before assuming.
+
+**Capture inflates VRAM, and `libreyolo profile run` will not show it**
+because it does not capture graphs. yolo9-m at 640 and batch 16 profiled at
+15721 MB, which looks survivable on a 16 GB card. The real graphed run OOM'd
+on **all 100 datasets**, with the failure naming the cause:
+
+```
+13.61 GiB allocated in private pools (e.g., CUDA Graphs)
+```
+
+Disabling capture on that box dropped the same run to 15207 MB and it trained
+fine at full protocol batch. So size the lane with a 2-epoch smoke campaign,
+which exercises the real path including capture, EMA and validation:
+
+```bash
+va-bench rf100vl-campaign --model <M> --recipe <R> \
+  --datasets <one-dataset> --gpus 0 --jobs-per-gpu 1 --smoke-epochs 2
+```
+
+For a NMS-family model that cannot hold capture on the target card, dropping
+`cuda_graph` is the cheap deviation: the harness treats graph replay as
+outside the run signature and bit-identical on loss. Dropping physical batch
+is the expensive one, because it changes BatchNorm statistics even though
+`nbs` keeps the effective batch at 16.
+
+### Contribute the speedup back
+
+The campaign is a load test of LibreYOLO training, so treat what the profiler
+finds as a LibreYOLO bug list rather than a campaign workaround list. The
+scoring cost above is the model: it was found by profiling a campaign, fixed
+in the library as a default, and now every user benefits. When a fix belongs
+in the library, send it there and pin the campaign to the commit that carries
+it, rather than carrying a private patch on the box.
 
 ### Shakedown (before any full campaign)
 
