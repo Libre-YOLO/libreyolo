@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import torch
 
 pytestmark = [pytest.mark.unit, pytest.mark.fomo]
+
+if TYPE_CHECKING:
+    from libreyolo.models.fomo.model import LibreFOMO
 
 
 def _make_random_fomo(size: str = "s", nc: int = 1) -> "LibreFOMO":
@@ -54,13 +57,13 @@ class TestLibreFOMOTrainerSmoke:
             
         monkeypatch.setattr(model, "_load_weights", mock_load_weights)
         
-        results = model.train("dummy.yaml", allow_experimental=True)
+        model.train("dummy.yaml")
         assert loaded_path == str(dummy_ckpt)
 
     def test_train_resume_raises_when_no_checkpoint(self) -> None:
         model = _make_random_fomo(size="s", nc=1)
         with pytest.raises(ValueError, match="resume=True requires a checkpoint"):
-            model.train("dummy.yaml", allow_experimental=True, resume=True)
+            model.train("dummy.yaml", resume=True)
 
     def test_train_resume_calls_trainer_resume(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         model = _make_random_fomo(size="s", nc=1)
@@ -84,7 +87,7 @@ class TestLibreFOMOTrainerSmoke:
 
         monkeypatch.setattr("libreyolo.models.fomo.trainer.FOMOTrainer", DummyTrainer)
 
-        results = model.train("dummy.yaml", allow_experimental=True, resume=True)
+        model.train("dummy.yaml", resume=True)
         assert setup_called is True
         assert resume_called_with == str(dummy_ckpt)
 
@@ -110,15 +113,15 @@ class TestLibreFOMOTrainerSmoke:
 
         monkeypatch.setattr("libreyolo.models.fomo.trainer.FOMOTrainer", DummyTrainer)
 
-        model.train("dummy.yaml", allow_experimental=True, seed=0)
+        model.train("dummy.yaml", seed=0)
         state_0_first = seeds_recorded[0]
 
         seeds_recorded.clear()
-        model.train("dummy.yaml", allow_experimental=True, seed=0)
+        model.train("dummy.yaml", seed=0)
         state_0_second = seeds_recorded[0]
 
         seeds_recorded.clear()
-        model.train("dummy.yaml", allow_experimental=True, seed=100)
+        model.train("dummy.yaml", seed=100)
         state_100 = seeds_recorded[0]
 
         assert state_0_first == state_0_second
@@ -309,12 +312,7 @@ class TestLibreFOMOTrainerSmoke:
         with pytest.raises(ValueError, match="Augmented validation"):
             BaseModel.val(model, data="unused.yaml", imgsz=96, augment=True)
 
-    def test_train_without_flag_raises(self) -> None:
-        model = _make_random_fomo(size="s")
-        with pytest.raises(NotImplementedError, match="allow_experimental"):
-            model.train("dummy.yaml")
-
     def test_train_with_invalid_imgsz_raises(self) -> None:
         model = _make_random_fomo(size="s")
         with pytest.raises(ValueError, match="only supports imgsz=96"):
-            model.train("dummy.yaml", allow_experimental=True, imgsz=128)
+            model.train("dummy.yaml", imgsz=128)

@@ -101,7 +101,7 @@ def test_ec_train_applies_dataset_class_names_before_trainer(monkeypatch, tmp_pa
     monkeypatch.setattr(trainer_module, "ECTrainer", FakeTrainer)
 
     model = LibreEC(model_path=None, size="s", nb_classes=80, device="cpu")
-    model.train(data=str(data_yaml), allow_experimental=True, seed=0)
+    model.train(data=str(data_yaml), seed=0)
 
     assert model.nb_classes == 2
     assert model.names == {0: "red", 1: "white"}

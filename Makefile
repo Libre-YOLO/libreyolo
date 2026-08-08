@@ -25,7 +25,7 @@ help:
 	@echo "  test_install_smoke            - Run clean install smoke (MODE=editable|wheel|sdist|pypi)"
 	@echo "  test_e2e                      - Run all e2e tests (needs GPU + model weights)"
 	@echo "  test_e2e FROM=<file>          - Resume from a test file (e.g. FROM=test_rf1_training.py or FROM=rf1_training)"
-	@echo "  test_e2e MARKERS='<expr>'     - Run only matching e2e markers (e.g. MARKERS='e2e and not experimental_backend')"
+	@echo "  test_e2e MARKERS='<expr>'     - Run only matching e2e markers (e.g. MARKERS='e2e and not extended_backend')"
 	@echo "  test_e2e MARKER='<expr>'      - Alias for MARKERS=..., also works with FROM=..."
 	@echo "  test_e2e E2E_TIMEOUT=<secs>   - Per-test timeout, default 900 (0 disables)"
 	@echo "  print_nightly_suite           - Print nightly suite version and contract"

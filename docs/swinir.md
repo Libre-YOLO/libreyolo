@@ -22,7 +22,7 @@ result.save("upscaled.png")
 Inputs run at native resolution and are reflect-padded to an 8-pixel window
 multiple. Tiling is optional and bounds peak memory for large images. Training
 and dynamic spatial export are outside the first release. Static ONNX export is
-available as an experimental path: backend prediction pads inputs that fit
+available: backend prediction pads inputs that fit
 within the exported canvas and crops the 4x result back to the expected output
 shape, but the window attention sees that padding, so sub-canvas inputs
 measurably diverge from native inference. Export at the resolution you intend

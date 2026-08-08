@@ -14,7 +14,7 @@ import torch
 import libreyolo.export.mnn as mnn_export
 from libreyolo.export.exporter import BaseExporter, MNNExporter
 from libreyolo.export.support import EXPORT_FORMATS, get_support
-from libreyolo.models.registry import families_in
+from libreyolo.backends.mnn import _SUPPORTED_FAMILIES
 
 pytestmark = pytest.mark.unit
 
@@ -42,12 +42,12 @@ def test_mnn_registry_and_support_contract():
     assert MNNExporter.supports_int8 is False
     assert get_support("yolo9", "detect", "mnn").tier == "validated"
     assert get_support("rfdetr", "detect", "mnn").tier == "validated"
-    assert get_support("deimv2", "detect", "mnn").tier == "experimental"
+    assert get_support("deimv2", "detect", "mnn").tier == "available"
     assert get_support("yolox", "detect", "mnn").tier == "blocked"
 
 
-def test_mnn_covers_every_g0_g1_detection_family():
-    expected = set(families_in("g0") + families_in("g1"))
+def test_mnn_support_matches_the_runtime_family_contract():
+    expected = set(_SUPPORTED_FAMILIES)
     covered = {
         family
         for family in expected

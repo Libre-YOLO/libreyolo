@@ -746,7 +746,7 @@ class DEIMv2Config(TrainConfig):
 
 @dataclass(kw_only=True)
 class ECConfig(TrainConfig):
-    """EC-specific training defaults (experimental).
+    """EC-specific training defaults.
 
     Fine-tune defaults keep the optimizer/scheduler/loss shape from
     EdgeCrafter's published recipe (S/M):
@@ -759,8 +759,7 @@ class ECConfig(TrainConfig):
     strong color/geometric knobs are disabled here so the public config matches
     the effective training path.
 
-    Training has NOT been validated on a real fine-tune run — ship as
-    experimental.
+    Full real-data fine-tune convergence has not yet been validated.
     """
 
     optimizer: str = "adamw"
@@ -802,7 +801,7 @@ class ECConfig(TrainConfig):
 
 @dataclass(kw_only=True)
 class ECSegConfig(ECConfig):
-    """EC segmentation fine-tune defaults (experimental).
+    """EC segmentation fine-tune defaults.
 
     Inherits the EC detect recipe and adds the instance-mask loss knobs. The
     seg data path reuses RF-DETR's square-resize + polygon-rasterization
@@ -839,7 +838,7 @@ class ECSegConfig(ECConfig):
 
 @dataclass(kw_only=True)
 class ECPoseConfig(ECConfig):
-    """EC (DETR-style) pose fine-tune defaults (experimental).
+    """EC (DETR-style) pose fine-tune defaults.
 
     EdgeCrafter's ECPose is a DETRPose-style keypoint transformer (Hungarian
     matching + OKS). This config carries the keypoint count / sigmas and the
@@ -1030,11 +1029,10 @@ class RTMDetConfig(TrainConfig):
     - DynamicSoftLabelAssigner (topk=13)
     - QualityFocalLoss (beta=2.0, weight=1.0) + GIoULoss (weight=2.0)
 
-    Status: training is implemented but experimental. ``LibreRTMDet.train()``
-    requires ``allow_experimental=True`` because small-dataset fine-tune
-    convergence, from-scratch paper parity, multi-GPU behavior, cached
-    Mosaic/MixUp throughput, and the strict upstream two-stage pipeline switch
-    are not validated yet.
+    Detection training is implemented. Small-dataset fine-tune convergence,
+    from-scratch paper parity, multi-GPU behavior, cached Mosaic/MixUp
+    throughput, and the strict upstream two-stage pipeline switch have not yet
+    been validated.
     """
 
     # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same

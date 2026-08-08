@@ -1,6 +1,6 @@
 # Rockchip RKNN export
 
-Status: experimental F0 integration.
+Status: F0 integration with simulator validation.
 
 LibreYOLO can compile a fixed-shape ONNX export to Rockchip's `.rknn` format
 and run tensor-level parity checks in Toolkit2's x86 host simulator. A board is
@@ -30,10 +30,10 @@ raw-output checks, and real-image detection comparison:
 
 | Model variant | Task | Status |
 | --- | --- | --- |
-| YOLO9-t | detect | Experimental, simulator validated |
-| YOLO9-E2E-t | detect | Experimental, simulator validated |
-| PicoDet-s | detect | Experimental, simulator validated |
-| YOLO-NAS-s | detect | Experimental, simulator validated |
+| YOLO9-t | detect | Simulator validated |
+| YOLO9-E2E-t | detect | Simulator validated |
+| PicoDet-s | detect | Simulator validated |
+| YOLO-NAS-s | detect | Simulator validated |
 
 Other sizes, tasks, and Rockchip targets are rejected before compilation.
 The lower-level ONNX-to-RKNN helpers remain available for development probes,
@@ -188,7 +188,6 @@ families pass in a pinned Toolkit2 environment:
 4. RK3588 hardware: latency and memory measurements. This is the only gate that
    requires a board.
 
-Until those results are recorded, the four enabled variants remain an
-experimental simulator-validated surface rather than a generally supported
-backend. RF-DETR's failure also means this integration does not yet satisfy
-LibreYOLO's two-flagship coverage requirement for promotion.
+The four enabled variants are available with simulator validation; board
+performance has not been recorded. RF-DETR's failure also means this
+integration does not yet satisfy LibreYOLO's two-flagship coverage requirement.

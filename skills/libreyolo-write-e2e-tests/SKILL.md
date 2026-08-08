@@ -26,7 +26,7 @@ Writing one is mostly bookkeeping; this skill is the bookkeeping.
   dedicated `test_<family>*.py` file is for family-specific behavior
   (e.g. `test_yolonas.py`, `test_l2cs_gaze.py`, `test_openvocab_inference.py`).
 - **New export backend**: its own `test_<backend>.py`, modeled on
-  `test_onnx.py` (supported) or `test_ncnn.py` (experimental).
+  `test_onnx.py` (supported) or `test_ncnn.py` (extended coverage).
 - **Training behavior**: `test_rf1_training.py` (per-family train+reload on
   the marbles dataset) or `test_training_regression.py`.
 - **Smoke for a new optional tier**: pattern of `test_sam_smoke.py`,
@@ -47,7 +47,7 @@ marker-driven selections (and the nightly) will never pick it up, and
   unknown markers are a lint/CI failure.
 - tier marker for non-factory tiers: `vlm`, `sam`, `openvocab`, `clip`.
 - backend markers for export tests: `export_backend` + `supported_backend`
-  or `experimental_backend` + the backend name (`onnx`, `tensorrt`, ...).
+  or `extended_backend` + the backend name (`onnx`, `tensorrt`, ...).
 - `network` / `external_data` when it downloads or needs staged files.
 - nightly promotion markers: `general_nightly` / `flagship_nightly`
   (see below; do not sprinkle these casually).

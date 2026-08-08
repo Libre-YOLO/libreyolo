@@ -39,8 +39,8 @@ re-specify imgsz/task/classes).
 
 Formats are not equally supported, and support is per (format, family,
 task), not per format. ONNX is the release-gated supported backend; the
-others are covered by e2e but several are marked experimental
-(`supported_backend` vs `experimental_backend` markers in `tests/e2e/`).
+others are covered by e2e but have extended runtime coverage
+(`supported_backend` vs `extended_backend` markers in `tests/e2e/`).
 `libreyolo formats` prints the format list with capabilities; the e2e files
 (`test_onnx.py`, `test_tensorrt.py`, ...) are the truth for which families
 each format actually covers. Before telling anyone "family X exports to Y",
@@ -117,8 +117,8 @@ Copy the twin structure: exporter subclass (declare `format_name`, deps via
 shared pre/postprocess helpers in `BaseBackend`, never fork them), a lazy
 export in `libreyolo/__init__.py`, an optional-dependency extra in
 `pyproject.toml` (never a core dep), `libreyolo formats` row, an
-`experimental_backend`-marked e2e file, and docs. A new format starts
-experimental and stays that way until family coverage and parity tests say
+`extended_backend`-marked e2e file, and docs. A new format uses the extended
+marker until family coverage and parity tests say
 otherwise. Note the precedent that not everything becomes a format: when the
 toolchain cannot be a pip dependency (Hailo's proprietary compiler), ship a
 skill/doc for the two-stage flow instead of a `format=` target.
@@ -128,4 +128,4 @@ skill/doc for the two-stage flow instead of a `format=` target.
 - `skills/use-libreyolo/`: the user-facing export + exported-inference API.
 - `skills/libreyolo-export-hailo/`: the no-format precedent, done right.
 - `skills/libreyolo-write-e2e-tests/`: markers for export coverage.
-- `docs/testing.md`: which backends gate releases vs run experimentally.
+- `docs/testing.md`: which backends gate releases vs run on the extended schedule.

@@ -30,7 +30,7 @@ from .conftest import (
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.tensorrt,
     pytest.mark.trt,
 ]

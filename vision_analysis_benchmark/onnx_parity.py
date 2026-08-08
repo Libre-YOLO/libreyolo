@@ -318,7 +318,7 @@ def build_default_cases() -> list[ParityCase]:
         ("s",),
         "pose",
         "complete",
-        "experimental preview checkpoint",
+        "checkpoint converted from upstream early-access release",
     )
 
     add_many("rfdetr", "LibreRFDETR", ("n", "s", "m", "l"), "detect", "complete")
@@ -335,7 +335,7 @@ def build_default_cases() -> list[ParityCase]:
         ("n", "s", "m", "l", "x"),
         "pose",
         "complete",
-        "experimental preview checkpoint",
+        "checkpoint converted from upstream early-access release",
     )
 
     add_many(
@@ -343,53 +343,53 @@ def build_default_cases() -> list[ParityCase]:
         "LibreYOLOX",
         ("n", "t", "s", "m", "l", "x"),
         "detect",
-        "experimental",
+        "available",
     )
     add_many(
         "yolo9_e2e",
         "LibreYOLO9E2E",
         ("t", "s", "m", "c"),
         "detect",
-        "experimental",
+        "available",
     )
-    add_many("yolonas", "LibreYOLONAS", ("s", "m", "l"), "detect", "experimental")
+    add_many("yolonas", "LibreYOLONAS", ("s", "m", "l"), "detect", "available")
     add_many(
         "yolonas",
         "LibreYOLONAS",
         ("n", "s", "m", "l"),
         "pose",
-        "experimental",
+        "available",
         "pose weights download from Deci CDN with pinned checksums",
     )
-    add_many("dfine", "LibreDFINE", ("n", "s", "m", "l", "x"), "detect", "experimental")
-    add_many("deim", "LibreDEIM", ("n", "s", "m", "l", "x"), "detect", "experimental")
+    add_many("dfine", "LibreDFINE", ("n", "s", "m", "l", "x"), "detect", "available")
+    add_many("deim", "LibreDEIM", ("n", "s", "m", "l", "x"), "detect", "available")
     add_many(
         "deimv2",
         "LibreDEIMv2",
         ("atto", "femto", "pico", "n", "s", "m", "l", "x"),
         "detect",
-        "experimental",
+        "available",
     )
     add_many(
         "rtdetr",
         "LibreRTDETR",
         ("r18", "r34", "r50", "r50m", "r101", "l", "x"),
         "detect",
-        "experimental",
+        "available",
     )
     add_many(
         "rtdetrv2",
         "LibreRTDETRv2",
         ("r18", "r34", "r50", "r50m", "r101"),
         "detect",
-        "experimental",
+        "available",
     )
-    add_many("rtdetrv4", "LibreRTDETRv4", ("s", "m", "l", "x"), "detect", "experimental")
-    add_many("picodet", "LibrePICODET", ("s", "m", "l"), "detect", "experimental")
-    add_many("rtmdet", "LibreRTMDet", ("t", "s", "m", "l", "x"), "detect", "experimental")
-    add_many("ec", "LibreEC", ("s", "m", "l", "x"), "detect", "experimental")
-    add_many("ec", "LibreEC", ("s", "m", "l", "x"), "segment", "experimental")
-    add_many("ec", "LibreEC", ("s", "m", "l", "x"), "pose", "experimental")
+    add_many("rtdetrv4", "LibreRTDETRv4", ("s", "m", "l", "x"), "detect", "available")
+    add_many("picodet", "LibrePICODET", ("s", "m", "l"), "detect", "available")
+    add_many("rtmdet", "LibreRTMDet", ("t", "s", "m", "l", "x"), "detect", "available")
+    add_many("ec", "LibreEC", ("s", "m", "l", "x"), "detect", "available")
+    add_many("ec", "LibreEC", ("s", "m", "l", "x"), "segment", "available")
+    add_many("ec", "LibreEC", ("s", "m", "l", "x"), "pose", "available")
     return cases
 
 
@@ -1144,7 +1144,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--case", dest="cases", nargs="*", default=None)
     parser.add_argument("--families", nargs="*", default=None)
     parser.add_argument("--tasks", nargs="*", choices=["detect", "segment", "pose"], default=None)
-    parser.add_argument("--claims", nargs="*", choices=["complete", "experimental"], default=None)
+    parser.add_argument("--claims", nargs="*", choices=["complete", "available"], default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--list-cases", action="store_true")
     parser.add_argument("--device", default="auto", help="Device for PyTorch model load.")

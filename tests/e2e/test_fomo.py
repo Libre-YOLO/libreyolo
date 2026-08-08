@@ -88,7 +88,6 @@ def test_fomo_multiclass_training_e2e(tmp_path: Path) -> None:
     model = LibreFOMO(model_path=None, size="s", nb_classes=2, device="cpu")
 
     results = model.train(
-        allow_experimental=True,
         data=str(data_yaml),
         epochs=1,
         batch=2,
@@ -123,7 +122,6 @@ def test_training_configurations_parameterized(
     model = _make_random_fomo(size="s", nc=1)
 
     train_kwargs = {
-        "allow_experimental": True,
         "data": str(data_yaml),
         "epochs": 1,
         "batch": 2,

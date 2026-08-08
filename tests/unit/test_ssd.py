@@ -1,4 +1,4 @@
-"""SSD family shell, naming, and maturity tests."""
+"""SSD family shell, naming, and capability tests."""
 
 from __future__ import annotations
 

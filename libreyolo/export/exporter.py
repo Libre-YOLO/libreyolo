@@ -622,13 +622,6 @@ class BaseExporter(ABC):
                 f"{family} {task} export to {self.format_name} is blocked: "
                 f"{support.reason}{alternatives_text}"
             )
-        if support.tier == "experimental":
-            warnings.warn(
-                f"{family} {task} export to {self.format_name} is experimental: "
-                f"{support.reason}",
-                RuntimeWarning,
-                stacklevel=3,
-            )
         if kwargs.get("nms") and not self.supports_embedded_nms:
             raise NotImplementedError(
                 f"{self.format_name.upper()} embedded NMS export is not supported."

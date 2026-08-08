@@ -8,7 +8,7 @@ The nine promoted cases cover the complete double-tick contract:
 4. reject constant/disconnected graphs with a second input; and
 5. compare the public ``predict()`` result using the task threshold.
 
-PIDNet is the tenth measured case. It gets an explicit experimental parity
+PIDNet is the tenth measured case. It gets an explicit available status because
 floor because repeated TensorRT builds can straddle the stricter promotion
 threshold. The models use deterministic random weights so this suite validates
 conversion and runtime behavior, not task accuracy.
@@ -27,7 +27,7 @@ from .conftest import requires_tensorrt
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.export_backend,
-    pytest.mark.experimental_backend,
+    pytest.mark.extended_backend,
     pytest.mark.tensorrt,
     pytest.mark.trt,
 ]
@@ -54,7 +54,7 @@ ROUND8_VALIDATED_CASES = (
     TensorRTRound8Case("LibreDepthAnythingV2", "s", "depth", 70, 1),
 )
 
-ROUND8_EXPERIMENTAL_PIDNET = TensorRTRound8Case(
+ROUND8_AVAILABLE_PIDNET = TensorRTRound8Case(
     "LibrePIDNet",
     "s",
     "semantic",
@@ -323,11 +323,11 @@ def test_tensorrt_round8_raw_and_predict_parity(tmp_path, case):
 
 @requires_tensorrt
 @pytest.mark.slow
-def test_tensorrt_round8_pidnet_experimental_parity_floor(tmp_path):
+def test_tensorrt_round8_pidnet_available_parity_floor(tmp_path):
     """Keep PIDNet runnable while its build-to-build drift blocks promotion."""
     from libreyolo import LibreYOLO
 
-    case = ROUND8_EXPERIMENTAL_PIDNET
+    case = ROUND8_AVAILABLE_PIDNET
     torch.manual_seed(0)
     model = _build_model(case)
     model.model.eval()
