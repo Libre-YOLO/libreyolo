@@ -354,11 +354,35 @@ def test_group_is_supporting_trainable():
     assert MODEL_GROUPS["domedetr"] == "g2"
 
 
-def test_export_is_blocked_with_a_reason():
-    """Better a clear refusal than a graph that is only valid for one image."""
+@pytest.mark.parametrize(
+    "fmt",
+    ["onnx", "torchscript", "tensorrt", "openvino", "ncnn", "tflite",
+     "coreml", "coreai", "paddle", "mnn", "executorch", "rknn"],
+)
+def test_every_export_format_is_blocked_with_a_reason(fmt):
+    """Better a clear refusal than a graph that is only valid for one image.
+
+    Parametrised over every registered format, and the guard sits in
+    ``BaseExporter.create`` rather than in the per-format preflight: formats
+    with an optional toolchain (ExecuTorch) raise ImportError from their own
+    constructor otherwise, telling the user to install a dependency that
+    would not help.
+    """
     model = LibreDOMEDETR(model_path=None, size="s", nb_classes=9)
     with pytest.raises(NotImplementedError, match="query count per image"):
-        model.export(format="onnx")
+        model.export(format=fmt)
+
+
+def test_export_registry_has_no_domedetr_support_recorded():
+    """The published inventory must not advertise an export this cannot do."""
+    import json
+    from pathlib import Path as _Path
+
+    inventory = json.loads(
+        (_Path(__file__).resolve().parents[2] / "reports" / "export_inventory.json")
+        .read_text(encoding="utf-8")
+    )
+    assert inventory["domedetr"]["export_override"] == "none"
 
 
 def test_is_nms_free_family():
