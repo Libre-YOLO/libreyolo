@@ -23,16 +23,20 @@ and **Removed** before upgrading.
   suffix (`-edge`, `-normal`, `-embed`, `-mesh`). New public result types
   `EdgeMap`, `NormalMap`, `Embeddings`, `Identities` and `Meshes`; new
   validators `EdgeValidator` (ODS/OIS) and `NormalValidator` (angular error).
-  Contracts in ADRs 0013 (embed), 0013 (mesh), 0014 (normal), 0015 (edge).
+  Contracts in `docs/adr/`: `0013-embed-task-contract`,
+  `0013-mesh-task-contract`, `0014-normal-task-contract` and
+  `0015-edge-task-contract`. The two 0013s and the two 0015s genuinely collide;
+  the numbering needs a pass.
 
 - `embed`: L2-normalized image and region embeddings. Ships `LibreFaceEmbedder`
   (ONNX Runtime only, `libreyolo[onnx]`), a `Gallery` / `FaceGallery` API, and
   three CLI commands: `libreyolo enroll` (build a gallery from a
   folder-per-person tree), `libreyolo compare` and its alias `libreyolo verify`
   (two-image verification by cosine similarity). `libreyolo predict` gains
-  `--gallery` and `--gallery-threshold` for 1:N identification. ADR 0015
-  generalizes the task from face-only identity vectors to any region embedding,
-  with `face-recognition` and `reid` as aliases.
+  `--gallery` and `--gallery-threshold` for 1:N identification.
+  `docs/adr/0015-embed-generalization` widens the task from face-only identity
+  vectors to any region embedding, with `face-recognition` and `reid` as
+  aliases.
 
 - `mesh`: body mesh recovery. `LibreSAM3DBody` is available as an optional
   model gated on the `sam_3d_body` dependency; it is deliberately not exported
