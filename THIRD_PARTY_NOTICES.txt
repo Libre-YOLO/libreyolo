@@ -131,6 +131,40 @@ checkpoints (state-dict metadata wrap only; learned parameters unchanged). See
 libreyolo/models/siglip2/NOTICE.md.
 
 --------------------------------------------------------------------
+Perception Encoder / PE Core (Meta AI)
+--------------------------------------------------------------------
+Source: https://github.com/huggingface/pytorch-image-models (tag v1.0.28,
+        commit 8ef73809f622e0031bd7f4940265734aef8b9978)
+        https://github.com/mlfoundations/open_clip (tag v3.2.0,
+        commit 6f939057c792a2f3d4d58df748de60ca47c4aed4)
+License: Apache License 2.0 (pytorch-image-models); MIT License (open_clip)
+Copyright (c) Ross Wightman; (c) 2012-2021 OpenCLIP authors.
+Used for: the LibrePE family (libreyolo/models/pe/). The vision tower
+(PEVisionTransformer, PEBlock, PEAttentionRope, PEAttentionPoolLatent,
+RotaryEmbeddingCat and the rotary/fourier helpers in libreyolo/models/pe/nn.py)
+is adapted from timm's EVA implementation (timm/models/eva.py,
+timm/layers/pos_embed_sincos.py, timm/layers/attention_pool.py). The text tower
+(PETextTransformer, Transformer, ResidualAttentionBlock in the same file) is
+adapted from open_clip's src/open_clip/transformer.py. Neither timm nor
+open_clip is imported at runtime. The OpenAI BPE tokenizer is reused from the
+existing libreyolo/models/clip/ implementation rather than duplicated.
+
+The Perception Encoder architecture itself is described in
+"Perception Encoder: The best visual embeddings are not at the output of the
+network" (Meta AI, https://arxiv.org/abs/2504.13181).
+
+NOTE: the official facebookresearch/perception_models repository (commit
+3e352cca660658d4b5c90f42a7808b11469e4c66) ships LICENSE.PE with Apache-2.0
+terms while the same revision's setup.py declares a noncommercial/proprietary
+package license. That inconsistency is unresolved, and is why no code was
+copied or adapted from that repository. The Perception Language Model
+(LICENSE.PLM, noncommercial), PE Spatial and PE-AV are out of scope.
+
+The shipped LibrePE weights are converted from the Apache-2.0
+OpenCLIP-compatible timm/PE-Core-* repositories (state-dict metadata wrap only;
+learned parameters unchanged). See libreyolo/models/pe/NOTICE.md.
+
+--------------------------------------------------------------------
 YOLOX (Megvii-BaseDetection)
 --------------------------------------------------------------------
 Source: https://github.com/Megvii-BaseDetection/YOLOX

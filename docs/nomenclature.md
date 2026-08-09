@@ -109,6 +109,7 @@ the `alexnet` / `deit` / `mobilenetv4` / `convnext` / `efficientnetv2` /
 | `swin`      | `LibreSwin`      | Upstream brand casing preserved (`Swin Transformer V1`) — classify-only and inference-only |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot classify + image/text embed) — inference-only |
 | `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot classify + image/text embed); inference-only |
+| `pe`        | `LibrePE`       | All-caps acronym (`PE`, Perception Encoder) kept short so canonical filenames stay compact; zero-shot classify + image/text/video embed; inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
 | `realesrgan` | `LibreRealESRGAN` | Upstream brand casing (`RealESRGAN`); restore-only super-resolution family |
 | `swinir`    | `LibreSwinIR`    | Upstream brand casing (`SwinIR`); restore-only transformer super-resolution family |
@@ -238,6 +239,7 @@ ships:
 | `ppocr`     | `t` (PP-OCRv5 mobile det + mobile rec, CPU tier), `l` (PP-OCRv5 server det + server rec, quality tier); detection long side 960 |
 | `clip`      | `b32`, `b16`, `l14` (ViT patch size baked in, all at 224) |
 | `siglip2`   | `b16` (base patch-16 at 256), `so400m` (shape-optimized 400M patch-14 at 384) |
+| `pe`        | `t16`, `s16` (patch-16 at 384), `b16` (patch-16 at 224), `l14` (patch-14 at 336), `g14` (gigantic patch-14 at 448) — ViT patch size baked in, resolution varies per size |
 
 VLM snapshot families use model-specific size names:
 
@@ -504,6 +506,7 @@ Detector-factory family support follows:
 | `swin`      | `("classify",)`             | classify | Swin Transformer V1 image classifier; t/s/b/l at 224; predict + top-1/top-5 `val` + ONNX/TorchScript/OpenVINO/TensorRT; inference-only |
 | `clip`      | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or whole-image/text embeddings in one space |
 | `siglip2`   | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or multilingual whole-image/text embeddings in one space |
+| `pe`        | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify, or image/text/whole-video embeddings in one space. The only family whose `embed` task pools a finite video into a single row (`VIDEO_EMBED_MODE = "clip"`) |
 | `facerec`   | `("embed",)`                | embed | two-stage face-region embeddings; rows align with face boxes; inference-only |
 
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so

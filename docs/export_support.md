@@ -110,6 +110,8 @@ in preflight.
 | yolonas | pose | ✓ | ✓ | ✓ | available | ✓ | ✓ |  |  | ✓ |  |  |  |
 | yolox | detect | ✓ | ✓ | ✓ | available | ✓ |  |  |  | ✓ | ✓ | available | ✓ |
 | zipdepth | depth | ✓ | ✓ | ✓ | available | ✓ |  |  |  | ✓ |  |  | ✓ |
+| pe | classify | ✓ | ✓ | available | available | available |  |  |  |  |  |  |  |
+| pe | embed | ✓ | ✓ | available | available | available |  |  |  |  |  |  |  |
 
 ## Parity thresholds
 
@@ -429,6 +431,10 @@ A check mark applies only under any constraint listed here.
 - `zipdepth` / `depth` / `openvino`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; two-input raw parity, factory reload, metadata, and public predict parity
 - `zipdepth` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `pe` / `classify` / `onnx`: fixed square input; dynamic batch only. Video graphs have a static frame count -- a dynamic F is not advertised. The classify graph freezes the class set present at export time.
+- `pe` / `classify` / `torchscript`: fixed square input; dynamic batch only. Video graphs have a static frame count -- a dynamic F is not advertised. The classify graph freezes the class set present at export time.
+- `pe` / `embed` / `onnx`: fixed square input; dynamic batch only. Video graphs have a static frame count -- a dynamic F is not advertised. The classify graph freezes the class set present at export time.
+- `pe` / `embed` / `torchscript`: fixed square input; dynamic batch only. Video graphs have a static frame count -- a dynamic F is not advertised. The classify graph freezes the class set present at export time.
 
 ## Available combinations
 
@@ -521,6 +527,12 @@ These converter paths are callable with the recorded validation context.
 - `yolox` / `detect` / `tensorrt`: The permissively licensed trained checkpoint exports, reloads, and passes public predict parity, but normalized raw error is 1.6% and image signal is only 2.1 times the conversion error.
 - `yolox` / `detect` / `coreml`: Conversion is available, but runtime parity requires a macOS runner.
 - `zipdepth` / `depth` / `tensorrt`: TensorRT 10.16 FP32 exports, reloads, and predicts, but repeated builds produced raw depth PSNR as low as 30.27 dB, below the 40 dB promotion gate.
+- `pe` / `classify` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `pe` / `classify` / `tensorrt`: The converter path is available, but the project has not yet recorded TensorRT runtime parity for this family and task.
+- `pe` / `classify` / `openvino`: The converter path is available, but the project has not yet recorded OpenVINO runtime parity for this family and task.
+- `pe` / `embed` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `pe` / `embed` / `tensorrt`: The converter path is available, but the project has not yet recorded TensorRT runtime parity for this family and task.
+- `pe` / `embed` / `openvino`: The converter path is available, but the project has not yet recorded OpenVINO runtime parity for this family and task.
 
 ## Blocked combinations
 
@@ -1278,3 +1290,17 @@ These converter paths are callable with the recorded validation context.
 - `zipdepth` / `depth` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `zipdepth` / `depth` / `tflite`: onnx2tf 2.6.7 flatbuffer-direct conversion does not support the edge-mode Pad operation in ZipDepth's convex upsampler.
 - `zipdepth` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `pe` / `classify` / `paddle`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `classify` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
+- `pe` / `classify` / `rknn`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `classify` / `ncnn`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `classify` / `tflite`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `classify` / `coreml`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `classify` / `coreai`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `paddle`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
+- `pe` / `embed` / `rknn`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `ncnn`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `tflite`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `coreml`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `coreai`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
