@@ -282,10 +282,39 @@ def test_rtdetrv2_obb_torchscript_raw_roundtrip(tmp_path):
     with torch.inference_mode():
         expected = model.model(image)
         actual = torch.jit.load(str(output_path)).eval()(image)
-    # Random initialization leaves near-tied encoder top-k candidates, and
-    # CPU kernels may select adjacent queries across supported CI platforms.
-    torch.testing.assert_close(actual[0], expected["pred_logits"], rtol=1e-3, atol=3e-3)
-    torch.testing.assert_close(actual[1], expected["pred_boxes"], rtol=1e-3, atol=3e-3)
+    # An untrained encoder score head produces near-constant objectness scores:
+    # for this seed, 263 of the top 350 candidates sit within 1e-6 of their
+    # neighbour and some are bit-identical. The decoder's `torch.topk` therefore
+    # breaks genuine ties, and a different BLAS reduction order (thread count,
+    # platform kernel) can pick a neighbouring anchor for the last few queries.
+    # That swaps whole query rows, which no element-wise tolerance can absorb
+    # (and a relative tolerance is meaningless here anyway: box components are
+    # near zero). So assert per-query agreement at a tolerance ~30x tighter than
+    # a blanket compare, allow a small number of tie-broken queries, and pin the
+    # global, permutation-invariant score distribution.
+    logits, boxes = actual[0], actual[1]
+    exp_logits, exp_boxes = expected["pred_logits"], expected["pred_boxes"]
+    assert logits.shape == exp_logits.shape
+    assert boxes.shape == exp_boxes.shape
+    assert torch.isfinite(logits).all() and torch.isfinite(boxes).all()
+
+    per_query_diff = torch.maximum(
+        (logits - exp_logits).abs().amax(dim=-1),
+        (boxes - exp_boxes).abs().amax(dim=-1),
+    )
+    num_queries = per_query_diff.shape[-1]
+    mismatched = int((per_query_diff > 1e-4).sum())
+    assert mismatched <= max(3, num_queries // 100), (
+        f"{mismatched}/{num_queries} TorchScript queries disagree with eager by "
+        f"more than 1e-4 (max diff {per_query_diff.max().item():.6f}); more than "
+        "a handful means a real export regression, not top-k tie-breaking"
+    )
+
+    # Permutation invariant: the sorted score profile cannot change no matter
+    # which of the tied candidates each backend selects.
+    exp_sorted = exp_logits.flatten().sort().values
+    act_sorted = logits.flatten().sort().values
+    torch.testing.assert_close(act_sorted, exp_sorted, rtol=0, atol=1e-4)
 
     backend = LibreYOLO(str(output_path), device="cpu")
     assert (backend.model_family, backend.model_size, backend.task) == (
