@@ -13,11 +13,14 @@
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-LibreYOLO-blue?logo=linkedin)](https://www.linkedin.com/company/libreyolo/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-MIT-licensed computer vision library with inference and training support for a variety of models. It provides a familiar high-level Python and CLI interface and reads common YOLO-format datasets, so existing workflows port over with minimal changes.
+**An MIT-licensed computer vision library.** Detection, segmentation, pose,
+depth, OCR and a dozen more tasks behind one small API, with training and
+export included rather than sold separately. Reads common YOLO-format
+datasets, so existing workflows port over with minimal changes.
 
 ![LibreYOLO Detection Example](libreyolo/assets/parkour_result.jpg)
 
-## Installation & Quick start
+## Install
 
 ```bash
 pip install libreyolo
@@ -31,28 +34,35 @@ result = model(SAMPLE_IMAGE, save=True)
 ```
 
 <details>
-<summary><b>Optional pip extras</b></summary>
+<summary><b>Optional extras</b></summary>
 
 <br>
 
-The base install covers YOLOv9 and the other detection models, plus training
-and inference. Add an extra in brackets when you need a heavier model family
-(for example RF-DETR, which needs `transformers`) or an export backend.
-Comma-separate to combine, e.g. `pip install "libreyolo[rfdetr,onnx]"`:
+The base install covers YOLOv9 and the other core detectors, training, and
+inference. Add an extra when you need a heavier family or an export backend.
+Comma-separate to combine, for example `pip install "libreyolo[rfdetr,onnx]"`.
 
 | Group | Extras |
 | --- | --- |
-| Export | `onnx`, `tensorrt`, `openvino`, `mnn`, `ncnn`, `tflite` (alias: `litert`), `coreml` |
-| Serving / deployment | `triton` ([Triton guide](docs/triton.md)) |
-| Models | `rfdetr`, `vlm`, `sam`, `openvocab`, `clip`, `gaze` |
-| Training | `lora`, `plots`, `tensorboard`, `mlflow`, `wandb` |
+| Export | `onnx`, `tensorrt`, `openvino`, `coreml`, `coreai`, `tflite` (alias `litert`), `ncnn`, `mnn`, `paddle`, `executorch` |
+| Serving | `triton` |
+| Models | `rfdetr`, `vlm`, `sam`, `openvocab`, `clip`, `siglip2`, `eomt`, `midas`, `modus`, `sensenova`, `gaze` |
+| Training | `lora`, `plots`, `tensorboard`, `mlflow`, `wandb`, `comet`, `clearml`, `neptune`, `dvclive` |
+| Speed | `fast-eval`, `hub-kernels` |
+| Sources | `stream` |
 | Everything | `pip install "libreyolo[all]"` |
 
-For the full list of extras and per-backend notes, see the [docs](https://www.libreyolo.com/docs#installation).
+`executorch`, `coreai` and `neptune` are deliberately left out of `all`: they
+pin torch or protobuf in ways that would drag the rest of the environment with
+them. Full list and per-backend notes in the
+[install guide](https://www.libreyolo.com/docs/install).
 
 </details>
 
-To install from source (development, or to track unreleased changes):
+<details>
+<summary><b>Install from source</b></summary>
+
+<br>
 
 ```bash
 git clone https://github.com/LibreYOLO/libreyolo.git
@@ -60,107 +70,104 @@ cd libreyolo
 pip install -e .
 ```
 
-A plain clone checks out `release`, the stable branch whose code matches these
-docs. For the latest unreleased work, switch to the integration branch with
-`git checkout dev`.
-
-## Flagship models
-
-LibreYOLO recommends these model families because they offer the best balance
-and receive the heaviest testing:
-
-- **YOLOv9** for CNN-based YOLO models.
-- **RF-DETR** for transformer-based detection and segmentation.
-
-## Detection models
-
-LibreYOLO is a YOLO library first. The table below covers the main detection
-families. `✓` supported. Empty cells are not currently supported.
-
-<table>
-  <thead>
-    <tr>
-      <th rowspan="2">Model family</th>
-      <th colspan="3">Inference</th>
-      <th rowspan="2">Training</th>
-      <th colspan="6">Export formats</th>
-    </tr>
-    <tr>
-      <th>Detection</th>
-      <th>Segmentation</th>
-      <th>Pose</th>
-      <th>ONNX</th>
-      <th>TorchScript</th>
-      <th>TensorRT</th>
-      <th>OpenVINO</th>
-      <th>NCNN</th>
-      <th>TFLite (LiteRT)</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td><strong>⭐ YOLOv9</strong></td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
-    <tr><td><strong>⭐ RF-DETR</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td></tr>
-    <tr><td>YOLOX</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
-    <tr><td>YOLO-NAS</td><td>✓</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
-    <tr><td>HRNet</td><td></td><td></td><td>✓</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>YOLOv9-E2E</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
-    <tr><td>YOLOv9-P2</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
-    <tr><td>YOLOv7</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
-    <tr><td>D-FINE</td><td>✓</td><td>✓</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>DEIM</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>DEIMv2</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>RT-DETR</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>RT-DETRv2<br><small>OBB inference; ONNX + TorchScript</small></td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>RT-DETRv4</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>Dome-DETR</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>DETR</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>LW-DETR</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>Deformable DETR</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>DINO-DETR</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>Faster R-CNN</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>RetinaNet</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>SSD300</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>Mask R-CNN</td><td>✓</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>FCN</td><td></td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>CenterNet</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>FCOS</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td><td></td></tr>
-    <tr><td>DeepLabv3 (semantic)</td><td></td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>EfficientDet</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>EC</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>RTMDet</td><td>✓</td><td>✓</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-    <tr><td>PicoDet</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
-    <tr><td>MiDaS (depth)</td><td></td><td></td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
-  </tbody>
-</table>
-
-## Beyond detection
-
-The same three-line API covers a lot more than boxes: the checkpoint name
-selects the task. These families are extras on top of the core library.
-
-<details>
-<summary><b>All other tasks and their models</b></summary>
-
-<br>
-
-- **Instance segmentation (promptable):** SAM, SAM 2, SAM 3, MobileSAM, EdgeTAM, PicoSAM3, EoMT
-- **Semantic segmentation:** SegFormer, PIDNet, EoMT, DINOv2
-- **Panoptic segmentation:** EoMT
-- **Oriented boxes (OBB):** RF-DETR
-- **Classification:** AlexNet, ResNet, DeiT, ConvNeXt, MobileNetV4, EfficientNetV2, Swin, VGG, ViT, DINOv2, CLIP, SigLIP2
-- **Point detection:** FOMO, LocateAnything
-- **Depth estimation:** Depth Anything 3, Depth Anything V2, ZipDepth
-- **Surface-normal estimation:** MoGe-2 (ViT-S/B/L)
-- **Image restoration & super-resolution:** NAFNet, Real-ESRGAN, SwinIR
-- **Background removal (matting):** BiRefNet, FeyNobg
-- **OCR:** PP-OCR
-- **Gaze estimation:** L2CS
-- **Facial recognition (face embedding):** LibreFaceRec (verification + gallery identification)
-- **Open-vocabulary & VLM detection:** Grounding DINO, OWLv2, OmDet-Turbo, OV-DEIM, Florence-2, Kosmos-2, Qwen3-VL, InternVL3, LFM2-VL, SmolVLM2, LocateAnything
+A plain clone checks out `release`, the stable branch matching the published
+package. For unreleased work, `git checkout dev`.
 
 </details>
 
+## One API, seventeen tasks
+
+The same three lines run every task. Only the checkpoint changes.
+
+```python
+from libreyolo import LibreYOLO
+
+LibreYOLO("LibreYOLO9t.pt")("street.jpg", save=True)             # detection
+LibreYOLO("LibreDeepLabv3mv3-sem.pt")("street.jpg", save=True)   # semantic segmentation
+LibreYOLO("LibreHRNetw32-pose.pt")("street.jpg", save=True)      # pose
+LibreYOLO("LibreMiDaSs-depth.pt")("street.jpg", save=True)       # depth
+LibreYOLO("LibreFeyNobgl-matte.pt")("portrait.jpg", save=True)   # background removal
+LibreYOLO("LibreRTDETRv2n-obb.pt")("aerial.jpg", save=True)      # oriented boxes
+```
+
+Sources are not just files. Point it at a webcam, an RTSP stream, a video, a
+directory, a YouTube URL or your screen:
+
+```bash
+libreyolo predict --model yolo9-t --source 0 --show          # webcam
+libreyolo predict --model yolo9-t --source rtsp://camera/1   # network camera
+libreyolo predict --model yolo9-t --source screen            # screen capture
+```
+
+## What ships
+
+| Task | Models |
+| --- | --- |
+| **Detection** | YOLOv9, RF-DETR, YOLOX, YOLO-NAS, D-FINE, DEIM, RT-DETR v1/v2/v4, RTMDet, PicoDet, YOLOv7, EfficientDet, and the classics: DETR, Deformable DETR, DINO-DETR, LW-DETR, Faster R-CNN, RetinaNet, SSD, FCOS, CenterNet |
+| **Tiny objects** | Dome-DETR (aerial, drone, remote sensing) |
+| **Instance segmentation** | RF-DETR, RTMDet, D-FINE, Mask R-CNN |
+| **Promptable segmentation** | SAM, SAM 2, SAM 3, MobileSAM, EdgeTAM, PicoSAM3 |
+| **Semantic segmentation** | SegFormer, PIDNet, DeepLabv3, FCN, LingBot-Vision, DINOv2, EoMT |
+| **Panoptic segmentation** | EoMT |
+| **Pose** | RF-DETR, YOLO-NAS, HRNet, EC |
+| **Oriented boxes** | RF-DETR, RT-DETRv2 |
+| **Classification** | MobileNetV4, ConvNeXt, EfficientNetV2, ResNet, ViT, Swin, DeiT, VGG, AlexNet, CLIP, SigLIP2, DINOv2 |
+| **Depth** | Depth Anything 3, Depth Anything V2, ZipDepth, MiDaS |
+| **Surface normals** | MoGe-2 |
+| **Edges** | DexiNed, TEED |
+| **Embeddings** | LibreFaceEmbedder, CLIP, SigLIP2, DINOv2 |
+| **Body mesh** | SAM 3D Body |
+| **Restoration** | NAFNet, Real-ESRGAN, SwinIR |
+| **Background removal** | BiRefNet, FeyNobg |
+| **OCR** | PP-OCR |
+| **Point detection** | FOMO, LocateAnything |
+| **Gaze** | L2CS |
+| **Open vocabulary and VLMs** | Grounding DINO, OWLv2, OmDet-Turbo, OV-DEIM, Florence-2, Kosmos-2, Qwen3-VL, InternVL3, LFM2-VL, SmolVLM2, MODUS |
+
+Per-family sizes, checkpoints and parity evidence live in the
+[model reference](https://www.libreyolo.com/docs/models).
+
+## Train
+
+```python
+from libreyolo import LibreYOLO
+
+model = LibreYOLO("LibreYOLO9t.pt")
+model.train(data="dataset.yaml", epochs=100, imgsz=640)
+```
+
+```bash
+libreyolo train --model yolo9-t --data dataset.yaml --epochs 100
+```
+
+Multi-GPU, LoRA, layer freezing, distillation, from-scratch training, and
+TensorBoard, MLflow, Weights & Biases, Comet, ClearML, Neptune and DVCLive
+logging are all supported. See the
+[training guide](https://www.libreyolo.com/docs/train).
+
+## Export and deploy
+
+Twelve formats: ONNX, TorchScript, TensorRT, OpenVINO, CoreML, Core AI, TFLite
+(LiteRT), NCNN, MNN, RKNN, Paddle and ExecuTorch. Plus NVIDIA Triton serving
+and DeepStream config generation.
+
+```bash
+libreyolo export --model yolo9-t --format onnx
+```
+
+Support varies by family and task, see the
+[export matrix](https://www.libreyolo.com/docs/reference/export-matrix).
+
+## Documentation
+
+- [Docs](https://www.libreyolo.com/docs) covers install, tasks, models, training, prediction, export and the CLI
+- [Benchmarks](https://www.visionanalysis.org/) for independent numbers
+- [CHANGELOG.md](CHANGELOG.md) for what changed
+
 ## License
 
-- **Code:** MIT License
-- **Weights:** Pre-trained weights may inherit licensing from the original source. Check the license in the specific HF repo of weights that you are interested in. LibreYOLO HF models always have a license.
+- **Code:** MIT License.
+- **Weights:** pre-trained weights may inherit licensing from their original
+  source, and not all of them are permissive. Check the license on the
+  specific Hugging Face repo before you use one commercially. Every LibreYOLO
+  Hugging Face model states its license.
