@@ -393,9 +393,11 @@ carry `Results.embeddings` with shape `(1, D)` and no boxes; region results use
 image path and is never inferred to be text. `Gallery` stores named references
 for any shape, while `FaceGallery` remains its compatibility alias.
 
-Dedicated embed checkpoints use `-embed`. Dual-task CLIP and SigLIP2 reuse
+Dedicated embed checkpoints use `-embed`. Dual-task CLIP, SigLIP2 and PE reuse
 their existing `-cls` two-tower artifact with an explicit `task="embed"`; no
-duplicate artifact is published for identical weights. DINOv2 likewise loads
+duplicate artifact is published for identical weights. PE additionally accepts a
+finite video under `task="embed"` and returns one row for the whole clip rather
+than one per frame. DINOv2 likewise loads
 an existing family checkpoint and bypasses its task head. Task aliases
 `facial-recognition`, `face-recognition`, `recognition`, `face`, `faceid`,
 `embedding`, and `reid` resolve to `embed` at the API boundary. See ADR 0013
@@ -693,6 +695,15 @@ LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter read
 # Use the same -cls artifact with task="embed"; size codes bake in resolution.
 LibreSigLIP2b16-cls.pt    # google/siglip2-base-patch16-256 (Apache-2.0 weights), 256 px
 LibreSigLIP2so400m-cls.pt # google/siglip2-so400m-patch14-384 (Apache-2.0 weights), 384 px
+
+# pe: Perception Encoder Core zero-shot classify, or image/text/whole-video
+# embedding. Use the same -cls artifact with task="embed"; size codes bake in
+# patch size, and resolution varies per size.
+LibrePEt16-cls.pt         # timm/PE-Core-T-16-384 (Apache-2.0 weights), 384 px, dim 512
+LibrePEs16-cls.pt         # timm/PE-Core-S-16-384 (Apache-2.0 weights), 384 px, dim 512
+LibrePEb16-cls.pt         # timm/PE-Core-B-16 (Apache-2.0 weights), 224 px, dim 1024
+LibrePEl14-cls.pt         # timm/PE-Core-L-14-336 (Apache-2.0 weights), 336 px, dim 1024
+LibrePEg14-cls.pt         # timm/PE-Core-bigG-14-448 (Apache-2.0 weights), 448 px, dim 1280
 ```
 
 ### VLM analysis (external snapshot tier)
