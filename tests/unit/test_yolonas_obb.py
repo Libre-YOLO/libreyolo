@@ -346,3 +346,21 @@ def test_autoconvert_reads_supergradients_processing_params_names():
     assert _checkpoint_names(loaded, nc=2) == ["plane", "ship"]
     # An explicit `names` key still wins.
     assert _checkpoint_names({**loaded, "names": ["a"]}, nc=1) == ["a"]
+
+
+def test_backend_obb_parser_drops_non_finite_rows():
+    """The numpy backend path must reject NaN/Inf rows like the native one."""
+    from libreyolo.backends.base import BaseBackend
+
+    boxes = np.array(
+        [[[np.nan, 10.0, 8.0, 4.0, 0.0], [200.0, 100.0, 20.0, 10.0, 0.1]]],
+        dtype=np.float32,
+    )
+    scores = np.array([[[0.99], [0.8]]], dtype=np.float32)
+    parsed = BaseBackend._parse_yolonas_obb(
+        [boxes, scores], 1024, 1024, 512, conf=0.1, iou=0.5, ratio=1.0
+    )
+    _boxes, out_scores, _cls, _masks, obb = parsed
+    assert len(obb) == 1
+    assert np.isfinite(obb).all()
+    assert np.isclose(out_scores[0], 0.8)

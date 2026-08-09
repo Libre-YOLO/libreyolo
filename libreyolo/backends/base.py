@@ -2283,7 +2283,15 @@ class BaseBackend(ABC):
         xywhr[:, 0] = np.clip(xywhr[:, 0], 0, orig_w)
         xywhr[:, 1] = np.clip(xywhr[:, 1], 0, orig_h)
 
-        valid = (xywhr[:, 2] > 0) & (xywhr[:, 3] > 0)
+        # Non-finite rows are dropped here rather than in NMS: the native path
+        # filters them inside rotated_nms_keep_indices, and canonicalization
+        # would otherwise carry NaN centres and angles into public results.
+        valid = (
+            np.isfinite(xywhr).all(axis=1)
+            & np.isfinite(max_scores)
+            & (xywhr[:, 2] > 0)
+            & (xywhr[:, 3] > 0)
+        )
         xywhr = xywhr[valid]
         max_scores = max_scores[valid]
         class_ids = class_ids[valid]
