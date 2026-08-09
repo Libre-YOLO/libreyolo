@@ -42,6 +42,14 @@ TOLERANCES = {
     "tensorrt": 3e-3,
 }
 
+# The child process decides whether it can run: it owns both gates (converted
+# weights present, native runtime importable) and both live behind the process
+# boundary on purpose, so the parent does not import onnxruntime/openvino just
+# to answer the question. A bare pytest.skip() in the child raises out of
+# __main__ and exits 1, which the parent then reads as a failed export. Give
+# "skipped" its own exit code so it survives the boundary.
+_SKIP_EXIT_CODE = 77
+
 
 def _weights_dir() -> Path:
     value = os.environ.get("HRNET_CONVERTED_DIR")
@@ -193,6 +201,10 @@ def test_real_checkpoint_export_raw_and_public_parity(
         timeout=300,
         check=False,
     )
+    if completed.returncode == _SKIP_EXIT_CODE:
+        reason = completed.stderr.strip().splitlines()[-1] if completed.stderr.strip() else ""
+        pytest.skip(f"HRNet {size} {format_name}: {reason}")
+
     assert completed.returncode == 0, (
         f"HRNet {size} {format_name} export parity subprocess failed\n"
         f"stdout:\n{completed.stdout}\n"
@@ -201,4 +213,10 @@ def test_real_checkpoint_export_raw_and_public_parity(
 
 
 if __name__ == "__main__":
-    _run_case(Path(sys.argv[1]), sys.argv[2], sys.argv[3])
+    try:
+        _run_case(Path(sys.argv[1]), sys.argv[2], sys.argv[3])
+    except pytest.skip.Exception as exc:
+        # Translate the skip into an exit code the parent understands; letting
+        # it propagate would exit 1 and read as a real parity failure.
+        print(f"SKIPPED: {exc}", file=sys.stderr)
+        raise SystemExit(_SKIP_EXIT_CODE) from None
