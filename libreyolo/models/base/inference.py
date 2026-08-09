@@ -1347,6 +1347,17 @@ class InferenceRunner:
         source_label = str(source) if source_label is None else source_label
 
         if getattr(self.model, "VIDEO_EMBED_MODE", "frames") == "clip":
+            # Clip mode collapses the video to a single result, so there is no
+            # per-frame stream to annotate, write or display. Say so rather
+            # than accepting the flag and silently producing nothing.
+            if save or show:
+                raise NotImplementedError(
+                    "save=True / show=True are not supported for clip-mode "
+                    "video inference: the video collapses to one result per "
+                    "clip, so there is no annotated frame stream to write or "
+                    "display. Use the returned Results (for example "
+                    "result.embeddings) directly."
+                )
             yield self._predict_video_clip(
                 source,
                 conf=conf,

@@ -383,7 +383,7 @@ class LibreVJEPA2(BaseModel):
                 "embed_tokens() requires task='embed'; this model is "
                 f"task={self.task!r}."
             )
-        tensor = self._preprocess(source, **kwargs)
+        tensor, _, _, _ = self._preprocess(source, **kwargs)
         with torch.no_grad():
             encoder = self.model
             tokens = encoder(tensor)

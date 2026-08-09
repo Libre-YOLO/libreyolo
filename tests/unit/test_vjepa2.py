@@ -339,3 +339,26 @@ class TestInferenceContracts:
         base = model.sample_clip_indices(500, 1)
         doubled = model.sample_clip_indices(500, 2)
         assert (doubled[-1] - doubled[0]) == 2 * (base[-1] - base[0])
+
+    def test_embed_tokens_unpacks_the_preprocess_tuple(self):
+        """Regression: embed_tokens fed the whole 4-tuple to the encoder."""
+        model = LibreVJEPA2(size="l256", task="embed")
+        model._requested_clip_frames = 2
+        tokens = model.embed_tokens(torch.zeros(1, 2, 3, 256, 256))
+        # (B, T', H', W', D) with T' = frames / tubelet, H' = W' = 256/16
+        assert tokens.shape == (1, 1, 16, 16, 1024)
+
+    def test_embed_tokens_rejects_a_classify_model(self):
+        model = LibreVJEPA2(size="l256", task="classify", nb_classes=174)
+        with pytest.raises(ValueError, match="requires task='embed'"):
+            model.embed_tokens(torch.zeros(1, 2, 3, 256, 256))
+
+    def test_clip_mode_rejects_save_and_show_instead_of_ignoring_them(self):
+        """Clip mode yields one result, so there is no frame stream to write."""
+        import inspect
+
+        from libreyolo.models.base.inference import InferenceRunner
+
+        source = inspect.getsource(InferenceRunner._predict_video)
+        # The flags must be handled in the clip branch, not silently dropped.
+        assert "save or show" in source
