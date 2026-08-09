@@ -364,3 +364,20 @@ def test_backend_obb_parser_drops_non_finite_rows():
     assert len(obb) == 1
     assert np.isfinite(obb).all()
     assert np.isclose(out_scores[0], 0.8)
+
+
+def test_ui_summary_reports_obb_not_detect():
+    """OBB results fill `boxes` too, so the UI must dispatch on `obb` first."""
+    from libreyolo.ui.server import _summarize_result
+    from libreyolo.utils.results import OBB, Boxes, Results
+
+    result = Results(
+        boxes=Boxes(
+            np.zeros((2, 4), dtype=np.float32),
+            np.zeros((2,), dtype=np.float32),
+            np.zeros((2,), dtype=np.float32),
+        ),
+        obb=OBB(np.zeros((2, 7), dtype=np.float32), (100, 100)),
+        orig_shape=(100, 100),
+    )
+    assert _summarize_result(result) == ("obb", "2 objects")
