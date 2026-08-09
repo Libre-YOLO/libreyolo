@@ -87,6 +87,61 @@ def _default_name(model, suffix: str, ext: str) -> str:
     return f"{model.FILENAME_PREFIX}{model.size}-{suffix}.{ext}"
 
 
+def build_metadata(model, kind: str, frames: int) -> dict:
+    """Metadata describing an exported PE graph.
+
+    Written into ONNX ``metadata_props`` and the TorchScript
+    ``libreyolo_metadata.json`` extra file, so a reloaded artifact knows its
+    family, task, resolution and -- for clip graphs -- its fixed frame count,
+    tensor layout and pooling rule, instead of falling back to detection
+    defaults.
+    """
+    cfg = model.model.cfg
+    task = "classify" if kind == "classify" else "embed"
+    metadata: dict[str, object] = {
+        "model_family": model.FAMILY,
+        "model_size": model.size,
+        "size": model.size,
+        "task": task,
+        "default_task": model.DEFAULT_TASK,
+        "supported_tasks": list(model.SUPPORTED_TASKS),
+        "imgsz": cfg.image_size,
+        "input_size": cfg.image_size,
+        "embedding_dim": cfg.projection_dim,
+        "pixel_mean": [0.5, 0.5, 0.5],
+        "pixel_std": [0.5, 0.5, 0.5],
+        "input_kind": "video" if kind == "video" else "image",
+    }
+    if kind == "video":
+        metadata.update(
+            {
+                "frames": int(frames),
+                "input_layout": "BFCHW",
+                "video_pool": "mean_frame_embeddings",
+                "video_sampling": (
+                    "uniform over the finite source, endpoints included; the "
+                    "last frame repeats only when decoding yields fewer frames "
+                    "than requested"
+                ),
+                "dynamic_frames": False,
+            }
+        )
+    if kind == "classify":
+        metadata["names"] = [model.names[i] for i in sorted(model.names)]
+        metadata["nc"] = len(model.names)
+    return metadata
+
+
+def _stringify(metadata: dict) -> dict:
+    """ONNX metadata_props values must be strings."""
+    import json
+
+    return {
+        key: value if isinstance(value, str) else json.dumps(value)
+        for key, value in metadata.items()
+    }
+
+
 def build_export_module(model, kind: str, frames: int = 8):
     """Build the CPU-resident export graph for ``kind``.
 
@@ -152,6 +207,10 @@ def export_onnx(
             )
     finally:
         model.model.visual.to(device)
+
+    from ...export.onnx import embed_onnx_metadata
+
+    embed_onnx_metadata(output, _stringify(build_metadata(model, kind, frames)))
     return output
 
 
@@ -168,9 +227,16 @@ def export_torchscript(
     output = str(output or _default_name(model, suffix, "torchscript"))
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     try:
+        import json
+
         with torch.no_grad():
             traced = torch.jit.trace(module, dummy, strict=False)
-            traced.save(output)
+            extra_files = {
+                "libreyolo_metadata.json": json.dumps(
+                    build_metadata(model, kind, frames)
+                )
+            }
+            torch.jit.save(traced, output, _extra_files=extra_files)
     finally:
         model.model.visual.to(device)
     return output

@@ -315,7 +315,7 @@ class InferenceRunner:
                     "they arrive."
                 )
             if source_spec.kind == SourceKind.VIDEO:
-                return self._predict_video_clip(
+                clip_results = self._predict_video_clip(
                     source_spec.source,
                     conf=conf,
                     iou=iou,
@@ -324,6 +324,10 @@ class InferenceRunner:
                     max_det=max_det,
                     **kwargs,
                 )
+                # Honor the streaming contract: callers passing stream=True
+                # expect an iterator, even though a whole clip collapses to a
+                # single Results.
+                return iter(clip_results) if stream else clip_results
 
         # Handle finite video input.
         if source_spec.kind == SourceKind.VIDEO:
