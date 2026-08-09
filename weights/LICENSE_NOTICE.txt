@@ -460,6 +460,46 @@ non-commercial purposes. Converting a locally held checkpoint does not change
 its applicable terms. A checkpoint trained independently on compatibly
 licensed data may be distributed under the terms established by its trainer.
 
+V-JEPA 2 video encoders and attentive probes
+-------------------------------------------
+Weight licenses for this family are per artifact and are deliberately NOT
+collapsed into a single family-wide claim: the two ViT-g encoders are
+Apache-2.0 while the other six artifacts are MIT. Each rehosted Hugging Face
+repository carries the licence of its own source artifact.
+
+  LibreVJEPA2l256-embed.pt
+    facebook/vjepa2-vitl-fpc64-256 @ b3c1679b7c34d3255ef3547f27c7b226aefab26f
+    MIT
+  LibreVJEPA2h256-embed.pt
+    facebook/vjepa2-vith-fpc64-256 @ b5eac8703e3efdc1547fbb6ddfbeb133dc0bdee5
+    MIT
+  LibreVJEPA2g256-embed.pt
+    facebook/vjepa2-vitg-fpc64-256 @ 875c192b7b704b87d1e1d99345769632dd5f739a
+    Apache-2.0
+  LibreVJEPA2g384-embed.pt
+    facebook/vjepa2-vitg-fpc64-384 @ 12ca91694b230e0d4b5b0078af6f4ae1d51e933d
+    Apache-2.0
+  LibreVJEPA2l256-cls-ssv2.pt
+    facebook/vjepa2-vitl-fpc16-256-ssv2 @ 4aa02df83918538fc21cfaf576382fa20e489a80
+    MIT
+  LibreVJEPA2l256-cls-diving48.pt
+    facebook/vjepa2-vitl-fpc32-256-diving48 @ 71ae2a8b1ff5a297aeeaae9b5e64c7a2e5e6a633
+    MIT
+  LibreVJEPA2g384-cls-ssv2.pt
+    facebook/vjepa2-vitg-fpc64-384-ssv2 @ 9f5fd615cb6f79065a28edcf1cc3ef25010dddfa
+    MIT
+  LibreVJEPA2g384-cls-diving48.pt
+    facebook/vjepa2-vitg-fpc32-384-diving48 @ 0b48243375319bd8e03e3cd5560d957095429189
+    MIT
+
+The probe checkpoints were trained on Something-Something V2 and Diving48.
+Those datasets are named here for provenance only. Their terms are not the
+terms of these converted weights, and LibreYOLO does not mirror, bundle or
+auto-download either dataset. Something-Something V2 is distributed under a
+research-use agreement; Diving48's redistribution terms are not clearly
+established by the selected official source. Users training on either dataset
+are responsible for accepting its terms themselves.
+
 Third-party SOURCE CODE bundled inside the LibreYOLO Python package
 (separate from weights) is disclosed in the top-level NOTICE file.
 Notably, the DEIMv2 family bundles DINOv3 backbone code under Meta's

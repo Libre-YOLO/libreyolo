@@ -109,6 +109,7 @@ the `alexnet` / `deit` / `mobilenetv4` / `convnext` / `efficientnetv2` /
 | `swin`      | `LibreSwin`      | Upstream brand casing preserved (`Swin Transformer V1`) — classify-only and inference-only |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot classify + image/text embed) — inference-only |
 | `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot classify + image/text embed); inference-only |
+| `vjepa2`    | `LibreVJEPA2`   | All-caps acronym + version (`V-JEPA 2`), hyphen dropped; video clip embedding (`embed`) + attentive-probe video classification (`classify`) |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
 | `realesrgan` | `LibreRealESRGAN` | Upstream brand casing (`RealESRGAN`); restore-only super-resolution family |
 | `swinir`    | `LibreSwinIR`    | Upstream brand casing (`SwinIR`); restore-only transformer super-resolution family |
@@ -690,6 +691,25 @@ LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter read
 # Use the same -cls artifact with task="embed"; size codes bake in resolution.
 LibreSigLIP2b16-cls.pt    # google/siglip2-base-patch16-256 (Apache-2.0 weights), 256 px
 LibreSigLIP2so400m-cls.pt # google/siglip2-so400m-patch14-384 (Apache-2.0 weights), 384 px
+
+# vjepa2: V-JEPA 2 self-supervised video encoder. Consumes a CLIP, not a frame.
+# Size codes bake in the crop, because g256 and g384 are the same network at
+# different input resolutions. Every artifact carries a task suffix: a bare
+# LibreVJEPA2l256.pt is not canonical.
+LibreVJEPA2l256-embed.pt        # facebook/vjepa2-vitl-fpc64-256 (MIT weights), 256 px, 64 frames
+LibreVJEPA2h256-embed.pt        # facebook/vjepa2-vith-fpc64-256 (MIT weights), 256 px, 64 frames
+LibreVJEPA2g256-embed.pt        # facebook/vjepa2-vitg-fpc64-256 (Apache-2.0 weights), 256 px, 64 frames
+LibreVJEPA2g384-embed.pt        # facebook/vjepa2-vitg-fpc64-384 (Apache-2.0 weights), 384 px, 64 frames
+
+# Published attentive probes place the dataset variant AFTER the task suffix.
+# Only these four size/variant pairs exist; -cls without a variant, and any
+# other size/variant combination, are rejected even though the filename regex
+# can parse them. A locally trained probe loads from its explicit path and is
+# never assigned a published variant.
+LibreVJEPA2l256-cls-ssv2.pt     # 16 frames, 174 classes (MIT weights)
+LibreVJEPA2l256-cls-diving48.pt # 32 frames,  48 classes (MIT weights)
+LibreVJEPA2g384-cls-ssv2.pt     # 64 frames, 174 classes (MIT weights)
+LibreVJEPA2g384-cls-diving48.pt # 32 frames,  48 classes (MIT weights)
 ```
 
 ### VLM analysis (external snapshot tier)

@@ -98,6 +98,8 @@ in preflight.
 | teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  | ✓ |  |  |
 | vgg | classify | ✓ | ✓ | available | ✓ | ✓ |  |  |  | available |  |  |  |
 | vit | classify | ✓ | available | available | available | available |  |  |  | available |  |  |  |
+| vjepa2 | embed | ✓ | ✓ | available | available | available |  |  |  |  |  |  |  |
+| vjepa2 | classify | available | available | available | available | available |  |  |  |  |  |  |  |
 | yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  | ✓ |
 | yolo3 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ |
@@ -369,6 +371,8 @@ A check mark applies only under any constraint listed here.
 - `vgg` / `classify` / `tensorrt`: FP32, batch 1, fixed 224x224 input
 - `vgg` / `classify` / `openvino`: FP32, batch 1, fixed 224x224 input
 - `vit` / `classify` / `onnx`: FP32, fixed 224x224 input
+- `vjepa2` / `embed` / `onnx`: FP32, dynamic batch, fixed frame count / crop / tubelet geometry per graph; ONNX needs opset >= 14 for scaled_dot_product_attention
+- `vjepa2` / `embed` / `torchscript`: FP32, dynamic batch, fixed frame count / crop / tubelet geometry per graph; ONNX needs opset >= 14 for scaled_dot_product_attention
 - `yolo1` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo1` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
@@ -508,6 +512,14 @@ These converter paths are callable with the recorded validation context.
 - `vit` / `classify` / `tensorrt`: The converter path is available, but the project has not yet recorded TensorRT runtime parity for this family and task.
 - `vit` / `classify` / `openvino`: The converter path is available, but the project has not yet recorded OpenVINO runtime parity for this family and task.
 - `vit` / `classify` / `ncnn`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `vjepa2` / `embed` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `vjepa2` / `embed` / `tensorrt`: The converter path is available, but the project has not yet recorded TensorRT runtime parity for this family and task.
+- `vjepa2` / `embed` / `openvino`: The converter path is available, but the project has not yet recorded OpenVINO runtime parity for this family and task.
+- `vjepa2` / `classify` / `onnx`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `vjepa2` / `classify` / `torchscript`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `vjepa2` / `classify` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `vjepa2` / `classify` / `tensorrt`: The converter path is available, but the project has not yet recorded TensorRT runtime parity for this family and task.
+- `vjepa2` / `classify` / `openvino`: The converter path is available, but the project has not yet recorded OpenVINO runtime parity for this family and task.
 - `yolo7` / `detect` / `tensorrt`: TensorRT 10.16 FP32 exports and reloads, but the permissively licensed trained checkpoint changes the public top-k class membership.
 - `yolo9` / `detect` / `rknn`: Exact small variants passed RKNN Toolkit2 2.3.2 compilation, RK3588 PC-simulator raw-output gates, and matched post-NMS detections on a real image. Support is limited to YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s; on-device latency and parity have not been measured. Constraint: RKNN Toolkit2 2.3.2, RK3588 PC simulator, vendor floating build, batch 1, fixed square input
 - `yolo9` / `detect` / `coreml`: Conversion is available, but runtime parity requires a macOS runner.
@@ -1233,6 +1245,20 @@ These converter paths are callable with the recorded validation context.
 - `vit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `vit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `vit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
+- `vjepa2` / `embed` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
+- `vjepa2` / `embed` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
+- `vjepa2` / `embed` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
+- `vjepa2` / `embed` / `ncnn`: Both toolchains are built around rank-4 image tensors; a rank-5 clip input has no supported conversion path.
+- `vjepa2` / `embed` / `tflite`: Both toolchains are built around rank-4 image tensors; a rank-5 clip input has no supported conversion path.
+- `vjepa2` / `embed` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `vjepa2` / `embed` / `coreai`: This family and task have not been validated for Core AI export.
+- `vjepa2` / `classify` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
+- `vjepa2` / `classify` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
+- `vjepa2` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
+- `vjepa2` / `classify` / `ncnn`: Both toolchains are built around rank-4 image tensors; a rank-5 clip input has no supported conversion path.
+- `vjepa2` / `classify` / `tflite`: Both toolchains are built around rank-4 image tensors; a rank-5 clip input has no supported conversion path.
+- `vjepa2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `vjepa2` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
 - `yolo1` / `detect` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
 - `yolo1` / `detect` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `yolo1` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.

@@ -615,6 +615,19 @@ RTDETRV2_OBB_MODELS = [
     ("rtdetrv2", "n", "LibreRTDETRv2n-obb.pt"),
 ]
 
+# V-JEPA 2 is a video family and does not belong in MODEL_CATALOG: that matrix
+# feeds the COCO detection mAP and training gates, which a clip embedder fails
+# by construction. It is also kept out of GENERAL_NIGHTLY_INFERENCE_MODELS,
+# which is detect-only, so the general-nightly count in docs/testing.md is
+# unchanged. The representative cases below are the two smallest artifacts:
+# one encoder and one released probe.
+VJEPA2_EMBED_MODELS = [
+    ("vjepa2", "l256", "LibreVJEPA2l256-embed.pt"),
+]
+VJEPA2_CLASSIFY_MODELS = [
+    ("vjepa2", "l256", "LibreVJEPA2l256-cls-ssv2.pt"),
+]
+
 # Derived lists (no manual maintenance)
 YOLOX_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "yolox"]
 YOLO9_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "yolo9"]

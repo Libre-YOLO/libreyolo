@@ -5,6 +5,37 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases
 before 1.4.0 are documented in the
 [GitHub Releases](https://github.com/LibreYOLO/libreyolo/releases) only.
 
+## [Unreleased]
+
+### Added
+
+- **V-JEPA 2** (`vjepa2`), a self-supervised video encoder, under the generic
+  `embed` task plus `classify` for its released attentive probes. Sizes
+  `l256`, `h256`, `g256` and `g384`; canonical checkpoints
+  `LibreVJEPA2<size>-embed.pt` and `LibreVJEPA2<size>-cls-<ssv2|diving48>.pt`.
+  The encoder is a native pure-PyTorch port, so inference and export do not
+  depend on `transformers` at runtime.
+
+  This is the first family to consume a *clip* rather than a frame. A finite
+  video produces one result per sampled clip, with one clip by default;
+  every other family keeps its per-frame video result cardinality. An image
+  is accepted as an explicitly documented single-frame input, which is a
+  static appearance representation and not a motion one.
+
+  The public embedding is a LibreYOLO pooling contract, defined as the
+  arithmetic mean of the final encoder tokens followed by L2 normalization.
+  Upstream designates no global retrieval vector, and no retrieval benchmark
+  is claimed for it. The native spatiotemporal token grid is available
+  separately through `model.embed_tokens(...)` as `(B, T', H', W', D)`.
+
+  Encoder token and pooled-vector parity against unmodified
+  `transformers==5.1.0` is exact (`max_abs_diff == 0.0`) on float32 CPU for
+  `l256` and `h256`, as is single-view logit parity for the `l256` SSv2 probe.
+  ONNX and TorchScript ship fixed-frame 5D graphs with dynamic batch.
+
+  Self-supervised encoder pretraining is not implemented and rejects with an
+  actionable message; the attentive probe is the supported training path.
+
 ## [1.5.0] - 2026-08-09
 
 The largest release so far: 28 new model families, four new tasks (`edge`,
