@@ -30,11 +30,21 @@ before 1.4.0 are documented in the
 
   Encoder token and pooled-vector parity against unmodified
   `transformers==5.1.0` is exact (`max_abs_diff == 0.0`) on float32 CPU for
-  `l256` and `h256`, as is single-view logit parity for the `l256` SSv2 probe.
-  ONNX and TorchScript ship fixed-frame 5D graphs with dynamic batch.
+  all four sizes, as is single-view logit parity for three of the four
+  released probes. The `g384` Diving48 probe differs by one float32 ULP
+  (9.54e-07 absolute, 1.1e-07 relative); it is documented rather than papered
+  over, and the parity script still asserts `== 0.0`. ONNX and TorchScript
+  ship fixed-frame 5D graphs with dynamic batch.
 
-  Self-supervised encoder pretraining is not implemented and rejects with an
-  actionable message; the attentive probe is the supported training path.
+  A frozen attentive-probe trainer ships behind the normal
+  `model.train(data="video_dataset.yaml")` entry point. The encoder is frozen
+  and kept in eval mode; only the three-layer attentive pooler and the linear
+  classifier are optimized, and best checkpoints are selected by top-1
+  accuracy. Datasets are entirely user-supplied: manifests are validated in
+  full before the first epoch, and no video corpus is ever downloaded.
+
+  Self-supervised encoder pretraining, predictor pretraining and full encoder
+  fine-tuning all reject with actionable messages before a dataset is built.
 
 ## [1.5.0] - 2026-08-09
 

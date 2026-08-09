@@ -422,8 +422,34 @@ class LibreVJEPA2(BaseModel):
     # Training
     # =========================================================================
 
-    def train(self, *args, **kwargs):
-        """Reject self-supervised training before any dataset is constructed."""
+    def train(
+        self,
+        data: str,
+        *,
+        epochs: int = 10,
+        batch: int = 2,
+        lr0: float = 1e-3,
+        device: str = "",
+        workers: int = 0,
+        seed: int = 0,
+        project: str = "runs",
+        name: str = "train",
+        exist_ok: bool = False,
+        resume: bool = False,
+        amp: bool = True,
+        patience: int = 50,
+        freeze: int = 1,
+        callbacks=None,
+        **kwargs: Any,
+    ) -> dict:
+        """Train the attentive probe on a user-supplied video dataset.
+
+        The encoder is frozen and kept in eval mode; only the three-layer
+        attentive pooler and the linear classifier are optimized. ``data`` is a
+        dataset YAML whose manifests are validated in full before the first
+        epoch. Nothing is downloaded: the videos are yours.
+        """
+        # Reject the unsupported training stories before building a dataset.
         if self.task == "embed":
             raise NotImplementedError(
                 "V-JEPA 2 embedding training is self-supervised pretraining: it "
@@ -433,4 +459,42 @@ class LibreVJEPA2(BaseModel):
                 "    model = LibreYOLO('LibreVJEPA2l256-embed.pt', task='classify')\n"
                 "    model.train(data='video_dataset.yaml')"
             )
-        return super().train(*args, **kwargs)
+        if kwargs.pop("pretrain", False) or kwargs.pop("predictor", False):
+            raise NotImplementedError(
+                "V-JEPA 2 predictor / self-supervised pretraining is not "
+                "implemented and is out of scope for this family."
+            )
+        if freeze == 0:
+            raise NotImplementedError(
+                "Full encoder fine-tuning (freeze=0) is not wired for V-JEPA 2. "
+                "The supported recipe trains the attentive pooler and classifier "
+                "with the encoder frozen; unfreezing a 1B-parameter video "
+                "encoder needs far more memory than the probe recipe and has no "
+                "validated schedule here."
+            )
+
+        from .trainer import VJEPA2Trainer
+
+        trainer = VJEPA2Trainer(
+            model=self.model,
+            wrapper_model=self,
+            size=self.size,
+            num_classes=self.nb_classes,
+            data=data,
+            epochs=epochs,
+            batch=batch,
+            imgsz=self.crop_size,
+            lr0=lr0,
+            device=device if device else "auto",
+            workers=workers,
+            seed=seed,
+            project=project,
+            name=name,
+            exist_ok=exist_ok,
+            resume=resume,
+            amp=amp,
+            patience=patience,
+            callbacks=callbacks,
+            **kwargs,
+        )
+        return trainer.train()
