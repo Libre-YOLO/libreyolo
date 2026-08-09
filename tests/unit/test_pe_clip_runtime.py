@@ -162,6 +162,26 @@ def test_exported_backend_uses_pe_normalization(embedder, tmp_path):
     assert PE_MEAN == (0.5, 0.5, 0.5) and PE_STD == (0.5, 0.5, 0.5)
 
 
+def test_video_graph_reload_fails_loudly(embedder, tmp_path):
+    """A 5D clip graph must be refused with a reason, not an opaque rank error."""
+    from libreyolo.backends.torchscript import TorchScriptBackend
+
+    out = str(tmp_path / "vembed.torchscript")
+    embedder.export(format="torchscript", video=True, clip_frames=4, output=out)
+    with pytest.raises(NotImplementedError, match="5D"):
+        TorchScriptBackend(out, task="embed")
+
+
+def test_image_graph_reload_still_works(embedder, tmp_path):
+    """The guard must not catch ordinary 4D image graphs."""
+    from libreyolo.backends.torchscript import TorchScriptBackend
+
+    out = str(tmp_path / "embed.torchscript")
+    embedder.export(format="torchscript", output=out)
+    backend = TorchScriptBackend(out, task="embed")
+    assert backend.model_family == "pe"
+
+
 def test_torchscript_metadata_round_trips(embedder, tmp_path):
     import json
 

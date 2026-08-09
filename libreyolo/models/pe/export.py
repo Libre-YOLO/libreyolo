@@ -9,6 +9,14 @@ Three separate wrappers, because PE has three distinct exportable behaviors:
 * **video embed** - fixed-``F`` 5D ``(B, F, C, H, W)`` input to ``[B, D]`` unit
   rows, pooling frames inside the graph.
 
+  This graph is **direct-runtime only**. LibreYOLO's exported-backend
+  preprocessing builds 4D image tensors, so there is no shared 5D video-input
+  contract to drive it through ``LibreYOLO(<artifact>)`` yet. The artifact
+  records ``input_kind="video"`` and the backends refuse to load it with an
+  actionable message rather than failing on an opaque input-rank error; feed it
+  with ``onnxruntime`` / ``torch.jit`` directly. Native parity for the graph is
+  still verified (see ``tests/unit/test_pe_export.py``).
+
 Text tokenization is never exported. The exported classify graph is fixed to the
 labels and resolution present at export time.
 
