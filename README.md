@@ -33,8 +33,6 @@ model = LibreYOLO("LibreYOLO9t.pt")
 result = model(SAMPLE_IMAGE, save=True)
 ```
 
-That is the whole interface. The checkpoint you name decides the task.
-
 <details>
 <summary><b>Optional extras</b></summary>
 
@@ -131,10 +129,6 @@ Per-family sizes, checkpoints and parity evidence live in the
 
 ## Train
 
-Training is part of the library, not a separate product. Seventeen detection
-families train, plus classification, semantic segmentation, point and
-restoration families.
-
 ```python
 from libreyolo import LibreYOLO
 
@@ -161,15 +155,12 @@ and DeepStream config generation.
 libreyolo export --model yolo9-t --format onnx
 ```
 
-Support varies by family and task, and every combination is validated rather
-than assumed. The
-[export matrix](https://www.libreyolo.com/docs/reference/export-matrix) is the
-authoritative grid.
+Support varies by family and task, see the
+[export matrix](https://www.libreyolo.com/docs/reference/export-matrix).
 
 ## Documentation
 
 - [Docs](https://www.libreyolo.com/docs) covers install, tasks, models, training, prediction, export and the CLI
-- [Upgrading](https://www.libreyolo.com/docs/upgrade) if you are coming from an earlier version
 - [Benchmarks](https://www.visionanalysis.org/) for independent numbers
 - [CHANGELOG.md](CHANGELOG.md) for what changed
 
