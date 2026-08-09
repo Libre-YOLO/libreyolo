@@ -1764,6 +1764,31 @@
     "available": true,
     "group": "g3"
   },
+  "vjepa2": {
+    "class": "libreyolo.models.vjepa2.model.LibreVJEPA2",
+    "tasks": [
+      "embed",
+      "classify"
+    ],
+    "default_task": "embed",
+    "sizes": {
+      "l256": 256,
+      "h256": 256,
+      "g256": 256,
+      "g384": 384
+    },
+    "default_imgsz": {
+      "l256": 256,
+      "h256": 256,
+      "g256": 256,
+      "g384": 384
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g2"
+  },
   "yolo1": {
     "class": "libreyolo.models.yolo1.model.LibreYOLO1",
     "tasks": [

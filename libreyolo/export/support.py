@@ -3671,3 +3671,36 @@ __all__ = [
     "iter_validated",
     "validated_alternatives",
 ]
+
+
+# --- V-JEPA 2 -------------------------------------------------------------
+#
+# Every V-JEPA 2 graph consumes a 5D video clip, so only the formats whose
+# toolchains were actually exercised on a rank-5 input are claimed here.
+_add(
+    "validated",
+    ("vjepa2",),
+    ("embed",),
+    ("onnx", "torchscript"),
+    reason=(
+        "Fixed-frame 5D clip graphs are covered by export, runtime reload, "
+        "torch-vs-runtime embedding parity, unit-norm output, and a "
+        "temporal-order sensitivity check that fails a graph which ignores "
+        "frame order."
+    ),
+    since="1.6",
+    constraint=(
+        "FP32, dynamic batch, fixed frame count / crop / tubelet geometry per "
+        "graph; ONNX needs opset >= 14 for scaled_dot_product_attention"
+    ),
+)
+_add(
+    "blocked",
+    ("vjepa2",),
+    ("embed", "classify"),
+    ("ncnn", "tflite"),
+    reason=(
+        "Both toolchains are built around rank-4 image tensors; a rank-5 clip "
+        "input has no supported conversion path."
+    ),
+)

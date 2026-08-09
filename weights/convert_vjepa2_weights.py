@@ -77,7 +77,16 @@ def _load_snapshot(repo: str, revision: str) -> Tuple[dict, dict]:
 
     from huggingface_hub import snapshot_download
 
-    local = Path(snapshot_download(repo, revision=revision))
+    # Fetch only what the conversion reads. These repos ship the weights in
+    # BOTH safetensors and pickle form, and pulling both doubles the download
+    # and the on-disk cache for no benefit (the h256 repo is ~13 GB with both).
+    local = Path(
+        snapshot_download(
+            repo,
+            revision=revision,
+            allow_patterns=["config.json", "*.safetensors", "*.safetensors.index.json"],
+        )
+    )
     config = json.loads((local / "config.json").read_text(encoding="utf-8"))
 
     shards = sorted(local.glob("*.safetensors"))

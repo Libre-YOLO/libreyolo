@@ -237,6 +237,37 @@ class LibreVJEPA2(BaseModel):
         # dict); loading from a file is the family's job, as in every sibling.
         if isinstance(model_path, (str, Path)):
             self._load_weights(str(model_path))
+            self._adopt_checkpoint_clip_geometry(str(model_path))
+
+    def _adopt_checkpoint_clip_geometry(self, model_path: str) -> None:
+        """Recover the dataset variant and frame count from checkpoint metadata.
+
+        A probe must run at the frame count it was trained for -- an SSv2 L/256
+        probe is a 16-frame artifact, and silently running it at the encoder's
+        64 frames would change its pooled statistics and its logits. The
+        factory does not thread ``variant`` through, so it is read back here
+        rather than guessed from the size.
+        """
+        try:
+            from ...utils.serialization import load_trusted_torch_file
+
+            checkpoint = load_trusted_torch_file(model_path, map_location="cpu")
+        except Exception:  # pragma: no cover - metadata is best-effort
+            return
+        if not isinstance(checkpoint, dict):
+            return
+
+        variant = checkpoint.get("variant")
+        if isinstance(variant, str) and variant in self.WEIGHT_VARIANTS:
+            self.variant = variant
+
+        frames = checkpoint.get("frames_per_clip")
+        if isinstance(frames, int) and frames > 0:
+            self._requested_clip_frames = frames
+
+        stride = checkpoint.get("frame_stride")
+        if isinstance(stride, int) and stride > 0:
+            self.frame_stride = stride
 
     @property
     def clip_frames(self) -> int:
