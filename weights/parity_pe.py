@@ -52,49 +52,61 @@ def fetch(size: str) -> str:
     return hf_hub_download(repo, WEIGHT_FILE, revision=revision)
 
 
+def _logits(img: torch.Tensor, txt: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    return scale.exp() * (F.normalize(img, dim=-1) @ F.normalize(txt, dim=-1).T)
+
+
 def check_size(size: str, frames: int = 4, batch: int = 2) -> bool:
+    """Compare the port against the oracle on identical fixed inputs.
+
+    The oracle is built, run, and *freed* before the port is built. Holding both
+    in float32 at once costs ~20 GB for g14 and segfaults on a 32 GB machine.
+    """
     import open_clip
     import safetensors.torch as st
 
     cfg = PE_CONFIGS[size]
     path = fetch(size)
-
-    ours = build_pe_model(size)
-    result = ours.load_state_dict(st.load_file(path), strict=True)
-    assert not result.missing_keys and not result.unexpected_keys
-    ours.eval()
-
-    oracle, _, _ = open_clip.create_model_and_transforms(
-        cfg.open_clip_model_name, pretrained=path
-    )
-    oracle.eval()
-
     res = cfg.image_size
+
+    # g14 is a 1.88B vision tower at 448px; keep the fixtures small.
+    if size == "g14":
+        batch, frames = 1, 2
+
     torch.manual_seed(0)
     images = torch.randn(batch, 3, res, res)
     tokens = torch.randint(0, 49000, (3, cfg.context_length))
     tokens[:, -1] = 49407  # EOT marker drives argmax pooling
     clips = torch.randn(batch, frames, 3, res, res)
 
-    ok = True
+    # --- oracle pass, then free ------------------------------------------
+    oracle, _, _ = open_clip.create_model_and_transforms(
+        cfg.open_clip_model_name, pretrained=path
+    )
+    oracle.eval()
     with torch.no_grad():
-        ours_img, ref_img = ours.encode_image(images), oracle.encode_image(images)
-        ours_txt, ref_txt = ours.encode_text(tokens), oracle.encode_text(tokens)
-
-        def logits(img, txt, scale):
-            return scale.exp() * (
-                F.normalize(img, dim=-1) @ F.normalize(txt, dim=-1).T
-            )
-
-        ours_log = logits(ours_img, ours_txt, ours.logit_scale)
-        ref_log = logits(ref_img, ref_txt, oracle.logit_scale)
-
-        ours_vid = ours.encode_video(clips)
+        ref_img = oracle.encode_image(images)
+        ref_txt = oracle.encode_text(tokens)
+        ref_log = _logits(ref_img, ref_txt, oracle.logit_scale)
         flat = clips.reshape(batch * frames, 3, res, res)
         ref_vid = F.normalize(
             oracle.encode_image(flat).reshape(batch, frames, -1).mean(dim=1), dim=-1
         )
+    del oracle
+    gc.collect()
 
+    # --- port pass --------------------------------------------------------
+    ours = build_pe_model(size)
+    result = ours.load_state_dict(st.load_file(path), strict=True)
+    assert not result.missing_keys and not result.unexpected_keys
+    ours.eval()
+    with torch.no_grad():
+        ours_img = ours.encode_image(images)
+        ours_txt = ours.encode_text(tokens)
+        ours_log = _logits(ours_img, ours_txt, ours.logit_scale)
+        ours_vid = ours.encode_video(clips)
+
+    ok = True
     for label, a, b in (
         ("image", ours_img, ref_img),
         ("text", ours_txt, ref_txt),
@@ -109,7 +121,7 @@ def check_size(size: str, frames: int = 4, batch: int = 2) -> bool:
         )
         ok = ok and diff == 0.0
 
-    del ours, oracle
+    del ours
     gc.collect()
     return ok
 

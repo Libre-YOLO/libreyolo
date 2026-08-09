@@ -32,9 +32,10 @@ from pathlib import Path
 
 import torch
 
-from _conversion_utils import save_checkpoint, wrap_libreyolo_checkpoint
-
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from _conversion_utils import save_checkpoint, wrap_libreyolo_checkpoint  # noqa: E402
 
 from libreyolo.models.pe.nn import PE_CONFIGS, build_pe_model  # noqa: E402
 

@@ -451,3 +451,51 @@ class LibrePE(BaseModel):
             "Use set_classes([...]) then predict()/val() for zero-shot "
             "classification, or task='embed' for retrieval."
         )
+
+    # =========================================================================
+    # Export
+    # =========================================================================
+
+    def export(
+        self,
+        format: str = "onnx",
+        video: bool = False,
+        clip_frames: Optional[int] = None,
+        **kwargs,
+    ) -> str:
+        """Export an image-embedding, frozen-class, or fixed-frame video graph.
+
+        The graph is chosen from the loaded task plus ``video=``:
+
+        * ``task='embed'``           -> class-independent ``[B, D]`` unit rows.
+        * ``task='classify'``        -> ``[B, K]`` logits with the current
+          ``set_classes`` matrix baked in (no text tower, no tokenizer).
+        * ``video=True``             -> fixed-``F`` 5D clip graph, ``[B, D]``.
+
+        Only ONNX and TorchScript are implemented; both were parity tested.
+        Other formats are rejected rather than silently advertised.
+        """
+        from .export import export_onnx, export_torchscript
+
+        if video and self.task != "embed":
+            raise ValueError(
+                "Video export produces embeddings; load the model with "
+                "task='embed' to export a clip graph."
+            )
+        kind = "video" if video else ("embed" if self.task == "embed" else "classify")
+        frames = self._validate_clip_frames(
+            clip_frames if clip_frames is not None else self.clip_frames
+        )
+
+        fmt = format.lower()
+        if fmt == "onnx":
+            kwargs.setdefault("opset", 17)
+            return export_onnx(self, kind, frames=frames, **kwargs)
+        if fmt == "torchscript":
+            kwargs.pop("opset", None)
+            kwargs.pop("dynamic_batch", None)
+            return export_torchscript(self, kind, frames=frames, **kwargs)
+        raise NotImplementedError(
+            f"LibrePE export to {format!r} is not implemented. PE ships ONNX and "
+            "TorchScript, the two formats its graphs were parity tested in."
+        )
