@@ -16,8 +16,19 @@ before 1.4.0 are documented in the
   `69141b55c1161d939939a270523a7eca5a645f72`; the rotated head reproduces the
   pinned upstream head exactly (`max_abs_diff == 0` for all three sizes, see
   `weights/parity_yolonas_obb.py`). ONNX, TorchScript, TensorRT and OpenVINO
-  export and reload with backend results matching native inference. The task is
-  inference-only: `model.train(task="obb")` raises with an explanation.
+  export and reload with backend results matching native inference.
+- **YOLO-NAS-R training.** `model.train(data=...)` trains the rotated head on
+  standard YOLO OBB datasets through the public API, with the loss ported from
+  the same pinned upstream commit: varifocal classification, probabilistic-IoU
+  regression on `cxcywhr`, and width/height DFL, under a rotated task-aligned
+  assigner. Upstream's DOTA recipe supplies the defaults (AdamW 5e-5, weight
+  decay 3.5e-6, cosine to 0.1, EMA 0.9997, assigner top-k 12, loss weights
+  2.5 / 2.0 / 0.5). Best-checkpoint selection uses `metrics/mAP50-95(OBB)`, not
+  the axis-aligned proxy. `LibreYOLONAS.load_detect_weights_for_obb()` seeds a
+  rotated model from a YOLO-NAS detection checkpoint, mirroring upstream's
+  `strict_load: key_matching` start. Augmentation is flips plus HSV only:
+  mosaic, mixup and affine do not have a correct rotated-label mapping and are
+  not offered rather than silently corrupting angles.
   The pretrained weights stay under Deci's separate non-redistributable
   YOLO-NAS-R license and are downloaded from Deci's CDN and SHA256-verified
   rather than mirrored — the same treatment YOLO-NAS detect and pose get.

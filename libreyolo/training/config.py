@@ -240,9 +240,7 @@ class TrainConfig:
         if self.eval_max_det is not None:
             self.eval_max_det = int(self.eval_max_det)
             if self.eval_max_det < 1:
-                raise ValueError(
-                    f"eval_max_det must be >= 1, got {self.eval_max_det}"
-                )
+                raise ValueError(f"eval_max_det must be >= 1, got {self.eval_max_det}")
 
     @classmethod
     def from_kwargs(cls, **kwargs):
@@ -1003,6 +1001,44 @@ class YOLONASPoseConfig(YOLONASConfig):
 
 
 @dataclass(kw_only=True)
+class YOLONASOBBConfig(YOLONASConfig):
+    """YOLO-NAS-R (oriented boxes) training defaults.
+
+    Loss weights, assigner top-k, optimizer and schedule follow upstream's
+    DOTA recipe at the pinned YOLO-NAS-R commit
+    (``recipes/training_hyperparams/default_yolo_nas_r_train_params.yaml``):
+    AdamW at 5e-5 with weight decay 3.5e-6, cosine to 0.1 of the initial LR,
+    EMA 0.9997, no AMP, assigner top-k 12, and loss weights
+    ``classification 2.5 / iou 2.0 / dfl 0.5``.
+
+    Augmentation is flips plus HSV only -- see
+    :class:`libreyolo.data.augment.yolonas.YOLONASOBBTrainTransform` for why
+    mosaic, mixup and affine are not offered for rotated boxes.
+    """
+
+    classification_loss_weight: float = 2.5
+    iou_loss_weight: float = 2.0
+    dfl_loss_weight: float = 0.5
+    bbox_assigner_topk: int = 12
+    bbox_assigned_alpha: float = 1.0
+    bbox_assigned_beta: float = 6.0
+    use_varifocal_loss: bool = True
+    max_labels: int = 300
+
+    lr0: float = 5e-5
+    weight_decay: float = 3.5e-6
+    warmup_epochs: int = 1
+    min_lr_ratio: float = 0.1
+    epochs: int = 100
+    ema_decay: float = 0.9997
+    amp: bool = False
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    eval_interval: int = 1
+    name: str = "yolonas_obb_exp"
+
+
+@dataclass(kw_only=True)
 class PICODETConfig(TrainConfig):
     """PICODET-specific training defaults.
 
@@ -1233,4 +1269,3 @@ class FOMOConfig(TrainConfig):
     distance_tolerance: float = 1.5
 
     name: str = "fomo_exp"
-

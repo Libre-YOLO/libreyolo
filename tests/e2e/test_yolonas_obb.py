@@ -42,7 +42,25 @@ def test_yolonas_obb_trained_checkpoint_smoke(family, size, weights):
 
 
 @pytest.mark.parametrize("family,size,weights", YOLONAS_OBB_PARAMS)
-def test_yolonas_obb_training_is_rejected(family, size, weights):
+def test_yolonas_obb_trained_checkpoint_takes_a_gradient_step(family, size, weights):
+    """The public checkpoint trains: one real forward/backward on its own head."""
+    import torch
+
     model = LibreYOLO(weights)
-    with pytest.raises(NotImplementedError, match="inference-only"):
-        model.train(data="coco128.yaml", epochs=1)
+    from libreyolo.models.yolonas.obb_loss import YOLONASOBBLoss
+
+    loss_fn = YOLONASOBBLoss(num_classes=model.nb_classes).to(model.device)
+    net = model.model.train()
+    images = torch.rand(1, 3, 320, 320, device=model.device)
+    targets = torch.zeros(1, 4, 6, device=model.device)
+    targets[0, 0] = torch.tensor(
+        [0.0, 160.0, 160.0, 80.0, 40.0, 0.3], device=model.device
+    )
+
+    loss, components = loss_fn(net(images), targets)
+    loss.backward()
+
+    assert torch.isfinite(loss) and loss.item() > 0
+    assert components.shape == (4,)
+    grads = [p.grad for p in net.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)

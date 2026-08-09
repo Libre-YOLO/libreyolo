@@ -283,6 +283,24 @@ class LibreYOLONAS(BaseModel):
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
+    def _get_val_preprocessor(self, img_size: int | None = None):
+        """Pick the preprocessor matching this task's inference recipe.
+
+        OBB uses a different geometry from detect/pose (longest side to 1024
+        and bottom-right padding, versus 636/640 and centre padding). The
+        postprocessor inverts the OBB recipe, so validating with the detect
+        preprocessor silently mis-maps every box back onto the canvas and
+        collapses OBB mAP to ~0 -- exactly the class of bug
+        ``YOLONASValPreprocessor``'s own docstring records for detect.
+        """
+        if self.task == "obb":
+            from ...validation.preprocessors import YOLONASOBBValPreprocessor
+
+            if img_size is None:
+                img_size = self._get_input_size()
+            return YOLONASOBBValPreprocessor(img_size=(img_size, img_size))
+        return super()._get_val_preprocessor(img_size)
+
     def _init_model(self) -> nn.Module:
         if self.task == "obb":
             return LibreYOLONASOBBModel(
@@ -645,17 +663,36 @@ class LibreYOLONAS(BaseModel):
             loggers: Optional built-in experiment loggers: a registered name,
                 a configured logger instance, or an iterable mixing both.
         """
+        # Task-specific defaults for arguments left unset by the caller.
         if self.task == "obb":
-            raise NotImplementedError(
-                "YOLO-NAS-R (task='obb') ships inference-only in LibreYOLO: the "
-                "rotated head, decode, preprocessing, postprocessing and exports "
-                "are ported and parity-checked, but the rotated loss "
-                "(probabilistic-IoU task-aligned assignment, width/height DFL, "
-                "offset and rotation regression) is not wired yet. Use "
-                "task='detect' or task='pose' to train YOLO-NAS."
+            # Upstream's DOTA recipe: AdamW 5e-5, 100 epochs, no AMP.
+            if lr0 is None:
+                lr0 = 5e-5
+            if epochs is None:
+                epochs = 100
+            if amp is None:
+                amp = False
+            return self._train_obb(
+                data,
+                epochs=epochs,
+                batch=batch,
+                imgsz=imgsz,
+                lr0=lr0,
+                optimizer=optimizer,
+                device=device,
+                workers=workers,
+                seed=seed,
+                project=project,
+                name=name or "yolonas_obb_exp",
+                exist_ok=exist_ok,
+                resume=resume,
+                amp=amp,
+                patience=patience,
+                callbacks=callbacks,
+                loggers=loggers,
+                **kwargs,
             )
 
-        # Task-specific defaults for arguments left unset by the caller.
         if lr0 is None:
             lr0 = 2e-3 if self.task == "pose" else 5e-4
         if epochs is None:
@@ -764,6 +801,195 @@ class LibreYOLONAS(BaseModel):
             self.model.eval()
 
         return results
+
+    def _train_obb(
+        self,
+        data: str,
+        *,
+        epochs: int,
+        batch: int,
+        imgsz: int,
+        lr0: float,
+        optimizer: str,
+        device: str,
+        workers: int,
+        seed: int,
+        project: str,
+        name: str,
+        exist_ok: bool,
+        resume: bool,
+        amp: bool,
+        patience: int,
+        callbacks=None,
+        loggers=None,
+        **kwargs,
+    ) -> dict:
+        """Train the YOLO-NAS-R rotated head on a YOLO-format OBB dataset.
+
+        Labels are the standard YOLO OBB rows (``class x1 y1 x2 y2 x3 y3 x4
+        y4``, normalized corners); the shared dataset converts them to
+        canonical ``xywhr``.
+
+        ``imgsz`` is the training canvas and defaults to the caller's value --
+        upstream trains on 640-pixel crops and validates at 1024, so the
+        1024 default inference size is not a required training size.
+        """
+        from libreyolo.data import load_data_config
+
+        from .obb_trainer import YOLONASOBBTrainer
+
+        try:
+            data_config = load_data_config(data, autodownload=True)
+            data = data_config.get("yaml_file", data)
+        except Exception as e:
+            raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")
+
+        yaml_nc = data_config.get("nc")
+        yaml_names = data_config.get("names")
+        if yaml_nc is None and yaml_names is not None:
+            yaml_nc = len(yaml_names)
+        if yaml_nc is not None and int(yaml_nc) != self.nb_classes:
+            logger.info(
+                "Rebuilding YOLO-NAS-R head for %d classes (was %d)",
+                int(yaml_nc),
+                self.nb_classes,
+            )
+            self._rebuild_for_new_classes(int(yaml_nc))
+
+        if yaml_names is not None:
+            if isinstance(yaml_names, list):
+                yaml_names = {i: n for i, n in enumerate(yaml_names)}
+            self.names = self._sanitize_names(yaml_names, self.nb_classes)
+
+        if seed >= 0:
+            import random
+
+            import numpy as np
+
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+
+        trainer = YOLONASOBBTrainer(
+            model=self.model,
+            wrapper_model=self,
+            size=self.size,
+            num_classes=self.nb_classes,
+            data=data,
+            epochs=epochs,
+            batch=batch,
+            imgsz=imgsz,
+            lr0=lr0,
+            optimizer=optimizer.lower(),
+            device=device if device else "auto",
+            workers=workers,
+            seed=seed,
+            project=project,
+            name=name,
+            exist_ok=exist_ok,
+            resume=resume,
+            amp=amp,
+            patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
+            **kwargs,
+        )
+
+        if resume:
+            if not self.model_path:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreYOLONAS('path/to/last.pt', task='obb'); "
+                    "model.train(data=..., resume=True)"
+                )
+            trainer.setup()
+            trainer.resume(str(self.model_path))
+            return trainer.train()
+
+        results = trainer.train()
+
+        best_ckpt = results.get("best_checkpoint")
+        if best_ckpt and Path(best_ckpt).exists():
+            self.model_path = best_ckpt
+            self._load_weights(best_ckpt)
+            self.model.eval()
+
+        return results
+
+    def load_detect_weights_for_obb(self, detect_checkpoint) -> dict:
+        """Initialise a rotated model from a YOLO-NAS *detection* checkpoint.
+
+        Upstream trains YOLO-NAS-R starting from the same-size detection
+        weights with ``strict_load: key_matching``. This is that: the shared
+        backbone, neck, and every head tensor whose shape still matches are
+        copied over; the rotated-specific parameters (``reg_pred`` -- which
+        changes from ``4 * (reg_max + 1)`` to ``2 * (reg_max + 1)`` channels
+        --, ``rot_pred``, ``offset_pred``, and ``cls_pred`` when the class
+        count differs) stay at their fresh initialisation.
+
+        :param detect_checkpoint: path to a YOLO-NAS detect checkpoint, or an
+            already-loaded state dict.
+        :return: a report with the ``transferred``, ``skipped_shape`` and
+            ``missing`` key lists.
+        """
+        if self.task != "obb":
+            raise ValueError(
+                "load_detect_weights_for_obb() is only valid on a task='obb' "
+                f"model, this one is task='{self.task}'."
+            )
+
+        if isinstance(detect_checkpoint, (str, Path)):
+            loaded = load_untrusted_torch_file(
+                str(detect_checkpoint),
+                map_location="cpu",
+                context="YOLO-NAS detect->OBB transfer",
+            )
+        else:
+            loaded = detect_checkpoint
+        source = dict(unwrap_yolonas_checkpoint(loaded))
+        source = self._strip_ddp_prefix(source)
+
+        if self.is_obb_state_dict(source):
+            raise ValueError(
+                "Expected a YOLO-NAS detection checkpoint for transfer "
+                "initialisation, got a rotated (OBB) one. Load it directly "
+                "instead."
+            )
+        if self.is_pose_state_dict(source):
+            raise ValueError(
+                "Expected a YOLO-NAS detection checkpoint for transfer "
+                "initialisation, got a pose one."
+            )
+
+        target = self.model.state_dict()
+        transferred, skipped_shape = [], []
+        update = {}
+        for key, tensor in source.items():
+            if key not in target:
+                continue
+            if tuple(target[key].shape) != tuple(tensor.shape):
+                skipped_shape.append(key)
+                continue
+            update[key] = tensor
+            transferred.append(key)
+
+        missing = [k for k in target if k not in update]
+        self.model.load_state_dict(update, strict=False)
+        self.model.to(self.device)
+        logger.info(
+            "Detect->OBB transfer: %d tensors copied, %d shape-mismatched, "
+            "%d left freshly initialised",
+            len(transferred),
+            len(skipped_shape),
+            len(missing),
+        )
+        return {
+            "transferred": transferred,
+            "skipped_shape": skipped_shape,
+            "missing": missing,
+        }
 
     def _train_pose(
         self,
