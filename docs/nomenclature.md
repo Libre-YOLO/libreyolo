@@ -77,7 +77,7 @@ the `alexnet` / `deit` / `mobilenetv4` / `convnext` / `efficientnetv2` /
 | `rtmdet`    | `LibreRTMDet`   | Upstream brand casing preserved (`RTMDet`) |
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
 | `lwdetr`    | `LibreLWDETR`   | All-caps acronym (hyphen dropped from `LW-DETR`) |
-| `domedetr`  | `LibreDOMEDETR` | All-caps acronym (hyphen dropped from `Dome-DETR`); inference-only tiny-object detector. Canonical filenames always carry a dataset suffix (`LibreDOMEDETRs-aitod.pt`, `LibreDOMEDETRs-visdrone.pt`): there is no COCO checkpoint and no bare `LibreDOMEDETRs.pt` |
+| `domedetr`  | `LibreDOMEDETR` | All-caps acronym (hyphen dropped from `Dome-DETR`); trainable tiny-object detector. Canonical filenames always carry a dataset suffix (`LibreDOMEDETRs-aitod.pt`, `LibreDOMEDETRs-visdrone.pt`): there is no COCO checkpoint and no bare `LibreDOMEDETRs.pt` |
 | `faster_rcnn` | `LibreFasterRCNN` | Upstream acronym and underscore retained in the family id; canonical filename drops punctuation; inference-only two-stage detector |
 | `retinanet` | `LibreRetinaNet` | Upstream CamelCase brand preserved; inference-only one-stage focal-loss detector |
 | `ssd`       | `LibreSSD`       | All-caps acronym; fixed-300 inference-only single-shot detector |

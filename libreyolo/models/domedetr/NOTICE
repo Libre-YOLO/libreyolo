@@ -28,10 +28,18 @@ CSP/RepNCSPELAN4 encoder blocks, the FDR decoder stack, and the pure-PyTorch
 multi-scale deformable attention) is imported from libreyolo/models/dfine/
 rather than re-vendored here, and is covered by that family's attribution.
 
-Not included: the training-only criterion, matcher, density ground-truth
-generator, and data pipeline; the deformable-encoder branch (no released
-config enables it); and the prebuilt MSDeformAttn CUDA extension under
-src/zoo/dome/ops/.
+The training path is ported too: the Dome-DETR criterion (loss.py, a subclass
+of D-FINE's), the DeFE density and count supervision together with the
+ground-truth density-map construction it is trained against (encoder.py), and
+the contrastive-denoising adaptation for a variable per-image query count
+(denoising.py). Each of those files carries the attribution above in its own
+header.
+
+Not included: upstream's data pipeline, which LibreYOLO replaces with its own;
+the deformable-encoder branch (no released config enables it); and the
+prebuilt MSDeformAttn CUDA extension under src/zoo/dome/ops/. The Hungarian
+matcher is inherited from libreyolo/models/dfine/ rather than re-vendored here,
+and is covered by that family's attribution.
 
 Model weights are not redistributed by LibreYOLO. See
 weights/LICENSE_NOTICE.txt for why.
