@@ -155,3 +155,130 @@ def test_public_layout_is_batch_frames_channels():
     assert ok.shape[-1] == 64
     with pytest.raises(RuntimeError):
         model(torch.randn(1, 3, 8, 32, 32))
+
+
+# ---------------------------------------------------------------------------
+# Family / artifact-matrix behaviour
+# ---------------------------------------------------------------------------
+
+from libreyolo.models.vjepa2.model import LibreVJEPA2  # noqa: E402
+from libreyolo.models.vjepa2.preprocess import clip_frame_indices  # noqa: E402
+
+
+class TestArtifactMatrix:
+    """Parsing a filename is not the same as the artifact existing."""
+
+    @pytest.mark.parametrize(
+        "name,size,task",
+        [
+            ("LibreVJEPA2l256-embed.pt", "l256", "embed"),
+            ("LibreVJEPA2h256-embed.pt", "h256", "embed"),
+            ("LibreVJEPA2g384-cls-ssv2.pt", "g384", "classify"),
+            ("LibreVJEPA2l256-cls-diving48.pt", "l256", "classify"),
+        ],
+    )
+    def test_published_names_resolve(self, name, size, task):
+        assert LibreVJEPA2.detect_size_from_filename(name) == size
+        assert LibreVJEPA2.detect_task_from_filename(name) == task
+
+    def test_bare_family_name_is_not_canonical(self):
+        # REQUIRE_TASK_SUFFIX: every published artifact carries a task suffix.
+        assert LibreVJEPA2.detect_size_from_filename("LibreVJEPA2l256.pt") is None
+
+    def test_embed_rejects_a_dataset_variant(self):
+        with pytest.raises(ValueError, match="carry no dataset variant"):
+            LibreVJEPA2.validate_artifact_name("l256", "embed", "ssv2")
+
+    def test_published_classify_requires_a_variant(self):
+        with pytest.raises(ValueError, match="require a dataset variant"):
+            LibreVJEPA2.validate_artifact_name("l256", "classify", None)
+
+    @pytest.mark.parametrize("size,variant", [("h256", "ssv2"), ("g256", "ssv2"), ("l256", "kinetics")])
+    def test_unpublished_probe_combinations_rejected(self, size, variant):
+        with pytest.raises(ValueError):
+            LibreVJEPA2.validate_artifact_name(size, "classify", variant)
+
+    @pytest.mark.parametrize("size,variant", [("l256", "ssv2"), ("l256", "diving48"), ("g384", "ssv2"), ("g384", "diving48")])
+    def test_published_probe_combinations_accepted(self, size, variant):
+        LibreVJEPA2.validate_artifact_name(size, "classify", variant)
+
+    def test_unknown_size_rejected(self):
+        with pytest.raises(ValueError, match="unknown V-JEPA 2 size"):
+            LibreVJEPA2.validate_artifact_name("vitl", "embed", None)
+
+
+class TestDiscriminators:
+    def test_can_load_needs_a_5d_patch_embedding(self):
+        five_d = {"embeddings.patch_embeddings.proj.weight": torch.zeros(8, 3, 2, 16, 16)}
+        assert LibreVJEPA2.can_load(five_d)
+        # A 4D Conv2d patch embed is an image ViT, not V-JEPA 2.
+        four_d = {"embeddings.patch_embeddings.proj.weight": torch.zeros(8, 3, 16, 16)}
+        assert not LibreVJEPA2.can_load(four_d)
+        assert not LibreVJEPA2.can_load({"backbone.conv1.weight": torch.zeros(4, 3, 7, 7)})
+
+    def test_can_load_accepts_both_checkpoint_roots(self):
+        nested = {"encoder.embeddings.patch_embeddings.proj.weight": torch.zeros(8, 3, 2, 16, 16)}
+        assert LibreVJEPA2.can_load(nested)
+
+    @pytest.mark.parametrize("hidden,expected", [(1024, "l256"), (1280, "h256")])
+    def test_detect_size_from_width(self, hidden, expected):
+        assert LibreVJEPA2.detect_size({"layernorm.weight": torch.zeros(hidden)}) == expected
+
+    def test_g_sizes_are_not_guessed_from_width(self):
+        """g256 and g384 share a width, so width must not decide between them."""
+        assert LibreVJEPA2.detect_size({"layernorm.weight": torch.zeros(1408)}) is None
+
+
+class TestClipSampler:
+    def test_exact_length_is_centered(self):
+        # 4 frames at stride 2 spans 7 source frames.
+        assert clip_frame_indices(7, 4, 2) == [0, 2, 4, 6]
+
+    def test_long_video_is_centered(self):
+        idx = clip_frame_indices(107, 4, 2)
+        assert idx == [50, 52, 54, 56]
+        assert len(idx) == 4
+
+    def test_short_video_uses_real_frames_before_repeating(self):
+        idx = clip_frame_indices(3, 4, 2)
+        # Real frames first (0, 2), then hold the last rather than repeating early.
+        assert idx == [0, 2, 2, 2]
+        assert idx[0] == 0
+
+    def test_released_default_spans_127_frames(self):
+        idx = clip_frame_indices(1000, 64, 2)
+        assert len(idx) == 64
+        assert idx[-1] - idx[0] == 126
+
+    def test_empty_video_is_an_error_not_a_black_clip(self):
+        with pytest.raises(ValueError, match="no frames"):
+            clip_frame_indices(0, 64, 2)
+
+    @pytest.mark.parametrize("frames,stride", [(0, 2), (64, 0), (-1, 2)])
+    def test_invalid_geometry_rejected(self, frames, stride):
+        with pytest.raises(ValueError):
+            clip_frame_indices(100, frames, stride)
+
+
+class TestTrainingGate:
+    def test_embed_training_rejects_before_dataset_construction(self):
+        model = LibreVJEPA2(size="l256", task="embed")
+        with pytest.raises(NotImplementedError, match="self-supervised"):
+            model.train(data="anything.yaml")
+
+
+class TestVideoMode:
+    def test_family_declares_clip_mode(self):
+        assert LibreVJEPA2.VIDEO_EMBED_MODE == "clip"
+
+    def test_other_families_keep_frame_mode(self):
+        """No-regression: existing families must keep per-frame video results."""
+        from libreyolo.models.base.model import BaseModel
+
+        assert getattr(BaseModel, "VIDEO_EMBED_MODE", "frames") == "frames"
+        for family in ("dinov2", "clip", "siglip2"):
+            cls = next(
+                (c for c in BaseModel._registry if c.FAMILY == family), None
+            )
+            if cls is not None:
+                assert getattr(cls, "VIDEO_EMBED_MODE", "frames") == "frames"

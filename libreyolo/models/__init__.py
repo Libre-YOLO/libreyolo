@@ -146,6 +146,13 @@ from .siglip2.model import LibreSigLIP2  # noqa: E402,F401  (import registers fa
 # on the composite det.*/rec.* checkpoint layout, so order does not matter.
 from .ppocr.model import LibrePPOCR  # noqa: E402,F401  (import registers family)
 
+# V-JEPA 2 video encoder + attentive probe: a native pure-torch port (no
+# transformers at runtime), so it registers eagerly. can_load is keyed on a 5D
+# Conv3d tubelet patch embedding, which no image family can produce, so
+# registration order does not matter. OpenCV is imported lazily inside the clip
+# sampler, keeping video decoding off the global import path.
+from .vjepa2.model import LibreVJEPA2  # noqa: E402,F401  (import registers family)
+
 
 def _ensure_rfdetr():
     """Lazily register RF-DETR and LibreDINOv2 if their dependencies are installed."""
