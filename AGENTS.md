@@ -27,9 +27,14 @@
 ## Agent conduct
 
 - Agents must not open GitHub issues.
-- Agents may open pull requests. The PR must target `dev`, and its description
-  must include a `## Code provenance` section that is accurate for the actual
-  diff (see `.github/pull_request_template.md` and the `merge-to-dev` skill).
+- Agents may open pull requests against any branch, including the `dev` to
+  `release` PR that cuts a version. The description must follow
+  `.github/pull_request_template.md`, which means a `## Code provenance`
+  section that is accurate for the actual diff; the rest of the template is
+  guidance, so fill in what the change warrants (see also the `merge-to-dev`
+  and `libreyolo-release` skills). A release PR must additionally say that it
+  shows no CI checks by design and must be merged with a merge commit rather
+  than a squash.
   Opening a PR is where an agent's authority stops: it does not approve, does
   not merge, and does not dismiss review findings.
 - Agents must not post issue comments or PR comments unless a human explicitly
