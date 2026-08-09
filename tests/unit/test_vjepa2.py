@@ -282,3 +282,60 @@ class TestVideoMode:
             )
             if cls is not None:
                 assert getattr(cls, "VIDEO_EMBED_MODE", "frames") == "frames"
+
+
+class TestInferenceContracts:
+    """Regressions for the three review findings on the public paths."""
+
+    def test_preprocess_returns_the_shared_four_tuple(self):
+        """The shared runner unpacks four values; returning a bare tensor breaks predict()."""
+        import numpy as np
+
+        model = LibreVJEPA2(size="l256", task="embed")
+        model._requested_clip_frames = 2
+        frame = np.zeros((240, 320, 3), dtype=np.uint8)
+        out = model._preprocess(frame, "rgb")
+        assert isinstance(out, tuple) and len(out) == 4
+        tensor, _original, original_size, ratio = out
+        assert tensor.ndim == 5                    # (B, F, C, H, W)
+        assert tensor.shape[2] == 3
+        assert original_size == (320, 240)         # (w, h) of the source
+        assert ratio == 1.0
+
+    def test_explicit_5d_clip_passes_through_preprocess(self):
+        model = LibreVJEPA2(size="l256", task="embed")
+        clip = torch.zeros(1, 4, 3, 256, 256)
+        tensor, _, size, ratio = model._preprocess(clip)
+        assert tensor.shape == (1, 4, 3, 256, 256)
+        assert size == (256, 256) and ratio == 1.0
+
+    def test_wrong_crop_in_explicit_clip_is_rejected(self):
+        model = LibreVJEPA2(size="l256", task="embed")
+        with pytest.raises(ValueError, match="requires 256x256"):
+            model._preprocess(torch.zeros(1, 4, 3, 224, 224))
+
+    def test_channels_last_clip_is_rejected(self):
+        """(B, F, H, W, C) is a different picture; it must not be accepted."""
+        model = LibreVJEPA2(size="l256", task="embed")
+        with pytest.raises(ValueError, match=r"C=3 at dim 2"):
+            model._preprocess(torch.zeros(1, 4, 256, 256, 3))
+
+    def test_clip_mode_is_actually_consumed_by_the_runner(self):
+        """Declaring VIDEO_EMBED_MODE is not enough; the runner must honour it."""
+        from libreyolo.models.base.inference import InferenceRunner
+
+        assert hasattr(InferenceRunner, "_predict_video_clip")
+
+    def test_sample_clip_indices_uses_checkpoint_geometry(self):
+        model = LibreVJEPA2(size="l256", task="embed")
+        model._requested_clip_frames = 8
+        idx = model.sample_clip_indices(500)
+        assert len(idx) == 8
+        assert idx[-1] - idx[0] == (8 - 1) * model.frame_stride
+
+    def test_vid_stride_multiplies_the_family_stride(self):
+        model = LibreVJEPA2(size="l256", task="embed")
+        model._requested_clip_frames = 4
+        base = model.sample_clip_indices(500, 1)
+        doubled = model.sample_clip_indices(500, 2)
+        assert (doubled[-1] - doubled[0]) == 2 * (base[-1] - base[0])

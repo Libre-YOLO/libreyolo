@@ -3686,12 +3686,16 @@ _add(
         "Fixed-frame 5D clip graphs are covered by export, runtime reload, "
         "torch-vs-runtime embedding parity, unit-norm output, and a "
         "temporal-order sensitivity check that fails a graph which ignores "
-        "frame order."
+        "frame order. Parity is measured by driving the runtime directly "
+        "with a 5D clip."
     ),
     since="1.6",
     constraint=(
         "FP32, dynamic batch, fixed frame count / crop / tubelet geometry per "
-        "graph; ONNX needs opset >= 14 for scaled_dot_product_attention"
+        "graph; ONNX needs opset >= 14 for scaled_dot_product_attention. "
+        "The graph must be driven with a 5D clip: LibreYOLO's exported-backend "
+        "path still preprocesses to a 4D image batch and raises "
+        "NotImplementedError for this family."
     ),
 )
 _add(

@@ -32,6 +32,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ...tasks import normalize_task
+from ...utils.image_loader import ImageLoader
 from ..base.model import BaseModel
 from .nn import (
     VJEPA2_CONFIGS,
@@ -40,6 +41,7 @@ from .nn import (
     VJEPA2Config,
 )
 from .preprocess import (
+    clip_frame_indices,
     DEFAULT_FRAME_STRIDE,
     image_to_clip,
     preprocess_frames,
@@ -312,21 +314,53 @@ class LibreVJEPA2(BaseModel):
     def _get_preprocess_numpy():
         return preprocess_frames
 
-    def _preprocess(self, image, *, color_format=None, **kwargs):
-        """Accept a still image, a list of frames, or an explicit 5D clip."""
+    def _preprocess(
+        self,
+        image,
+        color_format: str = "auto",
+        input_size: Optional[int] = None,
+    ) -> Tuple[torch.Tensor, Any, Tuple[int, int], float]:
+        """Accept a still image, a list of frames, or an explicit 5D clip.
+
+        Returns the shared 4-tuple contract
+        ``(input_tensor, original_image, original_size, ratio)``. The tensor is
+        5D ``(B, F, C, H, W)`` rather than the usual 4D image batch, since this
+        family consumes clips.
+        """
+        del input_size  # clip geometry is fixed by the checkpoint, not the call
+
         if isinstance(image, torch.Tensor) and image.ndim == 5:
-            return validate_clip_tensor(image, self.crop_size).to(self.device)
+            tensor = validate_clip_tensor(image, self.crop_size)
+            size = (int(tensor.shape[-1]), int(tensor.shape[-2]))
+            return tensor.to(self.device), image, size, 1.0
+
         if isinstance(image, (list, tuple)):
-            frames = [np.asarray(f) for f in image]
-            return preprocess_frames(frames, self.crop_size).to(self.device)
-        frame = np.asarray(image)
-        return image_to_clip(frame, self.crop_size, self.clip_frames).to(self.device)
+            frames = [np.asarray(ImageLoader.load(f, color_format=color_format)) for f in image]
+            original = frames[-1]
+            height, width = original.shape[:2]
+            tensor = preprocess_frames(frames, self.crop_size)
+            return tensor.to(self.device), original, (width, height), 1.0
+
+        loaded = ImageLoader.load(image, color_format=color_format)
+        frame = np.asarray(loaded)
+        height, width = frame.shape[:2]
+        tensor = image_to_clip(frame, self.crop_size, self.clip_frames)
+        return tensor.to(self.device), loaded, (width, height), 1.0
 
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         if self.task == "classify":
             return self.model(input_tensor)
         tokens = self.model(input_tensor)
         return self.pool_tokens(tokens)
+
+    def sample_clip_indices(self, total_frames: int, vid_stride: int = 1) -> list[int]:
+        """Deterministic centered clip indices for a finite video.
+
+        The generic runner owns decoding; temporal sampling stays here because
+        the frame count and stride belong to the checkpoint.
+        """
+        stride = self.frame_stride * max(1, int(vid_stride))
+        return clip_frame_indices(total_frames, self.clip_frames, stride)
 
     @staticmethod
     def pool_tokens(tokens: torch.Tensor) -> torch.Tensor:

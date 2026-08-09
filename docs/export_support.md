@@ -371,8 +371,8 @@ A check mark applies only under any constraint listed here.
 - `vgg` / `classify` / `tensorrt`: FP32, batch 1, fixed 224x224 input
 - `vgg` / `classify` / `openvino`: FP32, batch 1, fixed 224x224 input
 - `vit` / `classify` / `onnx`: FP32, fixed 224x224 input
-- `vjepa2` / `embed` / `onnx`: FP32, dynamic batch, fixed frame count / crop / tubelet geometry per graph; ONNX needs opset >= 14 for scaled_dot_product_attention
-- `vjepa2` / `embed` / `torchscript`: FP32, dynamic batch, fixed frame count / crop / tubelet geometry per graph; ONNX needs opset >= 14 for scaled_dot_product_attention
+- `vjepa2` / `embed` / `onnx`: FP32, dynamic batch, fixed frame count / crop / tubelet geometry per graph; ONNX needs opset >= 14 for scaled_dot_product_attention. The graph must be driven with a 5D clip: LibreYOLO's exported-backend path still preprocesses to a 4D image batch and raises NotImplementedError for this family.
+- `vjepa2` / `embed` / `torchscript`: FP32, dynamic batch, fixed frame count / crop / tubelet geometry per graph; ONNX needs opset >= 14 for scaled_dot_product_attention. The graph must be driven with a 5D clip: LibreYOLO's exported-backend path still preprocesses to a 4D image batch and raises NotImplementedError for this family.
 - `yolo1` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolo1` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448

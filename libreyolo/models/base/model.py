@@ -160,6 +160,13 @@ class BaseModel(ABC):
     # Hugging Face repo name in ``get_download_url``.
     WEIGHT_VARIANTS: ClassVar[tuple[str, ...]] = ()
 
+    # How a finite video is consumed. "frames" (the default) runs the model on
+    # each decoded frame and yields one result per frame, which is what every
+    # image-native family wants. "clip" opts a family into sampling one
+    # temporal clip and yielding one result per clip; the family then owns
+    # temporal sampling via ``sample_clip_indices``.
+    VIDEO_EMBED_MODE: ClassVar[str] = "frames"
+
     # Batched-predict policy: True when ``_preprocess`` yields stackable
     # (1, C, H, W) tensors and every tensor in the ``_forward`` output keeps
     # a leading batch dim (the contract batched validation already relies

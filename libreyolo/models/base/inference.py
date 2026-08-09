@@ -1338,8 +1338,27 @@ class InferenceRunner:
         source_label: Optional[str] = None,
         **kwargs,
     ) -> Generator[Results, None, None]:
-        """Run inference on a video file, yielding per-frame Results."""
+        """Run inference on a video file, yielding per-frame Results.
+
+        Families that declare ``VIDEO_EMBED_MODE = "clip"`` consume a clip
+        rather than a frame, and yield one result per sampled clip instead of
+        one per frame. Every other family keeps the per-frame path below.
+        """
         source_label = str(source) if source_label is None else source_label
+
+        if getattr(self.model, "VIDEO_EMBED_MODE", "frames") == "clip":
+            yield self._predict_video_clip(
+                source,
+                conf=conf,
+                iou=iou,
+                classes=classes,
+                max_det=max_det,
+                source_label=source_label,
+                vid_stride=vid_stride,
+                **kwargs,
+            )
+            return
+
         yield from run_video_inference(
             source,
             self._frame_predictor(
@@ -1356,6 +1375,86 @@ class InferenceRunner:
             show=show,
             output_path=output_path,
         )
+
+    def _predict_video_clip(
+        self,
+        source: Union[str, Path, FrameSource],
+        *,
+        conf: float = 0.25,
+        iou: float = 0.45,
+        classes: Optional[List[int]] = None,
+        max_det: int = 300,
+        source_label: str = "",
+        vid_stride: int = 1,
+        **kwargs,
+    ) -> Results:
+        """Decode one clip from a finite video and run a single forward pass.
+
+        Temporal sampling is family-local: the model owns the frame count,
+        stride and clip position. Decoding and error handling stay here so
+        every clip-mode family shares them.
+        """
+        import cv2
+
+        if not isinstance(source, (str, Path)):
+            raise ValueError(
+                "Clip-mode inference needs a finite video path. An unbounded "
+                "source cannot be sampled into a centered clip without "
+                "buffering it, which this path deliberately refuses to do."
+            )
+
+        path = str(source)
+        capture = cv2.VideoCapture(path)
+        if not capture.isOpened():
+            raise ValueError(f"Could not open video: {path}")
+
+        try:
+            total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total <= 0:
+                # Some containers do not report a frame count; fall back to a
+                # bounded decode rather than trusting the header.
+                frames_all = []
+                while True:
+                    ok, frame = capture.read()
+                    if not ok:
+                        break
+                    frames_all.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                if not frames_all:
+                    raise ValueError(
+                        f"Decoded no frames from {path}; refusing to treat a "
+                        "corrupt or empty video as a black clip."
+                    )
+                indices = self.model.sample_clip_indices(len(frames_all), vid_stride)
+                frames = [frames_all[i] for i in indices]
+            else:
+                indices = self.model.sample_clip_indices(total, vid_stride)
+                frames = []
+                for index in indices:
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, int(index))
+                    ok, frame = capture.read()
+                    if not ok:
+                        if not frames:
+                            raise ValueError(
+                                f"Could not decode any frame from {path}; "
+                                "refusing to treat it as a black clip."
+                            )
+                        # Past the real end: hold the last decoded frame.
+                        frames.append(frames[-1])
+                        continue
+                    frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        finally:
+            capture.release()
+
+        input_tensor, _, original_size, ratio = self.model._preprocess(frames, "rgb")
+        with torch.no_grad():
+            output = forward_maybe_graphed(
+                self.model, input_tensor.to(self.model.device)
+            )
+        detections = self.model._postprocess(
+            output, conf, iou, original_size, max_det=max_det, ratio=ratio,
+            classes=classes, **kwargs,
+        )
+        return self._wrap_results(detections, original_size, source_label, classes)
 
     def _frame_predictor(
         self,
