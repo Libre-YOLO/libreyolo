@@ -111,9 +111,22 @@ def _build_init_kw(model_instance: Any) -> dict:
         "_class": cls.__name__,
         "device": "auto",
     }
-    for attr in ("size", "nb_classes", "reg_max", "task", "num_masks", "proto_channels", "num_keypoints"):
+    for attr in (
+        "size",
+        "nb_classes",
+        "reg_max",
+        "task",
+        "num_masks",
+        "proto_channels",
+        "num_keypoints",
+        "weight_variant",
+    ):
         if (attr in supported or supports_kwargs) and hasattr(model_instance, attr):
             kw[attr] = getattr(model_instance, attr)
+    if supports_kwargs and getattr(model_instance, "_training_from_scratch", False):
+        # Workers rebuild the architecture before loading the temporary state
+        # dict. Preserve scratch-only backbone trainability during that build.
+        kw["_scratch_init"] = True
     return kw
 
 
@@ -211,8 +224,9 @@ def spawn_for_model(
             imgsz = train_kw.get("imgsz") or getattr(model_instance, "input_size", None) or 640
             resolved = resolve_auto_batch(
                 model_instance.model,
-                imgsz=int(imgsz),
+                imgsz=imgsz,
                 amp=bool(train_kw.get("amp", True)),
+                amp_dtype=str(train_kw.get("amp_dtype", "float16")),
                 world_size=nprocs,
                 nbs=nbs,
                 fraction=getattr(model_instance, "autobatch_fraction", _DEFAULT_FRACTION),
@@ -281,7 +295,7 @@ def spawn_for_model(
 # ---------------------------------------------------------------------------
 
 
-def ddp_aware(batch_key: str = "batch", experimental_key: str | None = None):
+def ddp_aware(batch_key: str = "batch"):
     """Decorator that adds automatic DDP spawn to a model ``train()`` method.
 
     When the decorated method is called with a multi-GPU device spec from
@@ -292,12 +306,6 @@ def ddp_aware(batch_key: str = "batch", experimental_key: str | None = None):
     Args:
         batch_key: Key in the captured kwargs that holds the batch size.
             Defaults to ``"batch"``; RF-DETR uses ``"batch_size"``.
-        experimental_key: If set, names a boolean kwarg (e.g.
-            ``"allow_experimental"``) that must be truthy before DDP spawn
-            is attempted. When it is falsy the decorator falls through to
-            the function body immediately, letting the body raise its own
-            validation error on the main process rather than inside a
-            spawned worker.
     """
     def decorator(train_fn):
         @functools.wraps(train_fn)
@@ -325,10 +333,6 @@ def ddp_aware(batch_key: str = "batch", experimental_key: str | None = None):
                         f"Multi-GPU DDP requires CUDA. Got device={device!r} but "
                         "CUDA is not available on this machine."
                     )
-                if experimental_key and not train_kw.get(experimental_key, True):
-                    # Guard not satisfied — fall through so the function body
-                    # raises its validation error cleanly on the main process.
-                    return train_fn(self, *args, **kwargs)
                 return spawn_for_model(self, train_kw, len(devices), devices=devices, batch_key=batch_key)
 
             return train_fn(self, *args, **kwargs)

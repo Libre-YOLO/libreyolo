@@ -39,6 +39,9 @@ class LibreResNet(BaseModel):
     FILENAME_PREFIX = "LibreResNet"
     INPUT_SIZES = {"18": 224, "34": 224, "50": 224, "101": 224}
     SUPPORTED_TASKS = ("classify",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "classify"
     REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreResNet<size>-cls.pt
     TRAIN_CONFIG = ResNetConfig

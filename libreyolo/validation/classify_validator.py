@@ -7,7 +7,7 @@ reusing the :class:`BaseValidator` template (setup -> iterate -> finalize).
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import torch
 from torch.utils.data import DataLoader
@@ -18,16 +18,33 @@ from ..data.classify_dataset import (
     get_class_names,
     resolve_classify_data,
 )
+from ..data.imagenet import imagenet1k_class_list, imagenet1k_synset_to_index
 from ..utils.general import COCO_CLASSES
 from .base import BaseValidator
+from .loss import ValidationLossMixin
+
+if TYPE_CHECKING:
+    from .config import ValidationConfig
+    from .loss import ValidationLossAdapter
 
 logger = logging.getLogger(__name__)
 
 
-class ClassifyValidator(BaseValidator):
+class ClassifyValidator(ValidationLossMixin, BaseValidator):
     """Top-1/top-5 accuracy validator for the classification task."""
 
     task = "classify"
+
+    def __init__(
+        self,
+        model,
+        config: Optional["ValidationConfig"] = None,
+        *,
+        loss_adapter: Optional["ValidationLossAdapter"] = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, config, **kwargs)
+        self._init_validation_loss(loss_adapter)
 
     def _model_class_names(self) -> list[str] | None:
         names = getattr(self.model, "names", None)
@@ -63,6 +80,20 @@ class ClassifyValidator(BaseValidator):
         return kwargs
 
     @staticmethod
+    def _imagenet_synset_mapping(
+        model_classes: list[str], dataset_classes: list[str]
+    ) -> dict[str, int] | None:
+        """Map a full or subset WNID ImageFolder to a canonical ImageNet head."""
+        if model_classes != imagenet1k_class_list():
+            return None
+        synset_to_index = imagenet1k_synset_to_index()
+        if not dataset_classes or any(
+            name not in synset_to_index for name in dataset_classes
+        ):
+            return None
+        return {name: synset_to_index[name] for name in dataset_classes}
+
+    @staticmethod
     def _format_class_delta(expected: set[str], actual: set[str]) -> str:
         details = []
         extra = sorted(actual - expected)
@@ -78,21 +109,27 @@ class ClassifyValidator(BaseValidator):
         split = self.config.split or "val"
         train_classes = get_class_names(dataset_root, split="train")
         model_classes = self._model_class_names()
+        class_to_idx = None
         if model_classes is None:
             class_names = train_classes
         else:
-            expected = set(model_classes)
-            actual = set(train_classes)
-            if expected != actual:
-                raise ValueError(
-                    "Classification train classes must match the model class names "
-                    f"({self._format_class_delta(expected, actual)})."
-                )
-            class_names = model_classes
+            class_to_idx = self._imagenet_synset_mapping(model_classes, train_classes)
+            if class_to_idx is not None:
+                class_names = train_classes
+            else:
+                expected = set(model_classes)
+                actual = set(train_classes)
+                if expected != actual:
+                    raise ValueError(
+                        "Classification train classes must match the model class names "
+                        f"({self._format_class_delta(expected, actual)})."
+                    )
+                class_names = model_classes
 
         # Label indices are pinned to the model/checkpoint class order when it is
         # explicit, otherwise to the train split order shared across splits.
-        class_to_idx = {name: i for i, name in enumerate(class_names)}
+        if class_to_idx is None:
+            class_to_idx = {name: i for i, name in enumerate(class_names)}
 
         dataset = ClassifyDataset(
             dataset_root=dataset_root,
@@ -103,7 +140,7 @@ class ClassifyValidator(BaseValidator):
             # Match the model's native eval pipeline so val() agrees with predict().
             transform_kwargs=self._dataset_transform_kwargs(),
         )
-        self._num_classes = len(class_names)
+        self._num_classes = len(model_classes or class_names)
         return DataLoader(
             dataset,
             batch_size=self.config.batch_size,
@@ -117,6 +154,7 @@ class ClassifyValidator(BaseValidator):
         self._top1_correct = 0
         self._top5_correct = 0
         self._total = 0
+        self._reset_validation_loss()
 
     def _preprocess_batch(self, batch: Any) -> tuple:
         images, targets, img_info, img_ids = batch
@@ -133,6 +171,10 @@ class ClassifyValidator(BaseValidator):
     def _update_metrics(
         self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None
     ) -> None:
+        # Accumulate before the .cpu() below so the adapter sees the logits on
+        # the device the criterion expects.
+        self._accumulate_validation_loss(preds, targets, image_size=None)
+
         logits = preds
         if isinstance(logits, dict):
             logits = logits.get("logits", logits.get("predictions"))
@@ -158,6 +200,7 @@ class ClassifyValidator(BaseValidator):
             "metrics/accuracy_top1": top1,
             "metrics/accuracy_top5": top5,
             "fitness": top1,
+            **self._validation_loss_metrics(),
         }
 
     def _print_results(self, metrics: Dict[str, float]) -> None:

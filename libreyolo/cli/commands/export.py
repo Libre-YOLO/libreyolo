@@ -10,6 +10,7 @@ from ..command_utils import (
     exit_with_error,
     help_json_callback,
     load_model_or_exit,
+    parse_imgsz_str,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
@@ -19,9 +20,20 @@ def export_cmd(
     model: str = typer.Option(..., help="Model weights (.pt)"),
     format: str = typer.Option(
         "onnx",
-        help="Export format: onnx, torchscript, tensorrt, openvino, ncnn, tflite (alias: litert), coreml",
+        help=(
+            "Export format: onnx, torchscript, executorch, tensorrt, openvino, "
+            "paddle, mnn, rknn, ncnn, tflite (alias: litert), coreml, coreai "
+            "(Apple, macOS only)"
+        ),
     ),
-    imgsz: Optional[str] = typer.Option(None, help="Input image size (e.g. 640 or 640,480)"),
+    name: Optional[str] = typer.Option(
+        None,
+        help="RKNN target platform (currently rk3588 only)",
+    ),
+    imgsz: Optional[str] = typer.Option(
+        None,
+        help="Input image size: 640 or 480x640 (HxW); 480,640 remains supported",
+    ),
     batch: int = typer.Option(1, help="Export batch size"),
     half: bool = typer.Option(False, help="FP16 precision"),
     int8: bool = typer.Option(False, help="INT8 quantization"),
@@ -49,6 +61,10 @@ def export_cmd(
     json_output: bool = typer.Option(False, "--json", help="JSON output to stdout"),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress stderr"),
     verbose: bool = typer.Option(False, help="Verbose export logging"),
+    verify: bool = typer.Option(
+        False,
+        help="Run RKNN Toolkit2's PC simulator and compare with ONNX Runtime",
+    ),
     help_json: bool = typer.Option(
         False,
         "--help-json",
@@ -88,6 +104,18 @@ def export_cmd(
             "max_det is only supported for ONNX embedded NMS; CoreML embedded "
             "NMS does not expose max_det.",
         )
+    if name is not None and fmt != "rknn":
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "--name is currently an RKNN target option; use it with --format rknn.",
+        )
+    if verify and fmt != "rknn":
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "--verify is currently supported only with --format rknn.",
+        )
 
     model_path = resolve_model_or_exit(out, model)
 
@@ -118,20 +146,16 @@ def export_cmd(
         export_kwargs["iou"] = iou
         if fmt == "onnx":
             export_kwargs["max_det"] = max_det
+    if fmt == "rknn":
+        export_kwargs["name"] = name or "rk3588"
+        export_kwargs["verify"] = verify
+    parsed_imgsz = None
     if imgsz is not None:
-        if "," in imgsz:
-            parts = imgsz.split(",")
-            if len(parts) != 2:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz format: {imgsz}. Use e.g. 640 or 640,480.")
-            try:
-                export_kwargs["imgsz"] = (int(parts[0]), int(parts[1]))
-            except ValueError:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz values: {imgsz}. Use integer dimensions.")
-        else:
-            try:
-                export_kwargs["imgsz"] = int(imgsz)
-            except ValueError:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz: {imgsz}. Use e.g. 640 or 640,480.")
+        try:
+            parsed_imgsz = parse_imgsz_str(imgsz)
+        except ValueError as exc:
+            exit_with_error(out, "invalid_imgsz", str(exc))
+        export_kwargs["imgsz"] = parsed_imgsz
     if data is not None:
         export_kwargs["data"] = data
     if data is not None or int8:
@@ -170,11 +194,11 @@ def export_cmd(
     else:
         size_mb = 0.0
 
-    if imgsz is not None and "," in imgsz:
-        parts = imgsz.split(",")
-        input_h, input_w = int(parts[0]), int(parts[1])
-    elif imgsz is not None:
-        input_h = input_w = int(imgsz)
+    if parsed_imgsz is not None:
+        if isinstance(parsed_imgsz, int):
+            input_h = input_w = parsed_imgsz
+        else:
+            input_h, input_w = parsed_imgsz
     else:
         native = (
             loaded_model._get_input_size()
@@ -194,6 +218,9 @@ def export_cmd(
         "half": half,
         "int8": int8,
     }
+    if fmt == "rknn":
+        data_out["target"] = name or "rk3588"
+        data_out["verified"] = verify
 
     if not json_output:
         data_out["_human_text"] = (

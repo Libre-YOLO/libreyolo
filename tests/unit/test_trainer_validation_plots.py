@@ -101,3 +101,58 @@ def test_trainer_validation_routes_point_task(monkeypatch):
     assert result["best_metric_key"] == "fitness"
     assert result["best_metric"] == pytest.approx(0.65)
     assert result["mAP50"] == pytest.approx(0.70)
+
+
+def test_trainer_passes_opt_in_loss_adapter_to_detection_validator(monkeypatch):
+    import torch
+
+    from libreyolo.validation.loss import ValidationLossMixin
+
+    observed = {}
+    adapter = object()
+
+    # Subclasses the mixin like the real validator does: the trainer decides
+    # whether to build an adapter by checking for it, because OBB and point
+    # validators take no loss_adapter.
+    class _DummyDetectionValidator(ValidationLossMixin):
+        def __init__(self, model, config, *, loss_adapter=None):
+            observed["model"] = model
+            observed["config"] = config
+            observed["loss_adapter"] = loss_adapter
+
+        def run(self):
+            return {
+                "metrics/mAP50": 0.6,
+                "metrics/mAP50-95": 0.4,
+                "metrics/loss": 1.25,
+            }
+
+    monkeypatch.setattr(
+        "libreyolo.validation.DetectionValidator", _DummyDetectionValidator
+    )
+
+    trainer = _make_trainer(
+        SimpleNamespace(
+            data="data.yaml",
+            batch=4,
+            imgsz=128,
+            amp=False,
+            workers=0,
+            save_plots=False,
+            val_loss=True,
+        )
+    )
+    trainer.device = torch.device("cpu")
+    trainer.is_distributed = False
+    trainer.ema_model = None
+    trainer.model = SimpleNamespace(state_dict=lambda: {})
+    trainer.wrapper_model = SimpleNamespace(task="detect", model=trainer.model)
+    trainer._is_final_epoch = lambda epoch: False
+    trainer.save_dir = SimpleNamespace()
+    trainer._scalar_mapping = lambda values: values
+    trainer.build_validation_loss_adapter = lambda model: adapter
+
+    result = trainer._run_validation(0)
+
+    assert observed["loss_adapter"] is adapter
+    assert result["metrics"]["metrics/loss"] == pytest.approx(1.25)

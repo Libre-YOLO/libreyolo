@@ -1,0 +1,49 @@
+MoGe-2 family notice
+====================
+
+Code provenance
+---------------
+The MoGe encoder wrapper, convolutional neck, normal decoder, image-plane
+coordinate construction, and inference graph in this directory are ported
+from the official Microsoft MoGe implementation:
+
+    https://github.com/microsoft/MoGe
+    commit 925b8ed835a7a9cdb7578ba15c658a0afc969030
+    License: MIT
+    Copyright (c) Microsoft Corporation.
+
+The full Microsoft MIT notice is reproduced in the repository-level
+THIRD_PARTY_NOTICES.txt.
+
+LibreYOLO omits the unused point, mask, and metric-scale heads. It reuses the
+existing DINOv2 implementation already bundled for Depth Anything V2, derived
+from facebookresearch/dinov2 under Apache License 2.0. No additional DINOv2
+source is copied for this family.
+
+Weight provenance
+-----------------
+The official ViT-S, ViT-B, and ViT-L normal checkpoints are downloaded
+directly from:
+
+    https://huggingface.co/Ruicheng/moge-2-vits-normal
+    revision 679230677b4d282c6f304189a93e98e14f085902
+    file model.pt
+    SHA-256 79a16621928c2bf0ed04659218c55c01075e950507f40bb3332fb4c873d3e1dc
+    model-card license: MIT
+
+    https://huggingface.co/Ruicheng/moge-2-vitb-normal
+    revision 54ad3a693e61907ea4633d13dec6ee682fa09419
+    file model.pt
+    SHA-256 16b8110e86d5dc5a849db120ca96ef3a223fd30b0c9146d1d81db504073da5f6
+    model-card license: MIT
+
+    https://huggingface.co/Ruicheng/moge-2-vitl-normal
+    revision b135031bae30b5ac2ae141a0e68717795ce38340
+    file model.pt
+    SHA-256 280741fd09bc3f403ccff9967784c2a391b52d2c0742ae3efdb21d9f90cc1a01
+    model-card license: MIT
+
+LibreYOLO checksum-pins those objects. The converter drops only tensors
+belonging to the unused point, mask, and metric-scale heads, retains all
+encoder, neck, and normal-head tensors unchanged, and adds LibreYOLO checkpoint
+metadata.

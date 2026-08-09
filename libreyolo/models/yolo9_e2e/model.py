@@ -211,9 +211,8 @@ class LibreYOLO9E2E(LibreYOLO9):
             patience: Early stopping patience.
             allow_download_scripts: Allow embedded Python in dataset YAML downloads.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
 
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.

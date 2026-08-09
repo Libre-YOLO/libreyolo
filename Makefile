@@ -5,9 +5,10 @@ UV := uv run --no-sync
 # to burn the whole nightly budget in silence. Override with E2E_TIMEOUT=<s>,
 # or 0 to disable.
 E2E_TIMEOUT ?= 900
+NIGHTLY_CORE_EXCLUSIONS := not export_backend and not executorch and not cuda_graph and not extended_training and not training_nightly
 
 .DEFAULT_GOAL := help
-.PHONY: help setup format lint typecheck test test_pr_gate test_install_smoke test_e2e print_nightly_suite test_general_nightly test_flagship_nightly test_nightly test_rf5 build clean
+.PHONY: help setup format lint typecheck test test_pr_gate test_install_smoke test_e2e print_nightly_suite test_general_nightly test_flagship_nightly test_training_nightly test_nightly test_rf5 build clean
 
 help:
 	@echo "═══════════════════════════════════════════════════════════════════════════════"
@@ -24,13 +25,14 @@ help:
 	@echo "  test_install_smoke            - Run clean install smoke (MODE=editable|wheel|sdist|pypi)"
 	@echo "  test_e2e                      - Run all e2e tests (needs GPU + model weights)"
 	@echo "  test_e2e FROM=<file>          - Resume from a test file (e.g. FROM=test_rf1_training.py or FROM=rf1_training)"
-	@echo "  test_e2e MARKERS='<expr>'     - Run only matching e2e markers (e.g. MARKERS='e2e and not experimental_backend')"
+	@echo "  test_e2e MARKERS='<expr>'     - Run only matching e2e markers (e.g. MARKERS='e2e and not extended_backend')"
 	@echo "  test_e2e MARKER='<expr>'      - Alias for MARKERS=..., also works with FROM=..."
 	@echo "  test_e2e E2E_TIMEOUT=<secs>   - Per-test timeout, default 900 (0 disables)"
 	@echo "  print_nightly_suite           - Print nightly suite version and contract"
-	@echo "  test_general_nightly          - Run broad native inference nightly checks"
+	@echo "  test_general_nightly          - Run curated native inference nightly checks"
 	@echo "  test_flagship_nightly         - Run heavy YOLO9/RF-DETR nightly checks"
-	@echo "  test_nightly                  - Run general + flagship nightly checks"
+	@echo "  test_training_nightly         - Run opt-in training-time GPU checks (CUDA graph capture)"
+	@echo "  test_nightly                  - Run general + flagship core nightly checks"
 	@echo "  test_rf5                      - Run RF5 training benchmark tests"
 	@echo "  build                         - Build package"
 	@echo "  clean                         - Remove build and test cache artifacts"
@@ -130,14 +132,17 @@ print_nightly_suite:
 	@$(UV) python -c "from tests.e2e.nightly_contract import nightly_summary_line; print(nightly_summary_line())"
 
 test_general_nightly: print_nightly_suite
-	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='general_nightly'
+	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='general_nightly and $(NIGHTLY_CORE_EXCLUSIONS)'
 
 test_flagship_nightly: print_nightly_suite
-	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='flagship_nightly and not export_backend'
+	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='flagship_nightly and $(NIGHTLY_CORE_EXCLUSIONS)'
+
+test_training_nightly: print_nightly_suite
+	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='training_nightly'
 
 test_nightly: print_nightly_suite
-	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='general_nightly'
-	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='flagship_nightly and not export_backend'
+	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='general_nightly and $(NIGHTLY_CORE_EXCLUSIONS)'
+	LIBREYOLO_FAIL_ON_NIGHTLY_SKIP=1 $(MAKE) test_e2e MARKERS='flagship_nightly and $(NIGHTLY_CORE_EXCLUSIONS)'
 
 test_rf5: clean
 	$(UV) pytest tests/e2e/test_rf5_training.py -m rf5 -v

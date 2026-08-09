@@ -79,6 +79,19 @@ def test_openvocab_model_names_flags_set_classes_families():
     assert not any(n.startswith("yolo9-") for n in flagged)
 
 
+def test_vit_cli_alias_is_ui_downloadable():
+    from libreyolo.cli.config import get_all_cli_names
+    from libreyolo.ui.server import _resolve_download_url
+
+    names = get_all_cli_names()
+    assert "vit-ti" in names
+    assert "vit-ti-cls" in names
+    assert _resolve_download_url("vit-ti") == (
+        "https://huggingface.co/LibreYOLO/LibreViTti-cls/resolve/main/"
+        "LibreViTti-cls.pt"
+    )
+
+
 def test_factory_openvocab_names_resolve_in_the_factory():
     """Every UI-listed factory name must stay a valid LibreOpenVocab alias."""
     from libreyolo.models.openvocab import _ALIASES
@@ -131,3 +144,88 @@ def test_self_managed_download_l2cs_only_r50():
     assert _self_managed_download("LibreL2CSr50.pt") is True
     assert _self_managed_download("LibreL2CSr18.pt") is False
     assert _self_managed_download("definitely-not-a-weight.pt") is False
+
+
+# ---------------------------------------------------------------------------
+# Embed (facial recognition)
+# ---------------------------------------------------------------------------
+
+
+class _Identities(list):
+    """Minimal stand-in with the .name/.score surface the UI reads."""
+
+    def __init__(self, names, scores):
+        super().__init__(names)
+        self.name = list(names)
+        self.score = list(scores)
+
+
+@pytest.mark.parametrize(
+    ("item", "expected"),
+    [
+        # Embed results carry face boxes; they must not read as detection.
+        (
+            result(
+                boxes=[object(), object()],
+                embeddings=[object(), object()],
+                names={0: "face"},
+            ),
+            ("embed", "2 faces"),
+        ),
+        (
+            result(
+                boxes=[object()],
+                embeddings=[object()],
+                identities=_Identities(["alice"], [0.8]),
+                names={0: "face"},
+            ),
+            ("embed", "alice"),
+        ),
+        (
+            result(
+                boxes=[object(), object()],
+                embeddings=[object(), object()],
+                identities=_Identities(["alice", None], [0.8, 0.1]),
+                names={0: "face"},
+            ),
+            ("embed", "alice (+1 unknown face)"),
+        ),
+        (
+            result(
+                boxes=[object(), object()],
+                embeddings=[object(), object()],
+                identities=_Identities([None, None], [0.1, 0.2]),
+                names={0: "face"},
+            ),
+            ("embed", "2 unknown faces"),
+        ),
+        (
+            result(embeddings=[object()]),
+            ("embed", "1 image"),
+        ),
+        (
+            result(
+                embeddings=[object()],
+                identities=_Identities([None], [0.2]),
+            ),
+            ("embed", "1 unknown image"),
+        ),
+        (
+            result(
+                embeddings=[object()],
+                identities=_Identities(["parkour"], [0.9]),
+            ),
+            ("embed", "parkour"),
+        ),
+    ],
+)
+def test_summarize_embed(item, expected):
+    assert _summarize_result(item) == expected
+
+
+def test_embed_download_url_resolves():
+    """The UI availability probe must find a URL for the ONNX-only family."""
+    from libreyolo.ui.server import _resolve_download_url
+
+    url = _resolve_download_url("facerec-l")
+    assert url is not None and url.endswith("librefacerec-l.onnx")

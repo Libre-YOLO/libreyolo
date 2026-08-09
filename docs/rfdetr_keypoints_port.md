@@ -73,8 +73,8 @@ slot is still selected by the internal class. Keypoint coordinates and confidenc
 The converted checkpoint carries LibreYOLO metadata (`model_family="rfdetr"`, `task="pose"`, `nc`,
 `num_keypoints`, `keypoint_dim`, `oks_sigmas`, `names`, `num_keypoints_per_class`) and is published as
 `LibreYOLO/LibreRFDETRx-pose` on HuggingFace with explicit Roboflow Apache-2.0 attribution.
-`THIRD_PARTY_NOTICES.txt` records the provenance. The weight is flagged experimental (preview), matching
-upstream's early-access framing.
+`THIRD_PARTY_NOTICES.txt` records the provenance. The checkpoint was converted from
+upstream's early-access release.
 
 ## Licensing / hygiene
 

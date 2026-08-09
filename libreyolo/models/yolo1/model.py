@@ -64,6 +64,9 @@ class LibreYOLO1(DarknetFamily):
     # for list inputs instead of attempting a real batch.
     SUPPORTS_BATCHED_PREDICT = False
     FILENAME_PREFIX = "LibreYOLO1"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES = {"t": 448, "b": 448}
 
     CFG_BY_SIZE = {"t": "yolov1-tiny", "b": "yolov1"}

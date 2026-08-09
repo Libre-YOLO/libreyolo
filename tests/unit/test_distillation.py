@@ -406,6 +406,14 @@ class TestDistiller:
 
     def test_mgd_loss_converges(self):
         """MGD distillation loss should decrease over optimization steps."""
+        # The test was previously unseeded, so every CI run drew a fresh init.
+        # Measured over 40 seeds the single-step ratio losses[-1]/losses[0] lands
+        # in [0.438, 0.498] with mean 0.466, i.e. the old `< 0.5` bound had no
+        # margin at all and failed whenever a run drew the upper tail (CI saw
+        # 0.5039). Seed explicitly, and assert on a 10-step windowed mean, whose
+        # spread across the same 40 seeds is only [0.609, 0.649], instead of on
+        # two individual noisy MGD steps (MGD masks are resampled every step).
+        torch.manual_seed(0)
         teacher = DummyModel(channels=(128, 256, 512))
         student = DummyModel(channels=(64, 128, 256))
         t_cfg = {
@@ -444,8 +452,14 @@ class TestDistiller:
             losses.append(loss.item())
             distiller.step()
 
-        assert losses[-1] < losses[0] * 0.5, (
-            f"MGD loss did not converge: first={losses[0]:.6f} → last={losses[-1]:.6f}"
+        first_window = sum(losses[:10]) / 10
+        last_window = sum(losses[-10:]) / 10
+        # 0.75 keeps ~0.10 of headroom over the worst seed observed (0.649)
+        # while still failing loudly if distillation stops optimizing: a no-op
+        # or broken MGD loss leaves the ratio at ~1.0.
+        assert last_window < first_window * 0.75, (
+            "MGD loss did not converge: "
+            f"mean(first 10)={first_window:.6f} -> mean(last 10)={last_window:.6f}"
         )
 
     def test_cwd_loss_converges(self):

@@ -9,6 +9,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ...kernels.attention.ms_deform_attn import (
+    maybe_ms_deform_attn_v2,
+    ms_deform_attn_available,
+    spatial_shapes_tensor,
+)
+
 
 def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
     x = x.clip(min=0.0, max=1.0)
@@ -49,13 +55,30 @@ def deformable_attention_core_func_v2(
     attention_weights: torch.Tensor,
     num_points_list: List[int],
     method: str = "default",
+    allow_acceleration: bool = True,
 ):
     """v2 deformable attention core.
 
     Differs from v1 in: (a) flat ``sum(num_points_list)`` layout instead of
     ``[L, P]``; (b) per-level split via ``num_points_list``; (c) optional
     ``method='discrete'`` integer-index sampling for TensorRT <8.5.
+
+    The loop below is the default and the export path. When the optional
+    accelerated ``ms_deform_attn`` slot resolves and the flat point layout
+    reshapes onto the slot's ``(n_levels, n_points)`` one, it takes over;
+    ``method='discrete'`` never does, its integer-index sampling is a
+    different equation.
     """
+    if method == "default" and allow_acceleration and ms_deform_attn_available():
+        accelerated = maybe_ms_deform_attn_v2(
+            value,
+            spatial_shapes_tensor(value_spatial_shapes, value.device),
+            sampling_locations,
+            attention_weights,
+            num_points_list,
+        )
+        if accelerated is not None:
+            return accelerated
     bs, _, n_head, c = value.shape
     _, Len_q, _, _, _ = sampling_locations.shape
 

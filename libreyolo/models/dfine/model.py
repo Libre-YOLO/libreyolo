@@ -30,7 +30,7 @@ class LibreDFINE(BaseModel):
     inference, fine-tuning (via ``DFINETrainer``), validation, and export
     (ONNX / TensorRT / OpenVINO).
 
-    ``task='segment'`` adds the D-FINE-seg mask head (experimental).
+    ``task='segment'`` adds the D-FINE-seg mask head.
     COCO-pretrained ``LibreDFINE{n,s,m,l,x}-seg.pt`` weights auto-download from
     the LibreYOLO Hugging Face org (converted from ArgoSA/D-FINE-seg,
     Apache-2.0). Fine-tuning from detect weights instead requires an explicit
@@ -42,6 +42,9 @@ class LibreDFINE(BaseModel):
     FILENAME_PREFIX = "LibreDFINE"
     INPUT_SIZES = {"n": 640, "s": 640, "m": 640, "l": 640, "x": 640}
     SUPPORTED_TASKS = ("detect", "segment")
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "detect"
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,
@@ -49,12 +52,25 @@ class LibreDFINE(BaseModel):
     }
     val_preprocessor_class = DFINEValPreprocessor
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
+    # The eval forward (HGNetv2 backbone + hybrid encoder + FDR decoder) is
+    # pure tensor work at a fixed eval_spatial_size: anchors are regenerated
+    # lazily but settle during capture warmup, and top-k selection has a
+    # static output shape. Captures and replays bit-identically
+    # (tests/unit/test_cuda_graph_detr_families.py).
+    SUPPORTS_CUDA_GRAPH = True
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
         # D-FINE-unique decoder key prefix.  ``pre_bbox_head`` is present in
         # D-FINE but absent from RT-DETR (which otherwise shares
         # ``dec_bbox_head``, ``denoising_class_embed``, and ``enc_bbox_head``).
+        #
+        # Dome-DETR derives from D-FINE and carries ``pre_bbox_head`` too, so
+        # reject its DeFE-bearing checkpoints explicitly. Registry order
+        # already puts LibreDOMEDETR first; this makes the rejection hold even
+        # when ``can_load`` is consulted on its own.
+        if any(k.startswith("encoder.DeFE.") for k in weights_dict):
+            return False
         return any("decoder.pre_bbox_head." in k for k in weights_dict)
 
     @classmethod
@@ -160,6 +176,7 @@ class LibreDFINE(BaseModel):
             nb_classes=self.nb_classes,
             eval_spatial_size=(self.input_size, self.input_size),
             enable_mask_head=self.task == "segment",
+            train_from_scratch=self._is_scratch_build(),
         )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
@@ -306,9 +323,8 @@ class LibreDFINE(BaseModel):
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
         """
         from libreyolo.data import load_data_config
 
@@ -390,7 +406,22 @@ class LibreDFINE(BaseModel):
         return results
 
     def _load_weights(self, model_path: str):
-        if not Path(model_path).exists():
+        model_path = self._resolve_weights_path(model_path)
+        path = Path(model_path)
+        download_error = None
+        if not path.exists():
+            from ...utils.download import download_weights
+
+            try:
+                download_weights(model_path, self.size)
+            except Exception as exc:
+                download_error = exc
+        if not path.exists():
+            if download_error is not None:
+                raise FileNotFoundError(
+                    f"D-FINE weights file not found: {model_path}\n"
+                    f"Auto-download failed: {download_error}"
+                ) from download_error
             raise FileNotFoundError(f"D-FINE weights file not found: {model_path}")
 
         try:

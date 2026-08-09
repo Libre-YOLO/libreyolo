@@ -21,6 +21,7 @@ jobs:
     outputs:
       should_run: ${{ steps.diff.outputs.should_run }}
       target_sha: ${{ steps.resolve.outputs.target_sha }}
+      cache_key: ${{ steps.resolve.outputs.cache_key }}
       cache_hit: ${{ steps.cache-target.outputs.cache-hit }}
     steps:
       - id: resolve
@@ -28,31 +29,81 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_SHA=$(git ls-remote https://github.com/LibreYOLO/libreyolo refs/heads/release | cut -f1)
+          # The cache key carries an ISO week so a frozen target is still
+          # retested once a week. A SHA-only key means a quiet branch is never
+          # re-run, and the environment underneath it drifts untested.
+          WINDOW=$(date -u +%G-W%V)
           echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
-          echo "Resolved: release=$TARGET_SHA"
+          echo "window=$WINDOW" >> "$GITHUB_OUTPUT"
+          echo "cache_key=last-tested-nightly-release-$TARGET_SHA-$WINDOW" >> "$GITHUB_OUTPUT"
+          echo "Resolved: release=$TARGET_SHA window=$WINDOW"
 
+      # restore, not cache: this job never creates the marker file, so the
+      # save-on-post of actions/cache would warn every run and could claim the
+      # key with nothing in it.
       - id: cache-target
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .last-release
-          key: last-tested-nightly-release-${{ steps.resolve.outputs.target_sha }}
+          key: ${{ steps.resolve.outputs.cache_key }}
 
       - id: diff
         name: Decide whether release needs testing
         env:
           FORCE: ${{ inputs.force }}
           HIT_TARGET: ${{ steps.cache-target.outputs.cache-hit }}
+          TARGET_SHA: ${{ steps.resolve.outputs.target_sha }}
+          WINDOW: ${{ steps.resolve.outputs.window }}
         run: |
           set -euo pipefail
           if [ "${FORCE:-false}" = "true" ]; then
             SHOULD_RUN=true
+            REASON="forced by workflow_dispatch input"
           elif [ "${HIT_TARGET:-}" = "true" ]; then
             SHOULD_RUN=false
+            REASON="release@${TARGET_SHA} already passed a nightly in week ${WINDOW}"
           else
             SHOULD_RUN=true
+            REASON="no passing nightly recorded for release@${TARGET_SHA} in week ${WINDOW}"
           fi
           echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
-          echo "Should run release: $SHOULD_RUN"
+          echo "Should run release: $SHOULD_RUN ($REASON)"
+
+          # Every run says, in its own summary, which SHA it covers and whether
+          # it actually tested it. A skipped run is green; without this line it
+          # is indistinguishable from a pass in the run list.
+          if [ "$SHOULD_RUN" = "true" ]; then
+            VERDICT="RUNNING the GPU suite"
+          else
+            VERDICT="SKIPPED, no GPU suite ran in this run"
+          fi
+          {
+            echo "### Nightly guard: $VERDICT"
+            echo
+            echo "- Target: \`release@${TARGET_SHA}\`"
+            echo "- Week window: \`${WINDOW}\`"
+            echo "- Reason: ${REASON}"
+            echo
+            if [ "$SHOULD_RUN" != "true" ]; then
+              echo "This run did **not** execute the GPU suite. The green tick"
+              echo "means the guard resolved cleanly, not that this commit was"
+              echo "tested in this run. The pass it is standing on is an earlier"
+              echo "run against the same SHA."
+              echo
+              echo "To test it anyway: re-dispatch with \`force=true\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  skipped:
+    name: Skipped (release already tested)
+    needs: guard
+    if: needs.guard.outputs.should_run == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain the skip
+        run: |
+          echo "No GPU suite ran. release@${{ needs.guard.outputs.target_sha }} already"
+          echo "passed a nightly this week. Re-dispatch with force=true to retest."
 
   e2e:
     name: e2e (release)
@@ -61,10 +112,13 @@ jobs:
     runs-on: [self-hosted, gpu, libreyolo-e2e]
     timeout-minutes: 180
     steps:
-      - name: Checkout release
+      # The resolved SHA, not the branch. This job tests whatever it checks
+      # out, so a branch ref would let release move between the guard and the
+      # checkout and mark one SHA as tested while having tested another.
+      - name: Checkout the resolved release SHA
         uses: actions/checkout@v4
         with:
-          ref: release
+          ref: ${{ needs.guard.outputs.target_sha }}
 
       - uses: astral-sh/setup-uv@v4
 
@@ -130,4 +184,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .last-release
-          key: last-tested-nightly-release-${{ needs.guard.outputs.target_sha }}
+          key: ${{ needs.guard.outputs.cache_key }}

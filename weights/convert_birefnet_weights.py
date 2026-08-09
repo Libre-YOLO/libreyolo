@@ -11,6 +11,8 @@ Usage::
     python weights/convert_birefnet_weights.py BiRefNet.safetensors weights/LibreBiRefNetl-matte.pt --size l --verify
     # lite (Swin-T tier, fast)
     python weights/convert_birefnet_weights.py BiRefNet_lite.safetensors weights/LibreBiRefNett-matte.pt --size t --verify
+FeyNobg checkpoints belong to the sibling ``feynobg`` family; use
+weights/convert_feynobg_weights.py for those.
 
 BiRefNet source code is MIT (https://github.com/ZhengPeng7/BiRefNet). The
 released ``BiRefNet`` (general) weights are tagged MIT on Hugging Face; verify
@@ -28,6 +30,7 @@ import torch
 from _conversion_utils import add_repo_root_to_path, load_checkpoint, save_checkpoint
 
 _EMBED_DIM_TO_SIZE = {96: "t", 192: "l"}
+_FEYNOBG_MARKER = "bb.layers.2.blocks.23.norm1.weight"
 _IMGSZ = 1024
 
 
@@ -53,6 +56,11 @@ def detect_size(state_dict: Dict[str, torch.Tensor]) -> str | None:
     proj = state_dict.get("bb.patch_embed.proj.weight")
     if proj is None or getattr(proj, "ndim", 0) != 4:
         return None
+    if _FEYNOBG_MARKER in state_dict:
+        raise ValueError(
+            "This looks like a FeyNobg checkpoint (24 stage-3 blocks); "
+            "use weights/convert_feynobg_weights.py instead."
+        )
     return _EMBED_DIM_TO_SIZE.get(int(proj.shape[0]))
 
 

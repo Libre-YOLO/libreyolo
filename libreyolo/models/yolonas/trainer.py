@@ -52,6 +52,27 @@ class YOLONASTrainer(BaseTrainer):
             use_varifocal_loss=True,
         ).to(self.device)
 
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+
+        from .nn import LibreYOLONASModel
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect" or type(self.model) is not LibreYOLONASModel:
+            raise ValueError(
+                "val_loss=True currently supports YOLO-NAS detection only; "
+                "pose and other tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import YOLONASValidationLoss
+
+        return YOLONASValidationLoss(
+            model,
+            max_labels=int(getattr(self.config, "max_labels", 100)),
+        )
+
     def get_loss_components(self, outputs: Dict) -> Dict[str, float]:
         def _scalar(v):
             return v.item() if isinstance(v, torch.Tensor) else v
@@ -71,3 +92,37 @@ class YOLONASTrainer(BaseTrainer):
             "iou": log_losses[1],
             "dfl": log_losses[2],
         }
+
+    def cuda_graph_train_spec(self):
+        """Capture spec: graph the network, keep the PPYoloE loss eager.
+
+        ``on_forward`` already splits at the right boundary — the network
+        forward takes only images, and the assigner-driven loss runs after
+        it — so ``assemble`` is that same tail verbatim.
+        """
+        from libreyolo.training.cuda_graph import (
+            CudaGraphTrainSpec,
+            GraphableNetwork,
+        )
+        from .nn import LibreYOLONASModel
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            return None
+        if not isinstance(self.model, LibreYOLONASModel):
+            return None
+        if getattr(self, "loss_fn", None) is None:
+            return None
+
+        network = GraphableNetwork(self.model)
+
+        def assemble(flat, imgs, targets, polygons=None):
+            total_loss, log_losses = self.loss_fn(network.rebuild(flat), targets)
+            return {
+                "total_loss": total_loss,
+                "cls": log_losses[0],
+                "iou": log_losses[1],
+                "dfl": log_losses[2],
+            }
+
+        return CudaGraphTrainSpec(network=network, assemble=assemble)

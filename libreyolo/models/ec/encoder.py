@@ -224,13 +224,15 @@ class HybridEncoder(nn.Module):
         return pos_embed
 
     @staticmethod
-    def build_2d_sincos_position_embedding(w, h, embed_dim=256, temperature=10000.0):
-        grid_w = torch.arange(int(w), dtype=torch.float32)
-        grid_h = torch.arange(int(h), dtype=torch.float32)
+    def build_2d_sincos_position_embedding(
+        w, h, embed_dim=256, temperature=10000.0, device=None
+    ):
+        grid_w = torch.arange(int(w), dtype=torch.float32, device=device)
+        grid_h = torch.arange(int(h), dtype=torch.float32, device=device)
         grid_w, grid_h = torch.meshgrid(grid_w, grid_h, indexing="ij")
         assert embed_dim % 4 == 0, "embed_dim must be divisible by 4"
         pos_dim = embed_dim // 4
-        omega = torch.arange(pos_dim, dtype=torch.float32) / pos_dim
+        omega = torch.arange(pos_dim, dtype=torch.float32, device=device) / pos_dim
         omega = 1.0 / (temperature**omega)
 
         out_w = grid_w.flatten()[..., None] @ omega[None]
@@ -248,7 +250,7 @@ class HybridEncoder(nn.Module):
                 src_flatten = proj_feats[enc_ind].flatten(2).permute(0, 2, 1)
                 if self.training or self.eval_spatial_size is None:
                     pos_embed = self.build_2d_sincos_position_embedding(
-                        w, h, self.hidden_dim, self.pe_temperature
+                        w, h, self.hidden_dim, self.pe_temperature, device=src_flatten.device
                     ).to(src_flatten.device)
                 else:
                     pos_embed = self._get_pos_embed(enc_ind, h, w, src_flatten)

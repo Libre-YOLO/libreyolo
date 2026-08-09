@@ -171,20 +171,61 @@ def test_training_is_explicitly_out_of_scope():
         model.train(data="unused.yaml")
 
 
-def test_static_onnx_roundtrip(tmp_path):
-    """Shape/dtype contract of the ONNX path (experimental tier: no numeric
-    parity guarantee; the backend pads sub-canvas inputs before the
-    transformer, which measurably diverges from native inference)."""
-    pytest.importorskip("onnx")
-    pytest.importorskip("onnxruntime")
-    from libreyolo.backends.onnx import OnnxBackend
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino", "tflite"])
+def test_fixed_canvas_export_predict_parity(tmp_path, format):
+    if format == "onnx":
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
+    if format == "tflite":
+        pytest.importorskip("onnx2tf")
+        pytest.importorskip("ai_edge_litert")
 
+    from libreyolo.export.exporter import OnnxExporter
+
+    torch.manual_seed(0)
     model = LibreSwinIR(size="s", device="cpu")
-    output_path = tmp_path / "swinir.onnx"
-    model.export(format="onnx", imgsz=64, dynamic=False, output_path=str(output_path))
-    backend = OnnxBackend(str(output_path))
-    image = Image.fromarray(np.zeros((24, 32, 3), dtype=np.uint8), mode="RGB")
+    model.model.eval()
+    tensor = torch.rand(1, 3, 64, 64)
+    with OnnxExporter(model)._model_context(
+        "cpu", False, False, 1, (64, 64)
+    ) as (wrapped, _):
+        with torch.no_grad():
+            expected = wrapped(tensor).detach().cpu().numpy()
+
+    output_path = tmp_path / {
+        "onnx": "swinir.onnx",
+        "torchscript": "swinir.torchscript",
+        "openvino": "swinir_openvino",
+        "tflite": "swinir.tflite",
+    }[format]
+    artifact = model.export(
+        format=format,
+        imgsz=64,
+        dynamic=False,
+        simplify=False,
+        output_path=str(output_path),
+    )
+    backend = LibreYOLO(artifact, device="cpu")
+    actual = backend._run_inference(tensor.numpy())[0]
+    rtol, atol = (
+        (2e-3, 2e-2)
+        if format in {"onnx", "openvino", "tflite"}
+        else (1e-3, 1e-3)
+    )
+    np.testing.assert_allclose(actual, expected, rtol=rtol, atol=atol)
+
+    image = np.random.default_rng(64).integers(
+        0, 256, size=(64, 64, 3), dtype=np.uint8
+    )
+    native = model.predict(image).restored.array
     exported = backend.predict(image).restored.array
+    mse = np.mean(
+        (native.astype(np.float64) - exported.astype(np.float64)) ** 2
+    )
+    psnr = float("inf") if mse == 0 else 20.0 * np.log10(255.0 / np.sqrt(mse))
+    assert psnr > 40.0
     assert backend.restore_scale == 4
-    assert exported.shape == (96, 128, 3)
+    assert exported.shape == (256, 256, 3)
     assert exported.dtype == np.uint8

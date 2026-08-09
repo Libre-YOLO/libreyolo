@@ -19,7 +19,7 @@ def get_unsupported_train_params(family: str | None) -> set[str]:
     (``libreyolo.data.augment.spec``), which covers every trainable family.
     Families may declare additional non-augmentation ignores via an
     ``UNSUPPORTED_TRAIN_PARAMS`` class attribute (RF-DETR: optimizer/momentum/
-    nesterov/pretrained), which is unioned in.
+    nesterov), which is unioned in.
     """
     from libreyolo.data.augment.spec import ignored_aug_params
 
@@ -56,6 +56,14 @@ def _weight_filename_for_cli(cls, size_code: str) -> str:
     formatter = getattr(cls, "format_weight_filename", None)
     if callable(formatter):
         return formatter(size_code)
+    # Families whose canonical filenames always carry the task suffix
+    # (REQUIRE_TASK_SUFFIX, e.g. LibreSegformerb0-sem.pt) must resolve the
+    # default-task CLI name to the suffixed file, or the auto-download URL
+    # points at a repo that does not exist.
+    if getattr(cls, "REQUIRE_TASK_SUFFIX", False):
+        suffix = task_to_suffix(getattr(cls, "DEFAULT_TASK", "detect"))
+        if suffix:
+            return f"{cls.FILENAME_PREFIX}{size_code}-{suffix}{cls.WEIGHT_EXT}"
     return f"{cls.FILENAME_PREFIX}{size_code}{cls.WEIGHT_EXT}"
 
 
@@ -67,8 +75,16 @@ def _task_sizes_for_cli(cls, task: str) -> dict[str, int]:
 def _register_cli_names_for_class(cls) -> None:
     default_task = getattr(cls, "DEFAULT_TASK", "detect")
     for size_code in _task_sizes_for_cli(cls, default_task):
+        weight_name = _weight_filename_for_cli(cls, size_code)
         cli_name = f"{cls.FAMILY}-{size_code}"
-        _CLI_NAME_TO_WEIGHTS[cli_name] = _weight_filename_for_cli(cls, size_code)
+        _CLI_NAME_TO_WEIGHTS[cli_name] = weight_name
+
+        # ``libreyolo models`` prints the explicit task suffix for every
+        # non-detection task. Keep the shorter default-task alias too, but make
+        # the advertised spelling resolve to the same canonical checkpoint.
+        suffix = task_to_suffix(default_task)
+        if suffix:
+            _CLI_NAME_TO_WEIGHTS[f"{cli_name}-{suffix}"] = weight_name
 
     for task in getattr(cls, "SUPPORTED_TASKS", ("detect",)):
         if task == default_task:
@@ -86,17 +102,24 @@ def _build_name_map() -> None:
     """Populate CLI name → weight filename mapping from model registry."""
     if _CLI_NAME_TO_WEIGHTS:
         return
+    from libreyolo.models import try_ensure_rfdetr
     from libreyolo.models.base.model import BaseModel
 
+    # RF-DETR and DINOv2 register together when their optional dependency is
+    # available. Trigger that registration before walking the registry so both
+    # families receive CLI aliases.
+    try_ensure_rfdetr()
     for cls in BaseModel._registry:
         _register_cli_names_for_class(cls)
 
-    # Also try RF-DETR (lazily registered)
-    from libreyolo.models import try_ensure_rfdetr
+    # The face-embedding (facial-recognition) family is ONNX-only and lives
+    # outside BaseModel._registry; register its embedder names explicitly.
+    from libreyolo.models.facerec.weights import FACEREC_SIZES
 
-    rfcls = try_ensure_rfdetr()
-    if rfcls is not None:
-        _register_cli_names_for_class(rfcls)
+    for size_code in FACEREC_SIZES:
+        weight_name = f"librefacerec-{size_code}.onnx"
+        _CLI_NAME_TO_WEIGHTS[f"facerec-{size_code}"] = weight_name
+        _CLI_NAME_TO_WEIGHTS[f"librefacerec-{size_code}"] = weight_name
 
 
 def get_all_cli_names() -> list[str]:
@@ -146,9 +169,15 @@ def _iter_model_classes():
             seen.add(cls)
             yield cls
 
-    rfcls = try_ensure_rfdetr()
-    if rfcls is not None and rfcls not in seen:
-        yield rfcls
+    try_ensure_rfdetr()
+    for cls in BaseModel._registry:
+        if cls not in seen:
+            yield cls
+
+
+def get_model_class(family: str | None):
+    """Return the registered wrapper for *family*, including lazy families."""
+    return next((cls for cls in _iter_model_classes() if cls.FAMILY == family), None)
 
 
 def detect_family_from_weight_filename(model: str) -> Optional[str]:
@@ -410,6 +439,10 @@ def _build_rfdetr_train_kwargs(
         "device": "device",
         "flip_prob": "flip_prob",
         "amp": "amp",
+        "amp_dtype": "amp_dtype",
+        "cuda_graph": "cuda_graph",
+        "max_det": "max_det",
+        "eval_max_det": "eval_max_det",
         "lora": "lora",
         "freeze": "freeze",
         "log_interval": "log_interval",
@@ -481,6 +514,7 @@ def build_family_train_kwargs(
             "ema",
             "ema_decay",
             "amp",
+            "amp_dtype",
             "name",
         }
         for internal_name in size_defaulted:

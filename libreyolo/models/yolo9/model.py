@@ -3,7 +3,7 @@
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -54,9 +54,11 @@ class LibreYOLO9(BaseModel):
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,
     }
-    EXPERIMENTAL_WEIGHT_FILENAMES: frozenset = frozenset()
     TRAIN_CONFIG = YOLO9Config
     val_preprocessor_class = YOLO9ValPreprocessor
+    # The detection forward is pure tensor work with no host sync, so it
+    # captures and replays bit-identically (tests/unit/test_cuda_graph.py).
+    SUPPORTS_CUDA_GRAPH = True
     # Additional checkpoint model_family values accepted as transfer-learning
     # sources (subclass hook; e.g. yolo9_p2 accepts base yolo9 checkpoints).
     TRANSFER_COMPATIBLE_FAMILIES: tuple = ()
@@ -481,7 +483,7 @@ class LibreYOLO9(BaseModel):
         *,
         epochs: int = _TRAIN_DEFAULTS.epochs,
         batch: int = _TRAIN_DEFAULTS.batch,
-        imgsz: int = _TRAIN_DEFAULTS.imgsz,
+        imgsz: Union[int, Tuple[int, int]] = _TRAIN_DEFAULTS.imgsz,
         lr0: float = _TRAIN_DEFAULTS.lr0,
         optimizer: str = _TRAIN_DEFAULTS.optimizer,
         device: str = "",
@@ -492,6 +494,7 @@ class LibreYOLO9(BaseModel):
         exist_ok: bool = _TRAIN_DEFAULTS.exist_ok,
         resume: bool = _TRAIN_DEFAULTS.resume,
         amp: bool = _TRAIN_DEFAULTS.amp,
+        amp_dtype: str = _TRAIN_DEFAULTS.amp_dtype,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
         pretrained: bool | str | Path | None = None,
@@ -505,7 +508,7 @@ class LibreYOLO9(BaseModel):
             data: Path to data.yaml file (required).
             epochs: Number of epochs to train.
             batch: Batch size.
-            imgsz: Input image size.
+            imgsz: Input image size. Accepts an int (square) or (height, width) tuple.
             lr0: Initial learning rate.
             optimizer: Optimizer name ('SGD', 'Adam', 'AdamW').
             device: Device to train on ('' = auto-detect).
@@ -516,19 +519,32 @@ class LibreYOLO9(BaseModel):
             exist_ok: If True, overwrite existing experiment directory.
             resume: If True, resume training from checkpoint.
             amp: Enable automatic mixed precision training.
+            amp_dtype: CUDA AMP dtype, ``float16`` or ``bfloat16``.
             patience: Early stopping patience.
             pretrained: Optional training initialization weights. Use True to
                 load the matching LibreYOLO9 detect checkpoint for transfer
                 learning, or pass a checkpoint path/name.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
 
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.
         """
         from libreyolo.data import load_data_config
+
+        # Seed before adapting the class head. Rebuilding for a dataset with a
+        # different class count initializes new parameters, so seeding later
+        # would make identical seed= runs start from different heads.
+        if seed >= 0:
+            import random
+            import numpy as np
+
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
 
         try:
             data_config = load_data_config(
@@ -575,16 +591,6 @@ class LibreYOLO9(BaseModel):
                 stats["skipped"],
             )
 
-        if seed >= 0:
-            import random
-            import numpy as np
-
-            random.seed(seed)
-            np.random.seed(seed)
-            torch.manual_seed(seed)
-            if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
-                torch.cuda.manual_seed_all(seed)
-
         trainer_kwargs = dict(
             model=self.model,
             wrapper_model=self,
@@ -604,6 +610,7 @@ class LibreYOLO9(BaseModel):
             exist_ok=exist_ok,
             resume=resume,
             amp=amp,
+            amp_dtype=amp_dtype,
             patience=patience,
             allow_download_scripts=allow_download_scripts,
             callbacks=callbacks,

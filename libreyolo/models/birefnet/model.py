@@ -12,6 +12,10 @@ Sizes: ``t`` = BiRefNet_lite (Swin-T tier, fast), ``l`` = BiRefNet general
 relative-position tables are resolution-tied; a non-native resolution silently
 interpolates them badly), and the matte is resized back to the original canvas.
 
+The sibling ``feynobg`` family (LibreFeyNobg) shares this architecture with a
+deeper stage 3; its checkpoints carry 24 stage-3 blocks and are rejected here
+so each family claims only its own weights.
+
 Inference-only in v1. Fine-tuning is a documented follow-up (see :meth:`train`);
 the paired-data schema is specced in ``docs/dataset_schema.md``.
 """
@@ -36,6 +40,9 @@ class LibreBiRefNet(BaseModel):
 
     FAMILY = "birefnet"
     FILENAME_PREFIX = "LibreBiRefNet"
+    # Capture covers the encoder only; the deformable decoder runs eagerly.
+    # See _get_graph_runner below.
+    SUPPORTS_CUDA_GRAPH = True
     WEIGHT_EXT = ".pt"
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"t": 1024, "l": 1024}
     SUPPORTED_TASKS = ("matte",)
@@ -47,8 +54,11 @@ class LibreBiRefNet(BaseModel):
 
     _UPSTREAM_URL = "https://github.com/ZhengPeng7/BiRefNet"
 
-    # The Swin patch-embed width uniquely identifies the backbone tier.
+    # The Swin patch-embed width identifies the backbone tier. FeyNobg shares
+    # the Swin-L width (192) but has 24 stage-3 blocks; its marker key makes
+    # detect_size return None so the feynobg family claims those checkpoints.
     _EMBED_DIM_TO_SIZE: ClassVar[Dict[int, str]] = {96: "t", 192: "l"}
+    _FEYNOBG_MARKER = "bb.layers.2.blocks.23.norm1.weight"
 
     # ====================================================================
     # Checkpoint detection
@@ -69,6 +79,8 @@ class LibreBiRefNet(BaseModel):
         proj = weights_dict.get("bb.patch_embed.proj.weight")
         if proj is None or getattr(proj, "ndim", 0) != 4:
             return None
+        if cls._FEYNOBG_MARKER in weights_dict:
+            return None  # FeyNobg checkpoint: belongs to the feynobg family
         return cls._EMBED_DIM_TO_SIZE.get(int(proj.shape[0]))
 
     @classmethod
@@ -136,8 +148,38 @@ class LibreBiRefNet(BaseModel):
         res = input_size if input_size is not None else self.input_size
         return preprocess_image(image, input_size=res, color_format=color_format)
 
+    # The decoder's deformable ASPP blocks call torchvision's deform_conv2d,
+    # whose CUDA kernel replays to a different result under graph capture (it
+    # is a compiled extension, so there is nothing to shim from here). The
+    # encoder in front of it captures bit-identically and is the bulk of the
+    # work, so capture stops there and the decoder runs eagerly on the replayed
+    # features. Results are identical to the fully eager path.
+    GRAPH_DISPATCH_IN_FORWARD = True
+
+    def _get_graph_runner(self):
+        if getattr(self, "_graph_runner", None) is None:
+            from ..base.cuda_graph import GraphRunner
+
+            self._graph_runner = GraphRunner(
+                forward_fn=lambda x: self.model.forward_enc(x),
+                family=self.family,
+            )
+        return self._graph_runner
+
     def _forward(self, input_tensor: torch.Tensor) -> Any:
-        return self.model(input_tensor)
+        mode = getattr(self, "_cuda_graph_mode", None)
+        if mode is None:
+            return self.model(input_tensor)
+        # forward_enc/forward_dec are called as plain methods, so the root
+        # __call__ hooks that implement the float32 I/O contract for
+        # half-precision checkpoints (fp16 cast recipe, fp16-remainder
+        # finalized quant) never fire; apply the same contract at the seam.
+        param_dtype = next(self.model.parameters()).dtype
+        if input_tensor.dtype == torch.float32 and param_dtype != torch.float32:
+            input_tensor = input_tensor.to(param_dtype)
+        feats = self._get_graph_runner().run(input_tensor, auto=(mode == "auto"))
+        out = self.model.forward_dec(input_tensor, feats)
+        return out.float() if out.dtype != torch.float32 else out
 
     def _postprocess(
         self,

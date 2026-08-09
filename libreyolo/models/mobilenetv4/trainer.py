@@ -16,10 +16,12 @@ import torch.nn.functional as F
 from ...training.config import TrainConfig
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.trainer import BaseTrainer
+from ..base.classify_cuda_graph import ClassifyCudaGraphMixin
+from ..base.classify_validation_loss import ClassifyValidationLossMixin
 from .config import MobileNetV4Config
 
 
-class MobileNetV4Trainer(BaseTrainer):
+class MobileNetV4Trainer(ClassifyCudaGraphMixin, ClassifyValidationLossMixin, BaseTrainer):
     """Cross-entropy fine-tuning trainer for MobileNetV4 classification."""
 
     # Non-detect task: select the best checkpoint by top-1 accuracy.

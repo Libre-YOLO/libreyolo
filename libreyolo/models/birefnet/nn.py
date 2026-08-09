@@ -30,6 +30,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.ops import deform_conv2d
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 # ======================================================================
@@ -68,8 +69,9 @@ class Mlp(nn.Module):
 class WindowAttention(nn.Module):
     """Window multi-head self-attention with a relative-position-bias table.
 
-    Uses the manual (non-SDPA) computation ``(q * scale) @ k^T + bias`` so the
+    Defaults to the manual computation ``(q * scale) @ k^T + bias`` so the
     forward is bit-identical to the upstream reference run with SDPA disabled.
+    ``fused_attn`` opts into the fused kernels and gives that up.
     """
 
     def __init__(self, dim: int, window_size: Tuple[int, int], num_heads: int, qkv_bias: bool = True):
@@ -101,6 +103,11 @@ class WindowAttention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(0.0)
         self.softmax = nn.Softmax(dim=-1)
+        # Opt-in fused SDPA. Default off: weights/parity_birefnet.py pins
+        # max_abs_diff == 0.0 against upstream BiRefNet and fused kernels
+        # accumulate in a different order. Flip with
+        # libreyolo.kernels.attention.set_fused_attention(model).
+        self.fused_attn = False
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         B_, N, C = x.shape
@@ -113,6 +120,21 @@ class WindowAttention(nn.Module):
             .unsqueeze(0)
             .to(dtype=q.dtype, device=q.device)
         )
+        if self.fused_attn and not manual_attention_required():
+            # SDPA takes one additive float mask, so the relative position bias
+            # and the shifted-window mask are summed into it. The window mask is
+            # (nW, N, N) and the batch is laid out as (batch, nW) flattened, so
+            # repeat tiles it per window.
+            attn_mask = relative_position_bias
+            if mask is not None:
+                attn_mask = attn_mask + mask.to(dtype=q.dtype).unsqueeze(1).repeat(
+                    B_ // mask.shape[0], 1, 1, 1
+                )
+            fused = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=0.0, is_causal=False,
+                scale=self.scale,
+            )
+            return self.proj_drop(self.proj(fused.transpose(1, 2).reshape(B_, N, C)))
         q = q * self.scale
         attn = q @ k.transpose(-2, -1)
         attn = attn + relative_position_bias
@@ -574,12 +596,16 @@ class LibreBiRefNetModel(nn.Module):
     the released General / lite configuration.
     """
 
-    def __init__(self, size: str = "l"):
+    def __init__(self, size: str = "l", dims: BiRefNetDims | None = None):
+        # ``dims`` lets architecture-sharing families (feynobg: BiRefNet with a
+        # deeper stage 3) reuse this module with their own dimension table.
         super().__init__()
-        if size not in BIREFNET_DIMS:
-            raise ValueError(f"Unknown BiRefNet size {size!r}; expected one of {sorted(BIREFNET_DIMS)}")
+        if dims is None:
+            if size not in BIREFNET_DIMS:
+                raise ValueError(f"Unknown BiRefNet size {size!r}; expected one of {sorted(BIREFNET_DIMS)}")
+            dims = BIREFNET_DIMS[size]
         self.size = size
-        d = BIREFNET_DIMS[size]
+        d = dims
 
         self.bb = SwinTransformer(
             embed_dim=d.embed_dim, depths=d.depths, num_heads=d.num_heads,
@@ -619,12 +645,23 @@ class LibreBiRefNetModel(nn.Module):
         )
         return x1, x2, x3, x4
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1, x2, x3, x4 = self.forward_enc(x)
+    def forward_dec(self, x: torch.Tensor, feats) -> torch.Tensor:
+        """Squeeze and decode the encoder features.
+
+        Separate from ``forward_enc`` because this half cannot be captured: the
+        deformable ASPP blocks call ``torchvision.ops.deform_conv2d``, whose
+        CUDA kernel replays to a different result under graph capture. The
+        encoder ahead of it captures cleanly, so the two are split to let the
+        encoder be replayed while this runs eagerly, leaving results unchanged.
+        """
+        x1, x2, x3, x4 = feats
         x4 = self.squeeze_module(x4)
         scaled_preds = self.decoder([x, x1, x2, x3, x4])
         # Inference contract: the final (full-resolution) logit map.
         return scaled_preds[-1]
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.forward_dec(x, self.forward_enc(x))
 
 
 __all__ = ["LibreBiRefNetModel", "BiRefNetDims", "BIREFNET_DIMS"]

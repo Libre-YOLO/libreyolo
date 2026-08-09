@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 @dataclass
@@ -91,6 +92,12 @@ class Owlv2Attention(nn.Module):
         self.v_proj = nn.Linear(hidden, hidden)
         self.q_proj = nn.Linear(hidden, hidden)
         self.out_proj = nn.Linear(hidden, hidden)
+        # Opt-in fused SDPA. Default off: weights/parity_owlv2.py pins
+        # objectness_logits to max_abs_diff == 0 and switches the transformers
+        # reference's own SDPA off to get it (its comment measures ~1e-4 on
+        # long vision sequences). Flip with
+        # libreyolo.kernels.attention.set_fused_attention(model).
+        self.fused_attn = False
 
     def forward(self, x: torch.Tensor, attn_mask: torch.Tensor | None = None) -> torch.Tensor:
         b, n, _ = x.shape
@@ -98,6 +105,13 @@ class Owlv2Attention(nn.Module):
         q = self.q_proj(x).view(*shape).transpose(1, 2)
         k = self.k_proj(x).view(*shape).transpose(1, 2)
         v = self.v_proj(x).view(*shape).transpose(1, 2)
+        if self.fused_attn and not manual_attention_required():
+            # attn_mask is already the additive float causal+padding mask.
+            out = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=0.0, is_causal=False,
+                scale=self.scale,
+            )
+            return self.out_proj(out.transpose(1, 2).reshape(b, n, -1))
         attn = torch.matmul(q, k.transpose(2, 3)) * self.scale
         if attn_mask is not None:
             attn = attn + attn_mask

@@ -269,6 +269,10 @@ class TransformerDecoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.eval_idx = eval_idx if eval_idx >= 0 else num_layers + eval_idx
+        # Set by ``emit_loss_outputs`` while training-time validation computes
+        # the criterion: eval otherwise scores only the ``eval_idx`` layer,
+        # which is not enough for the auxiliary-decoder loss terms.
+        self.emit_loss_outputs = False
 
     def forward(
         self,
@@ -306,7 +310,10 @@ class TransformerDecoder(nn.Module):
                 bbox_head[i](output) + inverse_sigmoid(ref_points_detach)
             )
 
-            if self.training:
+            # ``ref_points`` and ``ref_points_detach`` hold the same values, so
+            # the two appends below agree numerically; they differ only in the
+            # autograd graph, which validation does not build.
+            if self.training or self.emit_loss_outputs:
                 dec_out_logits.append(score_head[i](output))
                 if i == 0:
                     dec_out_bboxes.append(inter_ref_bbox)
@@ -388,6 +395,10 @@ class RTDETRTransformerv2(nn.Module):
             cross_attn_method=cross_attn_method,
         )
         self.decoder = TransformerDecoder(hidden_dim, decoder_layer, num_layers, eval_idx)
+
+        # See ``TransformerDecoder.emit_loss_outputs``: eval assembles a
+        # two-key inference dict, and the criterion needs the aux entries.
+        self.emit_loss_outputs = False
 
         self.num_denoising = num_denoising
         self.label_noise_ratio = label_noise_ratio
@@ -555,6 +566,11 @@ class RTDETRTransformerv2(nn.Module):
             self._anchor_cache.popitem(last=False)
 
     def _get_anchors_for_spatial_shapes(self, spatial_shapes, memory):
+        if torch.jit.is_tracing():
+            # Export is fixed-shape. Direct buffer access records movable
+            # attributes; tracing ``.to(memory.device)`` freezes the export
+            # host device into TorchScript.
+            return self.anchors, self.valid_mask
         shape_key = self._spatial_shape_key(spatial_shapes)
         key = (shape_key, memory.device, memory.dtype)
         cached = self._anchor_cache.get(key)
@@ -595,7 +611,7 @@ class RTDETRTransformerv2(nn.Module):
             output_memory, enc_outputs_logits, enc_outputs_coord_unact, self.num_queries
         )
 
-        if self.training:
+        if self.training or self.emit_loss_outputs:
             enc_topk_bboxes_list.append(F.sigmoid(enc_topk_bbox_unact))
             enc_topk_logits_list.append(enc_topk_logits)
 
@@ -687,7 +703,7 @@ class RTDETRTransformerv2(nn.Module):
 
         out = {"pred_logits": out_logits[-1], "pred_boxes": out_bboxes[-1]}
 
-        if self.training and self.aux_loss:
+        if (self.training or self.emit_loss_outputs) and self.aux_loss:
             out["aux_outputs"] = self._set_aux_loss(out_logits[:-1], out_bboxes[:-1])
             out["enc_aux_outputs"] = self._set_aux_loss(
                 enc_topk_logits_list, enc_topk_bboxes_list

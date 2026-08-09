@@ -35,6 +35,9 @@ class LibreDepthAnything3(BaseModel):
 
     FAMILY = "depth_anything3"
     FILENAME_PREFIX = "LibreDepthAnything3"
+    # Capture covers the network only; the sky step after it runs eagerly.
+    # See _get_graph_runner below.
+    SUPPORTS_CUDA_GRAPH = True
     WEIGHT_EXT = ".pt"
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"l": 504}
     SUPPORTED_TASKS = ("depth",)
@@ -118,8 +121,32 @@ class LibreDepthAnything3(BaseModel):
         chw, ratio = preprocess_numpy(np.asarray(img), effective_res)
         return torch.from_numpy(chw).unsqueeze(0), img, (orig_w, orig_h), ratio
 
+    # The sky-to-far-depth step branches on tensor values and selects a
+    # data-dependent number of pixels, so it cannot live inside a graph. The
+    # network in front of it can, so capture stops at the raw head outputs and
+    # the sky step runs eagerly on the replayed result. Numbers are identical
+    # to the fully eager path either way.
+    #
+    # _forward owns the replay decision because of that tail, so the shared
+    # helper must route through it rather than calling the runner itself.
+    GRAPH_DISPATCH_IN_FORWARD = True
+
+    def _get_graph_runner(self):
+        if getattr(self, "_graph_runner", None) is None:
+            from ..base.cuda_graph import GraphRunner
+
+            self._graph_runner = GraphRunner(
+                forward_fn=lambda x: self.model.forward_network(x),
+                family=self.family,
+            )
+        return self._graph_runner
+
     def _forward(self, input_tensor: torch.Tensor) -> Any:
-        return self.model(input_tensor)
+        mode = getattr(self, "_cuda_graph_mode", None)
+        if mode is None:
+            return self.model(input_tensor)
+        raw = self._get_graph_runner().run(input_tensor, auto=(mode == "auto"))
+        return self.model.finish_depth(raw[0], raw[1] if len(raw) > 1 else None)
 
     def _postprocess(
         self,
@@ -150,8 +177,23 @@ class LibreDepthAnything3(BaseModel):
             "weights/convert_depth_anything3_weights.py."
         )
 
-    def export(self, format: str = "onnx", **kwargs) -> str:
-        raise NotImplementedError(
-            "Export is not implemented for Depth Anything 3 yet (depth export "
-            "is out of scope per ADR 0006: depth task contract)."
-        )
+    def export(
+        self,
+        format: str = "onnx",
+        *,
+        opset: int = 17,
+        **kwargs,
+    ) -> str:
+        if format.lower() not in {
+            "onnx",
+            "torchscript",
+            "executorch",
+            "tensorrt",
+            "openvino",
+        }:
+            raise NotImplementedError(
+                f"Export to {format!r} is not implemented for Depth Anything 3; "
+                "supported formats are ONNX, TorchScript, ExecuTorch, "
+                "TensorRT, and OpenVINO."
+            )
+        return super().export(format=format, opset=opset, **kwargs)

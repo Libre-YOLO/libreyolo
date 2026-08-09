@@ -10,11 +10,18 @@ keeps ONNX export portable (opset >= 16).
 """
 
 import math
+from contextvars import ContextVar
 from typing import List
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from ...kernels.attention.ms_deform_attn import (
+    maybe_ms_deform_attn_v2,
+    ms_deform_attn_available,
+    spatial_shapes_tensor,
+)
 
 
 def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
@@ -50,6 +57,20 @@ def get_activation(act, inpace: bool = True):
     if hasattr(m, "inplace"):
         m.inplace = inpace
     return m
+
+
+# Set by the Core AI exporter for the duration of graph capture. A ContextVar
+# keeps nested or concurrent exports from resetting another export's state.
+# That converter has no lowering for aten.grid_sampler_2d, and the
+# manual gather-based path below emits no GridSample op, so it is the
+# same escape hatch the ONNX path already uses.
+_FORCE_MANUAL_GRID_SAMPLE: ContextVar[bool] = ContextVar(
+    "_FORCE_MANUAL_GRID_SAMPLE", default=False
+)
+# Strict torch.export capture cannot trace ContextVar.get(). Exporters that
+# require this decomposition temporarily set this plain module flag before
+# capture and restore it afterwards.
+_FORCE_MANUAL_GRID_SAMPLE_EXPORT = False
 
 
 def _grid_sample_bilinear_manual(feat, grid, padding_mode="zeros", align_corners=False):
@@ -128,7 +149,30 @@ def deformable_attention_core_func_v2(
         method: ``"default"`` (bilinear) or ``"discrete"`` (nearest integer).
 
     Returns: ``(bs, Len_q, n_head * c)``.
+
+    The loop below is the default and the export path. When the optional
+    accelerated ``ms_deform_attn`` slot resolves and the flat point layout
+    reshapes onto the slot's ``(n_levels, n_points)`` one, it takes over
+    (see ``libreyolo/kernels/attention/ms_deform_attn.py``). Neither
+    ``method='discrete'`` nor the forced-manual grid_sample used by the
+    ONNX/Core AI exporters ever does.
     """
+    if (
+        method == "default"
+        and not _FORCE_MANUAL_GRID_SAMPLE_EXPORT
+        and not _FORCE_MANUAL_GRID_SAMPLE.get()
+        and ms_deform_attn_available()
+    ):
+        accelerated = maybe_ms_deform_attn_v2(
+            # Per-level (bs, n_head, c, H*W) -> the slot's (bs, Len_in, n_head, c).
+            torch.cat(list(value), dim=-1).permute(0, 3, 1, 2),
+            spatial_shapes_tensor(value_spatial_shapes, value[0].device),
+            sampling_locations,
+            attention_weights,
+            num_points_list,
+        )
+        if accelerated is not None:
+            return accelerated
     bs, n_head, c, _ = value[0].shape
     _, Len_q, _, _, _ = sampling_locations.shape
 
@@ -148,7 +192,11 @@ def deformable_attention_core_func_v2(
         sampling_grid_l = sampling_locations_list[level]
 
         if method == "default":
-            if torch.onnx.is_in_onnx_export():
+            if (
+                torch.onnx.is_in_onnx_export()
+                or _FORCE_MANUAL_GRID_SAMPLE_EXPORT
+                or _FORCE_MANUAL_GRID_SAMPLE.get()
+            ):
                 sampling_value_l = _grid_sample_bilinear_manual(
                     value_l, sampling_grid_l, padding_mode="zeros", align_corners=False
                 )

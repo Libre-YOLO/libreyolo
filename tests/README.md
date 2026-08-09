@@ -18,6 +18,7 @@ tests/
     ├── conftest.py                      # Fixtures, helpers, RF5 infra, export helpers
     ├── configs/                         # Training config YAMLs (yolox, yolo9, rfdetr)
     ├── test_ncnn.py                     # ncnn export + inference
+    ├── test_mnn.py                      # MNN flagship export + inference
     ├── test_onnx.py                     # ONNX export + inference
     ├── test_openvino.py                 # OpenVINO export + inference
     ├── test_rf1_training.py             # All-models training test (marbles dataset)
@@ -57,13 +58,13 @@ make test_e2e
 pytest tests/e2e/ -v -m "e2e and onnx"
 pytest tests/e2e/ -v -m "e2e and torchscript and yolonas"
 pytest tests/e2e/ -v -m "e2e and yolo9 and not ncnn"
-pytest tests/e2e/ -v -m "e2e and not experimental_backend"
+pytest tests/e2e/ -v -m "e2e and not extended_backend"
 
 # Same marker filtering through the Makefile runner
 make test_e2e MARKERS='e2e and onnx'
 make test_e2e MARKERS='e2e and (onnx or torchscript) and not ncnn'
-make test_e2e MARKERS='e2e and not experimental_backend'
-make test_e2e MARKER='e2e and not experimental_backend' FROM=rf1_training
+make test_e2e MARKERS='e2e and not extended_backend'
+make test_e2e MARKER='e2e and not extended_backend' FROM=rf1_training
 make test_e2e MARKERS='e2e and dfine' FROM=test_rf1_training.py
 
 # MARKER= and MARKERS= are equivalent
@@ -86,8 +87,8 @@ python -m tests.e2e.test_rf5_training --list-configs
 
 ### Useful Markers
 
-- Support tiers: `supported_backend`, `experimental_backend`, `export_backend`
-- Backends: `onnx`, `torchscript`, `tensorrt`, `trt`, `openvino`, `ncnn`
+- Scheduling groups: `supported_backend`, `extended_backend`, `export_backend`
+- Backends: `onnx`, `torchscript`, `tensorrt`, `trt`, `openvino`, `mnn`, `ncnn`
 - Model families: `yolox`, `yolo9`, `yolonas`, `rfdetr`, `dfine`, `rtdetr`
 - Suites: `rf1`, `rf5`, `slow`
 
@@ -96,15 +97,16 @@ python -m tests.e2e.test_rf5_training --list-configs
 | Backend | Status | Marker | Release guidance |
 |---------|--------|--------|------------------|
 | ONNX | Supported | `supported_backend`, `onnx` | Keep in full release validation. |
-| TorchScript | Experimental | `experimental_backend`, `torchscript` | Optional release coverage. |
-| TensorRT | Experimental | `experimental_backend`, `tensorrt`, `trt` | Optional release coverage. |
-| OpenVINO | Experimental | `experimental_backend`, `openvino` | Optional release coverage. |
-| NCNN | Experimental | `experimental_backend`, `ncnn` | Exclude by default if turnaround matters. |
+| TorchScript | Extended schedule | `extended_backend`, `torchscript` | Optional release coverage. |
+| TensorRT | Extended schedule | `extended_backend`, `tensorrt`, `trt` | Optional release coverage. |
+| OpenVINO | Extended schedule | `extended_backend`, `openvino` | Optional release coverage. |
+| MNN | Supported | `supported_backend`, `mnn` | Flagship CPU parity coverage. |
+| NCNN | Extended schedule | `extended_backend`, `ncnn` | Exclude by default if turnaround matters. |
 
-If you want "everything except experimental export backends", run:
+If you want "everything except extended export backends", run:
 
 ```bash
-make test_e2e MARKERS='e2e and not rf5 and not experimental_backend'
+make test_e2e MARKERS='e2e and not rf5 and not extended_backend'
 ```
 
 That keeps training, validation, CLI, video, tracking, and ONNX coverage while dropping TorchScript, TensorRT, OpenVINO, and NCNN.

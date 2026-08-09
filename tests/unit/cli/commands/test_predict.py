@@ -82,6 +82,35 @@ class _FakeRestoreModel:
         )
 
 
+class _FakeStreamModel:
+    FAMILY = "yolo9"
+    task = "classify"
+    size = "t"
+    device = "cpu"
+
+    def __init__(self):
+        self.calls = []
+
+    def _get_input_size(self) -> int:
+        return 224
+
+    def __call__(self, source, **kwargs):
+        self.calls.append((source, kwargs))
+
+        def generate():
+            for frame_idx in range(2):
+                yield Results(
+                    boxes=None,
+                    orig_shape=(10, 12),
+                    path=str(source),
+                    names={0: "cat", 1: "dog"},
+                    probs=Probs(torch.tensor([0.2, 0.8])),
+                    frame_idx=frame_idx,
+                )
+
+        return generate()
+
+
 def test_predict_formats_classification_probs(monkeypatch, tmp_path):
     source = tmp_path / "image.jpg"
     Image.new("RGB", (12, 10)).save(source)
@@ -191,3 +220,61 @@ def test_predict_formats_restore_results(monkeypatch, tmp_path):
 
     assert human_result.exit_code == 0
     assert "restored" in human_result.stdout
+
+
+def test_predict_webcam_source_auto_streams_as_ndjson(monkeypatch):
+    fake_model = _FakeStreamModel()
+    monkeypatch.setattr(
+        predict_module,
+        "resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        predict_module,
+        "load_model_or_exit",
+        lambda *args, **kwargs: fake_model,
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [
+            "source=0",
+            "model=fake-stream.pt",
+            "stream_buffer=true",
+            "vid_stride=2",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    assert [row["frame_index"] for row in rows] == [0, 1]
+    assert all(row["results"][0]["predictions"][0]["name"] == "dog" for row in rows)
+    source, kwargs = fake_model.calls[0]
+    assert source == 0
+    assert kwargs["stream"] is True
+    assert kwargs["stream_buffer"] is True
+    assert kwargs["vid_stride"] == 2
+
+
+def test_predict_rtsp_source_bypasses_local_path_validation(monkeypatch):
+    fake_model = _FakeStreamModel()
+    monkeypatch.setattr(
+        predict_module,
+        "resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        predict_module,
+        "load_model_or_exit",
+        lambda *args, **kwargs: fake_model,
+    )
+
+    source = "rtsp://127.0.0.1:8554/camera"
+    result = runner.invoke(
+        _make_app(),
+        [f"source={source}", "model=fake-stream.pt", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert fake_model.calls[0][0] == source

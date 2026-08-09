@@ -1,0 +1,41 @@
+LibreEfficientDet third-party attribution
+=========================================
+
+The EfficientDet D0-D4 architecture, TensorFlow-compatible EfficientNet
+backbones, BiFPN topology, prediction heads, anchor generation, checkpoint
+configuration, and evaluation transform are derived from:
+
+    Repository: https://github.com/rwightman/efficientdet-pytorch
+    Commit:     c6dff775a36cea0bf9b76c58e59f936411c5ce01
+    Release:    effdet 0.4.1
+    License:    Apache License 2.0
+    Copyright:  Copyright 2020 Ross Wightman
+
+The native EfficientNet block structure and timm-compatible parameter names
+also follow:
+
+    Repository: https://github.com/huggingface/pytorch-image-models
+    Version:    v1.0.28
+    Commit:     8ef73809f622e0031bd7f4940265734aef8b9978
+    License:    Apache License 2.0
+    Copyright:  Ross Wightman and the timm contributors
+
+The original EfficientDet TensorFlow implementation is from Google Research:
+
+    Repository: https://github.com/google/automl/tree/master/efficientdet
+    BiFPN source commit: 56815c9986ffd4b508fe1d68508e268d129715c1
+    Anchor source commit: 6f6694cec1a48cdb33d5d1551a2d5db8ad227798
+    License: Apache License 2.0
+    Copyright: Copyright 2020 Google Research
+
+Official D0-D4 COCO checkpoints are unmodified learned tensors from the
+``rwightman/efficientdet-pytorch`` v0.1 GitHub release. That Apache-2.0
+project supplies no checkpoint-specific license, so the redistribution basis
+is Apache-2.0 implied by the releasing project rather than a separate explicit
+weight grant. Converted files add LibreYOLO metadata only.
+
+No source from the LGPL-licensed
+``zylo117/Yet-Another-EfficientDet-Pytorch`` project was consulted or used.
+
+The Apache License 2.0 text is distributed at
+``licenses/Apache-2.0.txt``.

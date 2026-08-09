@@ -84,6 +84,9 @@ class LibreSwinIR(BaseModel):
     FILENAME_PREFIX = "LibreSwinIR"
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"s": 64, "m": 64, "l": 64}
     SUPPORTED_TASKS = ("restore",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "restore"
     REQUIRE_TASK_SUFFIX = True
     TRAIN_CONFIG = None

@@ -38,11 +38,19 @@ class LibreDEIMv2(BaseModel):
 
     FAMILY = "deimv2"
     FILENAME_PREFIX = "LibreDEIMv2"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES = {size: int(cfg["input_size"]) for size, cfg in SIZE_CONFIGS.items()}
     TRAIN_CONFIG = DEIMv2Config
     val_preprocessor_class = DEIMv2ValPreprocessor
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
     IMGSZ_DIVISOR = 32
+    # Same graph-safety argument as D-FINE (DEIMv2 shares the DEIM/D-FINE
+    # decoder line): fixed eval_spatial_size, lazily built anchors settle in
+    # capture warmup, static top-k. Captures and replays bit-identically
+    # (tests/unit/test_cuda_graph_detr_families.py).
+    SUPPORTS_CUDA_GRAPH = True
 
     @classmethod
     def _validate_imgsz(cls, imgsz: int, *, context: str = "DEIMv2 imgsz") -> int:
@@ -249,9 +257,8 @@ class LibreDEIMv2(BaseModel):
                 family default).
             patience: Early stopping patience.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
         """
         from libreyolo.data import load_data_config
 
@@ -424,7 +431,22 @@ class LibreDEIMv2(BaseModel):
             )
 
     def _load_weights(self, model_path: str):
-        if not Path(model_path).exists():
+        model_path = self._resolve_weights_path(model_path)
+        path = Path(model_path)
+        download_error = None
+        if not path.exists():
+            from ...utils.download import download_weights
+
+            try:
+                download_weights(model_path, self.size)
+            except Exception as exc:
+                download_error = exc
+        if not path.exists():
+            if download_error is not None:
+                raise FileNotFoundError(
+                    f"DEIMv2 weights file not found: {model_path}\n"
+                    f"Auto-download failed: {download_error}"
+                ) from download_error
             raise FileNotFoundError(f"DEIMv2 weights file not found: {model_path}")
 
         try:

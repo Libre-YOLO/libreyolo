@@ -136,6 +136,9 @@ class LibreRTDETR(BaseModel):
     # Class-level metadata
     FAMILY = "rtdetr"
     FILENAME_PREFIX = "LibreRTDETR"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
     INPUT_SIZES = {
         "r18": 640,
@@ -333,8 +336,15 @@ class LibreRTDETR(BaseModel):
         # Skip pretrained download when weights will be loaded immediately after
         # (_loading_from_weights) or when called from _rebuild_for_new_classes
         # (_in_rebuild) — in both cases the backbone weights are overwritten anyway.
-        skip = getattr(self, "_in_rebuild", False) or getattr(self, "_loading_from_weights", False)
+        scratch = self._is_scratch_build()
+        skip = (
+            scratch
+            or getattr(self, "_in_rebuild", False)
+            or getattr(self, "_loading_from_weights", False)
+        )
         pretrained = cfg["backbone_pretrained"] and not skip
+        freeze_at = -1 if scratch else cfg["backbone_freeze_at"]
+        freeze_norm = False if scratch else cfg["backbone_freeze_norm"]
         backbone_kwargs: Dict[str, Any] = {}
         if cfg.get("backbone_type") == "hgnetv2":
             from .hgnetv2 import HGNetv2
@@ -342,15 +352,15 @@ class LibreRTDETR(BaseModel):
             backbone_kwargs["backbone"] = HGNetv2(
                 name=cfg["backbone_arch"],
                 return_idx=[1, 2, 3],
-                freeze_at=cfg["backbone_freeze_at"],
-                freeze_norm=cfg["backbone_freeze_norm"],
+                freeze_at=freeze_at,
+                freeze_norm=freeze_norm,
                 pretrained=pretrained,
             )
         else:
             backbone_kwargs.update(
                 backbone_depth=cfg["backbone_depth"],
-                backbone_freeze_at=cfg["backbone_freeze_at"],
-                backbone_freeze_norm=cfg["backbone_freeze_norm"],
+                backbone_freeze_at=freeze_at,
+                backbone_freeze_norm=freeze_norm,
                 backbone_pretrained=pretrained,
             )
         return RTDETRModel(
@@ -532,9 +542,8 @@ class LibreRTDETR(BaseModel):
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
 
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.

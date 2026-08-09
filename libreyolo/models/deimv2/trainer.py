@@ -163,6 +163,14 @@ class DEIMv2Trainer(DEIMTrainer):
                 f"({decoder_reg_max}); got {self.config.reg_max}."
             )
 
+        self.criterion = self.build_criterion()
+
+    def build_criterion(self, *, distributed_normalize: bool = True):
+        """Build the training criterion.
+
+        Validation loss builds a second one with ``distributed_normalize``
+        off, so both stay defined in exactly one place.
+        """
         matcher = HungarianMatcher(
             weight_dict={"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0},
             use_focal_loss=True,
@@ -172,7 +180,7 @@ class DEIMv2Trainer(DEIMTrainer):
             iou_order_alpha=float(self.config.iou_order_alpha or 1.0),
             matcher_change_epoch=int(self.config.matcher_change_epoch or 10000),
         )
-        self.criterion = DEIMv2Criterion(
+        return DEIMv2Criterion(
             matcher=matcher,
             weight_dict={
                 "loss_mal": 1.0,
@@ -187,10 +195,20 @@ class DEIMv2Trainer(DEIMTrainer):
             num_classes=self.config.num_classes,
             reg_max=self.config.reg_max,
             use_uni_set=bool(self.config.use_uni_set),
+            distributed_normalize=distributed_normalize,
         ).to(self.device)
 
     def _compute_criterion_losses(self, outputs: Dict, target_list) -> Dict:
         return self.criterion(outputs, target_list, epoch=self.current_epoch)
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import DEIMv2ValidationLoss
+
+        return DEIMv2ValidationLoss(
+            model,
+            self.build_criterion(distributed_normalize=False),
+            epoch=lambda: int(getattr(self, "current_epoch", 0) or 0),
+        )
 
     def _setup_optimizer(self) -> torch.optim.Optimizer:
         """AdamW groups matching DEIMv2's HGNetv2/DINOv3 recipes."""

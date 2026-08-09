@@ -46,15 +46,25 @@ class TestDepthAnythingMetadata:
         }
         assert LibreDepthAnythingV2.can_load(state)
 
-    def test_can_load_rejects_rfdetr_depth_signature(self):
+    def test_can_load_requires_da_encoder_prefix(self):
         from libreyolo.models.depth_anything.model import LibreDepthAnythingV2
 
-        # RF-DETR depth uses backbone.* (not pretrained.*) for the encoder.
-        rfdetr_depth = {
+        unrelated_depth = {
             "backbone.encoder.proj.weight": torch.zeros(1),
             "depth_head.weight": torch.zeros(1, 8, 1, 1),
         }
-        assert not LibreDepthAnythingV2.can_load(rfdetr_depth)
+        assert not LibreDepthAnythingV2.can_load(unrelated_depth)
+
+    def test_train_error_does_not_offer_unsupported_fine_tuning(self):
+        from libreyolo.models.depth_anything.model import LibreDepthAnythingV2
+
+        model = LibreDepthAnythingV2.__new__(LibreDepthAnythingV2)
+        with pytest.raises(NotImplementedError) as exc_info:
+            model.train(data="x.yaml")
+
+        message = str(exc_info.value)
+        assert "Training and fine-tuning" in message
+        assert "train upstream" not in message
 
     @pytest.mark.parametrize(
         "embed_dim,expected",
@@ -173,11 +183,13 @@ class TestForwardAndPredict:
         with pytest.raises(NotImplementedError):
             da_small.train(data="x.yaml")
 
-    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    @pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino"])
     def test_exported_depth_parity(self, da_small, tmp_path, format):
         if format == "onnx":
             pytest.importorskip("onnx")
             pytest.importorskip("onnxruntime")
+        if format == "openvino":
+            pytest.importorskip("openvino")
         from libreyolo import LibreYOLO
 
         image = np.zeros((70, 70, 3), dtype=np.uint8)

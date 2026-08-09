@@ -42,6 +42,9 @@ class LibreYOLOX(BaseModel):
     # Class-level metadata
     FAMILY = "yolox"
     FILENAME_PREFIX = "LibreYOLOX"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES = {"n": 416, "t": 416, "s": 640, "m": 640, "l": 640, "x": 640}
     TRAIN_CONFIG = YOLOXConfig
     val_preprocessor_class = YOLOXValPreprocessor
@@ -90,14 +93,9 @@ class LibreYOLOX(BaseModel):
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
-        # Official YOLOX sets BatchNorm eps=1e-3, momentum=0.03 on EVERY size
-        # (Exp.get_model() in yolox_base.py), not just nano. eps is load-bearing
-        # at inference: gating it to "n" left t/s/m/l/x on torch's default 1e-5,
-        # costing ~1-1.5 mAP that grows with depth.
-        for m in self.model.modules():
-            if isinstance(m, nn.BatchNorm2d):
-                m.eps = 1e-3
-                m.momentum = 0.03
+        # BatchNorm eps=1e-3 / momentum=0.03 (official YOLOX) is applied by
+        # LibreYOLOXModel.__init__ itself so it survives class-count rebuilds
+        # during training; no wrapper-level fixup is needed here.
 
     # =========================================================================
     # Model lifecycle
@@ -233,9 +231,8 @@ class LibreYOLOX(BaseModel):
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
 
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.

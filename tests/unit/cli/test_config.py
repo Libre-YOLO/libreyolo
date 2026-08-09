@@ -4,6 +4,7 @@ import pytest
 
 from dataclasses import fields as dc_fields
 
+import libreyolo.cli.config as cli_config
 from libreyolo.cli.config import (
     build_train_kwargs,
     detect_family_from_name,
@@ -44,6 +45,71 @@ class TestResolveModelName:
         assert resolve_model_name("rfdetr-n-seg") == "LibreRFDETRn-seg.pt"
         assert resolve_model_name("rfdetr-x-seg") == "LibreRFDETRx-seg.pt"
         assert resolve_model_name("rfdetr-xx-seg") == "LibreRFDETRxx-seg.pt"
+
+    @pytest.mark.parametrize(
+        ("short_name", "advertised_name", "weight_name"),
+        [
+            ("clip-b32", "clip-b32-cls", "LibreCLIPb32-cls.pt"),
+            (
+                "depth_anything-s",
+                "depth_anything-s-depth",
+                "LibreDepthAnythingV2s-depth.pt",
+            ),
+            ("fomo-s", "fomo-s-point", "LibreFOMOs-point.pt"),
+            ("midas-s", "midas-s-depth", "LibreMiDaSs-depth.pt"),
+            ("siglip2-b16", "siglip2-b16-cls", "LibreSigLIP2b16-cls.pt"),
+            ("vit-ti", "vit-ti-cls", "LibreViTti-cls.pt"),
+            ("zipdepth-b", "zipdepth-b-depth", "LibreZipDepthb-depth.pt"),
+        ],
+    )
+    def test_non_detection_default_aliases_use_canonical_suffix(
+        self, short_name, advertised_name, weight_name
+    ):
+        assert resolve_model_name(short_name) == weight_name
+        assert resolve_model_name(advertised_name) == weight_name
+
+    def test_suffix_optional_family_keeps_unsuffixed_checkpoint(self):
+        assert resolve_model_name("l2cs-r50") == "LibreL2CSr50.pt"
+        assert resolve_model_name("l2cs-r50-gaze") == "LibreL2CSr50.pt"
+
+    def test_lazily_registered_family_receives_default_task_aliases(self, monkeypatch):
+        import libreyolo.models as models
+        from libreyolo.models.base.model import BaseModel
+
+        class EagerFamily:
+            FAMILY = "eager"
+            FILENAME_PREFIX = "LibreEager"
+            WEIGHT_EXT = ".pt"
+            INPUT_SIZES = {"s": 64}
+            TASK_INPUT_SIZES = {}
+            SUPPORTED_TASKS = ("detect",)
+            DEFAULT_TASK = "detect"
+            REQUIRE_TASK_SUFFIX = False
+
+        class LazyFamily:
+            FAMILY = "lazy"
+            FILENAME_PREFIX = "LibreLazy"
+            WEIGHT_EXT = ".pt"
+            INPUT_SIZES = {"s": 64}
+            TASK_INPUT_SIZES = {}
+            SUPPORTED_TASKS = ("semantic",)
+            DEFAULT_TASK = "semantic"
+            REQUIRE_TASK_SUFFIX = False
+
+        registry = [EagerFamily]
+
+        def register_lazy_family():
+            registry.append(LazyFamily)
+            return LazyFamily
+
+        monkeypatch.setattr(BaseModel, "_registry", registry)
+        monkeypatch.setattr(models, "try_ensure_rfdetr", register_lazy_family)
+        monkeypatch.setattr(cli_config, "_CLI_NAME_TO_WEIGHTS", {})
+
+        cli_config._build_name_map()
+
+        assert cli_config.resolve_model_name("lazy-s") == "LibreLazys.pt"
+        assert cli_config.resolve_model_name("lazy-s-sem") == "LibreLazys.pt"
 
     def test_case_insensitive(self):
         assert resolve_model_name("YOLOX-S") == "LibreYOLOXs.pt"

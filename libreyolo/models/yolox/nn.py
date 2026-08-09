@@ -471,6 +471,13 @@ class YOLOXHead(nn.Module):
         self.grids = [torch.zeros(1)] * len(in_channels)
         self.decode_in_inference = False  # raw outputs for postprocess
         self.export = False  # True during ONNX/TorchScript export
+        # Validation loss: this head's eval branch sigmoids obj/cls and skips
+        # the grid bookkeeping get_losses needs, so eval output alone cannot
+        # be scored. With the flag on, eval *additionally* assembles the
+        # training-shaped tensors from the same conv outputs and stashes them
+        # in _loss_cache. The returned inference tensor is untouched.
+        self.emit_loss_outputs = False
+        self._loss_cache = None
 
     def initialize_biases(self, prior_prob):
         """Initialize biases for better training convergence."""
@@ -483,6 +490,72 @@ class YOLOXHead(nn.Module):
             b = conv.bias.view(1, -1)
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
+    def forward_train_maps(self, xin):
+        """Run the training convolutions and decode, without the loss.
+
+        Returns ``(outputs, x_shifts, y_shifts, expanded_strides,
+        origin_preds)`` — everything :meth:`get_losses` consumes except the
+        labels and the images. This is the boundary the CUDA-graph training
+        capture splits on: every tensor here is a pure function of the input
+        images at a fixed input shape, while ``get_losses`` (SimOTA) is
+        data-dependent and stays eager.
+
+        ``forward`` calls this for its own training branch, so the two paths
+        cannot drift.
+        """
+        outputs = []
+        origin_preds = []
+        x_shifts = []
+        y_shifts = []
+        expanded_strides = []
+
+        for k, (cls_conv, reg_conv, stride_this_level, x) in enumerate(
+            zip(self.cls_convs, self.reg_convs, self.strides, xin)
+        ):
+            x = self.stems[k](x)
+            cls_feat = cls_conv(x)
+            cls_output = self.cls_preds[k](cls_feat)
+
+            reg_feat = reg_conv(x)
+            reg_output = self.reg_preds[k](reg_feat)
+            obj_output = self.obj_preds[k](reg_feat)
+
+            output = torch.cat([reg_output, obj_output, cls_output], 1)
+            output, grid = self.get_output_and_grid(
+                output, k, stride_this_level, xin[0].type()
+            )
+            x_shifts.append(grid[:, :, 0])
+            y_shifts.append(grid[:, :, 1])
+            # Built directly on the feature map's device: allocating on CPU
+            # and moving with ``type_as`` is an unpinned host-to-device copy
+            # on every call, which is illegal inside a CUDA graph capture.
+            # Strides (8/16/32) are exact in every dtype used here.
+            expanded_strides.append(
+                torch.full(
+                    (1, grid.shape[1]),
+                    float(stride_this_level),
+                    dtype=xin[0].dtype,
+                    device=xin[0].device,
+                )
+            )
+            if self.use_l1:
+                batch_size = reg_output.shape[0]
+                hsize, wsize = reg_output.shape[-2:]
+                reg_output = reg_output.view(batch_size, 1, 4, hsize, wsize)
+                reg_output = reg_output.permute(0, 1, 3, 4, 2).reshape(
+                    batch_size, -1, 4
+                )
+                origin_preds.append(reg_output.clone())
+            outputs.append(output)
+
+        return (
+            torch.cat(outputs, 1),
+            x_shifts,
+            y_shifts,
+            expanded_strides,
+            origin_preds,
+        )
 
     def forward(self, xin, labels=None, imgs=None):
         """
@@ -497,7 +570,29 @@ class YOLOXHead(nn.Module):
             Training: loss dict
             Inference: list of detection outputs
         """
+        if self.training:
+            (
+                outputs,
+                x_shifts,
+                y_shifts,
+                expanded_strides,
+                origin_preds,
+            ) = self.forward_train_maps(xin)
+            if labels is None:
+                return outputs
+            return self.get_losses(
+                imgs,
+                x_shifts,
+                y_shifts,
+                expanded_strides,
+                labels,
+                outputs,
+                origin_preds,
+                dtype=xin[0].dtype,
+            )
+
         outputs = []
+        loss_outputs = []
         origin_preds = []
         x_shifts = []
         y_shifts = []
@@ -517,10 +612,14 @@ class YOLOXHead(nn.Module):
             reg_output = self.reg_preds[k](reg_feat)
             obj_output = self.obj_preds[k](reg_feat)
 
-            if self.training:
-                output = torch.cat([reg_output, obj_output, cls_output], 1)
-                output, grid = self.get_output_and_grid(
-                    output, k, stride_this_level, xin[0].type()
+            if self.emit_loss_outputs:
+                # Same assembly the training branch does, from the conv
+                # outputs already computed above: no extra convolutions.
+                loss_output, grid = self.get_output_and_grid(
+                    torch.cat([reg_output, obj_output, cls_output], 1),
+                    k,
+                    stride_this_level,
+                    xin[0].type(),
                 )
                 x_shifts.append(grid[:, :, 0])
                 y_shifts.append(grid[:, :, 1])
@@ -532,32 +631,32 @@ class YOLOXHead(nn.Module):
                 if self.use_l1:
                     batch_size = reg_output.shape[0]
                     hsize, wsize = reg_output.shape[-2:]
-                    reg_output = reg_output.view(batch_size, 1, 4, hsize, wsize)
-                    reg_output = reg_output.permute(0, 1, 3, 4, 2).reshape(
+                    l1_output = reg_output.view(batch_size, 1, 4, hsize, wsize)
+                    l1_output = l1_output.permute(0, 1, 3, 4, 2).reshape(
                         batch_size, -1, 4
                     )
-                    origin_preds.append(reg_output.clone())
-            else:
-                output = torch.cat(
-                    [reg_output, obj_output.sigmoid(), cls_output.sigmoid()], 1
-                )
+                    origin_preds.append(l1_output.clone())
+                loss_outputs.append(loss_output)
+
+            output = torch.cat(
+                [reg_output, obj_output.sigmoid(), cls_output.sigmoid()], 1
+            )
 
             outputs.append(output)
 
-        if self.training:
-            if labels is None:
-                return torch.cat(outputs, 1)
-            return self.get_losses(
-                imgs,
-                x_shifts,
-                y_shifts,
-                expanded_strides,
-                labels,
-                torch.cat(outputs, 1),
-                origin_preds,
-                dtype=xin[0].dtype,
-            )
-        elif self.export:
+        if self.emit_loss_outputs:
+            # Everything get_losses needs except the labels, which only the
+            # validation-loss adapter has.
+            self._loss_cache = {
+                "x_shifts": x_shifts,
+                "y_shifts": y_shifts,
+                "expanded_strides": expanded_strides,
+                "outputs": torch.cat(loss_outputs, 1),
+                "origin_preds": origin_preds,
+                "dtype": xin[0].dtype,
+            }
+
+        if self.export:
             # Export mode: decode grid offsets and return single flat tensor
             # suitable for ONNX/TorchScript tracing.
             decoded = []
@@ -601,11 +700,19 @@ class YOLOXHead(nn.Module):
         n_ch = 5 + self.num_classes
         hsize, wsize = output.shape[-2:]
         if grid.shape[2:4] != output.shape[2:4]:
-            yv, xv = meshgrid([torch.arange(hsize), torch.arange(wsize)])
+            # Built directly on ``device``: a CPU arange followed by ``.to``
+            # is an unpinned host-to-device copy, which is illegal inside a
+            # CUDA graph capture. Same values either way.
+            yv, xv = meshgrid(
+                [
+                    torch.arange(hsize, device=device),
+                    torch.arange(wsize, device=device),
+                ]
+            )
             grid = (
                 torch.stack((xv, yv), 2)
                 .view(1, 1, hsize, wsize, 2)
-                .to(device=device, dtype=output.dtype)
+                .to(dtype=output.dtype)
             )
             self.grids[k] = grid
 
@@ -741,8 +848,13 @@ class YOLOXHead(nn.Module):
         # Global (DDP-reduced) positive count: dividing by the global count
         # keeps DDP's gradient averaging equivalent to single-GPU training on
         # the same global batch (issue #484). Identical to the previous
-        # ``max(num_fg, 1)`` outside DDP.
-        num_fg = all_reduce_avg_scalar(num_fg, device=outputs.device)
+        # ``max(num_fg, 1)`` outside DDP. Rank-0-only validation loss selects
+        # the local path because it cannot enter a collective while the other
+        # ranks wait at the validation barrier.
+        if self.emit_loss_outputs and not self.training:
+            num_fg = float(max(num_fg, 1.0))
+        else:
+            num_fg = all_reduce_avg_scalar(num_fg, device=outputs.device)
         loss_iou = (
             self.iou_loss(bbox_preds.view(-1, 4)[fg_masks], reg_targets)
         ).sum() / num_fg
@@ -1015,6 +1127,27 @@ class LibreYOLOXModel(nn.Module):
             depthwise=depthwise,
             act=act,
         )
+
+        # Official YOLOX sets BatchNorm eps=1e-3, momentum=0.03 on every size
+        # (Exp.get_model() in yolox_base.py). It must be applied HERE, at
+        # construction, not as a post-hoc fixup in the LibreYOLOX wrapper:
+        # training calls _rebuild_for_new_classes() when the dataset class
+        # count differs from the checkpoint, which constructs a fresh
+        # LibreYOLOXModel — a wrapper-level fixup does not survive that
+        # rebuild. The result was a model trained (and in-training validated)
+        # at torch's default eps=1e-5 but reloaded for inference at 1e-3.
+        # Harmless for the regular-conv sizes, catastrophic for depthwise
+        # "n", whose per-channel running_var is small enough that eps
+        # dominates: on RF100-VL "ball", the same nano checkpoint scores
+        # 0.566 mAP at eps=1e-5 and 0.151 at eps=1e-3.
+        self._apply_official_bn_hyperparams()
+
+    def _apply_official_bn_hyperparams(self) -> None:
+        """Set BatchNorm eps/momentum to the values official YOLOX uses."""
+        for module in self.modules():
+            if isinstance(module, nn.BatchNorm2d):
+                module.eps = 1e-3
+                module.momentum = 0.03
 
     def forward(self, x, targets=None):
         """

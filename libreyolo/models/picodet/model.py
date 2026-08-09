@@ -37,6 +37,9 @@ class LibrePICODET(BaseModel):
 
     FAMILY = "picodet"
     FILENAME_PREFIX = "LibrePICODET"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES = {"s": 320, "m": 416, "l": 640}
     TRAIN_CONFIG = PICODETConfig
     val_preprocessor_class = PICODETValPreprocessor
@@ -162,12 +165,11 @@ class LibrePICODET(BaseModel):
 
     # ---- training --------------------------------------------------------
 
-    @ddp_aware(experimental_key="allow_experimental")
+    @ddp_aware()
     def train(
         self,
         data: str,
         *,
-        allow_experimental: bool = False,
         epochs: int = _TRAIN_DEFAULTS.epochs,
         batch: int = _TRAIN_DEFAULTS.batch,
         imgsz: int | None = None,
@@ -190,36 +192,19 @@ class LibrePICODET(BaseModel):
     ) -> dict:
         """Fine-tune PICODET on a YOLO-format dataset.
 
-        **EXPERIMENTAL.** Loss components and assigner mirror Bo's upstream
-        recipe (VFL + DFL + GIoU + SimOTA, with cls-quality weighting and
-        dynamic-IoU VFL targets). Inference is bit-equivalent to upstream
-        on the same checkpoint. Training has *not* been validated to clear
-        LibreYOLO's RF1 floor on small custom datasets — PICODET-s/320's
-        tiny 1.17M-param ESNet + 320 input is a poor fit for the
-        30-image/2-class fine-tunes RF1 stresses (see skill §6
-        "fine-tune parity, not paper parity"). Use it for full-COCO scale
-        training or accept that small-dataset transfer is rough.
-
-        Pass ``allow_experimental=True`` to acknowledge.
+        Loss components and the assigner follow Bo's upstream recipe (VFL +
+        DFL + GIoU + SimOTA, with classification-quality weighting and dynamic
+        IoU VFL targets). Inference is bit-equivalent to upstream on the same
+        checkpoint. PICODET-s/320 has not reliably cleared LibreYOLO's RF1
+        floor on the 30-image, two-class fine-tune fixture. Full-dataset
+        convergence, multi-GPU behavior, and augmentation beyond horizontal
+        flipping have not been validated.
 
         Args:
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
         """
-        if not allow_experimental:
-            raise RuntimeError(
-                "PICODET training is experimental. The loss + assigner match "
-                "Bo's upstream recipe and the trainer runs end-to-end, but "
-                "small-dataset fine-tunes (e.g. RF1's marbles) don't reliably "
-                "clear the 5%% mAP floor due to model capacity and the "
-                "no-aug upstream recipe. Pass allow_experimental=True to "
-                "proceed.\n"
-                "What's validated: inference, ONNX/TorchScript/NCNN/OpenVINO "
-                "export. What's NOT validated: small-dataset fine-tune "
-                "convergence, multi-GPU, augmentation policy beyond hflip."
-            )
         from libreyolo.data import load_data_config
 
         from .trainer import PICODETTrainer

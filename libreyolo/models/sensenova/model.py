@@ -201,6 +201,9 @@ class LibreSenseNovaVision(LibreVLMModel):
 
     FAMILY = "sensenovavision"
     FILENAME_PREFIX = "SenseNovaVision"
+    # Capture covers the vision tower only; generation stays eager.
+    # See _get_graph_runner and cuda_graph_scope below.
+    SUPPORTS_CUDA_GRAPH = True
 
     HF_REPOS: ClassVar[Dict[str, str]] = {
         # Byte-identical mirror of sensenova/SenseNova-Vision-7B-MoT at
@@ -696,6 +699,74 @@ class LibreSenseNovaVision(LibreVLMModel):
         self.names = dict(self._task_names())
         self.nb_classes = len(self.names)
         return inputs, img, img.size, 1.0
+
+    # =====================================================================
+    # CUDA graph capture
+    #
+    # Only the vision tower is graphable. Generation is autoregressive over a
+    # growing KV cache, so its shapes change every decode step and no fixed
+    # graph can represent it; it stays eager.
+    #
+    # The tower is reached through Bagel.run_vit rather than a _forward hook,
+    # because this family's _forward takes a structured inputs object rather
+    # than a tensor. The runner is attached to the Bagel module only while a
+    # scope is active, so with graphs off the call path is untouched.
+    #
+    # NOTE: this wiring has not been executed. It was written on a machine that
+    # could not hold the ~15 GB checkpoint, so the tower's capture-safety is
+    # verified (tests/unit/test_cuda_graph_families.py) but this dispatch is
+    # not. Every failure path falls back to the eager call for that reason.
+    # =====================================================================
+
+    def _get_graph_runner(self):
+        if getattr(self, "_graph_runner", None) is None:
+            from ..base.cuda_graph import GraphRunner
+
+            self._graph_runner = GraphRunner(
+                forward_fn=lambda tokens: self.model.vit_forward_for_graph(tokens),
+                family=self.family,
+            )
+        return self._graph_runner
+
+    def cuda_graph_scope(self, mode=True):
+        """Attach the tower runner to the Bagel module for the duration."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _scope():
+            outer = super(LibreSenseNovaVision, self).cuda_graph_scope(mode)
+            with outer:
+                model = getattr(self, "model", None)
+                attached = False
+                try:
+                    if model is not None and hasattr(model, "run_vit"):
+                        model._vit_graph_runner = self._get_graph_runner()
+                        model._vit_graph_auto = self._cuda_graph_mode == "auto"
+                        attached = True
+                except Exception:  # noqa: BLE001 - graphs must never break predict
+                    attached = False
+                try:
+                    yield
+                finally:
+                    if attached:
+                        model._vit_graph_runner = None
+
+        return _scope()
+
+    def capture_graph(self, imgsz=None, batch=1):
+        """Not supported: the tower's input is packed tokens, not an image.
+
+        The packed token count comes from the image and the patching config, so
+        there is no dummy input to build from ``imgsz``. Use
+        ``predict(..., cuda_graph=True)``, which captures on the first call at
+        a given packed shape.
+        """
+        raise NotImplementedError(
+            "LibreSenseNovaVision cannot pre-capture from imgsz: the vision "
+            "tower consumes packed tokens whose count depends on the image and "
+            "the patching config. Pass cuda_graph=True to predict instead, "
+            "which captures lazily at the packed shape."
+        )
 
     def _forward(self, inputs: _SenseNovaInputs) -> Dict[str, Any]:
         params = dict(inputs.params)

@@ -4,14 +4,16 @@ Moved verbatim from ``libreyolo/models/yolo9_e2e/utils.py``, which re-exports
 everything here for backward compatibility.
 """
 
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Union
 
 import torch
+
+from .common import _input_size_hw
 
 
 def _scale_and_clip_boxes(
     boxes: torch.Tensor,
-    input_size: int,
+    input_size: Union[int, Tuple[int, int]],
     original_size: Tuple[int, int] | None,
     letterbox: bool,
 ) -> torch.Tensor:
@@ -20,13 +22,14 @@ def _scale_and_clip_boxes(
 
     boxes = boxes.clone()
     orig_w, orig_h = original_size
+    input_h, input_w = _input_size_hw(input_size)
 
     if letterbox:
-        ratio = min(input_size / orig_h, input_size / orig_w)
+        ratio = min(input_h / orig_h, input_w / orig_w)
         boxes[:, :4] = boxes[:, :4] / ratio
     else:
-        scale_x = orig_w / input_size
-        scale_y = orig_h / input_size
+        scale_x = orig_w / input_w
+        scale_y = orig_h / input_h
         boxes[:, [0, 2]] *= scale_x
         boxes[:, [1, 3]] *= scale_y
 

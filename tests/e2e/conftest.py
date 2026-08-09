@@ -10,11 +10,15 @@ from pathlib import Path
 import pytest
 import torch
 
-from tests.e2e.nightly_contract import nightly_summary_line
+from tests.e2e.nightly_contract import (
+    NIGHTLY_E2E_MARKERS,
+    nightly_advanced_marker_conflicts,
+    nightly_summary_line,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FAIL_ON_NIGHTLY_SKIP_ENV = "LIBREYOLO_FAIL_ON_NIGHTLY_SKIP"
-_NIGHTLY_MARKERS = ("general_nightly", "flagship_nightly")
+_NIGHTLY_MARKERS = NIGHTLY_E2E_MARKERS
 
 
 def _repo_python_env() -> dict[str, str]:
@@ -48,6 +52,19 @@ def _marker_expr_selects_nightly(marker_expr: str) -> bool:
         if token in _NIGHTLY_MARKERS and (index == 0 or tokens[index - 1] != "not"):
             return True
     return False
+
+
+def pytest_itemcollected(item):
+    """Reject advanced-feature tests accidentally enrolled in the default nightly."""
+    conflicts = nightly_advanced_marker_conflicts(
+        marker.name for marker in item.iter_markers()
+    )
+    if conflicts:
+        joined = ", ".join(conflicts)
+        raise pytest.UsageError(
+            f"{item.nodeid} combines a default-nightly marker with opt-in marker(s): "
+            f"{joined}"
+        )
 
 
 def pytest_report_header(config):
@@ -115,6 +132,17 @@ def has_openvino():
         return False
 
 
+def has_mnn():
+    """Check if the MNN runtime and converter are installed."""
+    try:
+        from libreyolo.export.mnn import check_mnn_available
+
+        check_mnn_available()
+        return True
+    except (ImportError, OSError):
+        return False
+
+
 def has_ncnn():
     """Check if ncnn is installed and usable."""
     try:
@@ -147,6 +175,10 @@ requires_tensorrt = pytest.mark.skipif(
 
 requires_openvino = pytest.mark.skipif(
     not has_openvino(), reason="OpenVINO not installed (pip install openvino)"
+)
+
+requires_mnn = pytest.mark.skipif(
+    not has_mnn(), reason="MNN not installed (pip install libreyolo[mnn])"
 )
 
 requires_ncnn = pytest.mark.skipif(
@@ -423,7 +455,7 @@ def reset_gpu_state():
 #     gated on LIBREYOLO1B_CKPT). Its pretrained tiny weights are unrecoverable
 #     upstream, so there is no auto-download route to gate on at all.
 #   - yolo2/3/4 are inference-only conversions, and yolo7 (trainable via the
-#     experimental SimOTA recipe) has no HF auto-download route either; all are
+#     alternate SimOTA recipe) has no HF auto-download route either; all are
 #     covered by the offline synthetic-weight unit suites
 #     (tests/unit/test_darknet_families.py, tests/unit/test_yolo1.py,
 #     tests/unit/test_yolo7.py) plus the external numeric-parity scripts
@@ -473,6 +505,43 @@ MODEL_CATALOG = [
     ("deimv2", "m", "LibreDEIMv2m.pt"),
     ("deimv2", "l", "LibreDEIMv2l.pt"),
     ("deimv2", "x", "LibreDEIMv2x.pt"),
+    ("detr", "r50", "LibreDETRr50.pt"),
+    ("detr", "r50dc5", "LibreDETRr50dc5.pt"),
+    ("detr", "r101", "LibreDETRr101.pt"),
+    ("detr", "r101dc5", "LibreDETRr101dc5.pt"),
+    ("lwdetr", "t", "LibreLWDETRt.pt"),
+    ("lwdetr", "s", "LibreLWDETRs.pt"),
+    ("lwdetr", "m", "LibreLWDETRm.pt"),
+    ("lwdetr", "l", "LibreLWDETRl.pt"),
+    ("lwdetr", "x", "LibreLWDETRx.pt"),
+    ("faster_rcnn", "n", "LibreFasterRCNNn.pt"),
+    ("faster_rcnn", "s", "LibreFasterRCNNs.pt"),
+    ("faster_rcnn", "m", "LibreFasterRCNNm.pt"),
+    ("faster_rcnn", "l", "LibreFasterRCNNl.pt"),
+    ("retinanet", "r50", "LibreRetinaNetr50.pt"),
+    ("retinanet", "r50v2", "LibreRetinaNetr50v2.pt"),
+    ("ssd", "300", "LibreSSD300.pt"),
+    ("mask_rcnn", "r50", "LibreMaskRCNNr50.pt"),
+    ("centernet", "resdcn18", "LibreCenterNetresdcn18.pt"),
+    ("centernet", "dla34", "LibreCenterNetdla34.pt"),
+    ("fcos", "r50", "LibreFCOSr50.pt"),
+    ("efficientdet", "d0", "LibreEfficientDetd0.pt"),
+    ("efficientdet", "d1", "LibreEfficientDetd1.pt"),
+    ("efficientdet", "d2", "LibreEfficientDetd2.pt"),
+    ("efficientdet", "d3", "LibreEfficientDetd3.pt"),
+    ("efficientdet", "d4", "LibreEfficientDetd4.pt"),
+    ("deformable_detr", "r50ss", "LibreDeformableDETRr50ss.pt"),
+    ("deformable_detr", "r50ssdc5", "LibreDeformableDETRr50ssdc5.pt"),
+    ("deformable_detr", "r50", "LibreDeformableDETRr50.pt"),
+    ("deformable_detr", "r50refine", "LibreDeformableDETRr50refine.pt"),
+    (
+        "deformable_detr",
+        "r50twostage",
+        "LibreDeformableDETRr50twostage.pt",
+    ),
+    ("dinodetr", "r50", "LibreDINODETRr50.pt"),
+    ("dinodetr", "r50s5", "LibreDINODETRr50s5.pt"),
+    ("dinodetr", "swinl", "LibreDINODETRswinl.pt"),
     ("ec", "s", "LibreECs.pt"),
     ("ec", "m", "LibreECm.pt"),
     ("ec", "l", "LibreECl.pt"),
@@ -487,6 +556,10 @@ MODEL_CATALOG = [
     ("picodet", "s", "LibrePICODETs.pt"),
     ("picodet", "m", "LibrePICODETm.pt"),
     ("picodet", "l", "LibrePICODETl.pt"),
+    ("vit", "ti", "LibreViTti-cls.pt"),
+    ("vit", "s", "LibreViTs-cls.pt"),
+    ("vit", "b", "LibreViTb-cls.pt"),
+    ("vit", "l", "LibreViTl-cls.pt"),
 ]
 
 FLAGSHIP_FAMILIES = {"yolo9", "rfdetr"}
@@ -517,6 +590,31 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("rtmdet", "t", "LibreRTMDett.pt"),
 ]
 
+# Non-detect families keep task-specific opt-in checks outside the default
+# nightly budget.
+FCN_SEMANTIC_MODELS = [
+    ("fcn", "r50", "LibreFCNr50.pt"),
+]
+
+# Semantic families do not belong in MODEL_CATALOG: that catalog feeds the
+# COCO detection mAP gate. Keep task-appropriate public checkpoints separate.
+DEEPLABV3_SEMANTIC_MODELS = [
+    ("deeplabv3", "r50", "LibreDeepLabv3r50-sem.pt"),
+    ("deeplabv3", "r101", "LibreDeepLabv3r101-sem.pt"),
+    ("deeplabv3", "mv3", "LibreDeepLabv3mv3-sem.pt"),
+]
+DEEPLABV3_SMOKE_MODELS = [
+    ("deeplabv3", "mv3", "LibreDeepLabv3mv3-sem.pt"),
+]
+
+# OBB checkpoints do not belong in MODEL_CATALOG because that matrix feeds the
+# COCO detection mAP and training gates. Keep the task-appropriate smoke case
+# separate, as for the semantic-only matrices above. The representative N
+# checkpoint has a public LibreYOLO auto-download route.
+RTDETRV2_OBB_MODELS = [
+    ("rtdetrv2", "n", "LibreRTDETRv2n-obb.pt"),
+]
+
 # Derived lists (no manual maintenance)
 YOLOX_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "yolox"]
 YOLO9_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "yolo9"]
@@ -526,11 +624,21 @@ RFDETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rfdetr"]
 DFINE_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "dfine"]
 DEIM_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deim"]
 DEIMV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deimv2"]
+DETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "detr"]
+DEFORMABLE_DETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "deformable_detr"]
+DINODETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "dinodetr"]
 EC_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "ec"]
 RTDETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 RTDETRV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv2"]
 RTDETRV4_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv4"]
 PICODET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "picodet"]
+FASTER_RCNN_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "faster_rcnn"]
+RETINANET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "retinanet"]
+SSD_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "ssd"]
+MASK_RCNN_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "mask_rcnn"]
+CENTERNET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "centernet"]
+FCOS_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "fcos"]
+EFFICIENTDET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "efficientdet"]
 
 ALL_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG]
 ALL_MODELS_WITH_WEIGHTS = MODEL_CATALOG
@@ -539,8 +647,26 @@ NON_RFDETR_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f != "rfdetr"]
 # Quick test set (for CI — smallest auto-available models only)
 QUICK_TEST_MODELS = [("yolox", "n"), ("yolo9", "t"), ("rtdetr", "r18")]
 
-# Full test set (all non-RF-DETR models)
-FULL_TEST_MODELS = NON_RFDETR_MODELS
+# Full legacy export test set. Museum families with narrow, family-specific
+# export contracts (Faster R-CNN, RetinaNet, SSD, Mask R-CNN, CenterNet, FCOS,
+# EfficientDet) have dedicated runtime parity gates, so blocked formats must
+# not attempt to export them merely because their public weights are in the
+# catalog.
+FULL_TEST_MODELS = [
+    (family, size)
+    for family, size in NON_RFDETR_MODELS
+    if family
+    not in {
+        "faster_rcnn",
+        "vit",
+        "retinanet",
+        "ssd",
+        "mask_rcnn",
+        "centernet",
+        "fcos",
+        "efficientdet",
+    }
+]
 
 # RF-DETR test set (separate due to dependency)
 RFDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rfdetr"]
@@ -549,13 +675,30 @@ RFDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rfdetr"]
 RTDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 
 FAMILY_MARKERS = {
+    "alexnet": pytest.mark.alexnet,
     "yolox": pytest.mark.yolox,
     "yolo7": pytest.mark.yolo7,
     "yolo9": pytest.mark.yolo9,
     "yolo9_e2e": pytest.mark.yolo9_e2e,
     "yolonas": pytest.mark.yolonas,
     "rfdetr": pytest.mark.rfdetr,
+    "detr": pytest.mark.detr,
+    "deit": pytest.mark.deit,
+    "deeplabv3": pytest.mark.deeplabv3,
+    "lwdetr": pytest.mark.lwdetr,
+    "faster_rcnn": pytest.mark.faster_rcnn,
+    "retinanet": pytest.mark.retinanet,
+    "ssd": pytest.mark.ssd,
+    "mask_rcnn": pytest.mark.mask_rcnn,
+    "fcn": pytest.mark.fcn,
+    "centernet": pytest.mark.centernet,
+    "fcos": pytest.mark.fcos,
+    "efficientdet": pytest.mark.efficientdet,
+    "deformable_detr": pytest.mark.deformable_detr,
+    "dinodetr": pytest.mark.dinodetr,
+    "hrnet": pytest.mark.hrnet,
     "dfine": pytest.mark.dfine,
+    "domedetr": pytest.mark.domedetr,
     "deim": pytest.mark.deim,
     "deimv2": pytest.mark.deimv2,
     "ec": pytest.mark.ec,
@@ -566,6 +709,9 @@ FAMILY_MARKERS = {
     "rtmdet": pytest.mark.rtmdet,
     "l2cs": pytest.mark.l2cs,
     "fomo": pytest.mark.fomo,
+    "vit": pytest.mark.vit,
+    "vgg": pytest.mark.vgg,
+    "swin": pytest.mark.swin,
 }
 
 
@@ -632,6 +778,22 @@ GENERAL_NIGHTLY_INFERENCE_PARAMS = model_cases(
     GENERAL_NIGHTLY_INFERENCE_MODELS,
     with_weights=True,
     marks_resolver=general_nightly_marks,
+)
+FCN_SEMANTIC_PARAMS = model_cases(
+    FCN_SEMANTIC_MODELS,
+    with_weights=True,
+)
+DEEPLABV3_SEMANTIC_PARAMS = model_cases(
+    DEEPLABV3_SEMANTIC_MODELS,
+    with_weights=True,
+)
+DEEPLABV3_SMOKE_PARAMS = model_cases(
+    DEEPLABV3_SMOKE_MODELS,
+    with_weights=True,
+)
+RTDETRV2_OBB_PARAMS = model_cases(
+    RTDETRV2_OBB_MODELS,
+    with_weights=True,
 )
 
 

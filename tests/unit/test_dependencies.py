@@ -20,6 +20,12 @@ def test_rfdetr_extra_uses_native_dependencies():
     assert all(not dep.startswith("rfdetr") for dep in deps)
 
 
+def test_all_extra_includes_triton_serving_dependencies():
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+    all_deps = pyproject["project"]["optional-dependencies"]["all"]
+    assert "libreyolo[triton]" in all_deps
+
+
 def test_core_dependencies_include_import_chain_requirements():
     pyproject = tomllib.loads(Path("pyproject.toml").read_text())
     deps = pyproject["project"]["dependencies"]
@@ -32,6 +38,16 @@ def test_torch_floor_supports_amp_grad_scaler():
     pyproject = tomllib.loads(Path("pyproject.toml").read_text())
     deps = pyproject["project"]["dependencies"]
     assert "torch>=2.4.0" in deps
+
+
+def test_paddle_extra_pins_the_measured_converter_stack():
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+    deps = pyproject["project"]["optional-dependencies"]["paddle"]
+    assert "libreyolo[onnx]" in deps
+    assert "onnx>=1.14.0,<1.18" in deps
+    assert any(dep.startswith("paddlepaddle==2.6.2") for dep in deps)
+    assert any(dep.startswith("x2paddle==1.6.0") for dep in deps)
+    assert any(dep.startswith("six>=1.16.0") for dep in deps)
 
 
 def test_openvocab_extra_covers_clip_tokenizer_runtime():

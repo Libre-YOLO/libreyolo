@@ -45,25 +45,35 @@ manifest too, so `best.pt` from a QAT run is itself a quantized checkpoint.
 
 | Recipe | What it does | Families (v1) | Calibration |
 |---|---|---|---|
-| `fp16` | Cast to half precision with a float32 I/O contract. Inference-only. | yolo9, rfdetr | none |
-| `bf16` | Cast to bfloat16 (fp32's exponent range at half storage; the fix when fp16 overflows on DETR-style models). Inference-only. | yolo9, rfdetr | none |
-| `fp8` | E4M3 W+A simulation: per-channel weight scales, calibrated per-tensor activation scales, on `Conv2d` and `Linear`. | yolo9, rfdetr | required for activations |
-| `int8` | W8A8 simulation: per-channel symmetric INT8 weights, per-tensor affine INT8 activations, on `Conv2d` and `Linear`. | yolo9, rfdetr | required for activations (skipped with `calib=None`, weights-only) |
-| `w4a16` | Grouped symmetric INT4 weights (group 128 along in_features), float activations, on `Linear`. | rfdetr | not needed (weight-only) |
-| `w4a8` | Grouped INT4 weights plus calibrated INT8 activations, on `Linear`. Maps to NPU W4A8 deployments (Hexagon, Hailo `a8_w4`). | rfdetr | required for activations |
-| `nvfp4` | W4A4 NVFP4 simulation on `Linear`: E2M1 elements, 16-element blocks, FP8 E4M3 block scales, FP32 tensor scale. Dynamic activation scaling. | rfdetr | not needed (dynamic) |
-| `mxfp4` | OCP MXFP4 on `Linear`: E2M1 elements, 32-element blocks, power-of-two (E8M0) block scales. Dynamic activation scaling. | rfdetr | not needed (dynamic) |
+| `fp16` | Cast to half precision with a float32 I/O contract. Inference-only. | yolo9, rfdetr, birefnet, feynobg | none |
+| `bf16` | Cast to bfloat16 (fp32's exponent range at half storage; the fix when fp16 overflows on DETR-style models). Inference-only. | yolo9, rfdetr, birefnet, feynobg | none |
+| `fp8` | E4M3 W+A simulation: per-channel weight scales by default, calibrated per-tensor activation scales, on `Conv2d` and `Linear`. Selected Linear modules may use a manifest-recorded tensorwise weight scale when that is faster and validation-safe. | yolo9, rfdetr, birefnet, feynobg | required for activations |
+| `int8` | W8A8 simulation: per-channel symmetric INT8 weights, per-tensor affine INT8 activations, on `Conv2d` and `Linear`. | yolo9, rfdetr, birefnet, feynobg | required for activations (skipped with `calib=None`, weights-only) |
+| `w4a16` | Grouped symmetric INT4 weights (group 128 along in_features), float activations, on `Linear`. | rfdetr, birefnet, feynobg | not needed (weight-only) |
+| `w4a8` | Grouped INT4 weights plus calibrated INT8 activations, on `Linear`. Maps to NPU W4A8 deployments (Hexagon, Hailo `a8_w4`). | rfdetr, birefnet, feynobg | required for activations |
+| `nvfp4` | W4A4 NVFP4 simulation on `Linear`: E2M1 elements, 16-element blocks, FP8 E4M3 block scales, FP32 tensor scale. Dynamic activation scaling. | rfdetr, birefnet, feynobg | not needed (dynamic) |
+| `mxfp4` | OCP MXFP4 on `Linear`: E2M1 elements, 32-element blocks, power-of-two (E8M0) block scales. Dynamic activation scaling. | rfdetr, birefnet, feynobg | not needed (dynamic) |
 | `int2` | Research preview: grouped 2-bit weights (group 64) plus INT8 activations, on `Linear`. PTQ alone is unusable; QAT/QAD required. | rfdetr | required for activations |
 
 Linear-only recipes are rejected for conv-heavy families such as yolo9 on
 purpose: sub-8-bit acceleration is GEMM-only on current hardware, so
-convolutions stay in higher precision. Transformer families (RF-DETR) are
-the target; yolo9 uses `int8` or `fp8`.
+convolutions stay in higher precision. Transformer families (RF-DETR, and
+the Swin-backed birefnet/feynobg matte families) are the target; yolo9 uses
+`int8` or `fp8`. birefnet and feynobg are inference-only, so QAT/QAD healing
+is unavailable there; `int2` is rejected for both for that reason (PTQ-only
+int2 is unusable).
 
 Per-family `keep_high_precision` defaults protect the first layer and the
-heads (and always the YOLO9 DFL conv). Override with
-`quantize(..., keep_high_precision=("head.",))` if you know what you are
-doing.
+heads (and always the YOLO9 DFL conv). For birefnet and feynobg that means
+the Swin patch embed, the final matte-logit conv (`conv_out1`), the tiny
+bilateral-reference attention gates (`gdt_convs_attn`), and the
+training-only supervision heads (`gdt_convs_pred`, `conv_ms_spvn`), which
+never run at inference and would otherwise sit permanently uncalibrated in
+the manifest, and the deformable-conv weight containers (`regular_conv`),
+whose weights are read directly by `torchvision.ops.deform_conv2d` rather
+than through the module forward, so module-swap quantization cannot cover
+them. Override with `quantize(..., keep_high_precision=("head.",))` if you
+know what you are doing.
 
 ## Calibration data is not training data
 
@@ -74,8 +84,8 @@ doing.
 - `data=` (train/val): the labeled dataset. Purpose: gradients and metrics.
 
 Activation range estimation (`algorithm=`): the default `minmax` keeps the
-absolute extremes seen across calibration batches; `percentile`
-(experimental) uses the mean of per-batch 0.1/99.9 percentiles. Measured on
+absolute extremes seen across calibration batches; `percentile` uses the mean
+of per-batch 0.1/99.9 percentiles. Measured on
 coco128, minmax with a multi-batch calibration set wins for every tested
 model, and percentile clipping collapses DETR-family accuracy because
 transformer activation outliers are functionally load-bearing. What
@@ -93,7 +103,52 @@ claim about the quantized arithmetic. It is not a speed claim; packed
 low-bit kernels are a separate deployment concern. The `fp16` and `bf16`
 casts are the exception: they execute natively.
 
-`model.quant_info()` reports the recipe, module counts, calibration state,
+**Native fp8 tier** (finalized checkpoints on fp8 tensor cores, Ada sm_89 /
+Hopper / Blackwell): finalized fp8 `QuantLinear` modules run their GEMM
+directly on the packed E4M3 weights via `torch._scaled_mm` (the `fp8_gemm`
+registry kernel), using the same calibrated static activation scales as the
+simulation. The optional Triton tier fuses activation scaling, saturation,
+and E4M3 conversion into one pass. For per-channel weights it also fuses the
+bounded row-scale and bias epilogue into one pass; modules explicitly listed
+in the manifest's `fp8_tensorwise_weights` fuse the weight scale and bias
+directly into cuBLASLt. Without Triton, the same arithmetic uses stock PyTorch
+operations. Finalized fp8 `QuantConv2d` modules convolve in fp16 against
+weights dequantized from the packed E4M3 codes (the standard fp8-deployment
+convention; the E4M3 activation snap on conv inputs is simulation-only).
+Finalize with `remainder="fp16"` so the non-quantized interior runs in half
+precision (the loader installs the same float32 I/O root hooks the cast
+recipes use). Residual drift vs the simulated tier is half-precision
+rounding plus GEMM summation order; `LIBREYOLO_KERNELS=off` (legacy alias
+`LIBREYOLO_QUANT_KERNELS`) restores the exact simulated path everywhere. Measured on LibreFeyNobg (263M Swin-L
+matte, RTX 5070 Ti, 1024px, controlled ABBA runs): fp8 vs fp16 is
+85.7 vs 95.0 ms for a batch-1 graphed forward and 123.1 vs 129.3 ms through
+the full graphed `predict` path. At batch 4 the full path is 515.4 vs
+535.3 ms. The finalized fp8 file is 275 MB vs 531 MB for fp16.
+
+`model.quant_info()` reports the recipe and module state;
+`libreyolo.kernels.active()` reports the selected implementations (the
+registry lives in `libreyolo/kernels/`; see `docs/kernels.md`).
+Linux CUDA PyTorch environments commonly already include Triton. On Windows,
+install a PyTorch-compatible `triton-windows` build to enable the fused cast
+and epilogue; inference remains functional without it.
+
+### LibreMODUS local weight-only FP8
+
+LibreMODUS's `dtype="fp8"` path is deliberately separate from the finalized
+checkpoint tier above. Its external checkpoint cannot be redistributed, so it
+is converted locally and cached as sharded safetensors. Eligible linear weights
+in the interior decoder blocks use E4M3 plus one FP16 scale per output row;
+forward dequantizes them to the input dtype before `F.linear`.
+
+This reduces checkpoint/parameter storage but does **not** quantize activations
+or call the native `fp8_gemm` registry. It therefore makes no tensor-core speed
+claim. Embeddings, `lm_head`, norms, timestep/AdaLN modulation, first/last
+decoder blocks, projectors, SigLIP, and the FLUX VAE remain BF16. The cache key
+contains the immutable source revision (or local file SHA-256) and full recipe,
+and the cache is never uploaded. See [`libremodus.md`](libremodus.md) for usage
+and [`testing.md`](testing.md) for its quality/VRAM acceptance gates.
+
+The remaining `quant_info()` fields report module counts, calibration state,
 and execution tier.
 
 ## Export

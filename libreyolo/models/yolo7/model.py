@@ -37,6 +37,9 @@ class LibreYOLO7(BaseModel):
     FILENAME_PREFIX = "LibreYOLO7"
     INPUT_SIZES = {"b": 640}
     SUPPORTED_TASKS = ("detect",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "detect"
     # Letterbox + RGB + /255 + gray(114) pad — same contract as YOLO9.
     val_preprocessor_class = YOLO9ValPreprocessor

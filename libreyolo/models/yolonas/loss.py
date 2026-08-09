@@ -496,6 +496,7 @@ class PPYoloELoss(nn.Module):
         classification_loss_weight: float = 1.0,
         iou_loss_weight: float = 2.5,
         dfl_loss_weight: float = 0.5,
+        distributed_normalize: bool = True,
     ):
         super().__init__()
         self.use_varifocal_loss = use_varifocal_loss
@@ -503,6 +504,7 @@ class PPYoloELoss(nn.Module):
         self.iou_loss_weight = iou_loss_weight
         self.dfl_loss_weight = dfl_loss_weight
         self.num_classes = num_classes
+        self.distributed_normalize = distributed_normalize
 
         self.iou_loss = GIoULoss()
         self.static_assigner = ATSSAssigner(topk=9, num_classes=num_classes)
@@ -641,8 +643,15 @@ class PPYoloELoss(nn.Module):
         # all_reduce of ``assigned_scores_sum``: dividing by the global sum
         # keeps DDP's gradient averaging equivalent to single-GPU training on
         # the same global batch (issue #484). Identical to the previous
-        # ``clamp(min=1)`` outside DDP.
-        assigned_scores_sum = all_reduce_avg_scalar(assigned_scores_sum)
+        # ``clamp(min=1)`` outside DDP. Rank-0-only validation selects the
+        # local path because it cannot enter a collective while the other
+        # ranks wait at the validation barrier.
+        if self.distributed_normalize:
+            assigned_scores_sum = all_reduce_avg_scalar(assigned_scores_sum)
+        else:
+            assigned_scores_sum = float(
+                assigned_scores_sum.detach().float().clamp_min(1.0).item()
+            )
         cls_loss = self.classification_loss_weight * cls_loss_sum / assigned_scores_sum
         iou_loss = self.iou_loss_weight * iou_loss_sum / assigned_scores_sum
         dfl_loss = self.dfl_loss_weight * dfl_loss_sum / assigned_scores_sum

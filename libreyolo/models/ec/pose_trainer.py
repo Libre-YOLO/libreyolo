@@ -1,4 +1,4 @@
-"""ECPoseTrainer — native EdgeCrafter ECPose (DETR-style) fine-tuning (EXPERIMENTAL).
+"""ECPoseTrainer — native EdgeCrafter ECPose (DETR-style) fine-tuning.
 
 ECPose is a keypoint transformer, so this trainer owns its data pipeline
 (:class:`~libreyolo.data.YOLOPoseDataset` with keypoint-aware transforms, padded
@@ -59,7 +59,7 @@ def _set_bn_eval(module: torch.nn.Module) -> None:
 
 
 class ECPoseTrainer(BaseTrainer):
-    """Trainer for EdgeCrafter ECPose models (experimental)."""
+    """Trainer for EdgeCrafter ECPose models."""
 
     artifact_model_families = ("ec",)
     best_metric_key = "metrics/keypoints_mAP50-95"
@@ -189,7 +189,7 @@ class ECPoseTrainer(BaseTrainer):
     def _ddp_find_unused_parameters(self) -> bool:
         # Contrastive denoising exercises label_enc/pose_enc, but some auxiliary
         # heads can still go unused on batches with no GT, so keep this on for
-        # DDP safety (this is an experimental single-GPU-first path anyway).
+        # DDP to discover those unused parameters safely.
         return True
 
     def _build_dataset(self, img_files, label_files, preproc) -> YOLOPoseDataset:
@@ -503,8 +503,11 @@ class ECPoseTrainer(BaseTrainer):
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
+                max_det=self.config.max_det,
+                eval_max_det=self.config.eval_max_det,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 allow_download_scripts=self.config.allow_download_scripts,

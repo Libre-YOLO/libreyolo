@@ -27,9 +27,9 @@ from .conftest import requires_cuda, run_in_subprocess
 
 pytestmark = [
     pytest.mark.e2e,
+    pytest.mark.extended_training,
     pytest.mark.rfdetr,
     pytest.mark.slow,
-    pytest.mark.flagship_nightly,
 ]
 
 DATASET_ROOT = Path.home() / ".cache" / "libreyolo" / "fire-smoke-seg"

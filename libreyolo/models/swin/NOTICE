@@ -1,0 +1,46 @@
+LibreSwin third-party attribution
+=================================
+
+Architecture reference
+----------------------
+
+The shared Swin V1 tower in ``nn.py`` is a native PyTorch implementation
+derived from timm's Apache-2.0 Swin implementation:
+
+    Repository: https://github.com/huggingface/pytorch-image-models
+    Version:    v1.0.28
+    Commit:     8ef73809f622e0031bd7f4940265734aef8b9978
+    File:       timm/models/swin_transformer.py
+    License:    Apache License 2.0
+    Copyright:  Ross Wightman and the timm contributors
+
+The classifier wrapper, family integration, conversion code, preprocessing,
+postprocessing, and export tests are original LibreYOLO work. Parameter and
+module names intentionally match timm so released tensors load strictly and
+all four shipped variants produce bit-exact logits.
+
+Model and weight lineage
+------------------------
+
+Swin Transformer V1 and its released checkpoints are from Microsoft Research:
+
+    Repository: https://github.com/microsoft/Swin-Transformer
+    Commit:     f82860bfb5225915aca09c3227159ee9e1df874d
+    Storage:    https://github.com/SwinTransformer/storage
+    Release:    v1.0.0
+    Commit:     3cc359915d3a6079b176a871f68d5fb0d8dfdea2
+    License:    MIT License
+
+LibreYOLO converts the Tiny, Small, Base, and Large patch-4/window-7 classifiers
+mirrored by timm on Hugging Face. Tiny, Small, and Base are ImageNet-1k
+checkpoints. Large was pretrained on ImageNet-22k and fine-tuned on ImageNet-1k.
+Learned tensors are unchanged; conversion adds LibreYOLO metadata and canonical
+ImageNet-1k class names. Every hosted checkpoint repository carries the MIT
+license and this provenance.
+
+License texts
+-------------
+
+The Apache License 2.0 text is bundled at ``licenses/Apache-2.0.txt``. The MIT
+license for each converted weight is shipped verbatim in its Hugging Face
+repository.

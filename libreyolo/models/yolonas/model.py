@@ -36,6 +36,9 @@ class LibreYOLONAS(BaseModel):
     INPUT_SIZES = {"s": 640, "m": 640, "l": 640}
     POSE_INPUT_SIZES = {"n": 640, "s": 640, "m": 640, "l": 640}
     SUPPORTED_TASKS = ("detect", "pose")
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "detect"
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,
@@ -471,7 +474,7 @@ class LibreYOLONAS(BaseModel):
                 if ckpt_names is not None:
                     self.names = self._sanitize_names(ckpt_names, effective_nc)
 
-            self.model.load_state_dict(state_dict, strict=self._strict_loading())
+            self._load_state_dict_logged(state_dict, source=str(model_path))
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load YOLO-NAS weights from {model_path}: {e}"
@@ -520,9 +523,8 @@ class LibreYOLONAS(BaseModel):
                 task default).
             patience: Early stopping patience.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
         """
         # Task-specific defaults for arguments left unset by the caller.
         if lr0 is None:

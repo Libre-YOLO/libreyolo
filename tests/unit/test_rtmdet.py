@@ -68,6 +68,36 @@ def test_share_conv_aliasing():
         assert id(head.reg_convs[0][i].conv) == id(head.reg_convs[1][i].conv)
 
 
+def test_export_context_unshares_only_the_temporary_rtmdet_copy():
+    from libreyolo.export.exporter import ExecuTorchExporter
+
+    wrapper = LibreRTMDet(None, size="t", nb_classes=2, device="cpu")
+    original_head = wrapper.model.head
+
+    with ExecuTorchExporter(wrapper)._model_context(
+        torch.device("cpu"), False, False, 1, (64, 64)
+    ) as (prepared, _):
+        for index in range(original_head.stacked_convs):
+            assert (
+                id(prepared.head.cls_convs[0][index].conv)
+                != id(prepared.head.cls_convs[1][index].conv)
+            )
+            assert (
+                id(prepared.head.reg_convs[0][index].conv)
+                != id(prepared.head.reg_convs[1][index].conv)
+            )
+            assert (
+                id(original_head.cls_convs[0][index].conv)
+                == id(original_head.cls_convs[1][index].conv)
+            )
+
+    for index in range(original_head.stacked_convs):
+        assert (
+            id(original_head.cls_convs[0][index].conv)
+            == id(original_head.cls_convs[1][index].conv)
+        )
+
+
 def test_grid_priors_corner_offset():
     """``_make_grid_priors`` uses MlvlPointGenerator(offset=0) — corners, not centers.
 
@@ -164,21 +194,14 @@ def test_export_mode_returns_flat_tensor():
     assert out.shape == (1, 8400, 84)  # 80*80 + 40*40 + 20*20 = 8400; 4 box + 80 cls
 
 
-def test_train_gated_without_allow_experimental():
-    """``model.train(...)`` raises a clear error unless allow_experimental=True."""
-    m = LibreRTMDet(size="t", nb_classes=80)
-    with pytest.raises(RuntimeError, match="experimental"):
-        m.train(data="coco128.yaml", epochs=1)
-
-
-def test_config_docstring_matches_experimental_training_status():
-    """RTMDet config docs should not claim training is unimplemented."""
+def test_config_docstring_records_training_evidence():
+    """RTMDet config docs distinguish implementation from missing evidence."""
     from libreyolo.training.config import RTMDetConfig
 
-    doc = RTMDetConfig.__doc__ or ""
-    assert "implemented but experimental" in doc
-    assert "NOT yet implemented" not in doc
-    assert "NotImplementedError" not in doc
+    doc = " ".join((RTMDetConfig.__doc__ or "").split())
+    assert "Detection training is implemented" in doc
+    assert "Small-dataset fine-tune convergence" in doc
+    assert "have not yet been validated" in doc
 
 
 def test_trainer_filters_targets_by_width_and_height():
@@ -269,11 +292,13 @@ def test_assigner_handles_empty_gt():
     assert (out["assigned_labels"] == 80).all()
 
 
-@pytest.mark.parametrize("format", ["onnx", "torchscript"])
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino"])
 def test_exported_raw_parity(tmp_path, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
     from libreyolo import LibreYOLO
 
     torch.manual_seed(0)
@@ -291,8 +316,16 @@ def test_exported_raw_parity(tmp_path, format):
         dynamic=False,
         output_path=str(tmp_path / f"rtmdet.{format}"),
     )
-    actual = LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())[0]
+    backend = LibreYOLO(artifact, device="cpu")
+    actual = backend._run_inference(tensor.numpy())[0]
     np.testing.assert_allclose(actual, native, rtol=1e-4, atol=1e-4)
+    if format == "openvino":
+        image = np.random.default_rng(46).integers(
+            0, 256, size=(72, 96, 3), dtype=np.uint8
+        )
+        result = backend.predict(image, conf=0.99)
+        assert result.boxes is not None
+        assert result.orig_shape == (72, 96)
 
 
 def test_head_init_uses_focal_prior_bias():

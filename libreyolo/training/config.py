@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Union
 import yaml
 
+from libreyolo.utils.amp import normalize_amp_dtype
+from libreyolo.utils.image_size import normalize_imgsz
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,7 +50,7 @@ class TrainConfig:
     # Data
     data: Optional[str] = None
     data_dir: Optional[str] = None
-    imgsz: int = 640
+    imgsz: Union[int, Tuple[int, int], List[int], str] = 640
 
     # Training
     epochs: int = 300
@@ -120,6 +123,18 @@ class TrainConfig:
     ema: bool = True
     ema_decay: float = 0.9998
     amp: bool = True
+    # CUDA autocast dtype when AMP is enabled. The explicit default preserves
+    # historical amp=True behavior while allowing reproducible BF16 training.
+    amp_dtype: str = "float16"
+    # Capture the network's training forward/backward into CUDA graphs to
+    # cut kernel-launch overhead on launch-bound (small-model) runs. Opt-in
+    # and single-GPU only; families without capture support, distributed
+    # runs and distillation runs fall back to eager training with a warning.
+    # Most supported families reproduce eager numerics exactly; documented
+    # exceptions use family-specific parity tolerances. Batches whose shape
+    # differs from the captured shape (multi-scale, last partial batch) run
+    # eager. See docs/training_cuda_graphs.md.
+    cuda_graph: bool = False
     # Layer freezing. An int freezes the first N family-defined freeze groups;
     # a list freezes explicit group indices or module-name selectors; a string
     # freezes matching module/parameter names.
@@ -164,14 +179,34 @@ class TrainConfig:
     exist_ok: bool = False
     save_period: int = 10
     eval_interval: int = 10
+    # Prediction/NMS cap used by validation during training.
+    max_det: int = 300
+    # Optional COCO evaluator cap. None preserves pycocotools' historical
+    # maxDets=[1, 10, 100] behavior independently of the prediction cap.
+    eval_max_det: Optional[int] = None
+    # Use the faster-coco-eval C++ backend for in-training COCO validation
+    # metrics (bbox/segm). On by default; falls back to pycocotools with a
+    # warning if the faster-coco-eval package is not installed.
+    faster_coco_eval: bool = True
     save_plots: bool = False
+    # Compute the family's training objective on validation batches and emit
+    # metrics/loss plus its per-component values. Off by default because target
+    # assignment adds validation time and memory use. Families that do not
+    # implement it reject ``val_loss=True`` in
+    # ``BaseTrainer.validate_validation_loss_config``.
+    val_loss: bool = False
 
     # System
     workers: int = 4
     # Image caching to speed dataloading across epochs. Accepts False (off),
-    # True/'ram' (decoded images in RAM), or 'disk' (decoded images as .npy
-    # beside each source image). 'disk' is the safest choice with dataloader
-    # workers; default is off.
+    # True/'ram' (cached images in RAM), or 'disk' (cached images as .npy
+    # beside each source image). Families whose transform consumes the
+    # dataset's deterministic resize cache the *resized* image (skipping decode
+    # and resize, ~an order of magnitude smaller than caching the decode);
+    # families that opt into wants_unresized_image cache the full-resolution
+    # decode. Cached reads are byte-identical to fresh ones either way. The
+    # flag also enables caching in the per-epoch validation loop. 'disk' is
+    # the safest choice with dataloader workers; default is off.
     cache: Union[bool, str] = False
     patience: int = 50
     resume: bool = False
@@ -192,6 +227,22 @@ class TrainConfig:
     profile_steps: int = 20
     profile_trace: bool = True
     profile_open: bool = True
+
+    def __post_init__(self):
+        self.amp_dtype = normalize_amp_dtype(self.amp_dtype)
+        self.imgsz = normalize_imgsz(
+            self.imgsz,
+            name="imgsz",
+            allow_string=True,
+        )
+        if self.max_det < 1:
+            raise ValueError(f"max_det must be >= 1, got {self.max_det}")
+        if self.eval_max_det is not None:
+            self.eval_max_det = int(self.eval_max_det)
+            if self.eval_max_det < 1:
+                raise ValueError(
+                    f"eval_max_det must be >= 1, got {self.eval_max_det}"
+                )
 
     @classmethod
     def from_kwargs(cls, **kwargs):
@@ -328,6 +379,26 @@ class YOLO9PoseConfig(YOLO9Config):
     name: str = "yolo9_pose_exp"
 
 
+# Upstream's custom fine-tune configs pin the multi-scale collate's
+# base_size_repeat per size (Peterande/D-FINE, configs/dfine/custom/*.yml):
+# N disables multi-scale outright (`base_size_repeat: ~`) and smaller models
+# get more scale variety. Verified against upstream 2026-08; see issue #675.
+DFINE_BASE_SIZE_REPEAT: dict = {"n": None, "s": 20, "m": 6, "l": 4, "x": 3}
+
+
+def resolve_dfine_base_size_repeat(size, override=None):
+    """The multi-scale repeat the D-FINE trainer should hand its collate.
+
+    An explicit ``override`` (``DFINEConfig.base_size_repeat``) wins; otherwise
+    the upstream per-size default applies. ``None`` means the collate keeps
+    every batch at ``base_size`` (upstream's ``~`` for the N size). Unknown
+    sizes fall back to 3, the value that used to be hardcoded for everyone.
+    """
+    if override is not None:
+        return int(override)
+    return DFINE_BASE_SIZE_REPEAT.get(str(size).lower(), 3)
+
+
 @dataclass(kw_only=True)
 class DFINEConfig(TrainConfig):
     """D-FINE-specific training defaults.
@@ -365,6 +436,11 @@ class DFINEConfig(TrainConfig):
     backbone_lr_mult: float = 0.5  # upstream's fine-tune recipe uses 0.5×
     clip_max_norm: float = 0.1  # upstream default; 0 disables clipping
     multi_scale: bool = True  # per-batch random resize via DFINEMultiScaleCollate
+    # How often the base size appears among the multi-scale collate's choices.
+    # Unset (None) resolves to the upstream per-size default via
+    # resolve_dfine_base_size_repeat: n disables multi-scale, s 20, m 6, l 4,
+    # x 3. Set an int to override for every size.
+    base_size_repeat: Optional[int] = None
     aug_stop_epoch_ratio: float = 0.85  # disable strong augs at epoch * ratio
     crop_resize_prob: float = 0.0
 
@@ -377,6 +453,45 @@ class DFINEConfig(TrainConfig):
     amp: bool = False
     epochs: int = 132
     name: str = "dfine_exp"
+
+
+@dataclass(kw_only=True)
+class DOMEDETRConfig(DFINEConfig):
+    """Dome-DETR fine-tuning defaults.
+
+    Inherits D-FINE's recipe (that is what upstream builds on) and changes only
+    what Dome-DETR's own configs change:
+
+    - ``imgsz=800``: every shipped Dome-DETR config evaluates at 800x800.
+    - ``lr0``/``weight_decay``/``backbone_lr_mult`` from
+      ``configs/dome/Dome-*-*.yml``: backbone at 2e-5 against a 2e-4 base is a
+      0.1x multiplier, tighter than D-FINE's 0.5x.
+    - ``multi_scale=False``: MWAS requires the stride-8 map to divide evenly by
+      the window size, so a random per-batch resize would break the forward.
+
+    Upstream trains 160 epochs with ``MultiStepLR(milestones=[80, 120],
+    gamma=0.8)``. That is a from-scratch schedule; these defaults target
+    fine-tuning and keep D-FINE's flat-cosine, so reproducing the paper's
+    numbers needs the upstream schedule, not this config.
+    """
+
+    imgsz: int = 800
+    lr0: float = 2e-4
+    weight_decay: float = 6.5e-5
+    backbone_lr_mult: float = 0.1
+    multi_scale: bool = False
+    base_size_repeat: Optional[int] = None
+
+    # DeFE supervision weights. Note upstream's DomeCriterion *code* default
+    # for defe_density_map_weight is 4, but every shipped config in
+    # configs/dome/ overrides it to 1, so 1 is what the released
+    # checkpoints were trained with and what reproduces their loss values.
+    defe_density_map_weight: float = 1.0
+    density_recall_penalty: float = 0.3
+    defe_reg_loss_weight: float = 1.0
+
+    epochs: int = 160
+    name: str = "domedetr_exp"
 
 
 @dataclass(kw_only=True)
@@ -670,7 +785,7 @@ class DEIMv2Config(TrainConfig):
 
 @dataclass(kw_only=True)
 class ECConfig(TrainConfig):
-    """EC-specific training defaults (experimental).
+    """EC-specific training defaults.
 
     Fine-tune defaults keep the optimizer/scheduler/loss shape from
     EdgeCrafter's published recipe (S/M):
@@ -683,8 +798,7 @@ class ECConfig(TrainConfig):
     strong color/geometric knobs are disabled here so the public config matches
     the effective training path.
 
-    Training has NOT been validated on a real fine-tune run — ship as
-    experimental.
+    Full real-data fine-tune convergence has not yet been validated.
     """
 
     optimizer: str = "adamw"
@@ -726,7 +840,7 @@ class ECConfig(TrainConfig):
 
 @dataclass(kw_only=True)
 class ECSegConfig(ECConfig):
-    """EC segmentation fine-tune defaults (experimental).
+    """EC segmentation fine-tune defaults.
 
     Inherits the EC detect recipe and adds the instance-mask loss knobs. The
     seg data path reuses RF-DETR's square-resize + polygon-rasterization
@@ -763,7 +877,7 @@ class ECSegConfig(ECConfig):
 
 @dataclass(kw_only=True)
 class ECPoseConfig(ECConfig):
-    """EC (DETR-style) pose fine-tune defaults (experimental).
+    """EC (DETR-style) pose fine-tune defaults.
 
     EdgeCrafter's ECPose is a DETRPose-style keypoint transformer (Hungarian
     matching + OKS). This config carries the keypoint count / sigmas and the
@@ -954,11 +1068,10 @@ class RTMDetConfig(TrainConfig):
     - DynamicSoftLabelAssigner (topk=13)
     - QualityFocalLoss (beta=2.0, weight=1.0) + GIoULoss (weight=2.0)
 
-    Status: training is implemented but experimental. ``LibreRTMDet.train()``
-    requires ``allow_experimental=True`` because small-dataset fine-tune
-    convergence, from-scratch paper parity, multi-GPU behavior, cached
-    Mosaic/MixUp throughput, and the strict upstream two-stage pipeline switch
-    are not validated yet.
+    Detection training is implemented. Small-dataset fine-tune convergence,
+    from-scratch paper parity, multi-GPU behavior, cached Mosaic/MixUp
+    throughput, and the strict upstream two-stage pipeline switch have not yet
+    been validated.
     """
 
     # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
@@ -1037,6 +1150,48 @@ class SegformerConfig(TrainConfig):
     eval_interval: int = 1
 
     name: str = "segformer_exp"
+
+
+@dataclass(kw_only=True)
+class LingBotVisionConfig(TrainConfig):
+    """LingBot-Vision semantic training defaults — the report's linear probe.
+
+    The backbone stays frozen and only the 1x1 dense head trains (AdamW,
+    cosine decay), matching the upstream evaluation protocol that produced the
+    LibreYOLO-hosted weights. Set ``freeze_backbone=False`` for a full
+    fine-tune (expect to lower ``lr0`` accordingly).
+    """
+
+    optimizer: str = "adamw"
+    lr0: float = 1e-3
+    weight_decay: float = 1e-4
+    # Freeze the ViT backbone and train the head only (the linear probe).
+    freeze_backbone: bool = True
+
+    scheduler: str = "cosine"
+    warmup_epochs: int = 1
+    warmup_lr_start: float = 1e-6
+    min_lr_ratio: float = 0.0
+
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    flip_prob: float = 0.5
+    degrees: float = 0.0
+    translate: float = 0.0
+    shear: float = 0.0
+    # NOTE: photometric jitter is deliberately NOT declared here; the live knob
+    # is LibreLingBotVision.semantic_hsv_prob = 0.0 (see SegformerConfig).
+
+    ema: bool = True
+    ema_decay: float = 0.999
+    amp: bool = True
+
+    imgsz: int = 512
+    epochs: int = 20
+    batch: int = 16
+    eval_interval: int = 1
+
+    name: str = "lingbotvision_exp"
 
 
 @dataclass(kw_only=True)

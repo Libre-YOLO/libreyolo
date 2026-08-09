@@ -153,18 +153,52 @@ class PICODETTrainer(BaseTrainer):
 
     def on_setup(self) -> None:
         # Build the loss module once with the model's actual class count.
+        self._loss_fn = self.build_criterion()
+
+    def build_criterion(self, *, distributed_normalize: bool = True) -> PICODETLoss:
+        """Build the training criterion.
+
+        Validation loss builds a second one with ``distributed_normalize``
+        off, so both stay defined in exactly one place.
+        """
         nc = getattr(self.model.head, "num_classes", 80)
         reg_max = getattr(self.model.head, "reg_max", 7)
         strides = tuple(getattr(self.model.head, "strides", (8, 16, 32, 64)))
-        self._loss_fn = PICODETLoss(
+        return PICODETLoss(
             num_classes=nc,
             reg_max=reg_max,
             strides=strides,
+            distributed_normalize=distributed_normalize,
         ).to(self.device)
 
-    def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
-        cls_scores, bbox_preds = self.model(imgs)
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            raise ValueError(
+                "val_loss=True currently supports picodet detection only; "
+                "other tasks are not supported"
+            )
 
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        del model  # The validator's raw head output is what the criterion takes.
+        from ..base.dense_head_validation_loss import DenseHeadValidationLoss
+
+        return DenseHeadValidationLoss(
+            self.build_criterion(distributed_normalize=False),
+            num_classes=getattr(self.model.head, "num_classes", 80),
+            device=self.device,
+            family="picodet",
+        )
+
+    def _loss_from_head(self, cls_scores, bbox_preds, targets: torch.Tensor) -> Dict:
+        """Run the criterion over raw head outputs.
+
+        Split out of ``on_forward`` so the CUDA-graph path shares the exact
+        same tail: the graph captures the network only, and this method is
+        the eager remainder for both routes.
+        """
         # Targets: (B, max_labels, 5) [class, cx, cy, w, h] in pixel coords,
         # zero-padded. Convert to per-image (gt_boxes_xyxy, gt_labels) lists.
         gt_boxes_list = []
@@ -187,3 +221,36 @@ class PICODETTrainer(BaseTrainer):
             gt_labels_list.append(cls)
 
         return self._loss_fn(cls_scores, bbox_preds, gt_boxes_list, gt_labels_list)
+
+    def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
+        cls_scores, bbox_preds = self.model(imgs)
+        return self._loss_from_head(cls_scores, bbox_preds, targets)
+
+    def cuda_graph_train_spec(self):
+        """Capture spec: graph the network, keep the SimOTA assigner eager.
+
+        The network forward takes images only, so the boundary is the one
+        ``on_forward`` already uses; ``assemble`` is ``_loss_from_head``,
+        shared verbatim with the eager path.
+        """
+        from libreyolo.training.cuda_graph import (
+            CudaGraphTrainSpec,
+            GraphableNetwork,
+        )
+        from .nn import LibrePICODETModel
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            return None
+        if not isinstance(self.model, LibrePICODETModel):
+            return None
+        if getattr(self, "_loss_fn", None) is None:
+            return None
+
+        network = GraphableNetwork(self.model)
+
+        def assemble(flat, imgs, targets, polygons=None):
+            cls_scores, bbox_preds = network.rebuild(flat)
+            return self._loss_from_head(cls_scores, bbox_preds, targets)
+
+        return CudaGraphTrainSpec(network=network, assemble=assemble)

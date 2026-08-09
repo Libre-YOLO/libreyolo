@@ -302,7 +302,7 @@ def test_trainer_start_event_carries_resolved_config(tmp_path):
 def test_resolve_loggers_none_and_unknown():
     assert resolve_loggers(None) == []
     with pytest.raises(ValueError, match="Unknown logger"):
-        resolve_loggers("clearml")
+        resolve_loggers("not-a-logger")
 
 
 def test_resolve_loggers_strings_and_instances(fake_mlflow, fake_tensorboard):

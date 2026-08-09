@@ -104,9 +104,10 @@ expressible.
 - The source image is decoded once and handed to members as PIL.
 - Members may live on different devices; fusion runs on the first member's
   output device (post-suppression row counts are small).
-- v1 task scope is detect only; any non-detect member raises at
-  construction. Sources: image path / PIL / numpy / bytes / directory.
-  Video and stream raise in v1 (Phase 2).
+- Task scope is detect only; any non-detect member raises at construction.
+  Sources: image path / PIL / numpy / bytes / list / directory / video / screen
+  / webcam / network stream / YouTube / multi-stream file.
+  `stream=True` yields fused `Results` lazily for every source type.
 - `Results.speed` reports per-member inference times plus fusion
   (`member_0`, `member_1`, …, `fusion`), so the N× cost is visible.
 - WBF's `min(W_T, W_N) / W_N` rescale means fused scores can drop below the
@@ -151,9 +152,10 @@ both are documented and tested.
 - **Phase 1 (this ADR, implemented):** `libreyolo/ops/fusion.py`,
   `libreyolo/ensemble/`, stub-member unit tests, lazy exports. Zero changes
   to model families, no new dependencies, nothing imported unless used.
-- **Phase 2 (fast follows):** `ensemble.val()` (the measured-mAP number that
-  justifies the N× latency), video/stream, CLI comma-list models, a
-  `class_map` hook for name aliases ("person" vs "pedestrian").
+- **Phase 2 (partial):** video/stream is implemented. Remaining work is
+  `ensemble.val()` (the measured-mAP number that justifies the N× latency),
+  CLI comma-list models, and a `class_map` hook for name aliases
+  ("person" vs "pedestrian").
 - **Phase 3:** baked single-file ONNX ensemble — one input, one
   `(1, max_det, 6)` output in union label ids, indistinguishable from a
   single exported detector with embedded suppression. The graph compiles

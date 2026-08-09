@@ -7,8 +7,10 @@ import pytest
 import torch
 from PIL import Image
 
+from libreyolo.backends import base as backend_base
 from libreyolo.backends.base import BaseBackend
 from libreyolo.backends.tensorrt import TensorRTBackend
+from libreyolo.models.base import inference as inference_base
 from libreyolo.models.base.inference import InferenceRunner
 from libreyolo.utils.image_loader import ImageLoader
 
@@ -144,6 +146,119 @@ def test_runner_tiling_list_save_indexes_large_image_dirs(tmp_path):
     assert stems == ["image0", "image1"]
 
 
+def test_runner_streams_list_lazily_in_batch_sized_chunks():
+    runner = InferenceRunner(_StubModel())
+    images = [np.zeros((8, 8, 3), dtype=np.uint8) for _ in range(3)]
+    calls = []
+
+    def fake_process(chunk, *, batch, start_idx, **kwargs):
+        calls.append((len(chunk), batch, start_idx))
+        return [f"result-{start_idx + i}" for i in range(len(chunk))]
+
+    runner._process_in_batches = fake_process
+    results = runner(images, batch=2, stream=True)
+
+    assert calls == []
+    assert next(results) == "result-0"
+    assert calls == [(2, 2, 0)]
+    assert list(results) == ["result-1", "result-2"]
+    assert calls == [(2, 2, 0), (1, 2, 2)]
+
+
+def test_runner_streams_single_image_as_one_result():
+    runner = InferenceRunner(_StubModel())
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+
+    results = runner(image, stream=True)
+
+    assert not isinstance(results, list)
+    streamed = list(results)
+    assert len(streamed) == 1
+    assert streamed[0].orig_shape == (8, 8)
+
+
+def test_runner_empty_stream_yields_nothing():
+    runner = InferenceRunner(_StubModel())
+
+    assert list(runner([], stream=True)) == []
+
+
+def test_runner_screen_source_grabs_one_rgb_image(monkeypatch):
+    runner = InferenceRunner(_StubModel())
+    monkeypatch.setattr(
+        inference_base,
+        "grab_screen",
+        lambda source: np.zeros((9, 11, 3), dtype=np.uint8),
+    )
+
+    result = runner("screen 1")
+
+    assert result.orig_shape == (9, 11)
+    assert result.path == "screen 1"
+
+
+def test_runner_stream_screen_opens_capture_lazily(monkeypatch):
+    runner = InferenceRunner(_StubModel())
+    opened = []
+
+    def fake_screen_source(source, vid_stride):
+        opened.append((source, vid_stride))
+        return object()
+
+    def fake_run_video(source, predict_frame, **kwargs):
+        if False:
+            yield source, predict_frame, kwargs
+
+    monkeypatch.setattr(inference_base, "ScreenSource", fake_screen_source)
+    monkeypatch.setattr(inference_base, "run_video_inference", fake_run_video)
+
+    results = runner("screen", stream=True, vid_stride=3)
+
+    assert opened == []
+    assert list(results) == []
+    assert opened == [("screen", 3)]
+
+
+@pytest.mark.parametrize("source", [0, "rtsp://127.0.0.1:8554/camera"])
+def test_runner_live_sources_require_lazy_streaming(source):
+    runner = InferenceRunner(_StubModel())
+
+    with pytest.raises(ValueError, match="stream=True"):
+        runner(source)
+
+
+def test_runner_routes_multi_camera_sources_to_threaded_capture(monkeypatch):
+    runner = InferenceRunner(_StubModel())
+    sentinel = object()
+    calls = {}
+
+    def fake_build(spec, *, vid_stride, stream_buffer):
+        calls["build"] = (spec.items, vid_stride, stream_buffer)
+        return sentinel
+
+    def fake_predict(source, **kwargs):
+        calls["predict"] = (source, kwargs)
+        yield "frame"
+
+    monkeypatch.setattr(inference_base, "build_stream_source", fake_build)
+    runner._predict_video = fake_predict
+
+    results = runner(
+        [0, "rtsp://127.0.0.1:8554/camera"],
+        stream=True,
+        stream_buffer=True,
+        vid_stride=2,
+    )
+
+    assert list(results) == ["frame"]
+    assert calls["build"] == (
+        (0, "rtsp://127.0.0.1:8554/camera"),
+        2,
+        True,
+    )
+    assert calls["predict"][0] is sentinel
+
+
 # =============================================================================
 # Exported-backend pipeline (BaseBackend and TensorRT batching)
 # =============================================================================
@@ -174,6 +289,97 @@ def test_backend_call_routes_list_to_process_in_batches():
     assert out == ["r", "r", "r"]
     assert seen["batch"] == 2
     assert len(seen["images"]) == 3
+
+
+def test_backend_streams_list_lazily_in_batch_sized_chunks():
+    backend = _bare_backend()
+    images = [np.zeros((8, 8, 3), dtype=np.uint8) for _ in range(3)]
+    calls = []
+
+    def fake_process(chunk, *, batch, start_idx, **kwargs):
+        calls.append((len(chunk), batch, start_idx))
+        return [f"result-{start_idx + i}" for i in range(len(chunk))]
+
+    backend._process_in_batches = fake_process
+    results = backend(images, batch=2, stream=True)
+
+    assert calls == []
+    assert next(results) == "result-0"
+    assert calls == [(2, 2, 0)]
+    assert list(results) == ["result-1", "result-2"]
+    assert calls == [(2, 2, 0), (1, 2, 2)]
+
+
+def test_backend_streams_single_image_as_one_result():
+    backend = _bare_backend()
+    seen = []
+
+    def fake_process(chunk, **kwargs):
+        seen.extend(chunk)
+        return ["result"]
+
+    backend._process_in_batches = fake_process
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+
+    results = backend(image, stream=True)
+
+    assert seen == []
+    assert list(results) == ["result"]
+    assert len(seen) == 1 and seen[0] is image
+
+
+def test_backend_screen_source_grabs_one_rgb_image(monkeypatch):
+    backend = _bare_backend()
+    captured = {}
+
+    def fake_single(image, **kwargs):
+        captured["image"] = image
+        captured["kwargs"] = kwargs
+        return type("Result", (), {"path": None})()
+
+    backend._predict_single = fake_single
+    monkeypatch.setattr(
+        backend_base,
+        "grab_screen",
+        lambda source: np.zeros((9, 11, 3), dtype=np.uint8),
+    )
+
+    result = backend("screen 1")
+
+    assert captured["image"].shape == (9, 11, 3)
+    assert captured["kwargs"]["color_format"] == "rgb"
+    assert result.path == "screen 1"
+
+
+@pytest.mark.parametrize("source", [0, "rtsp://127.0.0.1:8554/camera"])
+def test_backend_live_sources_require_lazy_streaming(source):
+    backend = _bare_backend()
+
+    with pytest.raises(ValueError, match="stream=True"):
+        backend(source)
+
+
+def test_backend_routes_webcam_to_threaded_capture(monkeypatch):
+    backend = _bare_backend()
+    sentinel = object()
+    calls = {}
+
+    def fake_build(spec, *, vid_stride, stream_buffer):
+        calls["build"] = (spec.items, vid_stride, stream_buffer)
+        return sentinel
+
+    def fake_predict(source, **kwargs):
+        calls["predict"] = (source, kwargs)
+        yield "frame"
+
+    monkeypatch.setattr(backend_base, "build_stream_source", fake_build)
+    backend._predict_video = fake_predict
+
+    results = backend(0, stream=True, stream_buffer=True, vid_stride=3)
+
+    assert list(results) == ["frame"]
+    assert calls["build"] == ((0,), 3, True)
+    assert calls["predict"][0] is sentinel
 
 
 def test_backend_sequential_batches_pass_indexed_save_stems():
@@ -217,7 +423,9 @@ def test_tensorrt_batched_in_memory_images_keep_path_none_and_indexed_saves():
 
     seen_parse_kwargs = []
 
-    def parse_outputs(per_image, imgsz, orig_size, conf, ratio=1.0, iou=0.45, max_det=300):
+    def parse_outputs(
+        per_image, imgsz, orig_size, conf, ratio=1.0, iou=0.45, max_det=300
+    ):
         seen_parse_kwargs.append({"iou": iou, "max_det": max_det})
         return (
             np.zeros((0, 4), dtype=np.float32),
@@ -258,12 +466,12 @@ def test_tensorrt_batched_in_memory_images_keep_path_none_and_indexed_saves():
 
     images = [np.zeros((8, 8, 3), dtype=np.uint8)] * 3
     results = backend._process_in_batches(
-        images, batch=2, save=True, iou=0.6, max_det=50
+        images, batch=2, save=True, iou=0.6, max_det=50, start_idx=4
     )
 
     assert len(results) == 3
     assert built_paths == [None, None, None]
-    assert saved_names == ["image0", "image1", "image2"]
+    assert saved_names == ["image4", "image5", "image6"]
     # iou/max_det must reach the parser, mirroring _predict_single.
     assert seen_parse_kwargs == [{"iou": 0.6, "max_det": 50}] * 3
 
@@ -602,9 +810,7 @@ def test_deimv2_batched_routing_with_marker_outputs():
                 (0.5 + 0.2) * orig_h,
             ]
         )
-        torch.testing.assert_close(
-            result.boxes.xyxy[0], expected, rtol=1e-5, atol=1e-4
-        )
+        torch.testing.assert_close(result.boxes.xyxy[0], expected, rtol=1e-5, atol=1e-4)
 
 
 def test_picodet_batched_predict_smoke_matches_sequential():
@@ -653,7 +859,9 @@ def _marker_preprocess(image, imgsz, color_format):
     )
 
 
-def _marker_parse_outputs(per_image, imgsz, orig_size, conf, ratio=1.0, iou=0.45, max_det=300):
+def _marker_parse_outputs(
+    per_image, imgsz, orig_size, conf, ratio=1.0, iou=0.45, max_det=300
+):
     marker = float(np.asarray(per_image[0]).ravel()[0])
     return (
         np.array([[0.0, 0.0, 1.0, 1.0]], dtype=np.float32),
@@ -722,7 +930,12 @@ def test_backend_predict_batch_falls_back_when_runtime_rejects_batch():
 
     # Chunk of 2 fails batched, re-runs per image; final chunk of 1 runs
     # sequentially because the failure latched batching off.
-    assert blob_shapes == [(2, 3, 32, 32), (1, 3, 32, 32), (1, 3, 32, 32), (1, 3, 32, 32)]
+    assert blob_shapes == [
+        (2, 3, 32, 32),
+        (1, 3, 32, 32),
+        (1, 3, 32, 32),
+        (1, 3, 32, 32),
+    ]
     assert [marker for _, marker in results] == [10.0, 60.0, 200.0]
     assert backend._batched_inference_failed is True
 

@@ -37,7 +37,11 @@ class LibreFOMO(BaseModel):
     INPUT_SIZES: ClassVar[Dict[str, int]] = {k: int(v["imgsz"]) for k, v in CONFIGS.items()}
 
     SUPPORTED_TASKS = ("point",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "point"
+    REQUIRE_TASK_SUFFIX = True
     TRAIN_CONFIG = FOMOConfig
     val_preprocessor_class = FOMOValPreprocessor
     validator_class = FOMOValidator
@@ -175,15 +179,14 @@ class LibreFOMO(BaseModel):
         return validator.parse_gt_points_from_boxes(gt_row, orig_h, orig_w)
 
     # -------------------------------------------------------------------------
-    # Training (experimental — requires allow_experimental=True)
+    # Training
     # -------------------------------------------------------------------------
 
-    @ddp_aware(experimental_key="allow_experimental")
+    @ddp_aware()
     def train(
         self,
         data: str,
         *,
-        allow_experimental: bool = False,
         callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs: Any,
@@ -192,16 +195,9 @@ class LibreFOMO(BaseModel):
 
         Args:
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
         """
-        if not allow_experimental:
-            raise NotImplementedError(
-                "LibreFOMO training is experimental in this version. "
-                "Pass allow_experimental=True to model.train() to enable it."
-            )
-
         from .trainer import FOMOTrainer
 
         if "imgsz" not in kwargs:

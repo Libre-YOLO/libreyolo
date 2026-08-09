@@ -20,7 +20,11 @@ from .config import (
     YOLOv7Config as YOLOv7Config,
 )
 from .loggers import (
+    ClearMLLogger as ClearMLLogger,
+    CometLogger as CometLogger,
+    DVCLiveLogger as DVCLiveLogger,
     MLflowLogger as MLflowLogger,
+    NeptuneLogger as NeptuneLogger,
     TensorBoardLogger as TensorBoardLogger,
     WandbLogger as WandbLogger,
     resolve_loggers as resolve_loggers,

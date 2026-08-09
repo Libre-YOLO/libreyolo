@@ -441,10 +441,12 @@ class RTMDetLoss(nn.Module):
         assigner_topk: int = 13,
         soft_center_radius: float = 3.0,
         iou_weight: float = 3.0,
+        distributed_normalize: bool = True,
     ):
         super().__init__()
         self.num_classes = num_classes
         self.strides = list(strides)
+        self.distributed_normalize = distributed_normalize
         self.loss_cls = QualityFocalLoss(beta=qfl_beta, loss_weight=loss_cls_weight)
         self.loss_bbox = GIoULoss(loss_weight=loss_bbox_weight)
         self.assigner = DynamicSoftLabelAssigner(
@@ -525,8 +527,15 @@ class RTMDetLoss(nn.Module):
         # ``reduce_mean`` on the cls avg_factor: dividing by the global factor
         # keeps DDP's gradient averaging equivalent to single-GPU training on
         # the same global batch (issue #484). Identical to the previous
-        # ``max(sum, 1)`` outside DDP.
-        avg_factor = all_reduce_avg_scalar(assign_metrics.sum())
+        # ``max(sum, 1)`` outside DDP. Rank-0-only validation selects the local
+        # path because it cannot enter a collective while the other ranks wait
+        # at the validation barrier.
+        if self.distributed_normalize:
+            avg_factor = all_reduce_avg_scalar(assign_metrics.sum())
+        else:
+            avg_factor = float(
+                assign_metrics.sum().detach().float().clamp_min(1.0).item()
+            )
 
         loss_cls = self.loss_cls(
             cls_preds, (labels, assign_metrics), avg_factor=avg_factor

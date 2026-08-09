@@ -65,6 +65,9 @@ class LibrePPOCR(BaseModel):
 
     FAMILY = "ppocr"
     FILENAME_PREFIX = "LibrePPOCR"
+    # Detection stage captures bit-identically; see forward_det below for
+    # why recognition stays eager.
+    SUPPORTS_CUDA_GRAPH = True
     WEIGHT_EXT = ".pt"
     # The size value is the detection long-side limit (DetResizeForTest).
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"t": 960, "l": 960}
@@ -208,6 +211,42 @@ class LibrePPOCR(BaseModel):
             "LibrePPOCR does not use the detection-shaped _forward hook; "
             "the two-stage pipeline lives in models/ppocr/inference.py."
         )
+
+    # =========================================================================
+    # CUDA graph capture
+    #
+    # The detection-shaped _forward hook above stays unimplemented, so the
+    # generic capture path does not apply. Detection is still a plain
+    # image-in/map-out stage and captures cleanly, so it gets its own runner.
+    #
+    # Recognition is deliberately left eager: it runs on text crops whose width
+    # varies per line, so a shape-keyed cache would evict constantly and spend
+    # more on capture than replay saves.
+    # =========================================================================
+
+    def _get_graph_runner(self):
+        """Graph runner over the detection stage rather than ``_forward``."""
+        if getattr(self, "_graph_runner", None) is None:
+            from ..base.cuda_graph import GraphRunner
+
+            self._graph_runner = GraphRunner(
+                forward_fn=lambda x: self.model.det(x),
+                family=self.family,
+            )
+        return self._graph_runner
+
+    def forward_det(self, input_tensor):
+        """Run detection, replaying a captured graph when one is in scope.
+
+        Detection input size follows the source image's aspect ratio, so a
+        pipeline over mixed images produces several shapes. Each gets its own
+        graph up to the runner's cache cap, and anything past that falls back
+        to eager rather than growing without bound.
+        """
+        mode = getattr(self, "_cuda_graph_mode", None)
+        if mode is None:
+            return self.model.det(input_tensor)
+        return self._get_graph_runner().run(input_tensor, auto=(mode == "auto"))
 
     def _postprocess(self, *args, **kwargs):
         raise NotImplementedError(

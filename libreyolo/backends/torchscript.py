@@ -12,7 +12,12 @@ import torch
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.general import COCO_CLASSES
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, _read_metadata_imgsz, _read_pose_metadata
+from .base import (
+    BaseBackend,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+    _read_runtime_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +84,7 @@ class TorchScriptBackend(BaseBackend):
         if metadata_imgsz is not None:
             input_size = metadata_imgsz
         pose_metadata = _read_pose_metadata(metadata)
+        runtime_metadata = _read_runtime_metadata(metadata)
 
         if nb_classes is not None:
             resolved_nb_classes = nb_classes
@@ -108,6 +114,11 @@ class TorchScriptBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            crop_pct=runtime_metadata.get("crop_pct"),
+            interpolation=runtime_metadata.get("interpolation"),
+            num_bins=runtime_metadata.get("num_bins"),
+            bin_width_deg=runtime_metadata.get("bin_width_deg"),
+            offset_deg=runtime_metadata.get("offset_deg"),
             **pose_metadata,
         )
 

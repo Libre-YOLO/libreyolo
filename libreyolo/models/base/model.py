@@ -6,6 +6,7 @@ Provides shared functionality for all YOLO model variants.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import inspect
 import logging
@@ -49,6 +50,11 @@ from ...utils.serialization import (
     validate_checkpoint_metadata,
 )
 from ...validation.preprocessors import StandardValPreprocessor
+from .cuda_graph import (
+    GraphRunner,
+    forward_maybe_graphed,
+    normalize_cuda_graph_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +68,7 @@ _WRAPPER_OWNED_CFG_KEYS = frozenset({"size", "num_classes"})
 
 
 def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
-    """Decorate a family ``train()`` method to accept ``cfg='path/to/yaml'``.
+    """Add shared config-file and scratch-initialization handling to ``train()``.
 
     Loads the yaml as a dict and merges it into kwargs with user-provided
     kwargs winning. Keys consumed by positional args (and a small set of
@@ -80,12 +86,35 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
 
     @functools.wraps(train_fn)
     def wrapper(self, *args, cfg=None, **user_kwargs):
-        if cfg is None:
-            return train_fn(self, *args, **user_kwargs)
-        cfg_kwargs = load_train_cfg(cfg)
-        consumed = set(pos_names[: len(args)]) | _WRAPPER_OWNED_CFG_KEYS
-        merged = {k: v for k, v in cfg_kwargs.items() if k not in consumed}
-        merged.update(user_kwargs)
+        merged = dict(user_kwargs)
+        if cfg is not None:
+            cfg_kwargs = load_train_cfg(cfg)
+            consumed = set(pos_names[: len(args)]) | _WRAPPER_OWNED_CFG_KEYS
+            merged = {k: v for k, v in cfg_kwargs.items() if k not in consumed}
+            merged.update(user_kwargs)
+
+        if merged.get("pretrained") is False:
+            from ..registry import group_of
+
+            if group_of(self.FAMILY) in {"g0", "g1", "g2"}:
+                bound = sig.bind_partial(self, *args, **merged)
+                bound.apply_defaults()
+                extras = next(
+                    (
+                        bound.arguments.get(param.name, {})
+                        for param in sig.parameters.values()
+                        if param.kind == inspect.Parameter.VAR_KEYWORD
+                    ),
+                    {},
+                )
+                if bound.arguments.get("resume", extras.get("resume", False)):
+                    raise ValueError("pretrained=False cannot be combined with resume.")
+                self._reset_for_scratch(
+                    seed=bound.arguments.get("seed", extras.get("seed", 0))
+                )
+                if "pretrained" not in sig.parameters:
+                    merged.pop("pretrained")
+
         return train_fn(self, *args, **merged)
 
     wrapper._libreyolo_cfg_wrapped = True  # type: ignore[attr-defined]
@@ -114,6 +143,10 @@ class BaseModel(ABC):
     INPUT_SIZES: ClassVar[dict[str, int]] = {}
     SUPPORTED_TASKS: ClassVar[tuple[str, ...]] = ("detect",)
     DEFAULT_TASK: ClassVar[str] = "detect"
+    # Override when multiple runtime tasks intentionally share one checkpoint
+    # artifact. Filename parsing then advertises only the tasks with distinct
+    # published weight files while SUPPORTED_TASKS remains the runtime surface.
+    WEIGHT_TASKS: ClassVar[Optional[tuple[str, ...]]] = None
     # When True, the task suffix is mandatory in weight filenames (e.g. a
     # classify-only family requires ``-cls``); detect families leave it optional.
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = False
@@ -121,7 +154,6 @@ class BaseModel(ABC):
     TRAIN_CONFIG: ClassVar[Optional[type[TrainConfig]]] = None
     val_preprocessor_class = StandardValPreprocessor
     validator_class: ClassVar[Optional[type]] = None
-    EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset()
     # Dataset-variant weight suffixes (e.g. "visdrone" accepts
     # ``LibreYOLO9P2s-visdrone.pt``). Families that publish checkpoints
     # trained on a non-default dataset opt in; the variant stays part of the
@@ -133,6 +165,12 @@ class BaseModel(ABC):
     # a leading batch dim (the contract batched validation already relies
     # on). Set False where that does not hold (e.g. generative VLMs).
     SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = True
+
+    # CUDA-graph policy: True once a family's ``_forward`` is verified to
+    # capture and replay bit-identically. Capture forbids host-visible work
+    # mid-forward (``.item()``, ``.cpu()``, writing a Python int into a CUDA
+    # tensor), so families opt in only after a parity test covers them.
+    SUPPORTS_CUDA_GRAPH: ClassVar[bool] = False
 
     # TTA policy — subclasses may override
     TTA_ENABLED: ClassVar[bool] = True
@@ -176,6 +214,7 @@ class BaseModel(ABC):
         **kwargs,
     ):
         ensure_default_logging()
+        scratch_init = bool(kwargs.pop("_scratch_init", False))
         self.family = self.FAMILY
         self.task = self._resolve_task(task)
         valid_sizes = self._get_valid_sizes()
@@ -201,6 +240,10 @@ class BaseModel(ABC):
         self.size = size
         self.nb_classes = nb_classes
         self.input_size = self._get_task_input_sizes()[size]
+        # Built lazily on the first cuda_graph=True call so models that never
+        # ask for capture pay nothing.
+        self._graph_runner: Optional["GraphRunner"] = None
+        self._cuda_graph_mode: Optional[str] = None
 
         if nb_classes == 80:
             self.names: Dict[int, str] = {i: n for i, n in enumerate(COCO_CLASSES)}
@@ -218,10 +261,13 @@ class BaseModel(ABC):
         # Signal _init_model that weights will be loaded immediately after, so
         # subclasses can skip pretrained backbone downloads that would be wasted.
         self._loading_from_weights = isinstance(model_path, (str, Path, dict))
+        self._initializing_from_scratch = scratch_init
         try:
             self.model = self._init_model()
         finally:
             self._loading_from_weights = False
+            self._initializing_from_scratch = False
+        self._training_from_scratch = scratch_init
 
         if model_path is None:
             self.model_path = None
@@ -229,7 +275,7 @@ class BaseModel(ABC):
             self.model_path = None
             state_dict = self._prepare_state_dict(self._strip_ddp_prefix(model_path))
             self._validate_loaded_state_dict_for_task(state_dict, model_path)
-            self.model.load_state_dict(state_dict, strict=self._strict_loading())
+            self._load_state_dict_logged(state_dict, source="state dict")
         else:
             self.model_path = model_path
 
@@ -238,6 +284,44 @@ class BaseModel(ABC):
         else:
             self.model.eval()
         self.model.to(self.device)
+
+    @classmethod
+    def _from_scratch(
+        cls,
+        *,
+        size: str,
+        nb_classes: int = 80,
+        device: str = "auto",
+        task: str | None = None,
+        seed: int = 0,
+        **kwargs,
+    ) -> "BaseModel":
+        """Construct an architecture without loading model or backbone weights."""
+        cls._seed_scratch_initialization(seed)
+        return cls(
+            None,
+            size=size,
+            nb_classes=nb_classes,
+            device=device,
+            task=task,
+            _scratch_init=True,
+            **kwargs,
+        )
+
+    @staticmethod
+    def _seed_scratch_initialization(seed: int) -> None:
+        if seed is None or int(seed) < 0:
+            return
+        import random
+
+        import numpy as np
+
+        seed = int(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
     @staticmethod
     def _resolve_weights_path(model_path: str) -> str:
@@ -290,6 +374,119 @@ class BaseModel(ABC):
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         """Run model forward pass."""
         pass
+
+    # =========================================================================
+    # CUDA graph capture
+    # =========================================================================
+
+    def _require_cuda_graph_support(self) -> None:
+        if not self.SUPPORTS_CUDA_GRAPH:
+            raise NotImplementedError(
+                f"cuda_graph is not supported for the '{self.family}' family yet. "
+                "Capture requires a forward with no host-visible work, which is "
+                "verified per family. Run without cuda_graph=True, or export to "
+                "ONNX/TensorRT for a fused deployment path."
+            )
+
+    def _get_graph_runner(self) -> "GraphRunner":
+        if self._graph_runner is None:
+            self._graph_runner = GraphRunner(
+                forward_fn=self._forward, family=self.family
+            )
+        return self._graph_runner
+
+    def _forward_graphed(self, input_tensor: torch.Tensor) -> Any:
+        """Run ``_forward``, replaying a captured CUDA graph when in scope."""
+        return forward_maybe_graphed(self, input_tensor)
+
+    @contextlib.contextmanager
+    def cuda_graph_scope(self, mode: Any = True):
+        """Route forwards in this block through captured graphs.
+
+        Predict sets this once per call rather than threading a flag through
+        every internal predict path. Validates support up front so an
+        unsupported family fails loudly instead of silently running eager.
+
+        Args:
+            mode: ``True``/``"on"`` captures on first use, ``"auto"`` waits for
+                a shape to repeat, ``False`` is a no-op.
+        """
+        normalized = normalize_cuda_graph_mode(mode)
+        if normalized is None:
+            yield
+            return
+        self._require_cuda_graph_support()
+        previous = self._cuda_graph_mode
+        self._cuda_graph_mode = normalized
+        try:
+            yield
+        finally:
+            self._cuda_graph_mode = previous
+
+    def capture_graph(
+        self, imgsz: Optional[int] = None, batch: int = 1, dtype: Any = None
+    ) -> None:
+        """Capture a CUDA graph now for the given input shape.
+
+        Warmup and capture cost far more than a replay, so call this up front
+        when a first-request latency spike matters. Later
+        ``predict(..., cuda_graph=True)`` calls at the same shape replay the
+        captured graph.
+
+        Args:
+            imgsz: Input resolution. Defaults to the model's input size.
+            batch: Batch size the graph is captured for. A graph is valid only
+                for the exact shape it captured, so this must match how you
+                call predict.
+            dtype: Input dtype. Defaults to the model's parameter dtype.
+
+        Raises:
+            NotImplementedError: If the family has not opted in.
+            CudaGraphUnavailable: If capture is impossible or fails.
+        """
+        self._require_cuda_graph_support()
+        size = imgsz or self.input_size
+        if dtype is None:
+            dtype = next(self.model.parameters()).dtype
+        dummy = torch.zeros((batch, 3, size, size), dtype=dtype, device=self.device)
+        with torch.no_grad():
+            self._get_graph_runner().capture(dummy)
+
+    def graph_info(self) -> Dict[str, Any]:
+        """Report captured graphs, replay counts and any eager-fallback reason."""
+        if self._graph_runner is None:
+            return {
+                "family": self.family,
+                "supported": self.SUPPORTS_CUDA_GRAPH,
+                "captured": [],
+                "graph_count": 0,
+                "eager_fallbacks": 0,
+                "fallback_reason": None,
+            }
+        info = self._graph_runner.info()
+        info["supported"] = self.SUPPORTS_CUDA_GRAPH
+        return info
+
+    def release_graphs(self) -> None:
+        """Free every captured graph and its static buffers."""
+        if self._graph_runner is not None:
+            self._graph_runner.release()
+            self._graph_runner = None
+
+    def _invalidate_cuda_graphs(self, reason: str) -> None:
+        """Drop captured graphs after a change that relocates parameters.
+
+        A graph records memory addresses, not values, so anything that
+        *replaces* modules or tensors (quantize, dequantize, a device move, a
+        rebuilt head) leaves captured kernels pointing at storage that is stale
+        or already freed. In-place weight updates are safe and do not need this;
+        replacement does. Every such call site must invalidate, because the
+        cache key of shape/dtype/device cannot observe the change on its own.
+        """
+        if self._graph_runner is None:
+            return
+        logger.debug("cuda_graph: invalidating captured graphs (%s)", reason)
+        self.release_graphs()
 
     @abstractmethod
     def _postprocess(
@@ -384,6 +581,38 @@ class BaseModel(ABC):
         """
         return state_dict
 
+    def _prepare_scratch_init(self) -> None:
+        """Let wrappers reset checkpoint-derived architecture state."""
+
+    def _is_scratch_build(self) -> bool:
+        """Return whether this build belongs to a scratch-training lifecycle."""
+        return bool(
+            getattr(self, "_initializing_from_scratch", False)
+            or getattr(self, "_training_from_scratch", False)
+        )
+
+    def _reset_for_scratch(self, *, seed: int = 0) -> None:
+        """Replace the loaded network with a freshly initialized architecture."""
+        self._seed_scratch_initialization(seed)
+        self._prepare_scratch_init()
+        self._graph_runner = None
+        self._cuda_graph_mode = None
+        self._initializing_from_scratch = True
+        try:
+            model = self._init_model()
+        finally:
+            self._initializing_from_scratch = False
+
+        self.model = model
+        self.model_path = None
+        self._training_from_scratch = True
+        self.names = (
+            {i: name for i, name in enumerate(COCO_CLASSES)}
+            if self.nb_classes == 80
+            else {i: f"class_{i}" for i in range(self.nb_classes)}
+        )
+        self.model.train().to(self.device)
+
     def _rebuild_for_new_classes(self, new_nb_classes: int):
         """Rebuild model with a new class count, preserving weights where shapes match."""
         old_state = self.model.state_dict()
@@ -430,7 +659,7 @@ class BaseModel(ABC):
         sizes_pattern = "|".join(re.escape(size) for size in sizes)
         prefix = cls.FILENAME_PREFIX.lower()
         ext = re.escape(cls.WEIGHT_EXT)
-        suffixes = task_suffix_pattern(cls.SUPPORTED_TASKS)
+        suffixes = task_suffix_pattern(cls.WEIGHT_TASKS or cls.SUPPORTED_TASKS)
         if suffixes:
             # Families with no suffixless (detect) task can require the task
             # suffix so that e.g. ``LibreResNet50.pt`` is not accepted as a
@@ -493,6 +722,11 @@ class BaseModel(ABC):
         return dict(state_dict) if cls.can_load(state_dict) else None
 
     @classmethod
+    def default_checkpoint_names(cls, nc: int) -> Optional[Dict[int, str]]:
+        """Return known upstream labels when a raw checkpoint has no metadata."""
+        return None
+
+    @classmethod
     def detect_checkpoint_task(cls, state_dict: dict) -> Optional[str]:
         """Infer the task from task-specific head keys, or ``None`` if unknown."""
         return None
@@ -514,13 +748,7 @@ class BaseModel(ABC):
     @classmethod
     def get_download_notice(cls, filename: str, url: str) -> Optional[str]:
         """Return an optional warning shown before auto-downloading weights."""
-        if Path(filename).name.lower() not in cls.EXPERIMENTAL_WEIGHT_FILENAMES:
-            return None
-        return (
-            f"{Path(filename).name} is an EXTREMELY experimental preview checkpoint. "
-            "It is provided for early pose-estimation testing and may change without "
-            "compatibility guarantees."
-        )
+        return None
 
     @classmethod
     def verify_downloaded_file(cls, local_path: str, source_url: str) -> None:
@@ -633,8 +861,11 @@ class BaseModel(ABC):
                 ckpt_task = loaded.get("task")
                 if ckpt_task is not None:
                     normalized_ckpt_task = normalize_task(ckpt_task)
-                    if normalized_ckpt_task != self.task and not self._allow_checkpoint_task_mismatch(
-                        normalized_ckpt_task
+                    if (
+                        normalized_ckpt_task != self.task
+                        and not self._allow_checkpoint_task_mismatch(
+                            normalized_ckpt_task
+                        )
                     ):
                         raise RuntimeError(
                             f"Checkpoint was trained for task='{normalized_ckpt_task}' "
@@ -673,21 +904,56 @@ class BaseModel(ABC):
             else:
                 state_dict = self._prepare_state_dict(loaded)
 
-            quant_manifest = (
-                loaded.get("quant") if isinstance(loaded, dict) else None
-            )
+            quant_manifest = loaded.get("quant") if isinstance(loaded, dict) else None
             if quant_manifest:
                 from ...quant import apply_quant_structure
 
                 apply_quant_structure(self, quant_manifest)
 
             self._prepare_model_for_state_dict(state_dict)
-            self.model.load_state_dict(state_dict, strict=self._strict_loading())
+            self._load_state_dict_logged(state_dict, source=str(model_path))
             self.model.to(self.device).eval()
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load model weights from {model_path}: {e}"
             ) from e
+
+    def _load_state_dict_logged(self, state_dict: dict, source: str) -> None:
+        """Load with the family's strictness, making silent key drops visible.
+
+        Families that load with strict=False (e.g. YOLOX) previously discarded
+        missing/unexpected keys without a trace: a partially matching
+        checkpoint would "load" and then quietly predict with fresh-initialized
+        tensors wherever keys were absent. Shape mismatches raise regardless of
+        strictness, but name mismatches do not, so this logs them. A healthy
+        load stays silent.
+
+        Families with custom ``_load_weights`` overrides must either route
+        their final ``load_state_dict`` through this helper (YOLO-NAS) or
+        police the returned missing/unexpected keys themselves with
+        family-specific rules (D-FINE/DEIM/EC tolerate regenerated anchor
+        buffers but raise on other unexpected keys; DINOv2/RF-DETR/PIDNet
+        validate the key sets against the expected architecture).
+        """
+        result = self.model.load_state_dict(
+            state_dict, strict=self._strict_loading()
+        )
+        missing = list(getattr(result, "missing_keys", []) or [])
+        unexpected = list(getattr(result, "unexpected_keys", []) or [])
+        if missing or unexpected:
+            logger.warning(
+                "Non-strict load from %s: %d missing key(s) (model keeps "
+                "initialized weights for these) and %d unexpected key(s) "
+                "(ignored). First missing: %s. First unexpected: %s. "
+                "This usually indicates a size/task/architecture mismatch.",
+                source,
+                len(missing),
+                len(unexpected),
+                missing[:5],
+                unexpected[:5],
+            )
+            logger.debug("All missing keys: %s", missing)
+            logger.debug("All unexpected keys: %s", unexpected)
 
     def _allow_checkpoint_task_mismatch(self, checkpoint_task: str) -> bool:
         """Return whether a family permits loading a checkpoint from another task."""
@@ -745,6 +1011,52 @@ class BaseModel(ABC):
         """Alias for __call__ method."""
         return self(*args, **kwargs)
 
+    def embed(self, source=None, **kwargs) -> torch.Tensor:
+        """Return all embedding rows for ``source`` as ``(N_total, D)``.
+
+        This is a convenience wrapper over :meth:`predict`. Models must be
+        constructed with ``task="embed"`` so their results populate
+        ``Results.embeddings``.
+        """
+        if "embed" not in self._supported_tasks():
+            raise NotImplementedError(
+                f"The '{self.family}' family does not support task='embed'."
+            )
+        from ...utils.results import stack_result_embeddings
+
+        return stack_result_embeddings(self.predict(source, **kwargs))
+
+    def _postprocess_embeddings(
+        self,
+        output: Any,
+        *,
+        gallery=None,
+        threshold: Optional[float] = 0.4,
+    ) -> Dict[str, Any]:
+        """Normalize whole-image features and build the shared result payload."""
+        threshold = 0.4 if threshold is None else float(threshold)
+        features = output[0] if isinstance(output, (list, tuple)) else output
+        features = torch.as_tensor(features).float()
+        if features.ndim == 1:
+            features = features.unsqueeze(0)
+        if features.ndim != 2:
+            raise ValueError(
+                "Embedding models must emit features with shape (N, D); "
+                f"got {tuple(features.shape)}."
+            )
+        norms = torch.linalg.vector_norm(features, dim=-1, keepdim=True)
+        if bool((norms <= 1e-12).any()):
+            raise ValueError("Embedding model emitted an all-zero feature row.")
+        normalized = (features / norms).cpu()
+        payload: Dict[str, Any] = {"embeddings": normalized}
+        if gallery is not None:
+            payload["identities"] = gallery.identify(
+                normalized,
+                threshold=threshold,
+                model=self,
+            )
+        return payload
+
     def _predict_augment(
         self,
         image,
@@ -780,6 +1092,16 @@ class BaseModel(ABC):
             raise ValueError(
                 "Test-time augmentation does not support depth estimation yet. "
                 "Use augment=False for depth models."
+            )
+        if getattr(self, "task", "detect") == "normal":
+            raise ValueError(
+                "Test-time augmentation does not support surface normals yet. "
+                "Use augment=False for normal models."
+            )
+        if getattr(self, "task", "detect") == "edge":
+            raise ValueError(
+                "Test-time augmentation does not support edge detection yet. "
+                "Use augment=False for edge models."
             )
         if getattr(self, "task", "detect") == "restore":
             raise ValueError(
@@ -1184,6 +1506,15 @@ class BaseModel(ABC):
                 "Tracking does not support depth maps yet. "
                 "Use predict() for depth models."
             )
+        if task == "normal":
+            raise NotImplementedError(
+                "Tracking does not support surface-normal maps. "
+                "Use predict() for normal models."
+            )
+        if task == "edge":
+            raise NotImplementedError(
+                "Tracking does not support edge maps. Use predict() for edge models."
+            )
         if task == "semantic":
             raise NotImplementedError(
                 "Tracking does not support semantic segmentation yet. "
@@ -1197,6 +1528,13 @@ class BaseModel(ABC):
         if task == "restore":
             raise NotImplementedError(
                 "Tracking does not support restoration models. Use predict()."
+            )
+        if task == "mesh":
+            raise NotImplementedError(
+                "Tracking does not support body-mesh models yet. Use predict(). "
+                "Associating meshes over time also needs a temporal contract "
+                "(track IDs on the mesh rows, and a world frame) that the mesh "
+                "task does not define yet."
             )
         if task == "ocr":
             raise NotImplementedError(
@@ -1358,8 +1696,8 @@ class BaseModel(ABC):
             batch: Calibration batch size.
             algorithm: Activation range estimation: "minmax" (absolute
                 extremes across batches; the measured best default),
-                "percentile" (experimental: mean of per-batch 0.1/99.9
-                percentiles; degrades transformer families), or "auto"
+                "percentile" (mean of per-batch 0.1/99.9 percentiles; measured
+                to degrade transformer families), or "auto"
                 (minmax).
             keep_high_precision: Substring patterns of module names kept in
                 float. Defaults to the family policy (first layer + heads).
@@ -1380,6 +1718,7 @@ class BaseModel(ABC):
         """
         from libreyolo.quant import quantize_model
 
+        self._invalidate_cuda_graphs("quantize")
         return quantize_model(
             self,
             recipe=recipe,
@@ -1388,9 +1727,7 @@ class BaseModel(ABC):
             batch=batch,
             algorithm=algorithm,
             keep_high_precision=(
-                tuple(keep_high_precision)
-                if keep_high_precision is not None
-                else None
+                tuple(keep_high_precision) if keep_high_precision is not None else None
             ),
             allow_download_scripts=allow_download_scripts,
             verbose=verbose,
@@ -1412,6 +1749,7 @@ class BaseModel(ABC):
         """
         from libreyolo.quant import dequantize_model
 
+        self._invalidate_cuda_graphs("dequantize")
         return dequantize_model(self)
 
     def save(self, path: str) -> str:
@@ -1424,6 +1762,19 @@ class BaseModel(ABC):
         from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
         state_dict = {k: v.cpu() for k, v in self.model.state_dict().items()}
+        native_imgsz = self._get_input_size()
+        rectangular_metadata = {}
+        if isinstance(native_imgsz, (tuple, list)):
+            if len(native_imgsz) != 2:
+                raise ValueError(
+                    "Model input size must be an int or (height, width), "
+                    f"got {native_imgsz!r}."
+                )
+            imgsz_h, imgsz_w = int(native_imgsz[0]), int(native_imgsz[1])
+            checkpoint_imgsz = max(imgsz_h, imgsz_w)
+            rectangular_metadata = {"imgsz_h": imgsz_h, "imgsz_w": imgsz_w}
+        else:
+            checkpoint_imgsz = int(native_imgsz)
         checkpoint = wrap_libreyolo_checkpoint(
             state_dict,
             model_family=self._get_model_name(),
@@ -1431,7 +1782,8 @@ class BaseModel(ABC):
             task=self.task,
             nc=self.nb_classes,
             names=self.names,
-            imgsz=int(self._get_input_size()),
+            imgsz=checkpoint_imgsz,
+            **rectangular_metadata,
         )
         quant_manifest = getattr(self, "_quant_manifest", None)
         if quant_manifest:
@@ -1448,9 +1800,10 @@ class BaseModel(ABC):
         """Export model to deployment format.
 
         Args:
-            format: Target format ("onnx", "torchscript", "tensorrt",
-                "openvino", "ncnn", "tflite"). "litert" is accepted as an
-                alias for "tflite" (LiteRT is TensorFlow Lite's new name).
+            format: Target format ("onnx", "torchscript", "executorch",
+                "tensorrt", "openvino", "mnn", "ncnn", "tflite"). "litert" is
+                accepted as an alias for "tflite" (LiteRT is TensorFlow
+                Lite's new name).
             **kwargs: Format-specific parameters forwarded to the exporter.
 
         Returns:
@@ -1475,7 +1828,7 @@ class BaseModel(ABC):
         self,
         data: str | None = None,
         batch: int = 16,
-        imgsz: int | None = None,
+        imgsz: int | tuple[int, int] | None = None,
         conf: float = 0.001,
         iou: float = 0.6,
         workers: int = 4,
@@ -1494,7 +1847,8 @@ class BaseModel(ABC):
         Args:
             data: Path to data.yaml file.
             batch: Batch size.
-            imgsz: Image size (defaults to model's native input size).
+            imgsz: Square image size or ``(height, width)`` tuple. Defaults to
+                the model's native input size.
             conf: Confidence threshold.
             iou: IoU threshold for NMS.
             workers: Number of dataloader workers.
@@ -1504,6 +1858,11 @@ class BaseModel(ABC):
             save_json: Save predictions in COCO JSON format.
             plots: Alias for save_plots.
             verbose: Print detailed metrics.
+            faster_coco_eval: (kwarg) Use the faster-coco-eval C++ backend
+                for COCO metrics. Default True; falls back to pycocotools
+                if the package is unavailable. Pass False (or set
+                LIBREYOLO_FASTER_COCO_EVAL=0) to force pycocotools. The
+                backend used is surfaced as ``model.last_eval_backend``.
 
         Returns:
             Dictionary with metrics/precision, metrics/recall,
@@ -1514,6 +1873,8 @@ class BaseModel(ABC):
             DepthValidator,
             DetectionValidator,
             MatteValidator,
+            NormalValidator,
+            EdgeValidator,
             OBBValidator,
             OCRValidator,
             PanopticValidator,
@@ -1549,10 +1910,27 @@ class BaseModel(ABC):
                 "Augmented validation does not support depth estimation yet. "
                 "Use augment=False for depth models."
             )
+        if augment and self.task == "normal":
+            raise ValueError(
+                "Augmented validation does not support surface normals yet. "
+                "Use augment=False for normal models."
+            )
+        if augment and self.task == "edge":
+            raise ValueError(
+                "Augmented validation does not support edge detection yet. "
+                "Use augment=False for edge models."
+            )
         if augment and self.task == "restore":
             raise ValueError(
                 "Augmented validation does not support restoration models yet. "
                 "Use augment=False for restore models."
+            )
+        if augment and self.task == "mesh":
+            raise ValueError(
+                "Augmented validation does not support body-mesh models: a "
+                "horizontal flip swaps left and right body parts, so merging "
+                "flipped mesh parameters is not a matter of averaging. "
+                "Use augment=False for mesh models."
             )
         if augment and self.task == "matte":
             raise ValueError(
@@ -1581,6 +1959,14 @@ class BaseModel(ABC):
             **kwargs,
         )
 
+        if self.task == "mesh":
+            raise NotImplementedError(
+                "Body-mesh validation needs a ground-truth mesh dataset, and the "
+                "usual benchmarks (3DPW, EMDB, AGORA) are research-license only, "
+                "so none is bundled. The metrics themselves are available as "
+                "libreyolo.validation.mesh_metrics (MPJPE, PA-MPJPE, PVE) for "
+                "evaluating against a dataset you already hold."
+            )
         if self.task == "gaze":
             raise NotImplementedError(
                 "Validation against gaze ground-truth datasets (MPIIGaze, Gaze360) "
@@ -1601,6 +1987,10 @@ class BaseModel(ABC):
             validator_cls = PanopticValidator
         elif self.task == "depth":
             validator_cls = DepthValidator
+        elif self.task == "normal":
+            validator_cls = NormalValidator
+        elif self.task == "edge":
+            validator_cls = EdgeValidator
         elif self.task == "restore":
             validator_cls = RestoreValidator
         elif self.task == "matte":
@@ -1614,4 +2004,9 @@ class BaseModel(ABC):
         else:
             validator_cls = DetectionValidator
         validator = validator_cls(model=self, config=config)
-        return validator()
+        metrics = validator()
+        # Provenance: which COCO eval backend produced these metrics
+        # (e.g. "faster-coco-eval 1.7.2" / "pycocotools 2.0.10"; None for
+        # validators that don't run COCO evaluation).
+        self.last_eval_backend = getattr(validator, "eval_backend", None)
+        return metrics

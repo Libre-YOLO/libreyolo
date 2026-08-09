@@ -406,6 +406,7 @@ class RFDETRClassifier(nn.Module):
         nb_classes: int = 1000,
         device: str = "cpu",
         dropout: float = 0.2,
+        load_dinov2_weights: bool = True,
     ):
         super().__init__()
         if config not in RFDETR_CONFIGS:
@@ -421,7 +422,7 @@ class RFDETRClassifier(nn.Module):
         self.num_windows = self._NUM_WINDOWS
         self.resolution = 224
 
-        joiner = self._build_backbone(cfg, device)
+        joiner = self._build_backbone(cfg, device, load_dinov2_weights)
         # joiner = Sequential(Backbone, PositionEmbedding); classification only
         # needs the Backbone (DINOv2 encoder + projector) — drop the position
         # encoding so its parameters are not carried around unused.
@@ -431,7 +432,12 @@ class RFDETRClassifier(nn.Module):
         self.drop = nn.Dropout(p=dropout)
         self.linear = nn.Linear(self.hidden_dim, nb_classes)
 
-    def _build_backbone(self, cfg: RFDETRSizeConfig, device: str):
+    def _build_backbone(
+        self,
+        cfg: RFDETRSizeConfig,
+        device: str,
+        load_dinov2_weights: bool,
+    ):
         kwargs = dict(
             encoder=cfg.encoder,
             vit_encoder_num_layers=12,
@@ -455,6 +461,8 @@ class RFDETRClassifier(nn.Module):
             num_windows=self._NUM_WINDOWS,
             positional_encoding_size=self._POS_ENC_SIZE,
         )
+        if not load_dinov2_weights:
+            return build_backbone(load_dinov2_weights=False, **kwargs)
         try:
             return build_backbone(load_dinov2_weights=True, **kwargs)
         except Exception as exc:  # pragma: no cover - offline / hub failure
@@ -515,6 +523,7 @@ class RFDETRSemanticSegmenter(nn.Module):
         nb_classes: int = 19,
         device: str = "cpu",
         dropout: float = 0.1,
+        load_dinov2_weights: bool = True,
     ):
         super().__init__()
         if config not in RFDETR_CONFIGS:
@@ -529,7 +538,7 @@ class RFDETRSemanticSegmenter(nn.Module):
         self.num_windows = self._NUM_WINDOWS
         self.resolution = self._POS_ENC_SIZE * self._PATCH_SIZE  # 518
 
-        joiner = self._build_backbone(cfg, device)
+        joiner = self._build_backbone(cfg, device, load_dinov2_weights)
         # joiner = Sequential(Backbone, PositionEmbedding); the dense decoder
         # only needs the Backbone (DINOv2 encoder + projector).
         self.backbone = joiner[0]
@@ -551,7 +560,12 @@ class RFDETRSemanticSegmenter(nn.Module):
         self.register_buffer("pixel_mean", mean, persistent=False)
         self.register_buffer("pixel_std", std, persistent=False)
 
-    def _build_backbone(self, cfg: RFDETRSizeConfig, device: str):
+    def _build_backbone(
+        self,
+        cfg: RFDETRSizeConfig,
+        device: str,
+        load_dinov2_weights: bool,
+    ):
         kwargs = dict(
             encoder=cfg.encoder,
             vit_encoder_num_layers=12,
@@ -575,6 +589,8 @@ class RFDETRSemanticSegmenter(nn.Module):
             num_windows=self._NUM_WINDOWS,
             positional_encoding_size=self._POS_ENC_SIZE,
         )
+        if not load_dinov2_weights:
+            return build_backbone(load_dinov2_weights=False, **kwargs)
         try:
             return build_backbone(load_dinov2_weights=True, **kwargs)
         except Exception as exc:  # pragma: no cover - offline / hub failure
@@ -739,8 +755,15 @@ class LibreRFDETRModel(nn.Module):
             return self.segmenter(x, targets=targets)
         return self.model(x, targets=targets)
 
-    def build_criterion_and_postprocess(self):
-        return build_criterion_and_postprocessors(self.args)
+    def build_criterion_and_postprocess(
+        self,
+        *,
+        distributed_normalize: bool = True,
+    ):
+        return build_criterion_and_postprocessors(
+            self.args,
+            distributed_normalize=distributed_normalize,
+        )
 
     def load_state_dict(self, state_dict: dict[str, Any], strict: bool = True):
         if self.classification:

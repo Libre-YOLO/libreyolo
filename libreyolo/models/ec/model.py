@@ -32,6 +32,9 @@ class LibreEC(BaseModel):
     POSE_INPUT_SIZES = {"s": 640, "m": 640, "l": 640, "x": 640}
     SEG_INPUT_SIZES = {"s": 640, "m": 640, "l": 640, "x": 640}
     SUPPORTED_TASKS = ("detect", "pose", "segment")
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "detect"
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,
@@ -41,6 +44,11 @@ class LibreEC(BaseModel):
     POSE_NUM_KEYPOINTS = 17
     KEYPOINT_DIM = 3
     val_preprocessor_class = ECValPreprocessor
+    # EC shares the D-FINE decoder line (ECTrainer subclasses DFINETrainer)
+    # with an ECViT backbone; the eval forward is pure tensor work at a fixed
+    # eval_spatial_size. Captures and replays bit-identically
+    # (tests/unit/test_cuda_graph_detr_families.py).
+    SUPPORTS_CUDA_GRAPH = True
 
     _GH_RELEASE_BASE = (
         "https://github.com/capsule2077/edgecrafter/releases/download/edgecrafterv1"
@@ -270,12 +278,11 @@ class LibreEC(BaseModel):
         # forward time. Mirror the D-FINE policy.
         return False
 
-    @ddp_aware(experimental_key="allow_experimental")
+    @ddp_aware()
     def train(
         self,
         data: str,
         *,
-        allow_experimental: bool = False,
         epochs: int = 74,
         batch: int = 16,
         imgsz: int = 640,
@@ -302,22 +309,21 @@ class LibreEC(BaseModel):
         matcher + OKS/L1 criterion). Segmentation needs YOLO polygon labels;
         pose needs YOLO keypoint labels with ``kpt_shape`` in the dataset yaml.
 
-        **EXPERIMENTAL.** All three follow upstream EdgeCrafter's recipe (AdamW,
-        FlatCosine, EMA 0.9999, ImageNet-normalized inputs). Detect/seg add
-        MAL+L1+GIoU+FGL+DDF; loss + one-step train are validated on synthetic
-        input, but full-fine-tune convergence has not been run end-to-end. Pass
-        ``allow_experimental=True`` to acknowledge.
+        All three follow upstream EdgeCrafter's recipe (AdamW, FlatCosine,
+        EMA 0.9999, ImageNet-normalized inputs). Detect/seg add
+        MAL+L1+GIoU+FGL+DDF. Loss and one-step training are validated on
+        synthetic input. Full-fine-tune convergence, multi-GPU training, the
+        stop-augmentation best-reload behavior, and the Objects365-to-COCO
+        class remap have not been validated end to end.
 
         Args:
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
         """
         if self.task == "pose":
             return self._train_pose(
                 data=data,
-                allow_experimental=allow_experimental,
                 epochs=epochs,
                 batch=batch,
                 imgsz=imgsz,
@@ -335,16 +341,6 @@ class LibreEC(BaseModel):
                 loggers=loggers,
                 **kwargs,
             )
-        if not allow_experimental:
-            raise RuntimeError(
-                "EC training is experimental and has not been validated by a "
-                "full fine-tune. Pass allow_experimental=True to proceed.\n"
-                "What's been validated: inference parity (1e-5 vs upstream on all "
-                "4 sizes), ONNX export round-trip, COCO val2017 mAP. What's NOT "
-                "validated: full fine-tune convergence, multi-GPU, the "
-                "stop_aug_epoch best-reload trick, Obj365→COCO class remap."
-            )
-
         from pathlib import Path
 
         from libreyolo.data import load_data_config
@@ -433,7 +429,6 @@ class LibreEC(BaseModel):
         self,
         data: str,
         *,
-        allow_experimental: bool = False,
         epochs: int = 74,
         batch: int = 16,
         imgsz: int = 640,
@@ -453,22 +448,16 @@ class LibreEC(BaseModel):
     ) -> dict:
         """Fine-tune EdgeCrafter ECPose on a YOLO-format keypoint dataset.
 
-        **EXPERIMENTAL.** ECPose is a DETRPose keypoint transformer; this path
-        follows DETRPose's released recipe — Hungarian matcher (class + keypoint
+        ECPose is a DETRPose keypoint transformer; this path follows DETRPose's
+        released recipe — Hungarian matcher (class + keypoint
         L1 + OKS), VFL classification keyed on OKS, keypoint L1 + OKS losses,
         GO-LSD union matching, deep supervision over decoder/encoder/pre layers,
         and contrastive keypoint denoising — on a keypoint-aware (RGB +
-        ImageNet-normalized) data pipeline. Convergence has not been validated
-        end to end; pass ``allow_experimental=True`` to acknowledge. The dataset
-        ``data.yaml`` must declare ``kpt_shape: [num_keypoints, 2|3]``; only the
-        model's native keypoint count is supported (head fixed at construction).
+        ImageNet-normalized) data pipeline. Full-fine-tune convergence has not
+        been validated end to end. The dataset ``data.yaml`` must declare
+        ``kpt_shape: [num_keypoints, 2|3]``; only the model's native keypoint
+        count is supported because the head is fixed at construction.
         """
-        if not allow_experimental:
-            raise RuntimeError(
-                "EC pose training is experimental and has not been validated by "
-                "a full fine-tune. Pass allow_experimental=True to proceed."
-            )
-
         from pathlib import Path
 
         from libreyolo.data import load_data_config
@@ -590,7 +579,22 @@ class LibreEC(BaseModel):
         return results
 
     def _load_weights(self, model_path: str):
-        if not Path(model_path).exists():
+        model_path = self._resolve_weights_path(model_path)
+        path = Path(model_path)
+        download_error = None
+        if not path.exists():
+            from ...utils.download import download_weights
+
+            try:
+                download_weights(model_path, self.size)
+            except Exception as exc:
+                download_error = exc
+        if not path.exists():
+            if download_error is not None:
+                raise FileNotFoundError(
+                    f"EC weights file not found: {model_path}\n"
+                    f"Auto-download failed: {download_error}"
+                ) from download_error
             raise FileNotFoundError(f"EC weights file not found: {model_path}")
 
         try:

@@ -40,6 +40,25 @@ class NAFNetTrainer(BaseTrainer):
     def create_transforms(self):
         return None, None
 
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+        task = getattr(getattr(self, "wrapper_model", None), "task", "restore")
+        if task != "restore":
+            raise ValueError(
+                "val_loss=True currently supports nafnet restoration only; "
+                "other tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        # TLC local pooling is re-attached only after the last epoch (see
+        # train()), so per-epoch validation runs the same global-pool model
+        # training does and the two losses are directly comparable.
+        del model
+        from .validation_loss import NAFNetValidationLoss
+
+        return NAFNetValidationLoss(device=self.device)
+
     def on_setup(self) -> None:
         # TLC (NAFNetLocal) local pooling is an inference-time technique with a
         # window fixed by a warm-up forward. Upstream trains the plain
@@ -88,11 +107,47 @@ class NAFNetTrainer(BaseTrainer):
     ) -> Dict[str, torch.Tensor]:
         del polygons
         pred = self.model(imgs)
+        return self._restore_loss(pred, targets)
+
+    def _restore_loss(
+        self, pred: torch.Tensor, targets: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
+        """Charbonnier loss + PSNR over the network's restored image.
+
+        Split out of ``on_forward`` so the CUDA-graph path shares the exact
+        same tail: the graph captures the network only, and this method is
+        the eager remainder for both routes.
+        """
         pred = pred[:, :, : targets.shape[-2], : targets.shape[-1]]
         loss = charbonnier_loss(pred, targets)
         mse = torch.mean((pred.detach() - targets.detach()).pow(2)).clamp_min(1e-12)
         psnr = -10.0 * torch.log10(mse)
         return {"total_loss": loss, "loss_restore": loss.detach(), "psnr": psnr}
+
+    def cuda_graph_train_spec(self):
+        """Capture spec: graph the restoration network, keep the loss eager.
+
+        NAFNet's forward takes only the degraded image, so the network is
+        static-shaped for a fixed crop size; the Charbonnier loss and PSNR
+        readout stay eager.
+        """
+        from libreyolo.training.cuda_graph import (
+            CudaGraphTrainSpec,
+            GraphableNetwork,
+        )
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "restore")
+        if task != "restore":
+            return None
+        if not isinstance(self.model, torch.nn.Module):
+            return None
+
+        network = GraphableNetwork(self.model)
+
+        def assemble(flat, imgs, targets, polygons=None):
+            return self._restore_loss(network.rebuild(flat), targets)
+
+        return CudaGraphTrainSpec(network=network, assemble=assemble)
 
     def get_loss_components(self, outputs: Dict[str, Any]) -> Dict[str, float]:
         return {

@@ -145,6 +145,15 @@ class YOLOv7Model(nn.Module):
 
         if targets is None:
             return head_out
+        return self.compute_loss(head_out, targets)
+
+    def compute_loss(self, head_out, targets: torch.Tensor):
+        """SimOTA loss over already-computed head maps.
+
+        Split out of ``forward`` so a caller that has the raw maps (the
+        CUDA-graph training path captures the network and only the maps
+        cross the graph boundary) runs the identical criterion.
+        """
         if self._criterion is None:
             from .loss import YOLOv7Loss
             self._criterion = YOLOv7Loss(self.num_classes, self.anchors, self.strides)

@@ -1,0 +1,37 @@
+LibreDOMEDETR includes code ported from Dome-DETR:
+
+Source: https://github.com/RicePasteM/Dome-DETR
+Commit: 2dde3bc1946a3e9fad9abd0612b59fc39bd6b861
+License: Apache License 2.0.
+Copyright (c) 2025 The Dome-DETR Authors. All Rights Reserved.
+
+The upstream LICENSE file is the standard Apache-2.0 text but leaves the
+copyright line as the "[yyyy] [name of copyright owner]" placeholder, so there
+is no named holder in the file itself. The attribution above is taken from the
+upstream source headers.
+
+The upstream implementation is itself modified from D-FINE:
+
+Source: https://github.com/Peterande/D-FINE
+License: Apache License 2.0.
+Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
+
+LibreYOLO ports the three modules that distinguish Dome-DETR from D-FINE: DeFE
+(the density-focal extractor, src/zoo/dome/defe.py), MWAS (the masked window
+attention processor, src/zoo/dome/get_roi_features.py), and PAQI together with
+its density-adaptive NMS (src/zoo/dome/dome_decoder.py and
+src/zoo/dome/dynamic_nms.py). The static-shape MWAS formulation follows the
+same repository's "onnx-export" branch.
+
+Everything Dome-DETR shares unchanged with D-FINE (the HGNetv2 backbone, the
+CSP/RepNCSPELAN4 encoder blocks, the FDR decoder stack, and the pure-PyTorch
+multi-scale deformable attention) is imported from libreyolo/models/dfine/
+rather than re-vendored here, and is covered by that family's attribution.
+
+Not included: the training-only criterion, matcher, density ground-truth
+generator, and data pipeline; the deformable-encoder branch (no released
+config enables it); and the prebuilt MSDeformAttn CUDA extension under
+src/zoo/dome/ops/.
+
+Model weights are not redistributed by LibreYOLO. See
+weights/LICENSE_NOTICE.txt for why.

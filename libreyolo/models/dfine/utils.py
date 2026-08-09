@@ -14,6 +14,9 @@ from PIL import Image
 
 from ...postprocess.dfine import postprocess  # noqa: F401  (backward-compatible re-export)
 from ...utils.image_loader import ImageInput, ImageLoader
+from ...preprocess.dfine import (  # noqa: F401  (moved; re-exported for backward compatibility)
+    preprocess_numpy,
+)
 
 
 def unwrap_dfine_checkpoint(checkpoint: Mapping | Any):
@@ -39,21 +42,6 @@ def unwrap_dfine_checkpoint(checkpoint: Mapping | Any):
     return checkpoint
 
 
-def preprocess_numpy(
-    img_rgb_hwc: np.ndarray,
-    input_size: int = 640,
-) -> Tuple[np.ndarray, float]:
-    """Preprocess an RGB HWC uint8 array to D-FINE input layout.
-
-    Plain square resize to ``(input_size, input_size)``, no letterbox, no
-    ImageNet normalization — just ``uint8 / 255``. Ratio is always 1.0
-    because there's no padding.
-    """
-    img_resized = Image.fromarray(img_rgb_hwc).resize(
-        (input_size, input_size), Image.Resampling.BILINEAR
-    )
-    arr = np.array(img_resized, dtype=np.float32) / 255.0
-    return arr.transpose(2, 0, 1), 1.0
 
 
 def preprocess_image(

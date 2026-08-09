@@ -158,8 +158,49 @@ class FOMOTrainer(BaseTrainer):
 
         return self._loss_fn(logits, targets.long())
 
+    def cuda_graph_train_spec(self):
+        """Capture spec: graph the whole network, keep the loss eager.
+
+        FOMO's forward is a plain convolutional stack over images only, so
+        the network is static-shaped for a fixed batch; the centroid loss
+        (which reads the label grid) stays eager. The grid-shape check in
+        ``on_forward`` is reproduced here so a mismatched ``imgsz`` still
+        fails loudly instead of capturing a wrong graph.
+        """
+        from libreyolo.training.cuda_graph import (
+            CudaGraphTrainSpec,
+            GraphableNetwork,
+        )
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "point")
+        if task != "point":
+            return None
+        if not isinstance(self.model, torch.nn.Module):
+            return None
+        if getattr(self, "_loss_fn", None) is None:
+            return None
+
+        network = GraphableNetwork(self.model)
+
+        def assemble(flat, imgs, targets, polygons=None):
+            logits = network.rebuild(flat)
+            if logits.shape[-2:] != targets.shape[-2:]:
+                raise ValueError(
+                    f"Model output grid {tuple(logits.shape[-2:])} does not "
+                    f"match target grid {tuple(targets.shape[-2:])}."
+                )
+            return self._loss_fn(logits, targets.long())
+
+        return CudaGraphTrainSpec(network=network, assemble=assemble)
+
     def get_loss_components(self, outputs: Dict) -> Dict[str, float]:
         return {"ce": float(outputs.get("ce", 0.0))}
+
+    def validate_validation_loss_config(self) -> None:
+        # Accepted, but nothing to switch on: FOMOValidator always computes the
+        # loss and publishes it under the shared metrics/loss keys. Raising
+        # "not supported" here would be wrong, since it is.
+        return
 
     def _run_validation(
         self, epoch: int, *, save_plots: bool | None = None
@@ -185,8 +226,11 @@ class FOMOTrainer(BaseTrainer):
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
+                max_det=self.config.max_det,
+                eval_max_det=self.config.eval_max_det,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 save_plots=val_save_plots,

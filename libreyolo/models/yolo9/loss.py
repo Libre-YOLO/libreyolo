@@ -510,6 +510,7 @@ class YOLO9Loss:
         topk: int = 10,
         iou_factor: float = 6.0,
         cls_factor: float = 0.5,
+        distributed_normalize: bool = True,
     ):
         self.num_classes = num_classes
         self.reg_max = reg_max
@@ -524,6 +525,7 @@ class YOLO9Loss:
         self.topk = topk
         self.iou_factor = iou_factor
         self.cls_factor = cls_factor
+        self.distributed_normalize = distributed_normalize
 
         # Loss functions
         self.cls_loss = BCELoss()
@@ -563,20 +565,23 @@ class YOLO9Loss:
         if self.vec2box is None or self.vec2box.image_size != image_size:
             self._init_vec2box(image_size)
 
-    @staticmethod
-    def _global_cls_norm(targets_cls: Tensor) -> float:
-        """Global (DDP-reduced) positive count for loss normalization.
+    def _global_cls_norm(self, targets_cls: Tensor) -> float:
+        """Positive count for loss normalization.
 
         Multi-GPU training must divide by the global count so DDP's gradient
         averaging matches single-GPU on the same global batch (issue #484).
         Identical to ``max(targets_cls.sum(), 1)`` outside DDP. Shared by all
         yolo9 task losses so the normalizer contract lives in one place.
+        Rank-0-only validation explicitly selects the local path because it
+        cannot enter a collective while the other ranks wait at a barrier.
         """
-        return all_reduce_avg_scalar(targets_cls.sum())
+        if self.distributed_normalize:
+            return all_reduce_avg_scalar(targets_cls.sum())
+        return float(targets_cls.detach().float().sum().clamp_min(1.0).item())
 
     def __call__(
         self, predictions: List[Tensor], targets: Tensor
-    ) -> Tuple[Tensor, Dict[str, float]]:
+    ) -> Dict[str, Tensor | float]:
         """
         Compute YOLOv9 loss.
 
@@ -587,8 +592,8 @@ class YOLO9Loss:
                     Coordinates are normalized (0-1)
 
         Returns:
-            total_loss: Scalar loss tensor
-            loss_dict: Dict with individual loss values for logging
+            Dict containing the scalar total, weighted component tensors, and
+            logging values.
         """
         if self.vec2box is None:
             raise RuntimeError("Vec2Box not initialized. Call update_anchors() first.")

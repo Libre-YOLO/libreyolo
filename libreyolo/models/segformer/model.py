@@ -81,6 +81,9 @@ class LibreSegformer(BaseModel):
 
     FAMILY: ClassVar[str] = "segformer"
     FILENAME_PREFIX: ClassVar[str] = "LibreSegformer"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     WEIGHT_EXT: ClassVar[str] = ".pt"
     SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic",)
     DEFAULT_TASK: ClassVar[str] = "semantic"
@@ -490,7 +493,7 @@ class LibreSegformer(BaseModel):
         self.model.eval()
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        raise NotImplementedError("Export is not implemented for LibreSegformer yet.")
+        return super().export(format=format, **kwargs)
 
 
 __all__ = ["LibreSegformer", "preprocess_numpy"]

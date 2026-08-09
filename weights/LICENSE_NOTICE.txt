@@ -35,6 +35,22 @@ project the weights were derived from. Per-family summary:
              recoverable, so LibreYOLO1t ships as code only (bring your own
              tiny-yolov1.weights to convert).
 
+    Dome-DETR (LibreDOMEDETR{s,m,l}-{aitod,visdrone})  NOT REDISTRIBUTED
+             upstream: https://huggingface.co/RicePasteM/Dome-DETR
+             Not mirrored to the LibreYOLO organization. The upstream model
+             card carries no license field in its metadata, and its prose
+             simultaneously states the project is Apache-2.0 and that the
+             material is "for academic research purposes only". Those do not
+             agree, and the stricter reading is not a redistribution grant, so
+             the weight license is implied from the source repository rather
+             than stated. Until upstream sets an explicit license, download the
+             checkpoints from the link above and convert locally with
+             weights/convert_domedetr_weights.py. This follows the YOLO-NAS
+             precedent of linking rather than rehosting.
+             There is no COCO checkpoint for this family: only AI-TOD-V2
+             (9 classes) and VisDrone (12), hence the dataset suffix on every
+             canonical filename and the absence of a bare LibreDOMEDETRs.pt.
+
     YOLOv7   (LibreYOLO7b)                             MIT
              upstream: MultimediaTechLab/YOLO (Kin-Yiu Wong & Hao-Tang Tsui)
              The authors' MIT re-release, not WongKinYiu/yolov7 (GPL-3.0).
@@ -44,9 +60,173 @@ project the weights were derived from. Per-family summary:
              upstream: roboflow/rf-detr
              (backbone: facebookresearch/dinov2, Apache-2.0)
 
+    Faster R-CNN (LibreFasterRCNN{n,s,m,l})            BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official COCO checkpoints carry no per-object license file.
+             Rehosting uses BSD-3-Clause implied by the releasing project,
+             not a publisher-confirmed checkpoint grant. Every weight repo
+             ships the verbatim BSD text and states torchvision's warning that
+             pretrained-model terms may derive from training data and users
+             must determine permission for their use case.
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreFasterRCNN{n,s,m,l}
+
+    RetinaNet (LibreRetinaNet{r50,r50v2})               BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official COCO checkpoints carry no per-object license file.
+             Rehosting uses BSD-3-Clause implied by the releasing project,
+             not a publisher-confirmed checkpoint grant. Every weight repo
+             ships the verbatim BSD text and states torchvision's warning that
+             pretrained-model terms may derive from training data and users
+             must determine permission for their use case.
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreRetinaNet{r50,r50v2}
+    SSD300   (LibreSSD300)                            BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official COCO checkpoint carries no per-object license file.
+             Rehosting uses BSD-3-Clause implied by the releasing project and
+             repeats torchvision's pretrained-model/data warning. The VGG-16
+             backbone initialization traces to Oxford Visual Geometry Group
+             feature weights by Karen Simonyan and Andrew Zisserman under
+             CC BY 4.0; the model NOTICE preserves attribution and changes.
+             Public mirror: https://huggingface.co/LibreYOLO/LibreSSD300
+    Mask R-CNN (LibreMaskRCNNr50)                      BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             official checkpoint:
+               maskrcnn_resnet50_fpn_v2_coco-73cbd019.pth
+             official SHA-256:
+               73cbd0190fcbe3ba339921fbce2c3a0b6bb9126c9a133c85e43a2a8e060a109e
+             The checkpoint carries no per-object license file. Rehosting
+             uses BSD-3-Clause implied by the releasing project, not a
+             publisher-confirmed checkpoint grant. The weight repository
+             ships the verbatim BSD text and torchvision pretrained-model
+             caveat. Conversion adds metadata without changing learned tensors.
+             Public mirror: https://huggingface.co/LibreYOLO/LibreMaskRCNNr50
+    FCN      (LibreFCN{r50,r101})                      BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official COCO checkpoints carry no per-object license file.
+             Rehosting uses BSD-3-Clause implied by the releasing project,
+             not a publisher-confirmed checkpoint grant. Every weight repo
+             ships the verbatim BSD text and states torchvision's warning that
+             pretrained-model terms may derive from training data and users
+             must determine permission for their use case.
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreFCN{r50,r101}
+    CenterNet (LibreCenterNet{resdcn18,dla34})          MIT (implied)
+             upstream code and official COCO checkpoints:
+               xingyizhou/CenterNet at commit
+               4c50fd3a46bdf63dbf2082c5cbb3458d39579e6c (MIT)
+             Official checkpoint objects carry no standalone license file.
+             Rehosting uses MIT implied by the releasing project and the
+             maintainer-approved port brief, not a publisher-confirmed
+             checkpoint-specific grant. Every mirror ships the verbatim
+             CenterNet MIT license and repeats this caveat.
+             resdcn18 source SHA-256:
+               f9e413f91cdb235adbcb41c5c4052b8f7ff53999374048949789c29d6df18eaa
+             dla34 source SHA-256:
+               43bf4cc2efe00e02c1ae8484035b062a35543872d276c7dcfeb4db3e64203e4f
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreCenterNet{resdcn18,dla34}
+    FCOS       (LibreFCOSr50)                           BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official COCO checkpoint carries no per-object license file.
+             Rehosting uses BSD-3-Clause implied by the releasing project,
+             not a publisher-confirmed checkpoint grant. The weight repo
+             ships the verbatim BSD text and states torchvision's warning that
+             pretrained-model terms may derive from training data and users
+             must determine permission for their use case.
+             Public mirror: https://huggingface.co/LibreYOLO/LibreFCOSr50
+    AlexNet  (LibreAlexNetb-cls)                       BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official ImageNet-1K checkpoint has no per-object license
+             file. Rehosting uses BSD-3-Clause implied by the releasing
+             project, not a publisher-confirmed checkpoint grant. The weight
+             repo ships the verbatim BSD text and states torchvision's warning
+             that pretrained-model terms may derive from training data.
+             Public mirror: https://huggingface.co/LibreYOLO/LibreAlexNetb-cls
+    VGG      (LibreVGG{16,19,16bn,19bn}-cls)           BSD-3-Clause (implied)
+             upstream code: pytorch/vision at commit
+               10f68dbd78b9aa5cab9328f3b2e99cfb0b608122 (BSD-3-Clause)
+             The official ImageNet-1k V1 checkpoints carry no per-object
+             license file. Rehosting uses BSD-3-Clause implied by the
+             releasing project, not a publisher-confirmed checkpoint grant.
+             Every weight repo ships the verbatim BSD text and states
+             torchvision's warning that pretrained-model terms can depend on
+             training data and users must determine permission for their use
+             case. Conversion leaves every learned tensor unchanged and only
+             adds LibreYOLO checkpoint metadata.
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreVGG{16,19,16bn,19bn}-cls
+    DeepLabv3 (LibreDeepLabv3{r50,r101,mv3}-sem)        BSD-3-Clause (implied)
+             upstream code: pytorch/vision v0.26.0 at commit
+               336d36e8db990a905498c73933e35231876e28bc (BSD-3-Clause)
+             The official COCO checkpoints carry no per-object license file.
+             Rehosting uses BSD-3-Clause implied by the releasing project,
+             not a publisher-confirmed checkpoint grant. Every weight repo
+             ships the verbatim BSD text and states torchvision's warning that
+             pretrained-model terms may derive from training data and users
+             must determine permission for their use case. COCO annotations
+             are CC BY 4.0; source images retain individual Flickr terms.
+             Public mirrors: https://huggingface.co/LibreYOLO/LibreDeepLabv3{r50,r101,mv3}-sem
+    EfficientDet (LibreEfficientDet{d0,d1,d2,d3,d4})  Apache-2.0 (implied)
+             upstream: rwightman/efficientdet-pytorch 0.4.1 at commit
+               c6dff775a36cea0bf9b76c58e59f936411c5ce01
+             Official D0-D4 COCO checkpoints come from the upstream v0.1
+             GitHub release and retain every learned tensor unchanged. The
+             release assets carry no separate weight-license object, so
+             rehosting uses Apache-2.0 implied by the releasing project rather
+             than a publisher-confirmed checkpoint-specific grant. Every
+             weight repository ships the verbatim Apache-2.0 text and a NOTICE
+             stating this caveat.
+
+    Deformable DETR                                     Apache-2.0
+             (LibreDeformableDETR{r50ss,r50ssdc5,r50,
+              r50refine,r50twostage})
+             upstream code: fundamentalvision/Deformable-DETR
+             upstream weights: SenseTime/deformable-detr* on Hugging Face
+             Converted without changing learned tensors; the 91-column COCO
+             head is retained and mapped to contiguous COCO-80 at runtime.
+
+    DINO-DETR (LibreDINODETR{r50,r50s5,swinl})          Apache-2.0 (implied)
+             upstream code and weight release: IDEA-Research/DINO at commit
+               d84a491d41898b3befd8294d1cf2614661fc0953
+             Official files: checkpoint0011_4scale.pth,
+               checkpoint0011_5scale.pth, and
+               checkpoint0027_5scale_swin.pth from the authors' Google Drive.
+             The releasing repository declares Apache-2.0, but its checkpoint
+             files have no separate license file or metadata. Rehosting uses
+             Apache-2.0 implied by that repository declaration, not a
+             publisher-confirmed checkpoint grant. Every mirror ships the
+             verbatim repository license, an explanatory NOTICE, source and
+             converted SHA-256 hashes, and an exact provenance record. Learned
+             tensors are unchanged; conversion only adds checkpoint metadata.
+             See docs/provenance/dinodetr.md and convert with
+             weights/convert_dinodetr_weights.py.
+
     RT-DETR  (LibreRTDETR{r18,r34,r50,r50m,r101})      Apache-2.0
              upstream: lyuwenyu/RT-DETR
              (backbone: PaddlePaddle/PaddleClas ResNet_vd, Apache-2.0)
+
+    RT-DETRv2 OBB                                      Apache-2.0
+             (LibreRTDETRv2{n,s,m,l,x}-obb)
+             upstream code: RicePasteM/RiO-DETR at commit
+               22d5232a4e0df6ac4bc26ed1c8aac8b4060449c7
+             official DOTA 1.0 checkpoints: RicePasteM/RT-DETR-OBB at
+               revision f376e9dcedfb9a47a21ac71ef61ad99f8b545698
+             converted mirrors: LibreYOLO/LibreRTDETRv2{n,s,m,l,x}-obb
+             Each mirror carries the upstream Apache License 2.0 and NOTICE.
+             Convert a locally supplied official checkpoint with
+             weights/convert_rtdetrv2_weights.py; conversion preserves learned
+             tensors and adds only LibreYOLO checkpoint metadata.
+
+    DETR     (LibreDETR{r50,r50dc5,r101,r101dc5})      Apache-2.0
+             upstream: facebookresearch/detr, commit
+             29901c51d7fe8712168b8d0d64351170bc0f83e0.
+             Official COCO model-zoo tensors are unchanged; conversion only
+             adds LibreYOLO checkpoint metadata. Every Hugging Face weight
+             repository carries the upstream Apache-2.0 LICENSE and NOTICE.
 
     EoMT     (LibreEoMTl-sem, LibreEoMTl-seg,          MIT
               LibreEoMTl-seg-1280, LibreEoMT{s,b,l}-panoptic)
@@ -62,11 +242,27 @@ project the weights were derived from. Per-family summary:
              upstream: timm fb_in1k; arch facebookresearch/ConvNeXt (MIT)
              (ConvNeXt-V2 fcmae weights are CC-BY-NC and are NOT used)
 
+    DeiT     (LibreDeiT{t,s,b}-cls)                    Apache-2.0
+             upstream weights: timm *.fb_in1k at the immutable revisions and
+             SHA-256 digests recorded in docs/provenance/deit.md
+             architecture: facebookresearch/deit and timm (Apache-2.0)
+             Only plain patch-16 224px checkpoints are mirrored; distilled,
+             DeiT III, and 384px variants are NOT used.
+
     EfficientNetV2 (LibreEfficientNetV2{b0,b1,b2,b3}-cls)  Apache-2.0
              upstream: timm (.in1k); arch google/automl
 
     ResNet   (LibreResNet{18,34,50,101}-cls)           Apache-2.0
              upstream: timm (a1_in1k "ResNet Strikes Back" recipe), ImageNet-1k
+
+    ViT      (LibreViT{ti,s,b,l}-cls)                  Apache-2.0
+             upstream: timm AugReg ImageNet-21k pretraining + ImageNet-1k
+             fine-tuning; metadata wrap only, learned tensors unchanged
+
+    Swin     (LibreSwin{t,s,b,l}-cls)                  MIT
+             upstream: microsoft/Swin-Transformer via timm; t/s/b ImageNet-1k,
+             l ImageNet-22k pretraining to ImageNet-1k fine-tuning
+             Convert with weights/convert_swin_weights.py.
 
     CLIP     (LibreCLIP{b32,b16}-cls)                  MIT (weights)
              upstream: mlfoundations/open_clip LAION-2B checkpoints;
@@ -106,6 +302,54 @@ project the weights were derived from. Per-family summary:
              any-view checkpoints are not hosted. CC-BY-NC-4.0
              Large/Giant/Nested checkpoints are explicitly excluded.
 
+    MiDaS    (LibreMiDaS{s,l}-depth)                   upstream download only
+             upstream: isl-org/MiDaS release assets
+             midas_v21_small_256.pt SHA-256:
+               70d6b9c891758c67f974a6097fb0c608c7ee67fb81ac3e5588847d5596d56fca
+             dpt_large_384.pt SHA-256:
+               2f21e586477d90cb9624c7eef5df7891edca49a1c4795ee2cb631fd4daa6ca69
+             The releasing repository is MIT, but LibreYOLO does not bundle
+             or rehost these checkpoints while commercial-use clearance of
+             the mixed training datasets remains unresolved under ADR 0006.
+             Runtime auto-download uses the official GitHub release URLs,
+             verifies these hashes, safely loads the raw state dict, and adds
+             LibreYOLO metadata locally. See docs/provenance/midas.md.
+
+    MoGe-2  (LibreMoGe2{s,b,l}-normal)                 MIT
+             upstream / pinned revision / model.pt SHA-256:
+             Ruicheng/moge-2-vits-normal
+               679230677b4d282c6f304189a93e98e14f085902
+               79a16621928c2bf0ed04659218c55c01075e950507f40bb3332fb4c873d3e1dc
+             Ruicheng/moge-2-vitb-normal
+               54ad3a693e61907ea4633d13dec6ee682fa09419
+               16b8110e86d5dc5a849db120ca96ef3a223fd30b0c9146d1d81db504073da5f6
+             Ruicheng/moge-2-vitl-normal
+               b135031bae30b5ac2ae141a0e68717795ce38340
+               280741fd09bc3f403ccff9967784c2a391b52d2c0742ae3efdb21d9f90cc1a01
+             All three upstream Hugging Face model cards declare license: mit.
+             LibreYOLO downloads the exact pinned objects directly. Conversion
+             retains the encoder, shared neck, and normal-head tensors
+             unchanged, removes the unused point/mask/metric-scale heads, and
+             adds LibreYOLO checkpoint metadata. Convert with
+             weights/convert_moge2_weights.py.
+
+    HRNet   (LibreHRNet{w32,w48}-pose)                 MIT implied by release
+             upstream: leoxiaobin/deep-high-resolution-net.pytorch at
+             6f69e4676ad8d43d0d61b64b1b9726f0c369e7b1 (MIT).
+             Official source files:
+               pose_hrnet_w32_256x192.pth
+                 SHA-256 19bc083708bb8d873211e50d85d56344c10290c6e8b564c813fdde09645c4c1c
+               pose_hrnet_w48_384x288.pth
+                 SHA-256 95e0fec3194826d5e3f806ea89be68bbb84517b114c3a32b3058c56610b5ef61
+             The official model zoo distributes these files from the MIT
+             project but attaches no separate per-file license. LibreYOLO
+             therefore describes the weight license as implied by the
+             releasing project, not checkpoint-specific or independently
+             publisher-confirmed. Every mirror includes the verbatim upstream
+             MIT LICENSE and this limitation in NOTICE. Conversion preserves
+             all learned tensors and adds only checkpoint metadata. See
+             docs/provenance/hrnet.md for converted hashes and evidence.
+
     NAFNet   (LibreNAFNet{s,l}-restore)                no bundled weights
              upstream code: megvii-research/NAFNet (MIT)
              Some published GoPro-trained checkpoint files do not carry an
@@ -136,6 +380,16 @@ project the weights were derived from. Per-family summary:
                converter and a ready-to-run upload script are provided so the
                maintainer can host them once the tag is confirmed. Users may
                still convert BiRefNet_lite locally at their own discretion.
+
+    FeyNobg (LibreFeyNobgl-matte)                      Apache-2.0
+             upstream: feyninc/FeyNobg on Hugging Face (nobg library on
+             GitHub), code and weights explicitly Apache-2.0 (YAML license
+             tag) -> rehosted under the LibreYOLO org
+             (LibreYOLO/LibreFeyNobgl-matte), including
+             post-training-quantized fp8/nvfp4 variants
+             (LibreFeyNobgl-matte-{fp8,nvfp4}). Upstream training data is
+             not disclosed; only the released weights are redistributed.
+             Convert with weights/convert_feynobg_weights.py.
 
     SegFormer (LibreSegformer{b0,b1,b2,b3,b4,b5}-sem)  NON-COMMERCIAL weights
              upstream code: huggingface/transformers modeling_segformer.py
@@ -195,6 +449,16 @@ The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting
 third-party checkpoints locally are responsible for complying with the
 upstream license of those checkpoints.
+
+TEED and DexiNed edge specialists
+---------------------------------
+The TEED and DexiNed architecture source is MIT-licensed. LibreYOLO bundles
+the architecture ports and local checkpoint converters, but does not bundle,
+mirror, or auto-download the authors' released checkpoints. Those checkpoints
+were trained on BIPED, whose published dataset terms restrict use to
+non-commercial purposes. Converting a locally held checkpoint does not change
+its applicable terms. A checkpoint trained independently on compatibly
+licensed data may be distributed under the terms established by its trainer.
 
 Third-party SOURCE CODE bundled inside the LibreYOLO Python package
 (separate from weights) is disclosed in the top-level NOTICE file.

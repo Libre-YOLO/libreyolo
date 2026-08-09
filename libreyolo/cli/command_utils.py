@@ -7,6 +7,8 @@ from typing import Any, NoReturn, Optional, Set, Tuple, Union
 import click
 import typer
 
+from libreyolo.utils.image_size import normalize_imgsz
+
 from .errors import CLIError
 from .output import OutputHandler
 
@@ -80,6 +82,29 @@ def _coerce_input_size(value: Any) -> ImageSize:
     return int(value)
 
 
+def parse_imgsz_str(imgsz: str | int | None) -> int | tuple[int, int] | None:
+    """Parse an imgsz value from CLI string format.
+
+    Accepts:
+        "640"      -> 640
+        "480x640"  -> (480, 640)
+        "480X640"  -> (480, 640)
+        "480,640"  -> (480, 640), legacy alias
+        None       -> None
+        int        -> int (pass-through)
+    """
+    if imgsz is None:
+        return None
+    if isinstance(imgsz, str) and not imgsz.strip():
+        return None
+    return normalize_imgsz(
+        imgsz,
+        name="imgsz",
+        allow_string=True,
+        allow_comma=True,
+    )
+
+
 def get_loaded_model_input_size(
     loaded_model: Any,
     *,
@@ -115,11 +140,17 @@ def get_loaded_model_input_size(
 
 def resolve_model_or_exit(out: OutputHandler, model: str) -> str:
     """Resolve a model reference or fail with a consistent CLI error."""
+    from libreyolo.backends.triton import is_triton_model_url
     from .config import get_all_cli_names, is_known_weight_filename, resolve_model_name
     from .errors import suggest_key
 
     model_path = resolve_model_name(model)
-    if model_path != model or Path(model).exists() or is_known_weight_filename(model):
+    if (
+        is_triton_model_url(model)
+        or model_path != model
+        or Path(model).exists()
+        or is_known_weight_filename(model)
+    ):
         return model_path
 
     all_names = get_all_cli_names()

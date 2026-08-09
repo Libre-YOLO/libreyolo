@@ -165,6 +165,8 @@ class TransformerEncoderLayer(nn.Module):
     def with_pos_embed(tensor, pos_embed):
         if pos_embed is None:
             return tensor
+        if torch.jit.is_tracing():
+            return tensor + pos_embed
         pos_embed = pos_embed.to(device=tensor.device, dtype=tensor.dtype)
         return tensor + pos_embed
 
@@ -318,7 +320,11 @@ class HybridEncoder(nn.Module):
                     self.hidden_dim,
                     self.pe_temperature,
                 )
-                setattr(self, f"pos_embed{idx}", pos_embed)
+                # Non-persistent: the embedding is deterministic geometry, not
+                # checkpoint state. Registering it still lets exported modules
+                # follow ``module.to(device)`` instead of freezing a CPU tensor
+                # into the traced graph.
+                self.register_buffer(f"pos_embed{idx}", pos_embed, persistent=False)
                 self._cache_pos_embed(
                     (
                         idx,
@@ -337,6 +343,11 @@ class HybridEncoder(nn.Module):
             self._pos_embed_cache.popitem(last=False)
 
     def _get_pos_embed(self, enc_ind, h, w, src_flatten):
+        if torch.jit.is_tracing():
+            # Export is fixed-shape. Returning the registered buffer directly
+            # records a movable GetAttr; tracing ``.to(src.device)`` would bake
+            # the export machine's device into the saved graph.
+            return getattr(self, f"pos_embed{enc_ind}")
         key = (enc_ind, h, w, src_flatten.device, src_flatten.dtype)
         pos_embed = self._pos_embed_cache.get(key)
         if pos_embed is None:
@@ -364,16 +375,18 @@ class HybridEncoder(nn.Module):
         return pos_embed
 
     @staticmethod
-    def build_2d_sincos_position_embedding(w, h, embed_dim=256, temperature=10000.0):
+    def build_2d_sincos_position_embedding(
+        w, h, embed_dim=256, temperature=10000.0, device=None
+    ):
         """Build 2D sinusoidal position embedding."""
-        grid_w = torch.arange(int(w), dtype=torch.float32)
-        grid_h = torch.arange(int(h), dtype=torch.float32)
+        grid_w = torch.arange(int(w), dtype=torch.float32, device=device)
+        grid_h = torch.arange(int(h), dtype=torch.float32, device=device)
         grid_w, grid_h = torch.meshgrid(grid_w, grid_h, indexing="ij")
         assert embed_dim % 4 == 0, (
             "Embed dimension must be divisible by 4 for 2D sin-cos position embedding"
         )
         pos_dim = embed_dim // 4
-        omega = torch.arange(pos_dim, dtype=torch.float32) / pos_dim
+        omega = torch.arange(pos_dim, dtype=torch.float32, device=device) / pos_dim
         omega = 1.0 / (temperature**omega)
 
         out_w = grid_w.flatten()[..., None] @ omega[None]
@@ -394,7 +407,7 @@ class HybridEncoder(nn.Module):
                 src_flatten = proj_feats[enc_ind].flatten(2).permute(0, 2, 1)
                 if self.training or self.eval_spatial_size is None:
                     pos_embed = self.build_2d_sincos_position_embedding(
-                        w, h, self.hidden_dim, self.pe_temperature
+                        w, h, self.hidden_dim, self.pe_temperature, device=src_flatten.device
                     ).to(src_flatten.device)
                 else:
                     pos_embed = self._get_pos_embed(enc_ind, h, w, src_flatten)
@@ -661,6 +674,10 @@ class TransformerDecoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.eval_idx = eval_idx if eval_idx >= 0 else num_layers + eval_idx
+        # Set by ``emit_loss_outputs`` while training-time validation computes
+        # the criterion: eval otherwise scores only the ``eval_idx`` layer,
+        # which is not enough for the auxiliary-decoder loss terms.
+        self.emit_loss_outputs = False
 
     def forward(
         self,
@@ -700,7 +717,10 @@ class TransformerDecoder(nn.Module):
                 bbox_head[i](output) + inverse_sigmoid(ref_points_detach)
             )
 
-            if self.training:
+            # ``ref_points`` and ``ref_points_detach`` hold the same values, so
+            # the two appends below agree numerically; they differ only in the
+            # autograd graph, which validation does not build.
+            if self.training or self.emit_loss_outputs:
                 dec_out_logits.append(score_head[i](output))
                 if i == 0:
                     dec_out_bboxes.append(inter_ref_bbox)
@@ -787,6 +807,10 @@ class RTDETRTransformer(nn.Module):
         self.decoder = TransformerDecoder(
             hidden_dim, decoder_layer, num_decoder_layers, eval_idx
         )
+
+        # See ``TransformerDecoder.emit_loss_outputs``: eval assembles a
+        # two-key inference dict, and the criterion needs the aux entries.
+        self.emit_loss_outputs = False
 
         # Denoising
         self.num_denoising = num_denoising
@@ -920,13 +944,18 @@ class RTDETRTransformer(nn.Module):
         anchors = []
         for lvl, (h, w) in enumerate(spatial_shapes):
             grid_y, grid_x = torch.meshgrid(
-                torch.arange(end=h, dtype=dtype),
-                torch.arange(end=w, dtype=dtype),
+                torch.arange(end=h, dtype=dtype, device=device),
+                torch.arange(end=w, dtype=dtype, device=device),
                 indexing="ij",
             )
             grid_xy = torch.stack([grid_x, grid_y], -1)
-            valid_WH = torch.tensor([w, h]).to(dtype)
-            grid_xy = (grid_xy.unsqueeze(0) + 0.5) / valid_WH
+            # Normalise by the level's width/height as Python scalars. Building a
+            # [w, h] tensor here would copy from host memory, which CUDA graph
+            # capture rejects; scalar division is identical numerically.
+            grid_xy = (grid_xy.unsqueeze(0) + 0.5)
+            grid_xy = torch.stack(
+                [grid_xy[..., 0] / float(w), grid_xy[..., 1] / float(h)], dim=-1
+            )
             wh = torch.ones_like(grid_xy) * grid_size * (2.0**lvl)
             anchors.append(torch.concat([grid_xy, wh], -1).reshape(-1, h * w, 4))
 
@@ -1059,7 +1088,7 @@ class RTDETRTransformer(nn.Module):
 
         out = {"pred_logits": out_logits[-1], "pred_boxes": out_bboxes[-1]}
 
-        if self.training and self.aux_loss:
+        if (self.training or self.emit_loss_outputs) and self.aux_loss:
             out["aux_outputs"] = self._set_aux_loss(out_logits[:-1], out_bboxes[:-1])
             out["aux_outputs"].extend(
                 self._set_aux_loss([enc_topk_logits], [enc_topk_bboxes])

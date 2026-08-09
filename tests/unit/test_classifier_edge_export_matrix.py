@@ -21,8 +21,10 @@ pytestmark = pytest.mark.unit
         ("LibreResNet", "18"),
     ],
 )
-@pytest.mark.parametrize("format", ["ncnn", "tflite"])
+@pytest.mark.parametrize("format", ["torchscript", "openvino", "ncnn", "tflite"])
 def test_classifier_edge_export_parity(tmp_path, class_name, size, format):
+    if format == "openvino":
+        pytest.importorskip("openvino")
     if format == "ncnn" and (
         importlib.util.find_spec("pnnx") is None
         or importlib.util.find_spec("ncnn") is None
@@ -46,7 +48,15 @@ def test_classifier_edge_export_parity(tmp_path, class_name, size, format):
     )
     native = model.predict(image).probs.data
 
-    output = tmp_path / ("model_ncnn" if format == "ncnn" else "model.tflite")
+    output = (
+        tmp_path
+        / {
+            "torchscript": "model.torchscript",
+            "openvino": "model_openvino",
+            "ncnn": "model_ncnn",
+            "tflite": "model.tflite",
+        }[format]
+    )
     artifact = model.export(
         format=format,
         output_path=str(output),

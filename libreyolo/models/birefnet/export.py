@@ -5,8 +5,8 @@ convolution), which neither ONNX exporter knows how to translate out of the box.
 ONNX opset 19 defines a standard ``DeformConv`` operator, and torchvision's
 offset/mask layout matches the ONNX spec, so we register a symbolic that maps
 the op to ``DeformConv`` and export at a fixed resolution. ONNX Runtime's CPU
-provider does not currently implement this node, so CPU runtime parity remains
-experimental even though graph creation succeeds.
+provider does not currently implement this node, so CPU runtime parity cannot
+be measured there even though graph creation succeeds.
 """
 
 from __future__ import annotations

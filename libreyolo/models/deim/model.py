@@ -30,6 +30,9 @@ class LibreDEIM(BaseModel):
 
     FAMILY = "deim"
     FILENAME_PREFIX = "LibreDEIM"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES = {"n": 640, "s": 640, "m": 640, "l": 640, "x": 640}
     TRAIN_CONFIG = DEIMConfig
     val_preprocessor_class = DEIMValPreprocessor
@@ -40,6 +43,12 @@ class LibreDEIM(BaseModel):
         # DEIM-D-FINE intentionally shares the same architecture keys as D-FINE.
         # The factory resolves that ambiguity with model_family metadata or a
         # DEIM filename hint before falling back to registry order.
+        #
+        # Dome-DETR also descends from D-FINE and carries pre_bbox_head, but it
+        # is a different architecture (DeFE/MWAS/PAQI), not an ambiguous
+        # sibling, so reject it outright rather than leaving it to ordering.
+        if any(k.startswith("encoder.DeFE.") for k in weights_dict):
+            return False
         return any("decoder.pre_bbox_head." in k for k in weights_dict)
 
     @classmethod
@@ -119,6 +128,7 @@ class LibreDEIM(BaseModel):
             config=self.size,
             nb_classes=self.nb_classes,
             eval_spatial_size=(self.input_size, self.input_size),
+            train_from_scratch=self._is_scratch_build(),
         )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
@@ -222,9 +232,8 @@ class LibreDEIM(BaseModel):
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
         """
         from libreyolo.data import load_data_config
 
@@ -306,7 +315,22 @@ class LibreDEIM(BaseModel):
         return results
 
     def _load_weights(self, model_path: str):
-        if not Path(model_path).exists():
+        model_path = self._resolve_weights_path(model_path)
+        path = Path(model_path)
+        download_error = None
+        if not path.exists():
+            from ...utils.download import download_weights
+
+            try:
+                download_weights(model_path, self.size)
+            except Exception as exc:
+                download_error = exc
+        if not path.exists():
+            if download_error is not None:
+                raise FileNotFoundError(
+                    f"DEIM weights file not found: {model_path}\n"
+                    f"Auto-download failed: {download_error}"
+                ) from download_error
             raise FileNotFoundError(f"DEIM weights file not found: {model_path}")
 
         try:

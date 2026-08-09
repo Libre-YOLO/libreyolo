@@ -56,6 +56,40 @@ def tiny_siglip2(monkeypatch):
     )
 
 
+@pytest.fixture
+def tiny_siglip2_embed(monkeypatch):
+    """Tiny SigLIP2 loaded through the whole-image embed task."""
+    tiny = sig_nn.SigLIP2Config(
+        vision_width=64,
+        vision_layers=1,
+        vision_heads=2,
+        vision_intermediate=128,
+        image_size=32,
+        patch_size=16,
+        text_width=32,
+        text_layers=1,
+        text_heads=2,
+        text_intermediate=64,
+        vocab_size=256000,
+        max_position_embeddings=64,
+        projection_size=64,
+    )
+    monkeypatch.setitem(sig_nn.SIGLIP2_CONFIGS, "tiny", tiny)
+    monkeypatch.setattr(
+        LibreSigLIP2,
+        "INPUT_SIZES",
+        {**LibreSigLIP2.INPUT_SIZES, "tiny": tiny.image_size},
+    )
+    torch.manual_seed(0)
+    state = sig_nn.SigLIP2Model(tiny).state_dict()
+    return LibreSigLIP2(
+        model_path=state,
+        size="tiny",
+        task="embed",
+        device="cpu",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registry / detection (pure classmethods - no model)
 # ---------------------------------------------------------------------------
@@ -110,6 +144,10 @@ class TestRegistry:
         assert LibreSigLIP2.detect_size_from_filename("LibreSigLIP2b16-cls.pt") == "b16"
         assert LibreSigLIP2.detect_size_from_filename("LibreSigLIP2so400m-cls.pt") == "so400m"
         assert LibreSigLIP2.detect_task_from_filename("LibreSigLIP2b16-cls.pt") == "classify"
+        assert (
+            LibreSigLIP2.detect_size_from_filename("LibreSigLIP2b16-embed.pt")
+            is None
+        )
 
     def test_download_url(self):
         url = LibreSigLIP2.get_download_url("LibreSigLIP2b16-cls.pt")
@@ -280,6 +318,41 @@ class TestInference:
             tiny_siglip2._forward(torch.zeros(1, 3, 32, 32))
 
 
+class TestEmbedTask:
+    def test_image_text_shapes_and_norms(self, tiny_siglip2_embed):
+        image = Image.fromarray(
+            np.random.default_rng(8).integers(
+                0, 256, size=(48, 36, 3), dtype=np.uint8
+            )
+        )
+        result = tiny_siglip2_embed(image)
+        assert result.boxes is None
+        assert result.probs is None
+        assert result.embeddings.data.shape == (1, 64)
+        assert result.embeddings.data.dtype == torch.float32
+        assert torch.allclose(
+            result.embeddings.data.norm(dim=-1),
+            torch.ones(1),
+            atol=1e-5,
+        )
+
+        text = tiny_siglip2_embed.embed_text(["a red truck", "a dog"])
+        assert text.shape == (2, 64)
+        assert text.dtype == torch.float32
+        assert torch.allclose(text.norm(dim=-1), torch.ones(2), atol=1e-5)
+        assert tiny_siglip2_embed.embed_text("a red truck").shape == (1, 64)
+        assert tiny_siglip2_embed.embed_text([]).shape == (0, 64)
+        with pytest.raises(TypeError, match="string"):
+            tiny_siglip2_embed.embed_text(["a dog", 3])
+
+    def test_embed_verb_stacks(self, tiny_siglip2_embed):
+        image_a = Image.new("RGB", (30, 40), color=(200, 30, 10))
+        image_b = Image.new("RGB", (30, 40), color=(10, 30, 200))
+        vectors = tiny_siglip2_embed.embed([image_a, image_b], batch=2)
+        assert vectors.shape == (2, 64)
+        assert torch.allclose(vectors.norm(dim=-1), torch.ones(2), atol=1e-5)
+
+
 # ---------------------------------------------------------------------------
 # Train is out of scope; export is frozen-class ONNX only
 # ---------------------------------------------------------------------------
@@ -290,9 +363,49 @@ class TestScope:
         with pytest.raises(NotImplementedError):
             tiny_siglip2.train(data="anything")
 
-    def test_export_non_onnx_raises(self, tiny_siglip2):
+    @pytest.mark.parametrize(
+        "format",
+        ["torchscript", "executorch", "tensorrt", "openvino", "tflite"],
+    )
+    def test_classify_export_routes_to_shared_export(
+        self, tiny_siglip2, monkeypatch, format
+    ):
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return f"siglip2-classify.{format}"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+        assert tiny_siglip2.export(format, dynamic=False) == (
+            f"siglip2-classify.{format}"
+        )
+        assert captured == {"format": format, "opset": 17, "dynamic": False}
+
+    def test_classify_export_rejects_unvalidated_runtime(self, tiny_siglip2):
         with pytest.raises(NotImplementedError):
+            tiny_siglip2.export(format="ncnn")
+
+    def test_classify_export_rejects_multi_label_runtime(self, tiny_siglip2):
+        tiny_siglip2.multi_label = True
+        with pytest.raises(NotImplementedError, match="multi-label"):
             tiny_siglip2.export(format="torchscript")
+
+    @pytest.mark.parametrize("format", ["onnx", "tflite"])
+    def test_embed_export_routes_to_shared_export(
+        self, tiny_siglip2_embed, monkeypatch, format
+    ):
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return f"siglip2-embed.{format}"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+        assert tiny_siglip2_embed.export(format, dynamic=False) == (
+            f"siglip2-embed.{format}"
+        )
+        assert captured == {"format": format, "opset": 17, "dynamic": False}
 
     def test_frozen_onnx_roundtrip(self, tiny_siglip2, tmp_path):
         pytest.importorskip("onnx")

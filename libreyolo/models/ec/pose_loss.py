@@ -292,8 +292,9 @@ class ECPoseCriterion(nn.Module):
             unique, counts = torch.unique(ind, return_counts=True, dim=0)
             unique_sorted = unique[torch.argsort(counts, descending=True)]
             col_to_row = {}
-            for u in unique_sorted:
-                r, c = u[0].item(), u[1].item()
+            # One batched GPU->CPU transfer; upstream's per-element .item()
+            # loop costs two device syncs per unique pair.
+            for r, c in unique_sorted.tolist():
                 if r not in col_to_row:
                     col_to_row[r] = c
             rows = torch.tensor(list(col_to_row.keys()), device=ind.device).long()

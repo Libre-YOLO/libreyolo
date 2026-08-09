@@ -13,12 +13,14 @@ from ..command_utils import (
     get_user_provided_params,
     help_json_callback,
     load_model_or_exit,
+    parse_imgsz_str,
     resolve_model_or_exit,
 )
 from ..config import (
     apply_family_defaults,
     build_family_train_kwargs,
     detect_family_from_model_ref,
+    get_model_class,
     get_unsupported_train_params,
 )
 from ..output import OutputHandler
@@ -52,17 +54,45 @@ def _create_explicit_task_train_model(
     task: str | None,
     resume: bool | str,
     device: str,
+    pretrained: bool = True,
+    seed: int = 0,
 ):
-    """Instantiate task-specific train models that should start from architecture.
+    """Build a known architecture when training must not load a checkpoint.
 
-    Cross-task training can use detect checkpoints only as transfer weights.
-    Create the requested architecture first so task-specific heads exist before
-    training.
+    Scratch training covers every G0/G1/G2 family. The older transfer path below
+    remains limited to families that need a task-specific architecture before
+    loading their published checkpoint.
     """
+    from libreyolo.tasks import normalize_task
+
+    if pretrained is False and not resume:
+        from libreyolo.models.registry import group_of
+
+        model_cls = get_model_class(family)
+        if model_cls is not None and group_of(family) in {"g0", "g1", "g2"}:
+            size = model_cls.detect_size_from_filename(Path(model_path).name)
+            if size is None:
+                return None
+            train_task = (
+                normalize_task(task)
+                if task is not None
+                else model_cls.detect_task_from_filename(Path(model_path).name)
+                or model_cls.DEFAULT_TASK
+            )
+            scratch_kwargs = {}
+            variant = model_cls.detect_variant_from_filename(Path(model_path).name)
+            if variant is not None:
+                scratch_kwargs["weight_variant"] = variant
+            return model_cls._from_scratch(
+                size=size,
+                task=train_task,
+                device=device,
+                seed=seed,
+                **scratch_kwargs,
+            )
+
     if family not in {"yolo9", "rfdetr", "dfine"} or resume:
         return None
-
-    from libreyolo.tasks import normalize_task
 
     if family == "yolo9":
         from libreyolo.models.yolo9.model import LibreYOLO9 as model_cls
@@ -245,7 +275,7 @@ def train_cmd(
     # Training
     epochs: int = typer.Option(300, help="Training epochs"),
     batch: int = typer.Option(16, help="Batch size per device"),
-    imgsz: int = typer.Option(640, help="Training image size"),
+    imgsz: str = typer.Option("640", help="Training image size: 640 (square) or 480x640 (HxW)"),
     device: str = typer.Option("auto", help="Device: 0, cpu, mps, auto"),
     workers: int = typer.Option(4, help="Dataloader workers"),
     cache: str = typer.Option(
@@ -254,6 +284,17 @@ def train_cmd(
     seed: int = typer.Option(0, help="Random seed"),
     resume: str = typer.Option("", help="Resume training: true, or path to checkpoint"),
     amp: bool = typer.Option(True, help="Automatic Mixed Precision"),
+    amp_dtype: str = typer.Option(
+        "float16", help="CUDA AMP dtype: float16 or bfloat16"
+    ),
+    cuda_graph: bool = typer.Option(
+        False,
+        "--cuda-graph",
+        help=(
+            "Capture the training forward/backward into CUDA graphs "
+            "(single-GPU, supported families only; others run eager)"
+        ),
+    ),
     pretrained: bool = typer.Option(True, help="Use pretrained weights"),
     lora: bool = typer.Option(
         False,
@@ -310,6 +351,19 @@ def train_cmd(
     # Validation
     val: bool = typer.Option(True, help="Validate during training"),
     eval_interval: int = typer.Option(10, help="Validate every N epochs"),
+    max_det: int = typer.Option(
+        300, help="Maximum predictions per image after validation NMS"
+    ),
+    eval_max_det: Optional[int] = typer.Option(
+        None,
+        help="COCO evaluator cap (default: pycocotools AP@100)",
+    ),
+    faster_coco_eval: bool = typer.Option(
+        True,
+        "--faster-coco-eval/--no-faster-coco-eval",
+        help="Use the faster-coco-eval C++ backend for validation COCO metrics "
+        "(default: on when installed; falls back to pycocotools)",
+    ),
     save_plots: bool = typer.Option(
         False, help="Save final validation plots during training"
     ),
@@ -354,6 +408,15 @@ def train_cmd(
 
     # Parse tuple/list strings
     try:
+        from libreyolo.utils.amp import normalize_amp_dtype
+
+        amp_dtype = normalize_amp_dtype(amp_dtype)
+        if max_det < 1:
+            raise ValueError(f"max_det must be >= 1, got {max_det}")
+        if eval_max_det is not None and eval_max_det < 1:
+            raise ValueError(
+                f"eval_max_det must be >= 1, got {eval_max_det}"
+            )
         mosaic_scale_val = (
             ast.literal_eval(mosaic_scale)
             if isinstance(mosaic_scale, str)
@@ -404,6 +467,15 @@ def train_cmd(
             out, model=model, model_path=model_path, device=device
         )
         family = get_loaded_model_family(loaded_model)
+    if train_pretrained is False and resume_val:
+        from libreyolo.models.registry import group_of
+
+        if group_of(family) in {"g0", "g1", "g2"}:
+            exit_with_error(
+                out,
+                "config_unsupported",
+                "pretrained=false cannot be combined with resume.",
+            )
     if loaded_model is None:
         loaded_model = _create_explicit_task_train_model(
             family=family,
@@ -411,7 +483,13 @@ def train_cmd(
             task=normalized_task,
             resume=resume_val,
             device=device,
+            pretrained=train_pretrained,
+            seed=seed,
         )
+        if loaded_model is not None and train_pretrained is False:
+            # The architecture was seeded and built through _from_scratch().
+            # Do not rebuild it a second time in the public train wrapper.
+            train_pretrained = None
         if (
             loaded_model is not None
             and family == "yolo9"
@@ -459,16 +537,23 @@ def train_cmd(
 
     # All training params in CLI-facing names (single source of truth).
     # build_train_kwargs() maps these to TrainConfig field names automatically.
+    try:
+        parsed_imgsz = parse_imgsz_str(imgsz)
+    except ValueError as exc:
+        exit_with_error(out, "invalid_imgsz", str(exc))
+
     params = {
         "epochs": epochs,
         "batch": batch,
-        "imgsz": imgsz,
+        "imgsz": parsed_imgsz,
         "device": device,
         "workers": workers,
         "cache": cache_val,
         "seed": seed,
         "resume": resume_val,
         "amp": amp,
+        "amp_dtype": amp_dtype,
+        "cuda_graph": cuda_graph,
         "lora": lora,
         "freeze": freeze_val,
         "optimizer": optimizer,
@@ -497,6 +582,9 @@ def train_cmd(
         "ema": ema,
         "ema_decay": ema_decay,
         "eval_interval": eval_interval,
+        "max_det": max_det,
+        "eval_max_det": eval_max_det,
+        "faster_coco_eval": faster_coco_eval,
         "save_plots": save_plots,
         "patience": patience,
         "project": project,
@@ -550,6 +638,9 @@ def train_cmd(
             "lr0": params["lr0"],
             "momentum": params["momentum"],
             "scheduler": params["scheduler"],
+            "amp": params["amp"],
+            "amp_dtype": params["amp_dtype"],
+            "max_det": params["max_det"],
         }
         if params.get("freeze") is not None:
             resolved_config["freeze"] = params["freeze"]
@@ -576,6 +667,9 @@ def train_cmd(
                 "lr_drop": params["lr_drop"],
                 "ema": params["ema"],
                 "ema_decay": params["ema_decay"],
+                "amp": params["amp"],
+                "amp_dtype": params["amp_dtype"],
+                "max_det": params["max_det"],
                 "save_period": params["save_period"],
                 "lora": params["lora"],
             }
@@ -583,6 +677,8 @@ def train_cmd(
                 resolved_config["freeze"] = params["freeze"]
             if normalized_task is not None:
                 resolved_config["task"] = normalized_task
+        if params["eval_max_det"] is not None:
+            resolved_config["eval_max_det"] = params["eval_max_det"]
 
         data_out = {
             "valid": True,
@@ -622,9 +718,11 @@ def train_cmd(
     train_kwargs = build_family_train_kwargs(
         params, family, model_path=model_path, user_provided=user_provided
     )
-    train_kwargs["pretrained"] = train_pretrained  # Not in TrainConfig
+    if train_pretrained is not None:
+        train_kwargs["pretrained"] = train_pretrained  # Not in TrainConfig
     if family == "rfdetr":
-        train_kwargs.pop("pretrained", None)
+        if train_pretrained is not False:
+            train_kwargs.pop("pretrained", None)
         if not val and "val" in user_provided:
             out.progress(
                 "Warning: RF-DETR does not support disabling validation via val=false. Ignoring."

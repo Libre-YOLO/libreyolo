@@ -12,6 +12,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ...kernels.attention.sdpa import manual_attention_required
 
 
 class BertEmbeddings(nn.Module):
@@ -52,11 +53,33 @@ class BertSelfAttention(nn.Module):
 
     def forward(self, x, attn_mask):
         q, k, v = self._shape(self.query(x)), self._shape(self.key(x)), self._shape(self.value(x))
-        scores = (q @ k.transpose(-1, -2)) / math.sqrt(self.head_dim)
-        if attn_mask is not None:
-            scores = scores + attn_mask
-        probs = scores.softmax(-1)
-        ctx = (probs @ v).permute(0, 2, 1, 3).contiguous()
+        if manual_attention_required():
+            # Graph capture (ONNX, and the jit.trace-based TorchScript /
+            # CoreML / NCNN exporters) must see the primitive-op equation;
+            # eager inference keeps the fused kernels below.
+            scores = (q @ k.transpose(-1, -2)) / math.sqrt(self.head_dim)
+            if attn_mask is not None:
+                scores = scores + attn_mask
+            probs = scores.softmax(-1)
+            ctx = probs @ v
+        else:
+            mask = attn_mask
+            if mask is not None and mask.dtype == torch.bool:
+                # Grounding DINO's block-diagonal mask arrives boolean and the
+                # eager path above ADDS it (True -> +1, False -> +0), a weak
+                # bias rather than a hard -inf mask. SDPA reads a bool mask as
+                # "allowed", so cast to keep the additive semantics.
+                mask = mask.to(q.dtype)
+            ctx = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=mask,
+                dropout_p=0.0,
+                is_causal=False,
+                scale=1.0 / math.sqrt(self.head_dim),
+            )
+        ctx = ctx.permute(0, 2, 1, 3).contiguous()
         b, n = x.shape[0], x.shape[1]
         return ctx.view(b, n, -1)
 

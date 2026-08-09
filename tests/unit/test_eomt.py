@@ -316,11 +316,13 @@ class TestEoMTPredict:
         with pytest.raises(NotImplementedError):
             model.train(data="ade20k.yaml")
 
-    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    @pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino"])
     def test_exported_semantic_parity(self, fake_eomt_net, tmp_path, format):
         if format == "onnx":
             pytest.importorskip("onnx")
             pytest.importorskip("onnxruntime")
+        if format == "openvino":
+            pytest.importorskip("openvino")
 
         import numpy as np
 
@@ -335,8 +337,11 @@ class TestEoMTPredict:
             0, 256, size=(512, 512, 3), dtype=np.uint8
         )
         native = model.predict(image, imgsz=512).semantic_mask.data
-        suffix = ".onnx" if format == "onnx" else ".torchscript"
-        artifact = tmp_path / f"eomt_semantic{suffix}"
+        artifact = tmp_path / {
+            "onnx": "eomt_semantic.onnx",
+            "torchscript": "eomt_semantic.torchscript",
+            "openvino": "eomt_semantic_openvino",
+        }[format]
         model.export(
             format=format,
             output_path=str(artifact),
@@ -887,6 +892,7 @@ def test_val_segment_routes_to_base_val(fake_eomt_seg_net, monkeypatch):
         data="coco.yaml",
         imgsz=640,
         half=True,
+        amp_dtype="bf16",
         save_dir="runs/val/exp",
         save_plots=True,
     )
@@ -897,6 +903,7 @@ def test_val_segment_routes_to_base_val(fake_eomt_seg_net, monkeypatch):
     # half/save_dir/save_plots must reach BaseModel.val(), not be silently
     # swallowed by the outer LibreEoMT.val() signature.
     assert kwargs.get("half") is True
+    assert kwargs.get("amp_dtype") == "bfloat16"
     assert kwargs.get("save_dir") == "runs/val/exp"
     assert kwargs.get("save_plots") is True
 

@@ -63,6 +63,30 @@ def _summarize_result(result) -> tuple[str, str]:
     if gaze is not None:
         return "gaze", _plural(len(gaze), "face")
 
+    # Region embeddings may carry boxes; whole-image embeddings do not.
+    embeddings = getattr(result, "embeddings", None)
+    if embeddings is not None:
+        if getattr(result, "boxes", None) is None:
+            unit = "image"
+        else:
+            unit = (
+                "face"
+                if "face" in getattr(result, "names", {}).values()
+                else "region"
+            )
+        unknown_unit = f"unknown {unit}"
+        identities = getattr(result, "identities", None)
+        if identities is not None and len(identities) == len(embeddings):
+            known = list(dict.fromkeys(n for n in identities.name if n is not None))
+            unknown = sum(1 for n in identities.name if n is None)
+            if known:
+                label = ", ".join(known)
+                if unknown:
+                    label += f" (+{_plural(unknown, unknown_unit)})"
+                return "embed", label
+            return "embed", _plural(len(identities), unknown_unit)
+        return "embed", _plural(len(embeddings), unit)
+
     boxes = getattr(result, "boxes", None)
     if boxes is not None:
         n = len(boxes)
@@ -149,6 +173,14 @@ def _resolve_download_url(name: str) -> str | None:
     from libreyolo.models.base.model import BaseModel
 
     filename = Path(resolve_model_name(name)).name
+
+    # The face-embedding family is ONNX-only and lives outside the model
+    # registry, so it publishes its download URLs directly.
+    from libreyolo.models.facerec.weights import FACEREC_WEIGHT_URLS
+
+    if filename in FACEREC_WEIGHT_URLS:
+        return FACEREC_WEIGHT_URLS[filename]
+
     classes = list(BaseModel._registry)
     rf = try_ensure_rfdetr()
     if rf is not None and rf not in classes:

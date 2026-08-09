@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from ..postprocess.slicing import slice_batch_outputs
 from .base import BaseValidator
 from .config import ValidationConfig
+from .loss import ValidationLossMixin
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ _N_VAL_SAMPLES = 8  # maximum sample images stored for visualisation
 
 if TYPE_CHECKING:
     from libreyolo.models.base import BaseModel
+    from .loss import ValidationLossAdapter
 
 
 def val_collate_fn(batch):
@@ -32,7 +34,7 @@ def val_collate_fn(batch):
     return imgs, targets, img_infos, img_ids
 
 
-class DetectionValidator(BaseValidator):
+class DetectionValidator(ValidationLossMixin, BaseValidator):
     """
     Validator for object detection models.
 
@@ -42,10 +44,16 @@ class DetectionValidator(BaseValidator):
 
     task = "detect"
 
+    # Class-level default so instances built without __init__ (a pattern the
+    # test suite uses for narrow-scope validators) still resolve it.
+    _gt_coco_api = None
+
     def __init__(
         self,
         model: "BaseModel",
         config: Optional[ValidationConfig] = None,
+        *,
+        loss_adapter: Optional["ValidationLossAdapter"] = None,
         **kwargs,
     ) -> None:
         super().__init__(model, config, **kwargs)
@@ -59,6 +67,11 @@ class DetectionValidator(BaseValidator):
         self._coco_label_to_category_id: Optional[Dict[int, int]] = None
         self._yolo_coco_img_files: Optional[List[Path]] = None
         self._yolo_coco_label_files: Optional[List[Path]] = None
+        self._init_validation_loss(loss_adapter)
+        # Parsed ground truth, cached across runs of this instance. The GT is
+        # immutable for the validator's lifetime; only the evaluator built on
+        # top of it accumulates state and must stay per-run.
+        self._gt_coco_api = None
 
     # =========================================================================
     # Setup
@@ -70,14 +83,20 @@ class DetectionValidator(BaseValidator):
     def _coco_api_kwargs(self) -> Dict[str, Any]:
         return {}
 
-    def _resolve_imgsz(self) -> int:
+    def _resolve_imgsz(self) -> int | tuple[int, int]:
         """Return the validation image size, falling back to the model native size."""
-        if self.config.imgsz is not None:
-            return int(self.config.imgsz)
+        imgsz = self.config.imgsz
+        if imgsz is not None:
+            if isinstance(imgsz, (list, tuple)):
+                return (int(imgsz[0]), int(imgsz[1]))
+            return int(imgsz)
 
         get_input_size = getattr(self.model, "_get_input_size", None)
         if callable(get_input_size):
-            return int(get_input_size())
+            raw = get_input_size()
+            if isinstance(raw, (list, tuple)):
+                return (int(raw[0]), int(raw[1]))
+            return int(raw)
 
         return 640
 
@@ -100,7 +119,10 @@ class DetectionValidator(BaseValidator):
         actual_imgsz = self._resolve_imgsz()
         self.config.imgsz = actual_imgsz
         self._actual_imgsz = actual_imgsz
-        img_size = (actual_imgsz, actual_imgsz)
+        if isinstance(actual_imgsz, (list, tuple)):
+            img_size = tuple(actual_imgsz)
+        else:
+            img_size = (actual_imgsz, actual_imgsz)
 
         img_files = None
         label_files = None
@@ -169,6 +191,7 @@ class DetectionValidator(BaseValidator):
             self.class_names = None
 
         self.val_preproc = self.model._get_val_preprocessor(img_size=actual_imgsz)
+        self._ensure_validation_loss_target_capacity()
         dataset_kwargs = self._dataset_kwargs()
 
         # Determine dataset format
@@ -263,6 +286,10 @@ class DetectionValidator(BaseValidator):
             self._yolo_coco_img_files = list(dataset.img_files)
             self._yolo_coco_label_files = list(dataset.label_files)
 
+        # Both dataset classes are ImageCacheMixin; every construction branch
+        # above funnels through here, so this is the single cache switch.
+        dataset.enable_image_cache(getattr(self.config, "cache", False))
+
         use_cuda = torch.cuda.is_available() and self.device.type == "cuda"
         nw = self.config.num_workers
 
@@ -279,6 +306,26 @@ class DetectionValidator(BaseValidator):
         )
 
         return dataloader
+
+    def _ensure_validation_loss_target_capacity(self) -> None:
+        """Keep validation target padding at least as large as training's cap."""
+        adapter = getattr(self, "loss_adapter", None)
+        requested = (
+            getattr(adapter, "max_labels", None) if adapter is not None else None
+        )
+        if requested is None:
+            return
+        requested = int(requested)
+        if requested < 1:
+            raise ValueError("Validation-loss max_labels must be at least 1")
+        current = int(getattr(self.val_preproc, "max_labels", requested))
+        if requested > current:
+            self.val_preproc.max_labels = requested
+            logger.info(
+                "Raised validation target capacity from %d to %d for loss computation",
+                current,
+                requested,
+            )
 
     def _find_coco_annotation_file(self, data_path: Path) -> Optional[Path]:
         annotations_dir = data_path / "annotations"
@@ -299,10 +346,17 @@ class DetectionValidator(BaseValidator):
 
         return resolve_default_coco_image_dir(data_path, self.config.split, json_file)
 
+    def _coco_max_det(self) -> int:
+        """Resolve the opt-in evaluator cap without coupling it to NMS."""
+        value = getattr(self.config, "eval_max_det", None)
+        return 100 if value is None else int(value)
+
     def _init_metrics(self) -> None:
         from libreyolo.data import load_data_config
         from libreyolo.data.yolo_coco_api import YOLOCocoAPI
         from libreyolo.validation import COCOEvaluator
+
+        self._reset_validation_loss()
 
         if self.config.verbose:
             logger.info("Initializing COCO evaluator...")
@@ -326,11 +380,16 @@ class DetectionValidator(BaseValidator):
                     "Install with: pip install pycocotools"
                 )
 
-            coco_api = COCO(str(self._coco_annotation_file))
+            coco_api = self._gt_coco_api
+            if coco_api is None:
+                coco_api = COCO(str(self._coco_annotation_file))
+                self._gt_coco_api = coco_api
             self.coco_evaluator = COCOEvaluator(
                 coco_api,
                 iou_type="bbox",
                 label_to_category_id=self._coco_label_to_category_id,
+                max_det=self._coco_max_det(),
+                faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
             )
             if self.config.verbose:
                 logger.info(
@@ -387,15 +446,23 @@ class DetectionValidator(BaseValidator):
             [Path(p) for p in label_files] if label_files else None
         )
 
-        coco_api = YOLOCocoAPI(
-            images_dir=images_dir,
-            labels_dir=labels_dir,
-            class_names=class_names,
-            image_files=image_files,
-            label_files=yolo_label_files,
-            **self._coco_api_kwargs(),
+        coco_api = self._gt_coco_api
+        if coco_api is None:
+            coco_api = YOLOCocoAPI(
+                images_dir=images_dir,
+                labels_dir=labels_dir,
+                class_names=class_names,
+                image_files=image_files,
+                label_files=yolo_label_files,
+                **self._coco_api_kwargs(),
+            )
+            self._gt_coco_api = coco_api
+        self.coco_evaluator = COCOEvaluator(
+            coco_api,
+            iou_type="bbox",
+            max_det=self._coco_max_det(),
+            faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
         )
-        self.coco_evaluator = COCOEvaluator(coco_api, iou_type="bbox")
 
         if self.config.verbose:
             logger.info("COCO evaluator initialized with %d images", len(coco_api.imgs))
@@ -403,6 +470,19 @@ class DetectionValidator(BaseValidator):
     # =========================================================================
     # Inference pipeline
     # =========================================================================
+
+    def _update_batch_metrics(
+        self,
+        predictions: Any,
+        images: torch.Tensor,
+        targets: torch.Tensor,
+    ) -> None:
+        """Accumulate an opt-in family loss from this batch's raw predictions."""
+        self._accumulate_validation_loss(
+            predictions,
+            targets,
+            image_size=(int(images.shape[-2]), int(images.shape[-1])),
+        )
 
     def _preprocess_batch(
         self, batch: Tuple
@@ -673,8 +753,12 @@ class DetectionValidator(BaseValidator):
                 coords[:, [1, 3]] -= off_y
                 gt_boxes = (coords / r).astype(np.float32)
             else:
-                sx = self._actual_imgsz / orig_w
-                sy = self._actual_imgsz / orig_h
+                if isinstance(self._actual_imgsz, (list, tuple)):
+                    act_w, act_h = self._actual_imgsz[1], self._actual_imgsz[0]
+                else:
+                    act_w = act_h = self._actual_imgsz
+                sx = act_w / orig_w
+                sy = act_h / orig_h
                 gt = vgt_xyxy[:, :4].copy()
                 gt[:, [0, 2]] /= sx  # x1, x2
                 gt[:, [1, 3]] /= sy  # y1, y2
@@ -704,8 +788,12 @@ class DetectionValidator(BaseValidator):
                 coords[:, [1, 3]] -= off_y
                 gt_boxes = (coords / r).astype(np.float32)
             else:
-                sx = self._actual_imgsz / orig_w
-                sy = self._actual_imgsz / orig_h
+                if isinstance(self._actual_imgsz, (list, tuple)):
+                    act_w, act_h = self._actual_imgsz[1], self._actual_imgsz[0]
+                else:
+                    act_w = act_h = self._actual_imgsz
+                sx = act_w / orig_w
+                sy = act_h / orig_h
                 gt = vgt[:, :4].copy()
                 gt[:, [0, 2]] /= sx  # x1, x2
                 gt[:, [1, 3]] /= sy  # y1, y2
@@ -792,7 +880,11 @@ class DetectionValidator(BaseValidator):
                 if "(B)" in k and not k.startswith("speed/")
             }
         else:
-            bm = {k: v for k, v in metrics.items() if not k.startswith("speed/")}
+            bm = {
+                k: v
+                for k, v in metrics.items()
+                if not k.startswith(("speed/", "metrics/loss"))
+            }
 
         # Inject per-IoU-threshold P/R; fallback to aggregate P/R when unavailable
         bm["p50-95"] = bm.get("metrics/precision", 0.0)
@@ -880,8 +972,11 @@ class DetectionValidator(BaseValidator):
             save_json = str(self.save_dir / "predictions.json")
 
         coco_metrics = self.coco_evaluator.compute(save_json=save_json)
+        # Provenance for callers (surfaced as model.last_eval_backend).
+        # getattr: tests substitute lightweight evaluator stubs.
+        self.eval_backend = getattr(self.coco_evaluator, "last_backend", None)
 
-        return {
+        metrics = {
             "metrics/precision": coco_metrics["precision"],
             "metrics/recall": coco_metrics["recall"],
             "metrics/mAP50-95": coco_metrics["mAP"],
@@ -897,10 +992,14 @@ class DetectionValidator(BaseValidator):
             "metrics/AR1": coco_metrics["AR1"],
             "metrics/AR10": coco_metrics["AR10"],
             "metrics/AR100": coco_metrics["AR100"],
+            "metrics/AR_max_det": coco_metrics["AR_max_det"],
+            "metrics/max_det": coco_metrics["max_det"],
             "metrics/AR_small": coco_metrics["AR_small"],
             "metrics/AR_medium": coco_metrics["AR_medium"],
             "metrics/AR_large": coco_metrics["AR_large"],
         }
+        metrics.update(self._validation_loss_metrics())
+        return metrics
 
 
 class SegmentationValidator(DetectionValidator):
@@ -963,6 +1062,8 @@ class SegmentationValidator(DetectionValidator):
             self.bbox_evaluator.coco_gt,
             iou_type="segm",
             label_to_category_id=self._coco_label_to_category_id,
+            max_det=self._coco_max_det(),
+            faster_coco_eval=getattr(self.config, "faster_coco_eval", False),
         )
 
     def _update_metrics(
@@ -1057,6 +1158,9 @@ class SegmentationValidator(DetectionValidator):
 
         bbox = self.bbox_evaluator.compute(save_json=bbox_json)
         mask = self.mask_evaluator.compute(save_json=mask_json)
+        # Provenance for callers (surfaced as model.last_eval_backend).
+        # getattr: tests substitute lightweight evaluator stubs.
+        self.eval_backend = getattr(self.bbox_evaluator, "last_backend", None)
 
         return {
             "metrics/mAP50-95": mask["mAP"],
@@ -1068,6 +1172,8 @@ class SegmentationValidator(DetectionValidator):
             "metrics/AR1": mask["AR1"],
             "metrics/AR10": mask["AR10"],
             "metrics/AR100": mask["AR100"],
+            "metrics/AR_max_det": mask["AR_max_det"],
+            "metrics/max_det": mask["max_det"],
             "metrics/AR_small": mask["AR_small"],
             "metrics/AR_medium": mask["AR_medium"],
             "metrics/AR_large": mask["AR_large"],

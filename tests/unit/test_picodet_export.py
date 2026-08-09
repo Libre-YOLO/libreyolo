@@ -76,9 +76,13 @@ def test_export_torchscript_runs():
         torch.testing.assert_close(y, native, rtol=1e-4, atol=1e-4)
 
 
-def test_export_ncnn_raw_parity(tmp_path):
-    pytest.importorskip("pnnx")
-    pytest.importorskip("ncnn")
+@pytest.mark.parametrize("format", ["openvino", "ncnn"])
+def test_export_edge_raw_parity(tmp_path, format):
+    if format == "openvino":
+        pytest.importorskip("openvino")
+    if format == "ncnn":
+        pytest.importorskip("pnnx")
+        pytest.importorskip("ncnn")
     from libreyolo import LibrePICODET, LibreYOLO
 
     torch.manual_seed(0)
@@ -91,11 +95,18 @@ def test_export_ncnn_raw_parity(tmp_path):
     model.model.head.export = False
 
     artifact = model.export(
-        format="ncnn",
+        format=format,
         imgsz=96,
         dynamic=False,
-        output_path=str(tmp_path / "picodet.ncnn"),
+        output_path=str(tmp_path / f"picodet.{format}"),
     )
     backend = LibreYOLO(artifact, device="cpu")
     actual = backend._run_inference(tensor.numpy())[0]
     np.testing.assert_allclose(actual, native, rtol=1e-3, atol=1e-3)
+    if format == "openvino":
+        image = np.random.default_rng(47).integers(
+            0, 256, size=(72, 96, 3), dtype=np.uint8
+        )
+        result = backend.predict(image, conf=0.99)
+        assert result.boxes is not None
+        assert result.orig_shape == (72, 96)

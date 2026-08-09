@@ -162,6 +162,7 @@ class LibreDFINEModel(nn.Module):
         eval_spatial_size: tuple[int, int] | None = (640, 640),
         activation: str = "relu",
         enable_mask_head: bool = False,
+        train_from_scratch: bool = False,
     ):
         super().__init__()
         if config not in SIZE_CONFIGS:
@@ -182,9 +183,9 @@ class LibreDFINEModel(nn.Module):
             name=cfg["backbone"],
             use_lab=cfg["use_lab"],
             return_idx=return_idx,
-            freeze_stem_only=cfg["freeze_stem_only"],
-            freeze_at=cfg["freeze_at"],
-            freeze_norm=cfg["freeze_norm"],
+            freeze_stem_only=False if train_from_scratch else cfg["freeze_stem_only"],
+            freeze_at=-1 if train_from_scratch else cfg["freeze_at"],
+            freeze_norm=False if train_from_scratch else cfg["freeze_norm"],
             pretrained=False,
         )
         self.encoder = HybridEncoder(

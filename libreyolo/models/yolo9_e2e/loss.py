@@ -30,6 +30,7 @@ class YOLO9E2ELoss:
         topk_one: int = 1,
         iou_factor: float = 6.0,
         cls_factor: float = 0.5,
+        distributed_normalize: bool = True,
     ):
         self.dense_loss = YOLO9Loss(
             num_classes=num_classes,
@@ -43,6 +44,7 @@ class YOLO9E2ELoss:
             topk=topk_many,
             iou_factor=iou_factor,
             cls_factor=cls_factor,
+            distributed_normalize=distributed_normalize,
         )
         self.exclusive_loss = YOLO9Loss(
             num_classes=num_classes,
@@ -56,6 +58,7 @@ class YOLO9E2ELoss:
             topk=topk_one,
             iou_factor=iou_factor,
             cls_factor=cls_factor,
+            distributed_normalize=distributed_normalize,
         )
 
     def update_anchors(self, image_size: List[int]):

@@ -32,7 +32,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
+import stat
+import time
 import tempfile
 from pathlib import Path
 from typing import Any, Optional, Tuple
@@ -80,7 +83,7 @@ def _candidate_tensor_dicts(loaded: Any):
     if isinstance(ema_state, dict):
         # mmengine ExpMomentumEMA prefixes module params with "module.".
         yield {
-            k[len("module."):]: v
+            k[len("module.") :]: v
             for k, v in ema_state.items()
             if k.startswith("module.")
         } or ema_state
@@ -99,12 +102,12 @@ def _normalize_tensor_dict(candidate: dict) -> dict[str, torch.Tensor]:
     for prefix in ("module.", "_orig_mod."):
         if any(k.startswith(prefix) for k in state):
             state = {
-                (k[len(prefix):] if k.startswith(prefix) else k): v
+                (k[len(prefix) :] if k.startswith(prefix) else k): v
                 for k, v in state.items()
             }
     # Some redistributions nest weights under a ``model.model.`` prefix.
     if all(k.startswith("model.model.") for k in state):
-        state = {k[len("model.model."):]: v for k, v in state.items()}
+        state = {k[len("model.model.") :]: v for k, v in state.items()}
     return state
 
 
@@ -455,7 +458,11 @@ def _wrap_claim(
     source: Path,
 ) -> Optional[Tuple[dict, str, str, str, str]]:
     """Build ``(wrapped, family, prefix, size, task)`` for a resolved claim."""
-    size = cls.detect_size(converted) or cls.detect_size_from_filename(source.name)
+    # Some Hugging Face assets are generically named ``model.safetensors``;
+    # their repository/cache directory is the only variant discriminator.
+    # Family parsers therefore receive the complete source path while their
+    # canonical regexes continue to work by searching within that string.
+    size = cls.detect_size(converted) or cls.detect_size_from_filename(str(source))
     if size is None:
         logger.warning(
             "Upstream %s checkpoint recognized but its size could not be "
@@ -478,12 +485,19 @@ def _wrap_claim(
         )
     nc = detected_nc or 80
     names = _checkpoint_names(loaded, nc)
+    if names is None:
+        names = cls.default_checkpoint_names(nc)
     extra_metadata: dict[str, Any] = {}
     if task == "restore":
         # Restore checkpoints use a single schema placeholder, not a semantic
         # class label. Foreign restoration releases normally carry no names.
         nc = 1
         names = {0: "image"}
+    if task == "depth":
+        # Dense depth checkpoints use a schema-only class slot. Foreign depth
+        # releases normally carry no names, so never fabricate ``class_0``.
+        nc = 1
+        names = {0: "depth"}
     if task == "pose":
         num_keypoints = None
         detect_keypoints = getattr(cls, "detect_num_keypoints", None)
@@ -628,8 +642,11 @@ def _try_rfdetr(loaded: Any) -> Optional[Tuple[dict, str, str, str, str]]:
     # encoder/decoder-ish keys) are not misclaimed.
     keys_lower = [k.lower() for k in state]
     is_rfdetr = any(
-        "dinov2" in k or "query_embed" in k or "enc_out_class_embed" in k for k in keys_lower
-    ) or ("class_embed.bias" in state and any(k.startswith("backbone.0") for k in state))
+        "dinov2" in k or "query_embed" in k or "enc_out_class_embed" in k
+        for k in keys_lower
+    ) or (
+        "class_embed.bias" in state and any(k.startswith("backbone.0") for k in state)
+    )
     if not is_rfdetr:
         return None
 
@@ -641,7 +658,9 @@ def _try_rfdetr(loaded: Any) -> Optional[Tuple[dict, str, str, str, str]]:
         )
         return None
 
-    task = "segment" if any(k.startswith("segmentation_head") for k in state) else "detect"
+    task = (
+        "segment" if any(k.startswith("segmentation_head") for k in state) else "detect"
+    )
 
     raw_nc = rfdetr_cls.detect_nb_classes(state)
     nc, names = _rfdetr_class_metadata(loaded, raw_nc)
@@ -672,6 +691,57 @@ def _canonical_path(source: Path, prefix: str, size: str, task: str) -> Path:
     suffix = task_to_suffix(task)
     task_part = f"-{suffix}" if suffix else ""
     return source.parent / f"{source.stem}-{prefix}{size}{task_part}.pt"
+
+
+def _atomic_torch_save(value: Any, path: Path, *, mode: int | None = None) -> None:
+    """Save a checkpoint without exposing a partially written zip archive."""
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    os.close(fd)
+    temporary = Path(temporary_name)
+    try:
+        torch.save(value, temporary)
+        if mode is not None:
+            os.chmod(temporary, mode)
+        _replace_tolerating_windows_sharing(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _replace_tolerating_windows_sharing(temporary: Path, path: Path) -> None:
+    """``os.replace`` with the one Windows semantic POSIX does not have.
+
+    On POSIX the rename always wins. On Windows it raises ``PermissionError``
+    (``WinError 5``) whenever any other handle holds the destination, which two
+    processes converting the same upstream checkpoint hit routinely: whoever
+    renames second collides with the reader the first one just unblocked. The
+    failure surfaced as a hard crash on a path whose whole purpose is to never
+    leave a half-written checkpoint behind.
+
+    Retry briefly, then concede. Conceding is correct rather than a fudge: both
+    writers derived the same conversion from the same source, so a destination
+    that already exists is the peer's identical result, and the caller's
+    contract (a complete checkpoint at ``path``) is satisfied either way.
+    """
+    last: OSError | None = None
+    for delay in (0.0, 0.02, 0.05, 0.1, 0.2):
+        if delay:
+            time.sleep(delay)
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError as exc:  # pragma: no cover - Windows only
+            last = exc
+    if path.exists():
+        logger.debug(
+            "Kept the concurrently written %s; this process could not replace "
+            "it (%s).",
+            path,
+            last,
+        )
+        return
+    raise last  # type: ignore[misc]
 
 
 def autoconvert_upstream_checkpoint(
@@ -705,7 +775,9 @@ def autoconvert_upstream_checkpoint(
             return None
 
     # Already a complete LibreYOLO v1.0 checkpoint — nothing to convert.
-    if isinstance(loaded, dict) and not validate_checkpoint_metadata(loaded, strict=False):
+    if isinstance(loaded, dict) and not validate_checkpoint_metadata(
+        loaded, strict=False
+    ):
         return None
 
     result = None
@@ -725,11 +797,22 @@ def autoconvert_upstream_checkpoint(
     wrapped, family, prefix, size, task = result
     out_path = _canonical_path(path, prefix, size, task)
 
+    # mkstemp uses owner-only permissions on POSIX. Preserve an existing
+    # conversion's mode, or inherit the source checkpoint's mode on first
+    # publication, so atomic replacement does not make shared weights private.
+    publication_mode = None
+    if os.name != "nt":
+        try:
+            mode_source = out_path if out_path.exists() else path
+            publication_mode = stat.S_IMODE(mode_source.stat().st_mode)
+        except OSError:
+            pass
+
     # Always (re)write the source-specific conversion. This keeps repeated loads
     # of the same source fresh while avoiding collisions with official weights
     # or other fine-tunes of the same family/size/task in the directory.
     try:
-        torch.save(wrapped, out_path)
+        _atomic_torch_save(wrapped, out_path, mode=publication_mode)
     except (OSError, RuntimeError) as exc:
         # Read-only source directory (e.g. a mounted cache). torch.save can
         # surface the failure as OSError (Python open) or RuntimeError (its

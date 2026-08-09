@@ -18,8 +18,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ...kernels.attention.ms_deform_attn import (
+    maybe_ms_deform_attn,
+    ms_deform_attn_available,
+    spatial_shapes_tensor,
+)
 from ..bert.nn import BertModel
 from ..swin.nn import SwinBackbone, SwinDims
+from ...kernels.attention.sdpa import manual_attention_required
 
 SPECIAL_TOKENS = [101, 102, 1012, 1029]  # BERT [CLS], [SEP], '.', '?'
 
@@ -59,6 +65,21 @@ def generate_masks_with_special_tokens_and_transfer_map(input_ids):
 
 
 def _msda(value, shapes_list, sampling_locations, attention_weights):
+    """Portable multi-scale deformable attention (classic Deformable-DETR layout).
+
+    The per-level loop below is the default and the export path; when the
+    optional accelerated ``ms_deform_attn`` slot resolves it takes over
+    (see ``libreyolo/kernels/attention/ms_deform_attn.py``).
+    """
+    if ms_deform_attn_available():
+        accelerated = maybe_ms_deform_attn(
+            value,
+            spatial_shapes_tensor(shapes_list, value.device),
+            sampling_locations,
+            attention_weights,
+        )
+        if accelerated is not None:
+            return accelerated
     b, _, nh, hd = value.shape
     _, nq, _, nl, npnt, _ = sampling_locations.shape
     value_list = value.split([h * w for h, w in shapes_list], dim=1)
@@ -101,11 +122,30 @@ class GDMultiheadAttention(nn.Module):
         def shape(t, lin):
             return lin(t).view(b, -1, self.num_heads, self.head_size).transpose(1, 2)
         ql, kl, vl = shape(q, self.query), shape(k, self.key), shape(v, self.value)
-        scores = (ql @ kl.transpose(-1, -2)) / math.sqrt(self.head_size)
-        if attention_mask is not None:
-            scores = scores + attention_mask
-        probs = scores.softmax(-1)
-        ctx = (probs @ vl).permute(0, 2, 1, 3).contiguous().view(b, -1, self.num_heads * self.head_size)
+        if manual_attention_required():
+            # Graph capture (ONNX, and the jit.trace-based TorchScript /
+            # CoreML / NCNN exporters) must see the primitive-op equation;
+            # eager inference keeps the fused kernels below.
+            scores = (ql @ kl.transpose(-1, -2)) / math.sqrt(self.head_size)
+            if attention_mask is not None:
+                scores = scores + attention_mask
+            ctx = scores.softmax(-1) @ vl
+        else:
+            mask = attention_mask
+            if mask is not None and mask.dtype == torch.bool:
+                # The eager path ADDS the mask (True -> +1, False -> +0); SDPA
+                # reads a bool mask as "allowed", so cast to stay additive.
+                mask = mask.to(ql.dtype)
+            ctx = F.scaled_dot_product_attention(
+                ql,
+                kl,
+                vl,
+                attn_mask=mask,
+                dropout_p=0.0,
+                is_causal=False,
+                scale=1.0 / math.sqrt(self.head_size),
+            )
+        ctx = ctx.permute(0, 2, 1, 3).contiguous().view(b, -1, self.num_heads * self.head_size)
         return self.out_proj(ctx)
 
 

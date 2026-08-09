@@ -6,8 +6,14 @@ See ``model.py`` for the ``LibreSAM(...)`` factory and ``base.py`` for the
 
 from __future__ import annotations
 
+from . import transformers_compat as _transformers_compat
 from .base import LibreSAMModel
 from .model import LibreEdgeTAM, LibreSAM, LibreSAM1, LibreSAM2, LibreSAM3
+
+# Makes the upstream vision attention capture-safe. Declines quietly if a
+# future transformers release restructures it, in which case SAM keeps working
+# and simply falls back to eager.
+_transformers_compat.apply()
 
 __all__ = [
     "LibreSAM",

@@ -17,10 +17,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INVENTORY_PATH = REPO_ROOT / "reports" / "export_inventory.json"
 DOCS_PATH = REPO_ROOT / "docs" / "export_support.md"
-MARKERS = {"validated": "✓", "experimental": "exp", "blocked": ""}
+MARKERS = {"validated": "✓", "available": "available", "blocked": ""}
 
 
-def _rows() -> tuple[list[str], list[str]]:
+def _rows() -> tuple[list[str], list[str], list[str], list[str]]:
     from libreyolo.export.support import EXPORT_FORMATS, get_support
 
     if not INVENTORY_PATH.exists():
@@ -35,6 +35,8 @@ def _rows() -> tuple[list[str], list[str]]:
         "| " + " | ".join(header) + " |",
         "| " + " | ".join(["---", "---", *(["---:"] * len(EXPORT_FORMATS))]) + " |",
     ]
+    validated_constraints = []
+    available_details = []
     blocked = []
     for family, metadata in inventory.items():
         for task in metadata["tasks"]:
@@ -47,13 +49,24 @@ def _rows() -> tuple[list[str], list[str]]:
                 + " |"
             )
             for fmt, entry in zip(EXPORT_FORMATS, entries):
+                if entry.tier == "validated" and entry.constraint:
+                    validated_constraints.append(
+                        f"- `{family}` / `{task}` / `{fmt}`: {entry.constraint}"
+                    )
+                if entry.tier == "available":
+                    detail = entry.reason
+                    if entry.constraint:
+                        detail = f"{detail} Constraint: {entry.constraint}"
+                    available_details.append(
+                        f"- `{family}` / `{task}` / `{fmt}`: {detail}"
+                    )
                 if entry.tier == "blocked":
                     blocked.append(f"- `{family}` / `{task}` / `{fmt}`: {entry.reason}")
-    return rows, blocked
+    return rows, validated_constraints, available_details, blocked
 
 
 def render_docs() -> str:
-    rows, blocked = _rows()
+    rows, validated_constraints, available_details, blocked = _rows()
     return "\n".join(
         [
             "# Export support",
@@ -61,8 +74,9 @@ def render_docs() -> str:
             "This document is generated from `libreyolo/export/support.py`.",
             "Do not edit the matrix by hand.",
             "",
-            "`✓` means parity-validated, `exp` means conversion is available without a",
-            "numeric parity guarantee, and an empty cell is blocked in preflight.",
+            "`✓` means parity-validated, `available` means the converter path is callable",
+            "with the validation context described below, and an empty cell is blocked",
+            "in preflight.",
             "",
             *rows,
             "",
@@ -73,7 +87,20 @@ def render_docs() -> str:
             "- Pose: keypoint L2 below 2 pixels at native resolution.",
             "- Classification: logits cosine above 0.999 and equal top-1 class.",
             "- Depth and restoration: PSNR above 40 dB against native output.",
+            "- Surface normals: mean angular error below 0.1 degree.",
             "- Point: peak locations equal within one output cell.",
+            "",
+            "## Validated constraints",
+            "",
+            "A check mark applies only under any constraint listed here.",
+            "",
+            *validated_constraints,
+            "",
+            "## Available combinations",
+            "",
+            "These converter paths are callable with the recorded validation context.",
+            "",
+            *available_details,
             "",
             "## Blocked combinations",
             "",

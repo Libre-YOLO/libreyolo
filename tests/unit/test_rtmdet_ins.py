@@ -141,7 +141,7 @@ def test_rtmdet_ins_rejects_detect_checkpoint_for_segment_task(tmp_path):
 def test_rtmdet_ins_training_and_export_are_explicitly_unsupported():
     wrapper = LibreRTMDet(None, size="t", nb_classes=2, device="cpu", task="segment")
     with pytest.raises(NotImplementedError, match="training"):
-        wrapper.train(data="unused.yaml", allow_experimental=True)
+        wrapper.train(data="unused.yaml")
 
     wrapper.model.head.export = True
     with pytest.raises(NotImplementedError, match="export"):

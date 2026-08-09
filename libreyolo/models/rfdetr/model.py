@@ -22,6 +22,7 @@ from .nn import (
 )
 from .config import RFDETRConfig
 from .imgsz import resolve_patch_window, validate_imgsz
+from ...utils.coco import COCO91_TO_COCO80
 from ...postprocess.rfdetr import postprocess
 from .utils import IMAGENET_MEAN, IMAGENET_STD, preprocess_numpy
 from .trainer import RFDETRTrainer
@@ -30,88 +31,9 @@ from ...validation.preprocessors import RFDETRValPreprocessor
 # COCO 91-class to 80-class mapping.
 # RF-DETR pretrained models output 91 COCO category IDs (1-90),
 # but YOLO-format labels use a contiguous 80-class scheme (0-79).
-_COCO91_TO_COCO80 = {
-    1: 0,
-    2: 1,
-    3: 2,
-    4: 3,
-    5: 4,
-    6: 5,
-    7: 6,
-    8: 7,
-    9: 8,
-    10: 9,
-    11: 10,
-    13: 11,
-    14: 12,
-    15: 13,
-    16: 14,
-    17: 15,
-    18: 16,
-    19: 17,
-    20: 18,
-    21: 19,
-    22: 20,
-    23: 21,
-    24: 22,
-    25: 23,
-    27: 24,
-    28: 25,
-    31: 26,
-    32: 27,
-    33: 28,
-    34: 29,
-    35: 30,
-    36: 31,
-    37: 32,
-    38: 33,
-    39: 34,
-    40: 35,
-    41: 36,
-    42: 37,
-    43: 38,
-    44: 39,
-    46: 40,
-    47: 41,
-    48: 42,
-    49: 43,
-    50: 44,
-    51: 45,
-    52: 46,
-    53: 47,
-    54: 48,
-    55: 49,
-    56: 50,
-    57: 51,
-    58: 52,
-    59: 53,
-    60: 54,
-    61: 55,
-    62: 56,
-    63: 57,
-    64: 58,
-    65: 59,
-    67: 60,
-    70: 61,
-    72: 62,
-    73: 63,
-    74: 64,
-    75: 65,
-    76: 66,
-    77: 67,
-    78: 68,
-    79: 69,
-    80: 70,
-    81: 71,
-    82: 72,
-    84: 73,
-    85: 74,
-    86: 75,
-    87: 76,
-    88: 77,
-    89: 78,
-    90: 79,
-}
+# Canonical definition lives in libreyolo.utils.coco — LW-DETR (RF-DETR's
+# ancestor) has the same 91-wide head. Aliased here for backward compat.
+_COCO91_TO_COCO80 = COCO91_TO_COCO80
 
 
 _RFDETR_UPSTREAM_WEIGHT_URLS = {
@@ -175,6 +97,9 @@ class LibreRFDETR(BaseModel):
     # Class-level metadata
     FAMILY: ClassVar[str] = "rfdetr"
     FILENAME_PREFIX: ClassVar[str] = "LibreRFDETR"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES: ClassVar[dict[str, int]] = {"n": 384, "s": 512, "m": 576, "l": 704}
     SEG_INPUT_SIZES: ClassVar[dict[str, int]] = {
         "n": 312,
@@ -200,10 +125,15 @@ class LibreRFDETR(BaseModel):
         "pose": POSE_INPUT_SIZES,
         "obb": INPUT_SIZES,
     }
-    EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset()
     TRAIN_CONFIG: ClassVar[type[RFDETRConfig]] = RFDETRConfig
     val_preprocessor_class: ClassVar[type[RFDETRValPreprocessor]] = RFDETRValPreprocessor
     TTA_FIXED_SIZE: ClassVar[bool] = True  # fixed square; multi-scale TTA is a no-op
+    # The eval forward (DINOv2 backbone + deformable-attention decoder) is
+    # pure tensor work with a static output structure; deformable attention
+    # uses atomics only in its backward, so the inference forward captures
+    # and replays bit-identically
+    # (tests/unit/test_cuda_graph_detr_families.py).
+    SUPPORTS_CUDA_GRAPH: ClassVar[bool] = True
 
     # CLI parameters intentionally ignored by native RF-DETR training.
     UNSUPPORTED_TRAIN_PARAMS: ClassVar[set[str]] = {
@@ -218,7 +148,6 @@ class LibreRFDETR(BaseModel):
         "nesterov",
         "hsv_prob",
         "translate",
-        "pretrained",
     }
 
     # =========================================================================
@@ -227,6 +156,51 @@ class LibreRFDETR(BaseModel):
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
+        # Vanilla DETR has a top-level query table and stock packed
+        # MultiheadAttention projections. RF-DETR's historical discriminator is
+        # intentionally broad, so reject this exact sibling signature first.
+        if (
+            "query_embed.weight" in weights_dict
+            and "transformer.decoder.layers.0.multihead_attn.in_proj_weight"
+            in weights_dict
+            and "backbone.0.body.conv1.weight" in weights_dict
+        ):
+            return False
+
+        # The original Deformable DETR shares generic transformer/query/head
+        # names with RF-DETR. Its ResNet body plus native deformable-attention
+        # key hierarchy is a distinct core family and must never reach the
+        # broad descendant marker test below.
+        if (
+            "backbone.0.body.conv1.weight" in weights_dict
+            and "transformer.encoder.layers.0.self_attn.sampling_offsets.weight"
+            in weights_dict
+            and "input_proj.0.0.weight" in weights_dict
+            and "class_embed.0.weight" in weights_dict
+            and any(key.startswith("bbox_embed.0.") for key in weights_dict)
+        ):
+            return False
+
+        # LW-DETR is this architecture's ancestor and shares the decoder,
+        # projector, and two-stage head key names. Its plain-ViT encoder
+        # (patch_embed.proj + CAE q_bias) is absent from RF-DETR, whose DINOv2
+        # backbone nests under backbone.0.encoder.encoder.*. Reject explicitly:
+        # the broad marker list below would otherwise claim those checkpoints.
+        if (
+            "backbone.0.encoder.patch_embed.proj.weight" in weights_dict
+            and any(k.endswith(".attn.q_bias") for k in weights_dict)
+        ):
+            return False
+
+        # Dome-DETR is a D-FINE derivative whose only overlap with the broad
+        # marker list below is ``decoder.denoising_class_embed.weight``
+        # (matched by the "class_embed" token). D-FINE itself is saved from the
+        # same collision by registry order; Dome-DETR registers late because
+        # importing it pulls in models.dfine, so reject it on its own key
+        # rather than relying on ordering.
+        if any(k.startswith("encoder.DeFE.") for k in weights_dict):
+            return False
+
         keys_lower = [k.lower() for k in weights_dict]
         if any(
             "detr" in k
@@ -390,7 +364,10 @@ class LibreRFDETR(BaseModel):
             # detection/seg/etc. fall back to the small default.
             size = "x" if normalize_task(resolved_task) == "pose" else "s"
 
-        if isinstance(model_path, dict) and not model_path:
+        scratch_init = bool(kwargs.get("_scratch_init", False))
+        if (scratch_init and model_path is None) or (
+            isinstance(model_path, dict) and not model_path
+        ):
             weight_source = None
         elif normalize_task(resolved_task) == "pose" and model_path is None:
             weight_source = None
@@ -610,6 +587,10 @@ class LibreRFDETR(BaseModel):
             obb=self._is_obb,
             num_keypoints=self.num_keypoints,
         )
+
+    def _prepare_scratch_init(self) -> None:
+        self._weight_source = None
+        self._model_num_classes = self.nb_classes
 
     def _rebuild_for_new_classes(self, new_nc: int):
         """Rebuild the detector head for a new class count."""
@@ -1142,6 +1123,18 @@ class LibreRFDETR(BaseModel):
                 kwargs["imgsz"],
                 name="RF-DETR export imgsz",
             )
+        export_imgsz = kwargs.get("imgsz", self._get_input_size())
+        native_obb_canvas = export_imgsz in {384, (384, 384)}
+        if (
+            str(format).lower() == "executorch"
+            and self._is_obb
+            and not native_obb_canvas
+        ):
+            raise ValueError(
+                "RF-DETR OBB ExecuTorch export currently requires imgsz=384. "
+                "Other sizes retain an antialiased bicubic positional-embedding "
+                "resize that ExecuTorch 1.2 cannot lower."
+            )
         return super().export(format, opset=opset, **kwargs)
 
     def val(self, *args, workers: int = 0, **kwargs) -> Dict:
@@ -1221,9 +1214,8 @@ class LibreRFDETR(BaseModel):
             output_dir: Directory for training runs and checkpoints.
             resume: Checkpoint path, or True to resume the loaded checkpoint.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
         """
         output_path = Path(output_dir)
         train_kwargs = dict(kwargs)

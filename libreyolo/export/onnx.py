@@ -9,10 +9,14 @@ from importlib import metadata as importlib_metadata
 import torch
 
 _DETR_TUPLE_OUTPUT_FAMILIES = {
+    "deformable_detr",
+    "detr",
+    "dinodetr",
     "dfine",
     "deim",
     "deimv2",
     "ec",
+    "lwdetr",
     "rfdetr",
     "rtdetr",
     "rtdetrv2",
@@ -42,7 +46,11 @@ def _uses_dfine_style_export_wrapper(model_family) -> bool:
 
 def _requires_onnx_opset17(model_family) -> bool:
     """Whether the family needs opset 17 for ONNX auto-opset selection."""
-    return model_family in _DETR_TUPLE_OUTPUT_FAMILIES
+    return model_family in _DETR_TUPLE_OUTPUT_FAMILIES or model_family in {
+        "deit",
+        "midas",
+        "moge2",
+    }
 
 
 def _set_metadata(model_proto, metadata: dict) -> None:
@@ -150,6 +158,7 @@ def export_onnx(
     half: bool,
     metadata: dict,
     nms: bool = False,
+    deepstream: bool = False,
 ) -> str:
     """Export a PyTorch model to ONNX format.
 
@@ -159,7 +168,7 @@ def export_onnx(
         output_path: Destination file path for the .onnx file.
         opset: ONNX opset version.
         simplify: Run onnxsim graph simplification.
-        dynamic: Enable dynamic batch axis.
+        dynamic: Enable the format's supported dynamic axes.
         half: Whether the model/input are FP16.
         metadata: Dict of metadata to embed in the ONNX model
             (keys like model_family, model_size, nb_classes, names, imgsz, etc.).
@@ -167,6 +176,9 @@ def export_onnx(
             ``(batch, max_det, 6)`` detection tensor first, followed by the raw
             detector tensor used by LibreYOLO backends for native postprocess
             parity. Skip the segmentation-probe / family output-schema logic.
+        deepstream: When True, use the DeepStream-adapted schema for tasks with
+            an nvinfer post-processor. Raw-tensor tasks preserve their regular
+            ONNX output names and dynamic axes.
 
     Returns:
         The output_path string.
@@ -183,6 +195,33 @@ def export_onnx(
         raise ImportError(
             "ONNX export requires the 'onnx' package. "
             "Install with: uv sync --extra onnx  or  pip install onnx"
+        )
+
+    task = metadata.get("task")
+    deepstream_raw_outputs = False
+    if deepstream:
+        from .deepstream import deepstream_uses_raw_outputs
+
+        deepstream_raw_outputs = deepstream_uses_raw_outputs(task)
+
+    if deepstream and not deepstream_raw_outputs:
+        # Parser-backed and native nvinfer tasks use one adapted output.
+        # Raw-tensor tasks retain their normal ONNX names and dynamic axes
+        # below so applications can decode every tensor from metadata.
+        input_name = "input" if metadata.get("model_family") == "rfdetr" else "images"
+        return _export_onnx_graph(
+            nn_model,
+            dummy,
+            output_path=output_path,
+            opset=opset,
+            simplify=simplify,
+            half=half,
+            metadata=metadata,
+            input_names=[input_name],
+            output_names=["output"],
+            dynamic_axes=(
+                {input_name: {0: "batch"}, "output": {0: "batch"}} if dynamic else None
+            ),
         )
 
     if nms:
@@ -213,10 +252,10 @@ def export_onnx(
     # to output count heuristic for direct export_onnx() calls. For known
     # DETR detection families we already know the output schema, so skip
     # the probe forward pass entirely and reuse the count below.
-    task = metadata.get("task")
     model_family = metadata.get("model_family")
     is_seg = metadata.get("segmentation") == "true" or task == "segment"
     is_yolo9_pose = model_family == "yolo9" and task == "pose"
+    is_hrnet_pose = model_family == "hrnet" and task == "pose"
     is_rfdetr_pose = model_family == "rfdetr" and task == "pose"
     is_ec_pose = model_family == "ec" and task == "pose"
     is_yolonas_pose = model_family == "yolonas" and task == "pose"
@@ -226,17 +265,36 @@ def export_onnx(
     is_restore = task == "restore"
     is_matte = task == "matte"
     is_depth = task == "depth"
+    is_normal = task == "normal"
+    is_edge = task == "edge"
     is_gaze = task == "gaze"
+    is_mask_rcnn = model_family == "mask_rcnn"
+    is_faster_rcnn = model_family == "faster_rcnn"
+    is_retinanet = model_family == "retinanet"
+    is_ssd = model_family == "ssd"
+    is_fcos = model_family == "fcos"
     known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
     if (
         not is_seg
         and not known_detr_detection
+        and not is_mask_rcnn
+        and not is_faster_rcnn
+        and not is_retinanet
+        and not is_ssd
+        and not is_fcos
         and not is_restore
         and not is_matte
         and not is_depth
+        and not is_normal
+        and not is_edge
         and not is_semantic
         and not is_gaze
+        # Supersedes the narrower is_hrnet_pose guard: every pose family has
+        # its own output-name branch below, and probing here would misread a
+        # multi-tensor pose head (rfdetr-pose 3, yolonas-pose 4) as
+        # segmentation via num_outputs >= 3.
+        and task != "pose"
     ):
         num_outputs = _detect_num_outputs(nn_model, dummy)
         is_seg = num_outputs >= 3
@@ -247,7 +305,62 @@ def export_onnx(
             "detection-only in LibreYOLO."
         )
 
-    if is_semantic:
+    if is_mask_rcnn or is_faster_rcnn:
+        output_names = ["boxes", "scores", "labels"]
+        if is_mask_rcnn and task == "segment":
+            output_names.append("masks")
+        # Batch stays fixed at one, but the source spatial axes must remain
+        # dynamic. GeneralizedRCNNTransform performs the upstream min/max
+        # aspect resize in-graph; forcing a square canvas here would require
+        # an extra resize/letterbox and break non-square prediction parity.
+        dynamic_axes = (
+            {
+                "images": {2: "height", 3: "width"},
+                "boxes": {0: "detections"},
+                "scores": {0: "detections"},
+                "labels": {0: "detections"},
+            }
+            if dynamic
+            else None
+        )
+        if dynamic_axes is not None and "masks" in output_names:
+            dynamic_axes["masks"] = {
+                0: "detections",
+                2: "mask_height",
+                3: "mask_width",
+            }
+    elif is_retinanet:
+        output_names = ["output"]
+        dynamic_axes = (
+            {
+                "images": {2: "height", 3: "width"},
+                "output": {1: "anchors"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_fcos:
+        output_names = ["output"]
+        # FCOS preprocessing is outside the graph and preserves aspect ratio,
+        # so padded spatial dimensions vary with the source image.
+        dynamic_axes = (
+            {
+                "images": {0: "batch", 2: "height", 3: "width"},
+                "output": {0: "batch", 1: "anchors"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_ssd:
+        # One fixed-anchor tensor: decoded xyxy boxes followed by contiguous
+        # class probabilities, transposed to the standard detector layout.
+        output_names = ["output"]
+        dynamic_axes = (
+            {"images": {0: "batch"}, "output": {0: "batch"}}
+            if dynamic
+            else None
+        )
+    elif is_semantic:
         output_names = ["semantic_logits"]
         dynamic_axes = (
             {
@@ -271,6 +384,11 @@ def export_onnx(
             }
             if dynamic
             else None
+        )
+    elif is_hrnet_pose:
+        output_names = ["heatmaps"]
+        dynamic_axes = (
+            {"images": {0: "people"}, "heatmaps": {0: "people"}} if dynamic else None
         )
     elif is_classify:
         # Classification emits a single logits tensor (B, num_classes).
@@ -304,6 +422,19 @@ def export_onnx(
         output_names = ["depth"]
         dynamic_axes = (
             {"images": {0: "batch"}, "depth": {0: "batch"}} if dynamic else None
+        )
+    elif is_normal:
+        # Dense OpenCV-frame unit normals (B, 3, H, W) at the export canvas;
+        # backends resize, renormalize, and return HWC on the original canvas.
+        output_names = ["normal"]
+        dynamic_axes = (
+            {"images": {0: "batch"}, "normal": {0: "batch"}} if dynamic else None
+        )
+    elif is_edge:
+        # Fused edge probability map (B, 1, H, W) at the export canvas.
+        output_names = ["edges"]
+        dynamic_axes = (
+            {"images": {0: "batch"}, "edges": {0: "batch"}} if dynamic else None
         )
     elif is_yolo9_pose:
         output_names = ["predictions", "keypoints"]

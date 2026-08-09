@@ -43,6 +43,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 
+def _parse_imgsz(s: str | None) -> int | tuple[int, int] | None:
+    """Parse imgsz string: "640" -> 640, "480x640" -> (480, 640)."""
+    if s is None:
+        return None
+    if "x" in s.lower():
+        parts = s.lower().split("x", 1)
+        return (int(parts[0]), int(parts[1]))
+    return int(s)
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -90,9 +100,9 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--imgsz",
-        type=int,
+        type=str,
         default=None,
-        help="Input image size (square). Defaults to the model's built-in default.",
+        help="Input image size: 640 (square) or 480x640 (HxW). Defaults to the model's built-in default.",
     )
     p.add_argument(
         "--devices",
@@ -193,8 +203,9 @@ def train_yolo9(args: argparse.Namespace) -> None:
     )
     if args.nbs is not None:
         train_kwargs["nbs"] = args.nbs  # otherwise TrainConfig default (nbs=None, no cap) applies
-    if args.imgsz is not None:
-        train_kwargs["imgsz"] = args.imgsz
+    parsed_imgsz = _parse_imgsz(args.imgsz)
+    if parsed_imgsz is not None:
+        train_kwargs["imgsz"] = parsed_imgsz
 
     result = model.train(**train_kwargs)
 

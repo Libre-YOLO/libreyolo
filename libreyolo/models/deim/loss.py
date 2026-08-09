@@ -64,8 +64,10 @@ class DEIMCriterion(nn.Module):
         boxes_weight_format=None,
         share_matched_indices=False,
         mal_alpha=None,
+        distributed_normalize=True,
     ):
         super().__init__()
+        self.distributed_normalize = distributed_normalize
         self.num_classes = num_classes
         self.matcher = matcher
         self.weight_dict = weight_dict
@@ -334,8 +336,9 @@ class DEIMCriterion(nn.Module):
             count_sort_indices = torch.argsort(counts, descending=True)
             unique_sorted = unique[count_sort_indices]
             column_to_row = {}
-            for idx in unique_sorted:
-                row_idx, col_idx = idx[0].item(), idx[1].item()
+            # One batched GPU->CPU transfer; upstream's per-element .item()
+            # loop costs two device syncs per unique pair (~1,200/step).
+            for row_idx, col_idx in unique_sorted.tolist():
                 if row_idx not in column_to_row:
                     column_to_row[row_idx] = col_idx
             final_rows = torch.tensor(list(column_to_row.keys()), device=ind.device)
@@ -362,6 +365,20 @@ class DEIMCriterion(nn.Module):
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
+    def _normalizer(self, count: int, device: torch.device) -> float:
+        """Return the box-count divisor for training or rank-local validation.
+
+        Training averages the count across ranks so DDP's gradient averaging
+        matches single-GPU. Rank-0-only validation selects the local path
+        because it cannot enter a collective while the other ranks wait at the
+        validation barrier.
+        """
+        value = torch.as_tensor([count], dtype=torch.float, device=device)
+        if self.distributed_normalize and _is_dist_available_and_initialized():
+            torch.distributed.all_reduce(value)
+            return torch.clamp(value / _get_world_size(), min=1).item()
+        return torch.clamp(value, min=1).item()
+
     def forward(self, outputs, targets, **kwargs):
         outputs_without_aux = {k: v for k, v in outputs.items() if "aux" not in k}
 
@@ -387,25 +404,9 @@ class DEIMCriterion(nn.Module):
             indices_aux_list.append(indices_enc)
         indices_go = self._get_go_indices(indices, indices_aux_list)
 
-        num_boxes_go = sum(len(x[0]) for x in indices_go)
-        num_boxes_go = torch.as_tensor(
-            [num_boxes_go],
-            dtype=torch.float,
-            device=next(iter(outputs.values())).device,
-        )
-        if _is_dist_available_and_initialized():
-            torch.distributed.all_reduce(num_boxes_go)
-        num_boxes_go = torch.clamp(num_boxes_go / _get_world_size(), min=1).item()
-
-        num_boxes = sum(len(t["labels"]) for t in targets)
-        num_boxes = torch.as_tensor(
-            [num_boxes],
-            dtype=torch.float,
-            device=next(iter(outputs.values())).device,
-        )
-        if _is_dist_available_and_initialized():
-            torch.distributed.all_reduce(num_boxes)
-        num_boxes = torch.clamp(num_boxes / _get_world_size(), min=1).item()
+        device = next(iter(outputs.values())).device
+        num_boxes_go = self._normalizer(sum(len(x[0]) for x in indices_go), device)
+        num_boxes = self._normalizer(sum(len(t["labels"]) for t in targets), device)
 
         losses = {}
         for loss in self.losses:

@@ -54,6 +54,33 @@ def tiny_clip(monkeypatch):
     )
 
 
+@pytest.fixture
+def tiny_clip_embed(monkeypatch):
+    """Tiny CLIP loaded through the new whole-image embed task."""
+    tiny = clip_nn.CLIPConfig(
+        embed_dim=16,
+        image_size=32,
+        patch_size=16,
+        vision_width=64,
+        vision_layers=1,
+        text_width=32,
+        text_heads=2,
+        text_layers=1,
+    )
+    monkeypatch.setitem(clip_nn.CLIP_CONFIGS, "tiny", tiny)
+    monkeypatch.setattr(
+        LibreCLIP, "INPUT_SIZES", {**LibreCLIP.INPUT_SIZES, "tiny": tiny.image_size}
+    )
+    torch.manual_seed(0)
+    state = clip_nn.CLIPModel(tiny).state_dict()
+    return LibreCLIP(
+        model_path=state,
+        size="tiny",
+        task="embed",
+        device="cpu",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registry / detection (pure classmethods — no model)
 # ---------------------------------------------------------------------------
@@ -90,6 +117,7 @@ class TestRegistry:
         assert LibreCLIP.detect_size_from_filename("LibreCLIPb32-cls.pt") == "b32"
         assert LibreCLIP.detect_size_from_filename("LibreCLIPb16-cls.pt") == "b16"
         assert LibreCLIP.detect_task_from_filename("LibreCLIPb32-cls.pt") == "classify"
+        assert LibreCLIP.detect_size_from_filename("LibreCLIPb32-embed.pt") is None
 
     def test_download_url(self):
         url = LibreCLIP.get_download_url("LibreCLIPb32-cls.pt")
@@ -209,6 +237,93 @@ class TestInference:
             tiny_clip._forward(torch.zeros(1, 3, 32, 32))
 
 
+class TestEmbedTask:
+    def test_shape_dtype_norm_and_text_space(self, tiny_clip_embed):
+        image = Image.fromarray(
+            np.random.default_rng(4).integers(
+                0, 256, size=(40, 50, 3), dtype=np.uint8
+            )
+        )
+        result = tiny_clip_embed.predict(image)
+
+        assert result.boxes is None
+        assert result.probs is None
+        assert result.names == {}
+        assert result.embeddings.data.shape == (1, 16)
+        assert result.embeddings.data.dtype == torch.float32
+        assert torch.allclose(
+            result.embeddings.data.norm(dim=-1),
+            torch.ones(1),
+            atol=1e-5,
+        )
+
+        text = tiny_clip_embed.embed_text(["a cat", "a dog"])
+        assert text.shape == (2, 16)
+        assert text.dtype == torch.float32
+        assert torch.allclose(text.norm(dim=-1), torch.ones(2), atol=1e-5)
+        assert tiny_clip_embed.embed_text("a cat").shape == (1, 16)
+        assert tiny_clip_embed.embed_text([]).shape == (0, 16)
+        with pytest.raises(TypeError, match="string"):
+            tiny_clip_embed.embed_text(["a cat", 3])
+
+    def test_embed_verb_stacks_and_summary_is_vector_free(self, tiny_clip_embed):
+        image = Image.new("RGB", (40, 30), color=(30, 60, 90))
+        vectors = tiny_clip_embed.embed([image, image])
+        assert vectors.shape == (2, 16)
+        assert vectors.dtype == torch.float32
+
+        result = tiny_clip_embed(image)
+        assert result.summary() == [{"embedding_dim": 16}]
+        assert len(result.summary(embeddings=True)[0]["embedding"]) == 16
+
+    def test_plain_string_source_remains_an_image_path(self, tiny_clip_embed):
+        with pytest.raises(FileNotFoundError, match="Image file not found"):
+            tiny_clip_embed.predict("a caption that is not a path")
+
+    def test_gallery_enroll_and_identify_whole_image(self, tiny_clip_embed):
+        from libreyolo import Gallery
+
+        image = Image.new("RGB", (40, 30), color=(120, 20, 60))
+        gallery = Gallery(tiny_clip_embed)
+        assert gallery.enroll("reference", image) == 1
+
+        result = tiny_clip_embed(image, gallery=gallery, threshold=0.99)
+        assert result.identities.name == ["reference"]
+        assert float(result.identities.score[0]) == pytest.approx(1.0, abs=1e-5)
+
+        unknown = tiny_clip_embed(image, gallery=gallery, threshold=1.1)
+        assert unknown.identities.name == [None]
+        assert float(unknown.identities.score[0]) == pytest.approx(1.0, abs=1e-5)
+
+    def test_embed_kwargs_rejected_outside_embed_task(self, tiny_clip):
+        image = Image.new("RGB", (40, 30), color=(10, 20, 30))
+        with pytest.raises(ValueError, match="threshold= is only supported"):
+            tiny_clip(image, threshold=0.5)
+        with pytest.raises(ValueError, match="gallery= is only supported"):
+            tiny_clip(image, gallery=object())
+
+    def test_embed_task_rejects_augment(self, tiny_clip_embed):
+        image = Image.new("RGB", (40, 30), color=(10, 20, 30))
+        with pytest.raises(ValueError, match="augmentation"):
+            tiny_clip_embed(image, augment=True)
+
+    def test_factory_explicit_embed_uses_classify_artifact(
+        self, tiny_clip_embed, tmp_path
+    ):
+        from libreyolo import LibreYOLO
+
+        checkpoint = tmp_path / "clip_tiny.pt"
+        torch.save(tiny_clip_embed.model.state_dict(), checkpoint)
+        loaded = LibreYOLO(
+            str(checkpoint),
+            size="tiny",
+            task="embed",
+            device="cpu",
+        )
+        assert isinstance(loaded, LibreCLIP)
+        assert loaded.task == "embed"
+
+
 # ---------------------------------------------------------------------------
 # Train is out of scope; export is frozen-class ONNX only
 # ---------------------------------------------------------------------------
@@ -219,9 +334,45 @@ class TestScope:
         with pytest.raises(NotImplementedError):
             tiny_clip.train(data="anything")
 
-    def test_export_non_onnx_raises(self, tiny_clip):
+    @pytest.mark.parametrize(
+        "format",
+        ["torchscript", "executorch", "tensorrt", "openvino"],
+    )
+    def test_classify_export_routes_to_shared_export(
+        self, tiny_clip, monkeypatch, format
+    ):
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return f"clip-classify.{format}"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+        assert tiny_clip.export(format, dynamic=False) == f"clip-classify.{format}"
+        assert captured == {"format": format, "opset": 17, "dynamic": False}
+
+    @pytest.mark.parametrize("format", ["ncnn", "tflite"])
+    def test_classify_export_rejects_unvalidated_runtime(self, tiny_clip, format):
         with pytest.raises(NotImplementedError):
-            tiny_clip.export(format="torchscript")
+            tiny_clip.export(format=format)
+
+    @pytest.mark.parametrize("format", ["onnx", "tflite"])
+    def test_embed_export_routes_to_shared_export(
+        self, tiny_clip_embed, monkeypatch, format
+    ):
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return f"clip-embed.{format}"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+        if format == "tflite":
+            with pytest.raises(NotImplementedError, match="currently supports"):
+                tiny_clip_embed.export(format, dynamic=False)
+            return
+        assert tiny_clip_embed.export(format, dynamic=False) == f"clip-embed.{format}"
+        assert captured == {"format": format, "opset": 17, "dynamic": False}
 
     def test_frozen_onnx_roundtrip(self, tiny_clip, tmp_path):
         pytest.importorskip("onnx")

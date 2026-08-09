@@ -26,6 +26,9 @@ class LibreRTDETRv4(LibreDFINE):
     # D-FINE grew a segment task (D-FINE-seg mask head); RT-DETRv4 has no mask
     # head, so pin the inherited task surface back to detect-only.
     SUPPORTED_TASKS = ("detect",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     TASK_INPUT_SIZES = {}
     TRAIN_CONFIG = RTDETRv4Config
 
@@ -69,6 +72,7 @@ class LibreRTDETRv4(LibreDFINE):
             nb_classes=self.nb_classes,
             eval_spatial_size=(self.input_size, self.input_size),
             activation="silu",
+            train_from_scratch=self._is_scratch_build(),
         )
 
     @ddp_aware()
@@ -111,9 +115,8 @@ class LibreRTDETRv4(LibreDFINE):
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
             callbacks: Optional training callback or iterable of callbacks.
-            loggers: Optional built-in experiment loggers: a name
-                ('tensorboard', 'mlflow', 'wandb'), a configured logger
-                instance, or an iterable mixing both.
+            loggers: Optional built-in experiment loggers: a registered name,
+                a configured logger instance, or an iterable mixing both.
         """
         from libreyolo.data import load_data_config
 

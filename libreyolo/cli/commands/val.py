@@ -10,6 +10,7 @@ from ..command_utils import (
     exit_with_error,
     help_json_callback,
     load_model_or_exit,
+    parse_imgsz_str,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
@@ -40,11 +41,26 @@ def val_cmd(
     data_dir: Optional[str] = typer.Option(None, help="Direct dataset directory"),
     split: str = typer.Option("val", help="Dataset split: val, test, train"),
     batch: int = typer.Option(16, help="Batch size"),
-    imgsz: Optional[int] = typer.Option(None, help="Image size"),
+    imgsz: Optional[str] = typer.Option(
+        None, help="Image size: 640 (square) or 480x640 (HxW)"
+    ),
     conf: float = typer.Option(0.001, help="Confidence threshold"),
     iou: float = typer.Option(0.6, help="NMS IoU threshold"),
-    max_det: int = typer.Option(300, help="Max detections per image"),
+    max_det: int = typer.Option(300, help="Max predictions per image after NMS"),
+    eval_max_det: Optional[int] = typer.Option(
+        None,
+        help="COCO evaluator cap (default: pycocotools AP@100)",
+    ),
+    faster_coco_eval: bool = typer.Option(
+        True,
+        "--faster-coco-eval/--no-faster-coco-eval",
+        help="Use the faster-coco-eval C++ backend for COCO metrics "
+        "(default: on when installed; falls back to pycocotools)",
+    ),
     half: bool = typer.Option(False, help="FP16 inference"),
+    amp_dtype: str = typer.Option(
+        "float16", help="CUDA autocast dtype when half=true: float16 or bfloat16"
+    ),
     save_json: bool = typer.Option(False, help="Save COCO-format JSON results"),
     save_plots: bool = typer.Option(
         False,
@@ -73,9 +89,24 @@ def val_cmd(
     ),
 ) -> None:
     """Evaluate a model on a dataset."""
+    from libreyolo.utils.amp import normalize_amp_dtype
     from libreyolo.utils.general import increment_path
 
     out = OutputHandler(json_mode=json_output, quiet=quiet)
+    try:
+        imgsz = parse_imgsz_str(imgsz)
+    except ValueError as exc:
+        exit_with_error(out, "invalid_imgsz", str(exc))
+    try:
+        amp_dtype = normalize_amp_dtype(amp_dtype)
+        if max_det < 1:
+            raise ValueError(f"max_det must be >= 1, got {max_det}")
+        if eval_max_det is not None and eval_max_det < 1:
+            raise ValueError(
+                f"eval_max_det must be >= 1, got {eval_max_det}"
+            )
+    except ValueError as exc:
+        exit_with_error(out, "config_type_error", str(exc))
     model_path = resolve_model_or_exit(out, model)
 
     if allow_download_scripts:
@@ -110,7 +141,10 @@ def val_cmd(
             save_dir=save_dir,
             data_dir=data_dir,
             half=half,
+            amp_dtype=amp_dtype,
             max_det=max_det,
+            eval_max_det=eval_max_det,
+            faster_coco_eval=faster_coco_eval,
         )
     except FileNotFoundError as e:
         exit_with_error(out, "data_not_found", str(e))
@@ -273,6 +307,8 @@ def val_cmd(
         "data": data,
         "split": split,
         "device": str(loaded_model.device),
+        # COCO eval backend provenance, e.g. "faster-coco-eval 1.7.2".
+        "eval_backend": getattr(loaded_model, "last_eval_backend", None),
         "metrics": {
             "mAP50": round(mAP50, 4),
             "mAP50_95": round(mAP50_95, 4),

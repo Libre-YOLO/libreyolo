@@ -6,7 +6,12 @@ from typing import Any, Optional
 
 import typer
 
-from ..command_utils import load_model_or_exit, resolve_model_or_exit
+from ..command_utils import (
+    exit_stage_error,
+    exit_with_error,
+    load_model_or_exit,
+    resolve_model_or_exit,
+)
 from ..errors import CLIError
 from ..output import OutputHandler
 from ...utils.model_info import build_model_info, format_model_info
@@ -17,6 +22,187 @@ from ...utils.model_info import build_model_info, format_model_info
 # =========================================================================
 def _get_output(json_output: bool, quiet: bool) -> OutputHandler:
     return OutputHandler(json_mode=json_output, quiet=quiet)
+
+
+def _resolve_embed_face_detector(out: OutputHandler, face_detector: Optional[str], device: str):
+    """Resolve a face detector for the two-stage face-embedding task.
+
+    Accepts an OpenCV face-detector ``.onnx`` (wrapped as a 5-landmark
+    ``OpenCVFaceDetector``) or a LibreYOLO detector checkpoint/name (wrapped via
+    ``resolve_face_detector``).
+    """
+    if face_detector is None:
+        # The runner falls back to the family's default detector
+        # (auto-downloaded on first use).
+        return None
+    if str(face_detector).lower().endswith(".onnx"):
+        from libreyolo.models.facerec import OpenCVFaceDetector
+
+        return OpenCVFaceDetector(face_detector)
+    fd_path = resolve_model_or_exit(out, face_detector)
+    fd_model = load_model_or_exit(
+        out, model=face_detector, model_path=fd_path, device=device
+    )
+    from libreyolo.models.l2cs.face import resolve_face_detector
+
+    return resolve_face_detector(fd_model)
+
+
+def compare_cmd(
+    model: str = typer.Option(..., help="Face-embedding model (path or name)"),
+    source: str = typer.Option(..., help="First image"),
+    source2: str = typer.Option(..., help="Second image to compare against"),
+    face_detector: Optional[str] = typer.Option(
+        None, "--face-detector", help="Face detector (YuNet .onnx or LibreYOLO detector)"
+    ),
+    threshold: float = typer.Option(
+        0.4, help="Cosine-similarity threshold for the same-identity decision"
+    ),
+    device: str = typer.Option("auto", help="Device: 0, cpu, mps, auto"),
+    json_output: bool = typer.Option(False, "--json", help="JSON output to stdout"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress stderr"),
+) -> None:
+    """Verify whether two face images are the same identity (cosine similarity)."""
+    out = _get_output(json_output, quiet)
+
+    for label, src in (("source", source), ("source2", source2)):
+        if not Path(src).exists() and not str(src).startswith(("http://", "https://")):
+            exit_with_error(out, "source_not_found", f"{label} not found: {src}")
+
+    model_path = resolve_model_or_exit(out, model)
+    loaded = load_model_or_exit(
+        out, model=model, model_path=model_path, device=device, task="facial-recognition"
+    )
+    if getattr(loaded, "task", None) != "embed":
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "compare requires a face-embedding model (task=facial-recognition).",
+        )
+    loaded.face_detector = _resolve_embed_face_detector(out, face_detector, device)
+
+    try:
+        res = loaded.verify(source, source2, threshold=threshold)
+    except Exception as exc:  # no face / runtime error
+        exit_stage_error(out, stage="compare", detail=exc, code="config_unsupported")
+
+    similarity = round(float(res["similarity"]), 4)
+    data = {
+        "similarity": similarity,
+        "same_person": bool(res["same_person"]),
+        "threshold": threshold,
+    }
+    if not json_output:
+        verdict = "SAME person" if data["same_person"] else "DIFFERENT people"
+        data["_human_text"] = (
+            f"cosine similarity: {similarity:.4f}  ->  {verdict} "
+            f"(threshold {threshold})"
+        )
+    out.result(data)
+
+
+def enroll_cmd(
+    model: str = typer.Option(..., help="Face-embedding model (path or name)"),
+    source: str = typer.Option(
+        ..., help="Folder-per-person tree: source/<identity>/*.jpg"
+    ),
+    gallery: str = typer.Option(
+        ..., help="Output gallery file (.npz); extended in place if it exists"
+    ),
+    face_detector: Optional[str] = typer.Option(
+        None, "--face-detector", help="Face detector (YuNet .onnx or LibreYOLO detector)"
+    ),
+    device: str = typer.Option("auto", help="Device: 0, cpu, mps, auto"),
+    json_output: bool = typer.Option(False, "--json", help="JSON output to stdout"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress stderr"),
+) -> None:
+    """Enroll identities into a face gallery from a folder-per-person tree."""
+    from libreyolo.utils.image_loader import ImageLoader
+
+    out = _get_output(json_output, quiet)
+
+    source_dir = Path(source)
+    if not source_dir.is_dir():
+        exit_with_error(
+            out,
+            "source_not_found",
+            f"source must be a directory laid out as <identity>/<images>: {source}",
+        )
+    identity_dirs = sorted(d for d in source_dir.iterdir() if d.is_dir())
+    if not identity_dirs:
+        exit_with_error(
+            out,
+            "config_unsupported",
+            f"No identity subfolders found under {source}. Expected "
+            "source/<identity_name>/*.jpg (the folder name becomes the identity).",
+        )
+
+    model_path = resolve_model_or_exit(out, model)
+    loaded = load_model_or_exit(
+        out, model=model, model_path=model_path, device=device, task="facial-recognition"
+    )
+    if getattr(loaded, "task", None) != "embed":
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "enroll requires a face-embedding model (task=facial-recognition).",
+        )
+    loaded.face_detector = _resolve_embed_face_detector(out, face_detector, device)
+
+    from libreyolo.models.facerec import FaceGallery
+
+    gallery_path = Path(gallery)
+    if gallery_path.exists():
+        book = FaceGallery.load(gallery_path, embedder=loaded)
+    else:
+        book = FaceGallery(embedder=loaded)
+
+    enrolled: dict[str, int] = {}
+    skipped: list[str] = []
+    for identity_dir in identity_dirs:
+        images = ImageLoader.collect_images(identity_dir)
+        if not images:
+            skipped.append(identity_dir.name)
+            continue
+        count = 0
+        for image in images:
+            try:
+                count += book.enroll(identity_dir.name, image)
+            except ValueError as exc:  # e.g. no face found in one reference
+                if not quiet:
+                    typer.echo(f"skip {image}: {exc}", err=True)
+        if count:
+            enrolled[identity_dir.name] = count
+        else:
+            skipped.append(identity_dir.name)
+
+    if not enrolled:
+        exit_stage_error(
+            out,
+            stage="enroll",
+            detail="no faces found in any identity folder",
+            code="config_unsupported",
+        )
+
+    try:
+        book.save(gallery_path)
+    except Exception as exc:
+        exit_stage_error(out, stage="enroll", detail=exc, code="io_error")
+
+    data = {
+        "gallery": str(gallery_path),
+        "identities": len(book),
+        "references": sum(enrolled.values()),
+        "enrolled": enrolled,
+        "skipped": skipped,
+    }
+    if not json_output:
+        data["_human_text"] = (
+            f"enrolled {sum(enrolled.values())} reference faces for "
+            f"{len(enrolled)} identities -> {gallery_path}"
+            + (f" (skipped: {', '.join(skipped)})" if skipped else "")
+        )
+    out.result(data)
 
 
 def _metadata_value_for_cli(value: Any) -> Any:
@@ -106,6 +292,9 @@ def checks_cmd(
         "onnxruntime",
         "tensorrt",
         "openvino",
+        "paddlepaddle",
+        "x2paddle",
+        "mnn",
         "ncnn",
         "onnx2tf",
         "ai-edge-litert",
@@ -270,9 +459,7 @@ def formats_cmd(
             "requires_onnx": cls.requires_onnx,
         }
         aliases = sorted(
-            alias
-            for alias, target in BaseExporter._aliases.items()
-            if target == name
+            alias for alias, target in BaseExporter._aliases.items() if target == name
         )
         if aliases:
             info["aliases"] = aliases
@@ -296,6 +483,8 @@ def formats_cmd(
             )
             if "tier" in f:
                 lines.append(f"    Tier: {f['tier']} ({f['reason']})")
+                if f.get("constraint"):
+                    lines.append(f"    Constraint: {f['constraint']}")
         data["_human_text"] = "\n".join(lines)
 
     out.result(data)

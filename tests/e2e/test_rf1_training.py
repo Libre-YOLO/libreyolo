@@ -86,22 +86,78 @@ def dataset_data_yaml(dataset):
 MIN_MAP = 0.05
 DETR_RF1_FAMILIES = {"dfine", "deim", "deimv2", "rtdetr"}
 
-# Families whose training is wired end-to-end (loss + assigner + trainer) and
-# whose inference parity is verified, but whose small-dataset fine-tune
-# convergence has not been validated against the RF1 mAP floor. Every RF1
-# training test skips them — keep the two tests consistent via this map.
-_EXPERIMENTAL_TRAINING_SKIP = {
+# Families without a training implementation cannot participate in the RF1
+# contract. Keep their concrete missing capability separate from trainable
+# families that simply have not cleared this particular validation fixture.
+_RF1_NOT_APPLICABLE = {
+    "vit": (
+        "ViT ships inference-only: the AugReg fine-tuning recipe is outside "
+        "this museum port, and train() raises. Pretrained and export parity "
+        "are verified separately."
+    ),
+    "efficientdet": (
+        "EfficientDet ships inference-only: its focal-loss, anchor matching, "
+        "and compound-scale training recipe are outside this port, and train() raises."
+    ),
+    "detr": (
+        "Original DETR ships inference-only: its 500-epoch Hungarian-matching "
+        "training recipe is not implemented, and train() raises. Inference "
+        "parity against the pinned Apache-2.0 source is exact."
+    ),
+    "faster_rcnn": (
+        "Faster R-CNN ships inference-only: RPN and sampled-RoI training "
+        "are intentionally outside the museum-port scope, and train() raises."
+    ),
+    "retinanet": (
+        "RetinaNet ships inference-only: focal-loss target assignment and "
+        "training losses are not implemented, and train() raises."
+    ),
+    "ssd": (
+        "SSD ships inference-only: MultiBox matching, hard-negative mining, "
+        "and training losses are outside the museum-port scope, and train() raises."
+    ),
+    "mask_rcnn": (
+        "Mask R-CNN ships inference-only: sampled-RoI and mask training are "
+        "not implemented, and train() raises."
+    ),
+    "fcos": (
+        "FCOS ships inference-only: dense target assignment and focal, box, "
+        "and centerness losses are outside the museum-port scope, and train() raises."
+    ),
+    "deformable_detr": (
+        "Deformable DETR ships inference-only: its Hungarian matcher, focal/L1/GIoU "
+        "losses, auxiliary decoder losses, and backbone learning-rate recipe are "
+        "not implemented. Exact upstream inference parity is verified separately."
+    ),
+    "dinodetr": (
+        "DINO-DETR ships inference-only: contrastive denoising, Hungarian matching, "
+        "auxiliary losses, and its multi-scale training recipe are outside this port. "
+        "Exact upstream inference parity is verified separately."
+    ),
+    "lwdetr": (
+        "LW-DETR ships inference-only: its Group-DETR one-to-many recipe "
+        "(13 query groups, IoU-aware classification loss, two-stage encoder "
+        "losses) is not implemented, and train() raises. Inference parity vs "
+        "Atten4Vis is exact and verified separately."
+    ),
+    "centernet": (
+        "CenterNet ships inference-only: its focal heatmap, size, and offset "
+        "training recipe is not implemented, and train() raises. Exact raw "
+        "inference parity is verified separately."
+    ),
+}
+
+_RF1_VALIDATION_GAPS = {
     "picodet": (
-        "PICODET training is experimental and not expected to clear the "
-        "RF1 mAP floor on small datasets (skill section 6: fine-tune parity, "
-        "not paper parity). Inference parity is verified separately."
+        "PICODET-s/320 has not reliably cleared the RF1 mAP floor on this "
+        "30-image fixture. Training remains directly callable and is covered "
+        "by smoke and backward-pass tests."
     ),
     "yolo7": (
-        "YOLOv7 training is experimental: the loss is LibreYOLO's SimOTA "
-        "assignment (Apache-2.0 YOLOX lineage) driving the v7 anchor head, "
-        "not the upstream v7 OTA recipe, and its RF1 fine-tune floor has not "
-        "been validated yet. Inference parity vs MIT MultimediaTechLab/YOLO "
-        "is exact and verified separately."
+        "YOLOv7 uses LibreYOLO's SimOTA assignment (Apache-2.0 YOLOX lineage) "
+        "with the v7 anchor head, not the upstream v7 OTA recipe, and has not "
+        "yet cleared the RF1 fine-tune floor. Training remains directly "
+        "callable; inference parity is verified separately."
     ),
 }
 
@@ -112,9 +168,9 @@ RF1_MODEL_WEIGHT_PARAMS = model_cases(
 )
 
 
-def skip_if_experimental_training(family: str) -> None:
-    """Skip an RF1 training test for families with experimental training."""
-    reason = _EXPERIMENTAL_TRAINING_SKIP.get(family)
+def skip_if_outside_rf1_contract(family: str) -> None:
+    """Skip families for which the RF1 contract is inapplicable or unproven."""
+    reason = _RF1_NOT_APPLICABLE.get(family) or _RF1_VALIDATION_GAPS.get(family)
     if reason is not None:
         pytest.skip(reason)
 
@@ -170,8 +226,6 @@ def rf1_train_kwargs(family: str, size: str) -> dict:
             "mosaic_prob": 0.0,
             "hsv_prob": 0.0,
         }
-    if family == "ec":
-        return {"allow_experimental": True}
     return {}
 
 
@@ -181,7 +235,7 @@ def rf1_train_kwargs(family: str, size: str) -> dict:
 )
 def test_rf1_training(family, size, weights, dataset_data_yaml, tmp_path):
     """Train on marbles, verify the model learns and clears a basic mAP floor."""
-    skip_if_experimental_training(family)
+    skip_if_outside_rf1_contract(family)
     weights = require_test_weights(weights, expected_family=family)
     if size == "x" or size == "l":
         val_batch = 4
@@ -434,7 +488,7 @@ def test_load_finetuned_checkpoint(family, size, weights, dataset_data_yaml, tmp
     with correct nc, names, and architecture auto-rebuild.
     Also verifies loss decreased during training and mAP improved.
     """
-    skip_if_experimental_training(family)
+    skip_if_outside_rf1_contract(family)
     weights = require_test_weights(weights, expected_family=family)
 
     if size in ("x", "l"):

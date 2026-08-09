@@ -26,6 +26,7 @@ from libreyolo.models.yolo9.transforms import (
 from .config import RTDETRConfig
 from .loss import RTDETRLoss
 from .transforms import RTDETRTrainTransform
+from ..base.detr_cuda_graph import DETREncoderCudaGraphMixin
 
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ def convert_targets_for_detr(
     return detr_targets
 
 
-class RTDETRTrainer(BaseTrainer):
+class RTDETRTrainer(DETREncoderCudaGraphMixin, BaseTrainer):
     """RT-DETR-specific trainer."""
 
     # RT-DETR pairs a CNN (PResNet/HGNetv2) backbone with a transformer
@@ -214,8 +215,32 @@ class RTDETRTrainer(BaseTrainer):
     def on_setup(self):
         """Initialize the loss criterion."""
         self._maybe_apply_lora()
-        self.criterion = RTDETRLoss(num_classes=self.config.num_classes)
-        self.criterion.to(self.device)
+        self.criterion = self.build_criterion()
+
+    def build_criterion(self, *, distributed_normalize: bool = True):
+        """Build the criterion. Validation loss builds a rank-local copy."""
+        return RTDETRLoss(
+            num_classes=self.config.num_classes,
+            distributed_normalize=distributed_normalize,
+        ).to(self.device)
+
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            raise ValueError(
+                f"val_loss=True currently supports {self.get_model_family()} "
+                "detection only; other tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import RTDETRValidationLoss
+
+        return RTDETRValidationLoss(
+            model, self.build_criterion(distributed_normalize=False)
+        )
 
     def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
         """Run the model forward pass with DETR-specific target conversion.

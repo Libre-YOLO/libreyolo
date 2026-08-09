@@ -6,11 +6,12 @@ formal contract in [`adr/0002-librevlm-contract.md`](adr/0002-librevlm-contract.
 
 ## What LibreVLM is
 
-LibreVLM lets you drop in a general vision-language model straight from Hugging
-Face and use it as an open-vocabulary object detector. A model here is an
-autoregressive chat model: you give it an image and a text prompt, and it
-generates text back. When that text is a structured list of boxes, LibreVLM
-parses it into the same `Results` object every LibreYOLO model returns.
+LibreVLM lets you use a general multimodal model as an open-vocabulary object
+detector. Most families are autoregressive chat models: you give one an image
+and a text prompt, and it generates text back. Structured boxes are parsed into
+the same `Results` object every LibreYOLO model returns. LibreMODUS is the
+analysis-only exception: it also uses a flow decoder for dense modalities and
+loads a pinned external snapshot through a vendored permissive runtime.
 
 There is no detection head and no fixed class set. The "vocabulary" is just a
 list of words you supply, so any label works ("pink car", "island", "wheel"),
@@ -23,7 +24,7 @@ integrating them as-is keeps LibreYOLO current with that progress.
 ## Available models
 
 Pass any of these names to `LibreVLM(name)`. A bare family name resolves to the
-size marked with `*`. The authoritative list is `_ALIASES` in
+size marked with `*`. The authoritative alias tables are in
 `libreyolo/models/vlm/__init__.py`, and passing an unknown name raises a
 `ValueError` listing every alias.
 
@@ -37,12 +38,17 @@ size marked with `*`. The authoritative list is `_ALIASES` in
 | `smolvlm2`, `-2.2b`*, `-500m`                | SmolVLM2  | Apache-2.0          | tiny; weak detector, zero-code family    |
 | `locate-anything`, `-3b`*                     | LocateAnything | NVIDIA non-commercial | remote-code grounder; boxes and points |
 | `sensenova-vision`, `-7b`*                    | SenseNova-Vision | Apache-2.0 code, CC BY-NC 4.0 weights | unified multimodal; 7 tasks, vendored port, heavy |
+| `libremodus`, `-14b-a7b`*, `modus`            | MODUS | Apache-2.0 code, external custom-term weights | analysis-only; four standard tasks plus `any2any()` |
 
 Florence-2 and Kosmos-2 do not use a chat template: they are driven by task /
 grounding prompts and decode boxes via the processor's `post_process_generation`,
 so their families override the three inference hooks (and Florence-2's boxes come
 back in pixels, no scaling needed). Use the `florence-community/*` Florence-2
 checkpoints; the original `microsoft/*` ones do not load on current transformers.
+
+LibreMODUS is not a raw-chat family. It exposes depth, normals, edges, COCO
+detection, grounding, and image-conditioned composition; RGB generation and
+VQA are intentionally unavailable. See [`libremodus.md`](libremodus.md).
 
 Larger Qwen3-VL tiers (30B and up) and Qwen2.5-VL are not included: the big ones
 do not fit a single consumer GPU, and Qwen2.5-VL uses a different coordinate
@@ -213,7 +219,9 @@ LibreYOLO contributes only adapter code. It does not redistribute VLM weights or
 remote-code model repositories; those are downloaded at runtime under the
 upstream model repository's terms when a user chooses that model.
 
-## Multi-task families: SenseNova-Vision
+## Multi-task families
+
+### SenseNova-Vision
 
 The tier's "VLM as detector" framing was v1 scoping, not a ceiling. The
 LocateAnything family already served two tasks (`detect`, `point`); the
@@ -245,20 +253,37 @@ one-time license notice. Capabilities without a canonical LibreYOLO task
 reconstruction) stay behind `chat()`/`generate()`. See
 [`adr/0012-sensenova-unified-multimodal.md`](adr/0012-sensenova-unified-multimodal.md).
 
+### LibreMODUS
+
+LibreMODUS adds `detect`, `depth`, `normal`, and `edge` to the standard task
+surface and returns the corresponding `Boxes`, `DepthMap`, `NormalMap`, or
+`EdgeMap`. Its `any2any()` method accepts one to three image-derived modalities
+plus optional text, can feed chained outputs back as conditions, and can rank
+multiple candidates with the model's own yes/no consistency logits.
+
+Unlike ordinary VLM snapshots, its architecture is built from the audited
+Bagel/Qwen2/SigLIP/FLUX modules in tree and dispatched with Accelerate. The
+checkpoint stays external and is never mirrored. The supported matrix,
+precision tiers, and terms distinction are documented in
+[`libremodus.md`](libremodus.md) and
+[`adr/0016-libremodus-analysis-contract.md`](adr/0016-libremodus-analysis-contract.md).
+
 ## Known limitations (v1)
 
 These are deliberate v1 scoping choices, called out so behavior matches expectations:
 
-- **Confidence is synthetic.** Every box is scored `1.0` (no calibrated per-box
-  score from a generative model). `conf=` filtering works mechanically but is not
-  calibrated, and in `track()` this makes ByteTrack's two-stage, score-stratified
-  association inert (no low-confidence recovery stage). `val()`/mAP is unsupported.
+- **Confidence is usually synthetic.** Chat-model adapters assign every box
+  `1.0`; `conf=` filtering is mechanical, and ByteTrack's score-stratified
+  association is inert. LibreMODUS derives a sequence score from constrained
+  token probabilities, but it is still not calibrated detector confidence.
+  Generic `val()`/mAP remains unsupported.
 - **`batch=` does not speed up VLMs.** `predict("folder/")` works, but generation
   runs one image at a time, so a larger `batch=` gives no throughput gain in v1.
 - **Python-API only.** The `libreyolo` CLI does not resolve VLM aliases yet; use
   `LibreVLM(...)` from Python. `predict`/`track` parity is at the API level.
-- **`chat()` and `prompt=`** apply to the chat-template families only; Florence-2
-  and Kosmos-2 are task-token driven (`chat()` raises, `prompt=` is ignored).
+- **`chat()`** applies to chat-template families only. Florence-2, Kosmos-2,
+  and LibreMODUS are task-driven and raise; `prompt=` is ignored by the first
+  two and is a one-phrase grounding convenience for LibreMODUS.
 - **Point support is family-specific.** LocateAnything supports `task="point"`
   and returns `Results.points`; point tracking, point validation, and exported
   backend point decoding remain out of scope.

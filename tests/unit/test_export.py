@@ -14,9 +14,11 @@ import libreyolo.export.onnx as onnx_module
 from libreyolo.export.exporter import (
     BaseExporter,
     CoreMLExporter,
+    ExecuTorchExporter,
     NcnnExporter,
     OnnxExporter,
     OpenVINOExporter,
+    PaddleExporter,
     TensorRTExporter,
     TFLiteExporter,
     TorchScriptExporter,
@@ -127,8 +129,10 @@ class TestExporterFormats:
     def test_expected_keys(self):
         assert "onnx" in BaseExporter._registry
         assert "torchscript" in BaseExporter._registry
+        assert "executorch" in BaseExporter._registry
         assert "tensorrt" in BaseExporter._registry
         assert "openvino" in BaseExporter._registry
+        assert "paddle" in BaseExporter._registry
         assert "ncnn" in BaseExporter._registry
         assert "tflite" in BaseExporter._registry
 
@@ -144,9 +148,15 @@ class TestExporterFormats:
         assert TensorRTExporter.requires_onnx is True
         assert TorchScriptExporter.apply_model_half is True
         assert TorchScriptExporter.supports_embedded_nms is False
+        assert ExecuTorchExporter.suffix == ".pte"
+        assert ExecuTorchExporter.supports_fp16 is False
+        assert ExecuTorchExporter.supports_int8 is False
         assert NcnnExporter.supports_int8 is False
         assert TFLiteExporter.requires_onnx is True
         assert TFLiteExporter.supports_fp16 is False
+        assert PaddleExporter.suffix == "_paddle"
+        assert PaddleExporter.requires_onnx is True
+        assert PaddleExporter.supports_fp16 is False
 
     def test_unsupported_exporter_rejects_embedded_nms(self):
         exporter = TorchScriptExporter(_make_wrapper())
@@ -397,6 +407,28 @@ class TestExporterFormats:
 
         assert device == torch.device("cpu")
 
+    @pytest.mark.parametrize("imgsz", [384, (384, 384)])
+    def test_rfdetr_obb_executorch_accepts_native_canvas_forms(
+        self, monkeypatch, imgsz
+    ):
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.models.rfdetr.model import LibreRFDETR
+
+        model = object.__new__(LibreRFDETR)
+        model.task = "obb"
+        model._validate_imgsz = lambda value, **_: value
+        model._get_input_size = lambda: 384
+        captured = {}
+
+        def fake_export(self, format="onnx", **kwargs):
+            captured.update(format=format, **kwargs)
+            return "model.pte"
+
+        monkeypatch.setattr(BaseModel, "export", fake_export)
+
+        assert model.export("executorch", imgsz=imgsz) == "model.pte"
+        assert captured["imgsz"] == imgsz
+
     @pytest.mark.parametrize("device_arg", ["0", 0])
     def test_export_normalizes_bare_numeric_device(self, device_arg):
         wrapper = _make_wrapper(model_name="yolo9")
@@ -589,6 +621,23 @@ class TestExporterFormats:
             OnnxExporter(wrapper)._resolve_params(
                 output_path=None,
                 imgsz=(32, 64),
+                device="cpu",
+                half=False,
+                int8=False,
+            )
+
+    def test_semantic_export_rejects_unaligned_imgsz(self):
+        wrapper = _make_wrapper(model_name="segformer", input_size=32)
+        wrapper.task = "semantic"
+        wrapper.semantic_imgsz_divisor = 32
+
+        with pytest.raises(
+            ValueError,
+            match=r"Semantic export imgsz must be divisible.*stride 32",
+        ):
+            OnnxExporter(wrapper)._resolve_params(
+                output_path=None,
+                imgsz=100,
                 device="cpu",
                 half=False,
                 int8=False,
@@ -867,6 +916,28 @@ class TestExporterFormats:
 
         backend = TorchScriptBackend(str(output_path), device="cpu")
         assert backend.imgsz == (16, 32)
+
+    def test_torchscript_backend_preserves_classification_preprocessing(self, tmp_path):
+        wrapper = _make_wrapper(model_name="resnet", input_size=32)
+        wrapper.task = "classify"
+        wrapper.SUPPORTED_TASKS = ("classify",)
+        wrapper.DEFAULT_TASK = "classify"
+        wrapper.crop_pct = 0.95
+        wrapper.interpolation = "bicubic"
+        output_path = tmp_path / "classifier.torchscript"
+
+        TorchScriptExporter(wrapper)(
+            output_path=str(output_path),
+            imgsz=32,
+            device="cpu",
+        )
+
+        from libreyolo.backends.torchscript import TorchScriptBackend
+
+        backend = TorchScriptBackend(str(output_path), device="cpu")
+        assert backend.task == "classify"
+        assert backend.crop_pct == pytest.approx(0.95)
+        assert backend.interpolation == "bicubic"
 
     def test_rectangular_int8_calibration_receives_tuple_imgsz(
         self, monkeypatch, tmp_path

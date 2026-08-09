@@ -28,13 +28,13 @@ The integration tricks in this file:
 
 from __future__ import annotations
 
+import logging
 import math
 import sys
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Type
 
 import torch
-from torch.amp import autocast
 from tqdm import tqdm
 
 from ...data import (
@@ -55,9 +55,12 @@ from .transforms import (
     DEIMPassThroughDataset,
     DEIMTrainTransform,
 )
+from ..base.detr_cuda_graph import DETREncoderCudaGraphMixin
+
+logger = logging.getLogger(__name__)
 
 
-class DEIMTrainer(BaseTrainer):
+class DEIMTrainer(DETREncoderCudaGraphMixin, BaseTrainer):
     # DEIM shares D-FINE's architecture shape: CNN (HGNetv2) backbone plus a
     # transformer encoder/decoder with nn.Linear projections. lora=True
     # freezes the backbone and the transformer base weights and trains LoRA
@@ -150,13 +153,21 @@ class DEIMTrainer(BaseTrainer):
 
             apply_lora_to_detr(self.model)
 
+        self.criterion = self.build_criterion()
+
+    def build_criterion(self, *, distributed_normalize: bool = True):
+        """Build the training criterion.
+
+        Validation loss builds a second one with ``distributed_normalize``
+        off, so both stay defined in exactly one place.
+        """
         matcher = HungarianMatcher(
             weight_dict={"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0},
             use_focal_loss=True,
             alpha=0.25,
             gamma=2.0,
         )
-        self.criterion = DEIMCriterion(
+        return DEIMCriterion(
             matcher=matcher,
             weight_dict={
                 "loss_mal": 1.0,
@@ -170,7 +181,26 @@ class DEIMTrainer(BaseTrainer):
             gamma=1.5,
             num_classes=self.config.num_classes,
             reg_max=32,
+            distributed_normalize=distributed_normalize,
         ).to(self.device)
+
+    def validate_validation_loss_config(self) -> None:
+        if not getattr(self.config, "val_loss", False):
+            return
+
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if task != "detect":
+            raise ValueError(
+                f"val_loss=True currently supports {self.get_model_family()} "
+                "detection only; other tasks are not supported"
+            )
+
+    def build_validation_loss_adapter(self, model: torch.nn.Module):
+        from .validation_loss import DEIMValidationLoss
+
+        return DEIMValidationLoss(
+            model, self.build_criterion(distributed_normalize=False)
+        )
 
     def on_mosaic_disable(self):
         super().on_mosaic_disable()
@@ -494,6 +524,9 @@ class DEIMTrainer(BaseTrainer):
            optimizer step.
         3. Apply per-group LR multipliers (the scheduler returns one base LR;
            each param group's ``lr_mult`` scales it).
+
+        The profiler hooks (``wrap_loader`` / ``_prof_phase`` / ``prof.step``)
+        mirror the parent loop exactly so ``profile=True`` works here too.
         """
         # Gradient accumulation is opt-in; delegate when enabled.
         if self._accum_steps > 1:
@@ -526,7 +559,10 @@ class DEIMTrainer(BaseTrainer):
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
 
-        for batch_idx, batch in enumerate(pbar):
+        # getattr: test doubles may bypass BaseTrainer.__init__, same as _profiler.
+        prof = getattr(self, "_profiler", None)
+        loader = prof.wrap_loader(pbar) if prof is not None else pbar
+        for batch_idx, batch in enumerate(loader):
             if len(batch) == 5:
                 imgs, targets, img_infos, img_ids, polygons = batch
             else:
@@ -534,32 +570,39 @@ class DEIMTrainer(BaseTrainer):
                 polygons = None
             self.current_iter = epoch * len(self.train_loader) + batch_idx
 
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device, non_blocking=True)
+            with self._prof_phase("to_device"):
+                imgs = imgs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
 
             if self.scaler is not None:
-                with autocast("cuda"):
-                    outputs = self.on_forward(imgs, targets, polygons=polygons)
+                with self._prof_phase("forward"):
+                    with self._autocast_context():
+                        outputs = self._forward_train(imgs, targets, polygons)
+                        loss = outputs["total_loss"]
+                self.optimizer.zero_grad()
+                with self._prof_phase("backward"):
+                    self.scaler.scale(loss).backward()
+                    if clip_max_norm > 0:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), clip_max_norm
+                        )
+                with self._prof_phase("optimizer"):
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+            else:
+                with self._prof_phase("forward"):
+                    outputs = self._forward_train(imgs, targets, polygons)
                     loss = outputs["total_loss"]
                 self.optimizer.zero_grad()
-                self.scaler.scale(loss).backward()
-                if clip_max_norm > 0:
-                    self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), clip_max_norm
-                    )
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                outputs = self.on_forward(imgs, targets, polygons=polygons)
-                loss = outputs["total_loss"]
-                self.optimizer.zero_grad()
-                loss.backward()
-                if clip_max_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), clip_max_norm
-                    )
-                self.optimizer.step()
+                with self._prof_phase("backward"):
+                    loss.backward()
+                    if clip_max_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), clip_max_norm
+                        )
+                with self._prof_phase("optimizer"):
+                    self.optimizer.step()
 
             if self.ema_model is not None:
                 self.ema_model.update(self.model)
@@ -582,15 +625,34 @@ class DEIMTrainer(BaseTrainer):
             postfix.update({k: f"{v:.4f}" for k, v in loss_components.items()})
             pbar.set_postfix(postfix)
 
+            if prof is not None:
+                prof.step()
+                if prof.finished:
+                    if getattr(self.config, "profile_then_stop", False):
+                        self._stop_training = True
+                        break
+                    # Window closed: drop the hooks so the rest of the run
+                    # pays nothing, and keep training.
+                    logger.info(
+                        "Profile window complete; training continues "
+                        "(profile_then_stop=True stops here instead)"
+                    )
+                    self._profiler = None
+                    prof = None
+
         num_batches = max(num_batches, 1)
         avg_loss = total_loss / num_batches
         avg_loss_components = {
             name: value / num_batches for name, value in loss_component_sums.items()
         }
 
+        # Validation. A profile-only run (profile_then_stop) truncated the
+        # epoch, so validating the barely-trained weights would waste time and
+        # could poison the best-metric state.
         val_metrics = None
         if (
-            self.config.eval_interval > 0
+            not getattr(self, "_stop_training", False)
+            and self.config.eval_interval > 0
             and (epoch + 1) % self.config.eval_interval == 0
         ):
             val_metrics = self._validate_epoch(epoch)
@@ -638,7 +700,10 @@ class DEIMTrainer(BaseTrainer):
         actual_window = accum
         base_lr = self.optimizer.param_groups[0]["lr"]
 
-        for batch_idx, batch in enumerate(pbar):
+        # getattr: test doubles may bypass BaseTrainer.__init__, same as _profiler.
+        prof = getattr(self, "_profiler", None)
+        loader = prof.wrap_loader(pbar) if prof is not None else pbar
+        for batch_idx, batch in enumerate(loader):
             if len(batch) == 5:
                 imgs, targets, img_infos, img_ids, polygons = batch
             else:
@@ -649,36 +714,43 @@ class DEIMTrainer(BaseTrainer):
             opt_step = epoch * steps_per_epoch + batch_idx // accum
             self.current_iter = opt_step
 
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device, non_blocking=True)
+            with self._prof_phase("to_device"):
+                imgs = imgs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
 
             if batch_idx % accum == 0:
                 self.optimizer.zero_grad(set_to_none=True)
                 actual_window = min(accum, len(self.train_loader) - batch_idx)
 
             if self.scaler is not None:
-                with autocast("cuda"):
-                    outputs = self.on_forward(imgs, targets, polygons=polygons)
-                    loss = outputs["total_loss"] / actual_window
-                self.scaler.scale(loss).backward()
+                with self._prof_phase("forward"):
+                    with self._autocast_context():
+                        outputs = self._forward_train(imgs, targets, polygons)
+                        loss = outputs["total_loss"] / actual_window
+                with self._prof_phase("backward"):
+                    self.scaler.scale(loss).backward()
                 if is_opt_step:
-                    if clip_max_norm > 0:
-                        self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(), clip_max_norm
-                        )
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                    with self._prof_phase("optimizer"):
+                        if clip_max_norm > 0:
+                            self.scaler.unscale_(self.optimizer)
+                            torch.nn.utils.clip_grad_norm_(
+                                self.model.parameters(), clip_max_norm
+                            )
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
             else:
-                outputs = self.on_forward(imgs, targets, polygons=polygons)
-                loss = outputs["total_loss"] / actual_window
-                loss.backward()
+                with self._prof_phase("forward"):
+                    outputs = self._forward_train(imgs, targets, polygons)
+                    loss = outputs["total_loss"] / actual_window
+                with self._prof_phase("backward"):
+                    loss.backward()
                 if is_opt_step:
-                    if clip_max_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(), clip_max_norm
-                        )
-                    self.optimizer.step()
+                    with self._prof_phase("optimizer"):
+                        if clip_max_norm > 0:
+                            torch.nn.utils.clip_grad_norm_(
+                                self.model.parameters(), clip_max_norm
+                            )
+                        self.optimizer.step()
 
             if is_opt_step:
                 if self.ema_model is not None:
@@ -701,15 +773,34 @@ class DEIMTrainer(BaseTrainer):
             postfix.update({k: f"{v:.4f}" for k, v in loss_components.items()})
             pbar.set_postfix(postfix)
 
+            if prof is not None:
+                prof.step()
+                if prof.finished:
+                    if getattr(self.config, "profile_then_stop", False):
+                        self._stop_training = True
+                        break
+                    # Window closed: drop the hooks so the rest of the run
+                    # pays nothing, and keep training.
+                    logger.info(
+                        "Profile window complete; training continues "
+                        "(profile_then_stop=True stops here instead)"
+                    )
+                    self._profiler = None
+                    prof = None
+
         num_batches = max(num_batches, 1)
         avg_loss = total_loss / num_batches
         avg_loss_components = {
             name: value / num_batches for name, value in loss_component_sums.items()
         }
 
+        # Validation. A profile-only run (profile_then_stop) truncated the
+        # epoch, so validating the barely-trained weights would waste time and
+        # could poison the best-metric state.
         val_metrics = None
         if (
-            self.config.eval_interval > 0
+            not getattr(self, "_stop_training", False)
+            and self.config.eval_interval > 0
             and (epoch + 1) % self.config.eval_interval == 0
         ):
             val_metrics = self._validate_epoch(epoch)

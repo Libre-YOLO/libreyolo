@@ -11,6 +11,7 @@ from libreyolo.quant import (
     NVFP4Linear,
     QuantConv2d,
     QuantizationError,
+    QuantLinear,
 )
 from libreyolo.quant.fake_quant import (
     E2M1_MAX,
@@ -198,6 +199,96 @@ def test_nvfp4_linear_finalize_roundtrip():
         assert torch.equal(q(x), ref)
 
 
+def test_fp8_tensorwise_weight_scaling_roundtrip():
+    from libreyolo.quant.fake_quant import E4M3_MAX, fake_quant_fp8
+    from libreyolo.quant.packing import unpack_fp8_weight
+
+    torch.manual_seed(0)
+    q = QuantLinear.from_float(nn.Linear(64, 32))
+    q._q_wformat = q._q_aformat = "fp8"
+    q._q_fp8_weight_scaling = "tensorwise"
+    expected_scale = (q.weight.detach().abs().amax() / E4M3_MAX).clamp_min(1e-12)
+    expected = fake_quant_fp8(q.weight.float(), expected_scale.reshape(1))
+
+    q.freeze_weight_qparams()
+    assert torch.equal(q._q_w_scale, expected_scale.expand_as(q._q_w_scale))
+    assert torch.equal(q._effective_weight(), expected)
+
+    q.make_finalized()
+    assert torch.equal(
+        unpack_fp8_weight(q.weight_packed, q._q_w_scale),
+        expected,
+    )
+    q.make_prepared()
+    assert q._q_fp8_weight_scaling == "tensorwise"
+    assert torch.equal(q.weight, expected)
+
+
+def test_fp8_tensorwise_manifest_rebuilds_exact_modules(tmp_path):
+    from libreyolo.quant import (
+        apply_quant_structure,
+        export_finalized_pt,
+        quantize_model,
+    )
+
+    class TinyFeynModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.bb = nn.Module()
+            self.bb.layers = nn.ModuleList(
+                [nn.Sequential(nn.Linear(16, 16)) for _ in range(2)]
+            )
+            self.head = nn.Linear(16, 4)
+
+        def forward(self, x):
+            for layer in self.bb.layers:
+                x = layer(x)
+            return self.head(x)
+
+    class TinyWrapper:
+        FAMILY = "feynobg"
+
+        def __init__(self):
+            self.model = TinyFeynModel()
+            self.device = torch.device("cpu")
+            self.size = "l"
+            self.task = "matte"
+            self.nb_classes = 1
+            self.names = {0: "foreground"}
+            self.model_path = None
+
+        def _get_model_name(self):
+            return "feynobg"
+
+        def _get_input_size(self):
+            return 1024
+
+    source = TinyWrapper()
+    quantize_model(
+        source,
+        recipe="fp8",
+        calib=None,
+        keep_high_precision=(),
+        verbose=False,
+    )
+    assert source._quant_manifest["fp8_tensorwise_weights"] == ["bb.layers.0.0"]
+    assert source.model.bb.layers[0][0]._q_fp8_weight_scaling == "tensorwise"
+    assert not hasattr(source.model.bb.layers[1][0], "_q_fp8_weight_scaling")
+
+    path = export_finalized_pt(
+        source,
+        out=tmp_path / "tiny-fp8.pt",
+        remainder="fp16",
+    )
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    loaded = TinyWrapper()
+    apply_quant_structure(loaded, checkpoint["quant"])
+    loaded.model.load_state_dict(checkpoint["model"])
+    assert loaded.model.bb.layers[0][0]._q_fp8_weight_scaling == "tensorwise"
+    assert not hasattr(loaded.model.bb.layers[1][0], "_q_fp8_weight_scaling")
+    assert loaded.model.bb.layers[0][0].is_finalized
+
+
 # ---------------------------------------------------------------------------
 # Kernel registry
 # ---------------------------------------------------------------------------
@@ -217,6 +308,31 @@ def test_kernel_registry_reference_forced_by_env(monkeypatch):
     finally:
         monkeypatch.delenv("LIBREYOLO_QUANT_KERNELS", raising=False)
         kernels.clear_cache()
+
+
+def test_kernel_registry_active_allows_lazy_registration(monkeypatch):
+    # Patch the real registry module: the libreyolo.quant.kernels shim
+    # forwards attribute reads but is a distinct module object, so setattr
+    # on it would not reach the registry internals.
+    from libreyolo import kernels
+
+    loaded = False
+
+    def lazy_load():
+        nonlocal loaded
+        if not loaded:
+            loaded = True
+            kernels.register(
+                "lazy_active_test",
+                lambda: None,
+                name="test",
+            )
+
+    monkeypatch.setattr(kernels, "_ensure_intree_loaded", lazy_load)
+    try:
+        assert kernels.active()["lazy_active_test"] == "test"
+    finally:
+        kernels.unregister("lazy_active_test", "test")
 
 
 def test_kernel_registry_custom_impl_and_env_override(monkeypatch):
@@ -729,3 +845,317 @@ def test_fp16_roundtrip_keeps_float32_io(tmp_path, yolo9t):
     reloaded = LibreYOLO9(str(path), size="t", device="cpu")
     assert reloaded.quant_info()["recipe"] == "fp16"
     assert next(reloaded.model.parameters()).dtype == torch.float16
+
+
+# ---------------------------------------------------------------------------
+# Robustness of the quant API state machine
+# ---------------------------------------------------------------------------
+
+
+def test_reference_tensor_handles_every_module_state():
+    """Device lookup must work whatever tensors a quant module owns.
+
+    A prepared MXFP4Linear without bias owns only its weight parameter and
+    registers no buffers, so a buffers-only lookup raised StopIteration and
+    crashed dequantize on the ordinary quantize -> train -> dequantize path.
+    """
+    from libreyolo.quant import MXFP4Linear
+    from libreyolo.quant.api import _reference_tensor
+
+    prepared = MXFP4Linear.from_float(nn.Linear(64, 32, bias=False))
+    assert not list(prepared.buffers())          # the condition that broke it
+    assert _reference_tensor(prepared).device == prepared.weight.device
+
+    finalized = MXFP4Linear.from_float(nn.Linear(64, 32, bias=False))
+    finalized.make_finalized()
+    assert "weight" not in dict(finalized.named_parameters())
+    assert _reference_tensor(finalized) is not None
+
+    with_bias = MXFP4Linear.from_float(nn.Linear(64, 32, bias=True))
+    assert _reference_tensor(with_bias) is not None
+
+
+def test_dequantize_survives_bias_free_mxfp4_in_prepared_state(yolo9t):
+    """dequantize_model must not crash on a bias-free prepared MXFP4Linear."""
+    from libreyolo.quant import MXFP4Linear
+    from libreyolo.quant.api import dequantize_model
+
+    root = yolo9t.model
+    parent = None
+    for module in root.modules():
+        for child_name, child in list(module.named_children()):
+            if isinstance(child, nn.Linear) and child.bias is None:
+                parent, name, original = module, child_name, child
+                break
+        if parent is not None:
+            break
+    if parent is None:  # graft one so the test is not architecture-dependent
+        parent, name = root, "_probe_linear"
+        original = nn.Linear(8, 8, bias=False)
+    setattr(parent, name, MXFP4Linear.from_float(
+        original if isinstance(original, nn.Linear) else nn.Linear(8, 8, bias=False)
+    ))
+    yolo9t._quant_manifest = {"recipe": "mxfp4", "state": "prepared"}
+
+    dequantize_model(yolo9t)  # previously raised StopIteration
+
+
+class _Boom(RuntimeError):
+    pass
+
+
+class _TinyQuantWrapper:
+    """Minimal stand-in for a model wrapper, holding real quant modules."""
+
+    FAMILY = "yolo9"
+
+    def __init__(self, quantized=True):
+        module = (
+            QuantConv2d(3, 4, 3, padding=1)
+            if quantized
+            else nn.Conv2d(3, 4, 3, padding=1, bias=False)
+        )
+        self.model = nn.Sequential(module)
+        self.device = torch.device("cpu")
+
+    def _get_input_size(self):
+        return 32
+
+    def _get_preprocess_numpy(self):
+        return None
+
+    def _get_model_name(self):
+        return "tiny"
+
+
+@pytest.mark.parametrize("fails", [True, False])
+def test_calibration_always_clears_observing_mode(monkeypatch, fails):
+    """Observing must be cleared on the failure path as well as the happy one.
+
+    Left set, every later forward keeps widening the observed ranges and
+    silently corrupts the calibration that follows.
+    """
+    import numpy as np
+
+    from libreyolo.quant import api as quant_api
+
+    wrapper = _TinyQuantWrapper()
+    quant_modules = [m for _, m in quant_api._quant_modules(wrapper.model)]
+    assert quant_modules, "fixture must contain quant modules"
+
+    class _Loader:
+        def __iter__(self):
+            yield np.zeros((1, 3, 32, 32), dtype=np.float32)
+            if fails:
+                raise _Boom("bad calibration sample")
+
+    monkeypatch.setattr(
+        "libreyolo.export.calibration.CalibrationDataLoader",
+        lambda **kwargs: _Loader(),
+    )
+
+    if fails:
+        with pytest.raises(_Boom):
+            quant_api._run_calibration(
+                wrapper, calib="x", batch=1, samples=1, algorithm="minmax",
+                allow_download_scripts=False,
+            )
+    else:
+        quant_api._run_calibration(
+            wrapper, calib="x", batch=1, samples=1, algorithm="minmax",
+            allow_download_scripts=False,
+        )
+
+    assert not any(getattr(m, "_q_observing", False) for m in quant_modules)
+    assert wrapper.model.training
+
+
+def test_failed_calibration_rolls_back_and_allows_retry(monkeypatch):
+    """A partial calibration must not leave an untracked quantized model."""
+    import numpy as np
+
+    from libreyolo.quant import api as quant_api
+
+    wrapper = _TinyQuantWrapper(quantized=False)
+    original = wrapper.model[0]
+    state = {"fail": True, "after_batch": False}
+
+    class _Loader:
+        def __iter__(self):
+            yield np.ones((1, 3, 32, 32), dtype=np.float32)
+            if state["fail"]:
+                state["after_batch"] = True
+                raise _Boom("interrupted after one batch")
+
+    monkeypatch.setattr(
+        "libreyolo.export.calibration.CalibrationDataLoader",
+        lambda **kwargs: _Loader(),
+    )
+
+    def quantize():
+        return quant_api.quantize_model(
+            wrapper,
+            recipe="int8",
+            calib="x",
+            batch=1,
+            samples=2,
+            keep_high_precision=(),
+            verbose=False,
+        )
+
+    with pytest.raises(_Boom):
+        quantize()
+
+    assert state["after_batch"]
+    assert wrapper.model[0] is original
+    assert wrapper.model.training
+    assert getattr(wrapper, "_quant_manifest", None) is None
+    assert not any(
+        isinstance(module, QuantConv2d) for module in wrapper.model.modules()
+    )
+
+    state["fail"] = False
+    quantize()
+    assert isinstance(wrapper.model[0], QuantConv2d)
+    assert wrapper._quant_manifest["calibrated"]
+    assert not wrapper.model[0]._q_observing
+
+
+# ---------------------------------------------------------------------------
+# birefnet (matte) family
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def birefnet_t():
+    from libreyolo.models.birefnet.model import LibreBiRefNet
+
+    return LibreBiRefNet(None, size="t", device="cpu")
+
+
+def test_birefnet_nvfp4_swaps_linears_and_respects_keeps(birefnet_t):
+    birefnet_t.quantize(recipe="nvfp4", verbose=False)
+    quant_names = [
+        n for n, m in birefnet_t.model.named_modules() if isinstance(m, NVFP4Linear)
+    ]
+    assert quant_names, "expected Swin Linear layers to be swapped to NVFP4Linear"
+    for pattern in ("patch_embed", "conv_out1", "gdt_convs_attn"):
+        assert not any(pattern in n for n in quant_names), pattern
+    info = birefnet_t.quant_info()
+    assert info["recipe"] == "nvfp4"
+    assert info["execution"] == "simulated"
+
+
+def test_birefnet_fp8_swaps_convs_and_linears(birefnet_t):
+    birefnet_t.quantize(recipe="fp8", calib=None, verbose=False)
+    kinds = {
+        type(m).__name__
+        for m in birefnet_t.model.modules()
+        if isinstance(m, (QuantConv2d,)) or type(m).__name__ == "QuantLinear"
+    }
+    assert kinds, "expected fp8 quant modules on both Conv2d and Linear"
+    assert "fp8_tensorwise_weights" not in birefnet_t.quant_info()
+
+
+def test_birefnet_int2_rejected(birefnet_t):
+    with pytest.raises(QuantizationError, match="inference-only"):
+        birefnet_t.quantize(recipe="int2", verbose=False)
+
+
+def test_feynobg_supported_and_int2_rejected():
+    # feynobg shares the birefnet architecture; the gate check is family-level
+    # and cheap to exercise without instantiating the 263M model.
+    from libreyolo.quant.api import SUPPORTED_FAMILIES, _check_support
+
+    assert "feynobg" in SUPPORTED_FAMILIES
+    _check_support("feynobg", "fp8")
+    _check_support("feynobg", "nvfp4")
+    with pytest.raises(QuantizationError, match="inference-only"):
+        _check_support("feynobg", "int2")
+
+
+def test_birefnet_nvfp4_save_load_roundtrip(tmp_path, birefnet_t):
+    from libreyolo import LibreYOLO
+
+    birefnet_t.quantize(recipe="nvfp4", verbose=False)
+    path = tmp_path / "LibreBiRefNett-matte-nvfp4.pt"
+    birefnet_t.save(str(path))
+
+    # The real user path: metadata dispatch picks family+size, then the quant
+    # manifest rebuilds the quantized structure before the state dict loads.
+    reloaded = LibreYOLO(str(path), device="cpu")
+    info = reloaded.quant_info()
+    assert info["recipe"] == "nvfp4"
+    assert reloaded.size == "t"
+    assert reloaded.task == "matte"
+
+    src = birefnet_t.model.state_dict()
+    dst = reloaded.model.state_dict()
+    assert set(src.keys()) == set(dst.keys())
+    for key in src:
+        assert torch.equal(src[key].cpu(), dst[key].cpu()), key
+
+
+@pytest.mark.parametrize("weight_scaling", ["per_channel", "tensorwise"])
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_fp8_native_linear_matches_simulation(weight_scaling):
+    """The scaled_mm native path tracks the simulated fp8 linear closely."""
+    import os
+
+    from libreyolo.quant import kernels as K
+
+    if K.resolve("fp8_gemm") is None:
+        pytest.skip("no fp8 tensor cores on this device")
+    torch.manual_seed(0)
+    lin = torch.nn.Linear(256, 512).cuda().eval()
+    q = QuantLinear.from_float(lin)
+    q._q_wformat = q._q_aformat = "fp8"
+    q._q_kind = "linear_fp8"
+    q._q_fp8_weight_scaling = weight_scaling
+    x = torch.randn(64, 256, device="cuda")
+    q._q_observing = True
+    q(x)
+    q._q_observing = False
+    q.freeze_weight_qparams()
+    q.make_finalized()
+
+    native = q(x.half())
+    os.environ["LIBREYOLO_QUANT_KERNELS"] = "reference"
+    K.clear_cache()
+    try:
+        sim = q(x.half())
+    finally:
+        os.environ.pop("LIBREYOLO_QUANT_KERNELS")
+        K.clear_cache()
+    rel = (
+        (native.float() - sim.float()).abs().mean()
+        / sim.float().abs().mean()
+    ).detach()
+    assert float(rel) < 5e-3, float(rel)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_fp8_triton_fused_cast_and_epilogue_match_torch():
+    from libreyolo.quant import kernels as K
+
+    cast = K.resolve("fp8_cast_static")
+    epilogue = K.resolve("fp8_perchannel_epilogue")
+    if cast is None or epilogue is None:
+        pytest.skip("Triton FP8 kernels unavailable")
+
+    torch.manual_seed(0)
+    x = torch.randn(257, 192, device="cuda", dtype=torch.float16).contiguous()
+    inverse_scale = torch.tensor(3.25, device="cuda", dtype=torch.float16)
+    expected_fp8 = (
+        (x.float() * inverse_scale.float())
+        .clamp(-448.0, 448.0)
+        .to(torch.float8_e4m3fn)
+    )
+    assert torch.equal(cast(x, inverse_scale), expected_fp8)
+
+    values = torch.randn(257, 192, device="cuda", dtype=torch.float16)
+    scale = torch.rand(1, 192, device="cuda", dtype=torch.float16)
+    bias = torch.randn(1, 192, device="cuda", dtype=torch.float16)
+    expected = (values.float() * scale.float() + bias.float()).half()
+    actual = epilogue(values, scale, bias)
+    torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)

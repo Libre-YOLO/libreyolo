@@ -301,6 +301,10 @@ class TransformerDecoder(nn.Module):
         self.num_layers = num_layers
         self.layer_scale = layer_scale
         self.num_head = num_head
+        # Set by ``emit_loss_outputs`` while training-time validation computes
+        # the criterion: eval otherwise scores only the ``eval_idx`` layer,
+        # which is not enough for the auxiliary-decoder loss terms.
+        self.emit_loss_outputs = False
         self.eval_idx = eval_idx if eval_idx >= 0 else num_layers + eval_idx
         self.up, self.reg_scale, self.reg_max = up, reg_scale, reg_max
         self.layers = nn.ModuleList(
@@ -412,7 +416,8 @@ class TransformerDecoder(nn.Module):
                 ref_points_initial, integral(pred_corners, project), reg_scale
             )
 
-            if self.training or i == self.eval_idx:
+            score_every_layer = self.training or self.emit_loss_outputs
+            if score_every_layer or i == self.eval_idx:
                 scores = score_head[i](output)
                 scores = self.lqe_layers[i](scores, pred_corners)
                 dec_out_logits.append(scores)
@@ -420,7 +425,7 @@ class TransformerDecoder(nn.Module):
                 dec_out_pred_corners.append(pred_corners)
                 dec_out_refs.append(ref_points_initial)
                 dec_out_hs.append(output)
-                if not self.training:
+                if not score_every_layer:
                     break
 
             pred_corners_undetach = pred_corners
@@ -623,6 +628,9 @@ class ECTransformer(nn.Module):
             ]
         )
 
+        # See ``TransformerDecoder.emit_loss_outputs``: eval assembles a
+        # two-key inference dict, and the criterion needs the training keys.
+        self.emit_loss_outputs = False
         self._anchor_cache = OrderedDict()
         if self.eval_spatial_size:
             anchors, valid_mask = self._generate_anchors()
@@ -821,7 +829,7 @@ class ECTransformer(nn.Module):
         enc_topk_bbox_unact = self.enc_bbox_head(enc_topk_memory) + enc_topk_anchors
 
         enc_topk_bboxes_list, enc_topk_logits_list = [], []
-        if self.training:
+        if self.training or self.emit_loss_outputs:
             enc_topk_bboxes_list.append(F.sigmoid(enc_topk_bbox_unact))
             enc_topk_logits_list.append(enc_topk_logits)
 
@@ -857,7 +865,7 @@ class ECTransformer(nn.Module):
                 dim=1,
                 index=topk_ind.unsqueeze(-1).repeat(1, 1, outputs_logits.shape[-1]),
             )
-            if self.training
+            if (self.training or self.emit_loss_outputs)
             else None
         )
         topk_memory = memory.gather(
@@ -975,7 +983,10 @@ class ECTransformer(nn.Module):
             dn_out_corners, out_corners = self._split(out_corners, 2, s_idx)
             dn_out_refs, out_refs = self._split(out_refs, 2, s_idx)
 
-        if not self.training:
+        # ``emit_loss_outputs`` reproduces the training-shaped dict during
+        # validation. ``out_logits[-1]`` is the same layer either way because
+        # loss outputs are only allowed when ``eval_idx`` is the last layer.
+        if not (self.training or self.emit_loss_outputs):
             result = {"pred_logits": out_logits[-1], "pred_boxes": out_bboxes[-1]}
             if out_segs is not None:
                 result["pred_masks"] = out_segs[-1]
@@ -1344,7 +1355,28 @@ class MSDeformAttnPose(nn.Module):
         reference_points = torch.transpose(reference_points, 2, 3).flatten(1, 2)
 
         if reference_points.shape[-1] == 2:
-            offset_normalizer = torch.tensor(input_spatial_shapes, device=query.device)
+            if (
+                torch.is_tensor(input_spatial_shapes)
+                and input_spatial_shapes.device == query.device
+            ):
+                offset_normalizer = input_spatial_shapes
+            else:
+                # Materialising this from host data copies host->device, which
+                # CUDA graph capture rejects. Memoise per shape and device so the
+                # copy happens on the eager warmup rather than during capture.
+                if torch.is_tensor(input_spatial_shapes):
+                    key = (tuple(input_spatial_shapes.cpu().flatten().tolist()), query.device)
+                else:
+                    key = (tuple(tuple(p) for p in input_spatial_shapes), query.device)
+                cache = getattr(self, "_offset_normalizer_cache", None)
+                if cache is None:
+                    cache = self._offset_normalizer_cache = {}
+                offset_normalizer = cache.get(key)
+                if offset_normalizer is None:
+                    offset_normalizer = torch.tensor(
+                        input_spatial_shapes, device=query.device
+                    )
+                    cache[key] = offset_normalizer
             offset_normalizer = offset_normalizer.flip([1]).reshape(
                 1, 1, 1, self.n_levels, 1, 2
             )
