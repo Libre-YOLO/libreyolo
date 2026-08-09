@@ -33,21 +33,29 @@ def _get_hf_token() -> Optional[str]:
     return None
 
 
-def _notify_yolonas_license_once() -> None:
-    """Print Deci's YOLO-NAS license terms once per process before download."""
+def _notify_yolonas_license_once(url: str = "") -> None:
+    """Print Deci's weight license terms once per process before download.
+
+    The rotated YOLO-NAS-R checkpoints ship a separate notice from the
+    detect/pose ones, so point at whichever actually governs this file.
+    """
     global _YOLONAS_LICENSE_NOTICE_SHOWN
     if _YOLONAS_LICENSE_NOTICE_SHOWN:
         return
     _YOLONAS_LICENSE_NOTICE_SHOWN = True
+    is_rotated = "yolo_nas_r_" in url.lower()
+    name = "YOLO-NAS-R (rotated)" if is_rotated else "YOLO-NAS"
+    license_file = "LICENSE.YOLONAS-R.md" if is_rotated else "LICENSE.YOLONAS.md"
+    rule = "─" * 69
     print(
         "\n"
-        "─────────────────────────────────────────────────────────────────────\n"
-        "YOLO-NAS weights are distributed by Deci.AI under a proprietary\n"
+        f"{rule}\n"
+        f"{name} weights are distributed by Deci.AI under a proprietary\n"
         "license (non-commercial, no redistribution, no production use\n"
         "without a separate agreement). By downloading, you accept those\n"
         "terms. Full license text:\n"
-        "  https://github.com/Deci-AI/super-gradients/blob/master/LICENSE.YOLONAS.md\n"
-        "─────────────────────────────────────────────────────────────────────\n"
+        f"  https://github.com/Deci-AI/super-gradients/blob/master/{license_file}\n"
+        f"{rule}\n"
     )
 
 
@@ -318,7 +326,7 @@ def download_url_to_path(url: str, path: Path, *, verify=None) -> None:
     is_hf = host.endswith("huggingface.co")
 
     if "cloudfront.net" in host or host.endswith("deci.ai"):
-        _notify_yolonas_license_once()
+        _notify_yolonas_license_once(url)
 
     headers = {}
     token = _get_hf_token()

@@ -5,6 +5,27 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases
 before 1.4.0 are documented in the
 [GitHub Releases](https://github.com/LibreYOLO/libreyolo/releases) only.
 
+## [Unreleased]
+
+### Added
+
+- **YOLO-NAS-R oriented boxes.** The existing `yolonas` family gains an `obb`
+  task: `LibreYOLO("LibreYOLONASs-obb.pt")` returns `Results.obb` on the
+  original image canvas, in sizes `s`/`m`/`l` at 1024 on DOTA2's 18 classes.
+  Ported from the Apache-2.0 SuperGradients pull request 2014 at pinned commit
+  `69141b55c1161d939939a270523a7eca5a645f72`; the rotated head reproduces the
+  pinned upstream head exactly (`max_abs_diff == 0` for all three sizes, see
+  `weights/parity_yolonas_obb.py`). ONNX, TorchScript, TensorRT and OpenVINO
+  export and reload with backend results matching native inference. The task is
+  inference-only: `model.train(task="obb")` raises with an explanation.
+  The pretrained weights stay under Deci's separate non-redistributable
+  YOLO-NAS-R license and are downloaded from Deci's CDN and SHA256-verified
+  rather than mirrored — the same treatment YOLO-NAS detect and pose get.
+- Shared rotated-box postprocessing helpers in `libreyolo/postprocess/obb_ops.py`
+  (corner conversion, axis-aligned proxy, exact rotated NMS, long-side
+  canonicalization), extracted from the YOLO9 OBB postprocessor so OBB families
+  share one implementation.
+
 ## [1.5.0] - 2026-08-09
 
 The largest release so far: 28 new model families, four new tasks (`edge`,

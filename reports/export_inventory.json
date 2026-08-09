@@ -1955,13 +1955,14 @@
     "class": "libreyolo.models.yolonas.model.LibreYOLONAS",
     "tasks": [
       "detect",
-      "pose"
+      "pose",
+      "obb"
     ],
     "default_task": "detect",
     "sizes": {
-      "s": 640,
-      "m": 640,
-      "l": 640,
+      "s": 1024,
+      "m": 1024,
+      "l": 1024,
       "n": 640
     },
     "default_imgsz": {
@@ -1980,6 +1981,11 @@
         "s": 640,
         "m": 640,
         "l": 640
+      },
+      "obb": {
+        "s": 1024,
+        "m": 1024,
+        "l": 1024
       }
     },
     "export_override": "none",

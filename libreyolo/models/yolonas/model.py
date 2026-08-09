@@ -1,4 +1,13 @@
-"""LibreYOLO YOLO-NAS wrapper (detect + pose)."""
+"""LibreYOLO YOLO-NAS wrapper (detect + pose + obb).
+
+The ``obb`` task is YOLO-NAS-R, ported from the Apache-2.0 SuperGradients
+pull request 2014 at pinned commit
+``69141b55c1161d939939a270523a7eca5a645f72``. Its pretrained DOTA2 weights are
+covered by Deci's separate, non-redistributable YOLO-NAS-R licence and are
+linked from Deci's CDN rather than mirrored -- same treatment as YOLO-NAS
+detect and pose. See ``THIRD_PARTY_NOTICES.txt`` and
+``weights/LICENSE_NOTICE.txt``.
+"""
 
 from __future__ import annotations
 
@@ -17,8 +26,9 @@ from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
 from ...validation.preprocessors import YOLONASValPreprocessor
-from .nn import LibreYOLONASModel, LibreYOLONASPoseModel
-from ...postprocess.yolonas import postprocess, postprocess_pose
+from .nn import LibreYOLONASModel, LibreYOLONASOBBModel, LibreYOLONASPoseModel
+from ...postprocess.yolonas import postprocess, postprocess_obb, postprocess_pose
+from ...preprocess.yolonas import preprocess_obb_image
 from .utils import (
     preprocess_image,
     preprocess_pose_image,
@@ -28,6 +38,29 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 _POSE_HEAD_KEY = "heads.head1.pose_pred.weight"
+_OBB_HEAD_KEY = "heads.head1.rot_pred.weight"
+
+# DOTA2 class order used by the upstream YOLO-NAS-R checkpoints.
+YOLONAS_OBB_CLASS_NAMES = (
+    "plane",
+    "ship",
+    "storage-tank",
+    "baseball-diamond",
+    "tennis-court",
+    "basketball-court",
+    "ground-track-field",
+    "harbor",
+    "bridge",
+    "large-vehicle",
+    "small-vehicle",
+    "helicopter",
+    "roundabout",
+    "soccer-ball-field",
+    "swimming-pool",
+    "container-crane",
+    "airport",
+    "helipad",
+)
 
 
 class LibreYOLONAS(BaseModel):
@@ -35,7 +68,9 @@ class LibreYOLONAS(BaseModel):
     FILENAME_PREFIX = "LibreYOLONAS"
     INPUT_SIZES = {"s": 640, "m": 640, "l": 640}
     POSE_INPUT_SIZES = {"n": 640, "s": 640, "m": 640, "l": 640}
-    SUPPORTED_TASKS = ("detect", "pose")
+    # YOLO-NAS-R is trained on DOTA2 and evaluated at 1024.
+    OBB_INPUT_SIZES = {"s": 1024, "m": 1024, "l": 1024}
+    SUPPORTED_TASKS = ("detect", "pose", "obb")
     # Forward is pure tensor work with no host sync, verified to capture and
     # replay bit-identically (tests/unit/test_cuda_graph_families.py).
     SUPPORTS_CUDA_GRAPH = True
@@ -43,6 +78,7 @@ class LibreYOLONAS(BaseModel):
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,
         "pose": POSE_INPUT_SIZES,
+        "obb": OBB_INPUT_SIZES,
     }
     POSE_NUM_KEYPOINTS = 17
     KEYPOINT_DIM = 3
@@ -70,7 +106,21 @@ class LibreYOLONAS(BaseModel):
         return _POSE_HEAD_KEY in weights_dict
 
     @classmethod
+    def is_obb_state_dict(cls, weights_dict: dict) -> bool:
+        """True for YOLO-NAS-R rotated checkpoints.
+
+        ``rot_pred`` exists only on the rotated head, so it separates OBB from
+        both detect and pose without touching any shared backbone key.
+        """
+        return _OBB_HEAD_KEY in weights_dict
+
+    @classmethod
     def detect_checkpoint_task(cls, weights_dict: dict) -> Optional[str]:
+        # OBB is resolved before pose and detect: the rotated head shares the
+        # detect head's cls_pred/reg_pred names, so a plain "not pose ->
+        # detect" fallback would silently build the wrong architecture.
+        if cls.is_obb_state_dict(weights_dict):
+            return "obb"
         return "pose" if cls.is_pose_state_dict(weights_dict) else None
 
     @classmethod
@@ -82,15 +132,24 @@ class LibreYOLONAS(BaseModel):
         size = super().detect_size_from_filename(filename)
         if size is not None:
             return size
-        match = re.search(r"yolo_nas(?:_pose)?_([nsml])_coco", filename.lower())
+        lowered = filename.lower()
+        match = re.search(r"yolo_nas(?:_pose)?_([nsml])_coco", lowered)
+        if match:
+            return match.group(1)
+        # Native Deci rotated checkpoints: yolo_nas_r_<size>_dota2.pth.
+        match = re.search(r"yolo_nas_r_([sml])_dota2", lowered)
         return match.group(1) if match else None
 
     @classmethod
     def detect_task_from_filename(cls, filename: str) -> Optional[str]:
-        # Native Deci pose checkpoints are named yolo_nas_pose_<size>_coco_pose.pth.
-        # Detect that here so local checkpoints route to the pose architecture.
-        if re.search(r"yolo_nas_pose_[nsml]_coco", filename.lower()):
+        # Native Deci pose checkpoints are named yolo_nas_pose_<size>_coco_pose.pth,
+        # rotated ones yolo_nas_r_<size>_dota2.pth. Detect those here so local
+        # checkpoints route to the right architecture.
+        lowered = filename.lower()
+        if re.search(r"yolo_nas_pose_[nsml]_coco", lowered):
             return "pose"
+        if re.search(r"yolo_nas_r_[sml]_dota2", lowered):
+            return "obb"
         return super().detect_task_from_filename(filename)
 
     @classmethod
@@ -105,6 +164,10 @@ class LibreYOLONAS(BaseModel):
             if size not in cls.POSE_INPUT_SIZES:
                 return None
             return f"{cls._DECI_CDN_BASE}/yolo_nas_pose_{size}_coco_pose.pth"
+        if task == "obb":
+            if size not in cls.OBB_INPUT_SIZES:
+                return None
+            return f"{cls._DECI_CDN_BASE}/yolo_nas_r_{size}_dota2.pth"
         if size not in cls.INPUT_SIZES:
             return None
         return f"{cls._DECI_CDN_BASE}/yolo_nas_{size}_coco.pth"
@@ -194,6 +257,10 @@ class LibreYOLONAS(BaseModel):
             # A file path's real class count is resolved in _load_weights;
             # training resolves it from the dataset yaml.
             nb_classes = 1
+        if resolved_task == "obb" and isinstance(model_path, dict):
+            ckpt_nc = self.detect_nb_classes(model_path)
+            if ckpt_nc is not None:
+                nb_classes = ckpt_nc
         super().__init__(
             model_path=model_path,
             size=size,
@@ -209,10 +276,20 @@ class LibreYOLONAS(BaseModel):
                 self.names = {0: "person"}
             else:
                 self.names = {i: str(i) for i in range(self.nb_classes)}
+        if self.task == "obb" and self.nb_classes == len(YOLONAS_OBB_CLASS_NAMES):
+            # Placeholder DOTA2 names; checkpoint metadata or the dataset yaml
+            # overrides them where present.
+            self.names = dict(enumerate(YOLONAS_OBB_CLASS_NAMES))
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
     def _init_model(self) -> nn.Module:
+        if self.task == "obb":
+            return LibreYOLONASOBBModel(
+                config=self.size,
+                nb_classes=self.nb_classes,
+                reg_max=self.reg_max,
+            )
         if self.task == "pose":
             return LibreYOLONASPoseModel(
                 config=self.size,
@@ -243,6 +320,10 @@ class LibreYOLONAS(BaseModel):
 
     def _rebuild_for_new_classes(self, new_nb_classes: int):
         self.nb_classes = new_nb_classes
+        if self.task == "obb":
+            self.model.replace_num_classes(new_nb_classes)
+            self.model.to(self.device)
+            return
         if self.task == "pose":
             # Rebuild the pose head's class channels; the per-keypoint
             # visibility channels and the rest of the model are preserved.
@@ -282,6 +363,12 @@ class LibreYOLONAS(BaseModel):
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Any, Tuple[int, int], float]:
         effective_size = input_size if input_size is not None else self.input_size
+        if self.task == "obb":
+            return preprocess_obb_image(
+                image,
+                input_size=effective_size,
+                color_format=color_format,
+            )
         if self.task == "pose":
             return preprocess_pose_image(
                 image,
@@ -296,8 +383,20 @@ class LibreYOLONAS(BaseModel):
 
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         output = self.model(input_tensor)
+        if self.task == "obb":
+            # Heads return ((boxes_cxcywhr, scores), raw_logits) in eager mode
+            # and just (boxes, scores) under tracing.
+            if isinstance(output, tuple) and len(output) == 2:
+                decoded = output[0] if isinstance(output[0], tuple) else output
+                boxes, scores = decoded
+                return {"boxes": boxes, "scores": scores}
+            return output
         if self.task == "pose":
-            if isinstance(output, tuple) and len(output) == 2 and isinstance(output[0], tuple):
+            if (
+                isinstance(output, tuple)
+                and len(output) == 2
+                and isinstance(output[0], tuple)
+            ):
                 output = output[0]
             # Heads return the inference 4-tuple
             # (bboxes, scores, pose_xy, pose_scores).
@@ -333,6 +432,16 @@ class LibreYOLONAS(BaseModel):
         **kwargs,
     ) -> Dict:
         actual_input_size = kwargs.get("input_size", self.input_size)
+        if self.task == "obb":
+            return postprocess_obb(
+                output,
+                conf_thres=conf_thres,
+                iou_thres=iou_thres,
+                input_size=actual_input_size,
+                original_size=original_size,
+                max_det=max_det,
+                letterbox=kwargs.get("letterbox", True),
+            )
         if self.task == "pose":
             return postprocess_pose(
                 output,
@@ -370,6 +479,10 @@ class LibreYOLONAS(BaseModel):
         "yolo_nas_pose_s_coco_pose.pth": "54f0933cb3760c5f9ba47e901c58d6d114cd206718667a586031bea0ab9ea849",
         "yolo_nas_pose_m_coco_pose.pth": "6d0f92a589fd2f39a9fb92c42894cca76e81eaf2fcb3a00f1cac2e7089fb91ec",
         "yolo_nas_pose_l_coco_pose.pth": "d05c55157b3eb917e43d3669cc1e99fbe35a8a93c7883b95b93036a81216c5ab",
+        # YOLO-NAS-R (rotated / OBB), DOTA2.
+        "yolo_nas_r_s_dota2.pth": "2dbca049da3a77b62882ba1c75fea236c2edac089a1166a91db1940af9aa7e24",
+        "yolo_nas_r_m_dota2.pth": "0f444de9dbf2221eecae0445f45773c210e59e9cbb13fd08c15e81f064e571d4",
+        "yolo_nas_r_l_dota2.pth": "ec8e24e8ba6acad97a15d7ccdbfc5658830f88e0ec73c1f5749b7ebf244f18d5",
     }
 
     @classmethod
@@ -429,18 +542,24 @@ class LibreYOLONAS(BaseModel):
             state_dict = self._prepare_state_dict(state_dict)
 
             ckpt_is_pose = self.is_pose_state_dict(state_dict)
-            if ckpt_is_pose and self.task != "pose":
+            ckpt_is_obb = self.is_obb_state_dict(state_dict)
+            ckpt_task = "obb" if ckpt_is_obb else ("pose" if ckpt_is_pose else "detect")
+            if ckpt_task != self.task:
                 raise RuntimeError(
-                    "Checkpoint is a YOLO-NAS pose model but this instance was "
-                    "initialized for detection. Pass task='pose' or use a "
-                    "detection checkpoint."
+                    f"Checkpoint is a YOLO-NAS {ckpt_task} model but this "
+                    f"instance was initialized for {self.task}. Pass "
+                    f"task='{ckpt_task}' or use a {self.task} checkpoint."
                 )
-            if not ckpt_is_pose and self.task == "pose":
-                raise RuntimeError(
-                    "Checkpoint is a YOLO-NAS detection model but this instance "
-                    "was initialized for pose. Pass task='detect' or use a pose "
-                    "checkpoint."
-                )
+
+            if ckpt_is_obb:
+                # Bare upstream YOLO-NAS-R checkpoints carry no nc/names
+                # metadata, so size the rotated head from the head shapes and
+                # fall back to the published DOTA2 class order.
+                ckpt_nc = self.detect_nb_classes(state_dict)
+                if ckpt_nc is not None and ckpt_nc != self.nb_classes:
+                    self._rebuild_for_new_classes(ckpt_nc)
+                if self.nb_classes == len(YOLONAS_OBB_CLASS_NAMES):
+                    self.names = dict(enumerate(YOLONAS_OBB_CLASS_NAMES))
 
             # Match the pose head to the checkpoint's keypoint count before
             # loading (e.g. a 4-keypoint fine-tune of a COCO-17 model).
@@ -526,6 +645,16 @@ class LibreYOLONAS(BaseModel):
             loggers: Optional built-in experiment loggers: a registered name,
                 a configured logger instance, or an iterable mixing both.
         """
+        if self.task == "obb":
+            raise NotImplementedError(
+                "YOLO-NAS-R (task='obb') ships inference-only in LibreYOLO: the "
+                "rotated head, decode, preprocessing, postprocessing and exports "
+                "are ported and parity-checked, but the rotated loss "
+                "(probabilistic-IoU task-aligned assignment, width/height DFL, "
+                "offset and rotation regression) is not wired yet. Use "
+                "task='detect' or task='pose' to train YOLO-NAS."
+            )
+
         # Task-specific defaults for arguments left unset by the caller.
         if lr0 is None:
             lr0 = 2e-3 if self.task == "pose" else 5e-4

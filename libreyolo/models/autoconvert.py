@@ -182,6 +182,14 @@ def _checkpoint_names(loaded: Any, nc: int | None = None) -> Any | None:
         return _trim_names_to_nc(names, nc)
 
     args = loaded.get("args") or loaded.get("hyper_parameters") or {}
+    if not args:
+        # SuperGradients (YOLO-NAS detect/pose and YOLO-NAS-R) stores the
+        # dataset's class names under ``processing_params``. Without this, an
+        # auto-converted Deci checkpoint silently ends up with class_0..class_N
+        # instead of its real COCO / DOTA2 labels.
+        processing_params = loaded.get("processing_params")
+        if isinstance(processing_params, dict):
+            args = processing_params
     class_names = (
         args.get("class_names")
         if isinstance(args, dict)
