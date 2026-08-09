@@ -78,6 +78,25 @@ def test_non_positive_clip_frames_rejected(embedder, clip_path):
         embedder.predict(clip_path, clip_frames=0)
 
 
+def test_save_writes_an_annotated_image(embedder, clip_path, tmp_path):
+    """save=True must be honored, not silently dropped."""
+    out = tmp_path / "saved"
+    embedder.predict(clip_path, save=True, output_path=str(out))
+    written = list(out.rglob("*.jpg")) + list(out.rglob("*.png"))
+    assert written, f"save=True wrote nothing under {out}"
+
+
+def test_vid_stride_rejected_as_inapplicable(embedder, clip_path):
+    """vid_stride conflicts with uniform whole-clip sampling; say so loudly."""
+    with pytest.raises(ValueError, match="clip_frames"):
+        embedder.predict(clip_path, vid_stride=2)
+
+
+def test_show_rejected_as_inapplicable(embedder, clip_path):
+    with pytest.raises(NotImplementedError, match="whole-clip"):
+        embedder.predict(clip_path, show=True)
+
+
 def test_live_source_rejected_without_buffering(embedder):
     with pytest.raises(ValueError, match="unbounded"):
         embedder.predict(0, stream=True)

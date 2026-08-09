@@ -315,6 +315,19 @@ class InferenceRunner:
                     "they arrive."
                 )
             if source_spec.kind == SourceKind.VIDEO:
+                if vid_stride != 1:
+                    raise ValueError(
+                        "vid_stride does not apply when a whole video is "
+                        "embedded as a single vector: frames are sampled "
+                        "uniformly across the entire clip. Use clip_frames= to "
+                        "control how many frames are sampled."
+                    )
+                if show:
+                    raise NotImplementedError(
+                        "show=True displays annotated frames as they are "
+                        "processed, which does not apply to a whole-clip "
+                        "embedding that yields one result for the entire video."
+                    )
                 clip_results = self._predict_video_clip(
                     source_spec.source,
                     conf=conf,
@@ -322,6 +335,9 @@ class InferenceRunner:
                     imgsz=imgsz,
                     classes=classes,
                     max_det=max_det,
+                    save=save,
+                    output_path=output_path,
+                    output_file_format=output_file_format,
                     **kwargs,
                 )
                 # Honor the streaming contract: callers passing stream=True
@@ -767,6 +783,9 @@ class InferenceRunner:
         imgsz=None,
         classes=None,
         max_det: int = 300,
+        save: bool = False,
+        output_path=None,
+        output_file_format=None,
         **kwargs,
     ) -> List[Results]:
         """Embed a finite video as a single row (``VIDEO_EMBED_MODE == "clip"``).
@@ -775,6 +794,10 @@ class InferenceRunner:
         temporal pooling belong to the family's ``_forward``. Returns a
         one-element list holding one ``Results`` for the whole clip, not one per
         frame.
+
+        ``save=True`` writes a single annotated image built from the first
+        sampled frame -- there is no per-frame video to render, because the
+        whole clip collapses to one result.
         """
         clip_frames = kwargs.pop(
             "clip_frames", getattr(self.model, "clip_frames", 8)
@@ -801,6 +824,12 @@ class InferenceRunner:
         )
         result = self._wrap_results(detections, original_size, str(source), classes)
         result.path = str(source)
+
+        if save:
+            save_file = resolve_save_path(
+                output_path, str(source), ext=output_file_format or "jpg"
+            )
+            self._save_annotated_image(result, frames[0], save_file)
         return [result]
 
     def _save_annotated_image(
