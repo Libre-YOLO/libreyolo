@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 from ...training.config import TrainConfig
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.trainer import BaseTrainer
+from ..base.classify_validation_loss import ClassifyValidationLossMixin
 from .dataset import VideoClipDataset, collate_clips, load_video_dataset
 
 logger = logging.getLogger(__name__)
@@ -38,8 +39,13 @@ class VJEPA2Config(TrainConfig):
         super().__init__(**kwargs)
 
 
-class VJEPA2Trainer(BaseTrainer):
-    """Cross-entropy training of the attentive pooler + classifier only."""
+class VJEPA2Trainer(ClassifyValidationLossMixin, BaseTrainer):
+    """Cross-entropy training of the attentive pooler + classifier only.
+
+    The probe is an ordinary cross-entropy classifier over clip logits, so it
+    reuses the shared classify validation-loss gate rather than reimplementing
+    it; ``val_loss=True`` is therefore supported.
+    """
 
     best_metric_key = "metrics/accuracy_top1"
 

@@ -968,6 +968,7 @@ _VAL_LOSS_FAMILIES = {
     "libreyolo.models.segformer.trainer": "SegformerTrainer",
     "libreyolo.models.lingbotvision.trainer": "LingBotVisionTrainer",
     "libreyolo.models.dinov2.trainer": "DINOv2Trainer",
+    "libreyolo.models.vjepa2.trainer": "VJEPA2Trainer",
     "libreyolo.models.nafnet.trainer": "NAFNetTrainer",
 }
 
