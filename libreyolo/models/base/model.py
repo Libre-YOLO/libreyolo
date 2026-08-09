@@ -172,6 +172,16 @@ class BaseModel(ABC):
     # tensor), so families opt in only after a parity test covers them.
     SUPPORTS_CUDA_GRAPH: ClassVar[bool] = False
 
+    # How a family embeds a finite video under task="embed".
+    #   "frames" (default) — one Results per decoded frame, the historical
+    #       behavior every existing family keeps.
+    #   "clip"            — one Results for the whole clip: frames are sampled
+    #       uniformly, encoded, and pooled by the family into a single row.
+    # Families opt in explicitly; the generic runner takes the clip path only
+    # when the resolved task is "embed", the source is a finite video, and the
+    # family declares clip support.
+    VIDEO_EMBED_MODE: ClassVar[str] = "frames"
+
     # TTA policy — subclasses may override
     TTA_ENABLED: ClassVar[bool] = True
     # True for families that resize to a fixed square regardless of input size
