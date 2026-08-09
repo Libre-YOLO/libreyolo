@@ -35,6 +35,7 @@ import logging
 import os
 import re
 import stat
+import time
 import tempfile
 from pathlib import Path
 from typing import Any, Optional, Tuple
@@ -703,9 +704,44 @@ def _atomic_torch_save(value: Any, path: Path, *, mode: int | None = None) -> No
         torch.save(value, temporary)
         if mode is not None:
             os.chmod(temporary, mode)
-        os.replace(temporary, path)
+        _replace_tolerating_windows_sharing(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _replace_tolerating_windows_sharing(temporary: Path, path: Path) -> None:
+    """``os.replace`` with the one Windows semantic POSIX does not have.
+
+    On POSIX the rename always wins. On Windows it raises ``PermissionError``
+    (``WinError 5``) whenever any other handle holds the destination, which two
+    processes converting the same upstream checkpoint hit routinely: whoever
+    renames second collides with the reader the first one just unblocked. The
+    failure surfaced as a hard crash on a path whose whole purpose is to never
+    leave a half-written checkpoint behind.
+
+    Retry briefly, then concede. Conceding is correct rather than a fudge: both
+    writers derived the same conversion from the same source, so a destination
+    that already exists is the peer's identical result, and the caller's
+    contract (a complete checkpoint at ``path``) is satisfied either way.
+    """
+    last: OSError | None = None
+    for delay in (0.0, 0.02, 0.05, 0.1, 0.2):
+        if delay:
+            time.sleep(delay)
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError as exc:  # pragma: no cover - Windows only
+            last = exc
+    if path.exists():
+        logger.debug(
+            "Kept the concurrently written %s; this process could not replace "
+            "it (%s).",
+            path,
+            last,
+        )
+        return
+    raise last  # type: ignore[misc]
 
 
 def autoconvert_upstream_checkpoint(

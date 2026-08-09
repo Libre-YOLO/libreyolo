@@ -35,6 +35,20 @@ def _tracked_paths() -> list[Path]:
     ]
 
 
+# The ban is on *labelling* a capability with the retired vocabulary. Two files
+# have the opposite job: they record that the vocabulary was retired. A release
+# that deletes the acknowledgement kwarg has to spell it out, or the user whose
+# script now raises TypeError searches the docs for the argument in their own
+# traceback and finds nothing. Keep those two exempt and the guard absolute
+# everywhere else, including every other doc page, model card and source file.
+_HISTORICAL_RECORD = ("CHANGELOG.md", "docs/upgrading.md")
+
+
+def _is_historical_record(line: str) -> bool:
+    path = line.split(":", 1)[0]
+    return path in _HISTORICAL_RECORD
+
+
 def _tracked_text_matches(patterns: tuple[str, ...]) -> list[str]:
     command = ["git", "grep", "-n", "-I", "-i", "-F"]
     for pattern in patterns:
@@ -67,7 +81,11 @@ def test_tracked_tree_has_no_deprecated_capability_vocabulary() -> None:
         if any(word in path.as_posix().casefold() for word in forbidden_words)
     ]
     violations.extend(
-        _tracked_text_matches(_FORBIDDEN_WORDS + _FORBIDDEN_STATUS_MARKERS)
+        line
+        for line in _tracked_text_matches(
+            _FORBIDDEN_WORDS + _FORBIDDEN_STATUS_MARKERS
+        )
+        if not _is_historical_record(line)
     )
 
     assert not violations, "Forbidden capability labels found:\n" + "\n".join(
