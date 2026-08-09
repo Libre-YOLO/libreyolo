@@ -44,6 +44,13 @@ class LibreFaceEmbedder:
     FAMILY = "facerec"
     SUPPORTED_TASKS = ("embed",)
     DEFAULT_TASK = "embed"
+    # This class does not derive from BaseModel, so it declares the batching
+    # contract itself: callers that read the flag off an arbitrary model
+    # default to True when it is absent, and predict() takes a single image.
+    # Without this, predict([img_a, img_b]) reached ImageLoader and raised
+    # "Unsupported image type: list", which reads as a broken model rather
+    # than an unsupported call shape.
+    SUPPORTS_BATCHED_PREDICT = False
 
     def __init__(
         self,
