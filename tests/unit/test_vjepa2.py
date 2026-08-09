@@ -362,3 +362,19 @@ class TestInferenceContracts:
         source = inspect.getsource(InferenceRunner._predict_video)
         # The flags must be handled in the clip branch, not silently dropped.
         assert "save or show" in source
+
+    def test_unknown_frame_count_decode_is_bounded(self):
+        """A video with no header frame count must not be buffered whole.
+
+        Memory has to stay proportional to the clip, not the video: the
+        counting pass uses grab() (no pixel decode) and only the frames the
+        clip actually needs are retained.
+        """
+        import inspect
+
+        from libreyolo.models.base.inference import InferenceRunner
+
+        source = inspect.getsource(InferenceRunner._predict_video_clip)
+        assert "capture.grab()" in source
+        # The old unbounded accumulator must not come back.
+        assert "frames_all" not in source

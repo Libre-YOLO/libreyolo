@@ -1422,21 +1422,43 @@ class InferenceRunner:
         try:
             total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
             if total <= 0:
-                # Some containers do not report a frame count; fall back to a
-                # bounded decode rather than trusting the header.
-                frames_all = []
-                while True:
-                    ok, frame = capture.read()
-                    if not ok:
-                        break
-                    frames_all.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                if not frames_all:
+                # Some containers do not report a frame count. Count in a first
+                # pass without retaining pixels, then decode only the frames the
+                # clip needs. Buffering the whole video here would make memory
+                # grow with its length and can exhaust RAM on a long file; the
+                # clip is bounded, so the decode should be too.
+                counted = 0
+                while capture.grab():  # grab() advances without decoding pixels
+                    counted += 1
+                if counted == 0:
                     raise ValueError(
                         f"Decoded no frames from {path}; refusing to treat a "
                         "corrupt or empty video as a black clip."
                     )
-                indices = self.model.sample_clip_indices(len(frames_all), vid_stride)
-                frames = [frames_all[i] for i in indices]
+                indices = self.model.sample_clip_indices(counted, vid_stride)
+                wanted = set(indices)
+                capture.release()
+                capture = cv2.VideoCapture(path)
+                decoded = {}
+                position = 0
+                highest = max(wanted)
+                while position <= highest:
+                    ok, frame = capture.read()
+                    if not ok:
+                        break
+                    if position in wanted:
+                        decoded[position] = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    position += 1
+                if not decoded:
+                    raise ValueError(
+                        f"Could not decode any frame from {path}; refusing to "
+                        "treat it as a black clip."
+                    )
+                held = decoded[min(decoded)]
+                frames = []
+                for index in indices:
+                    held = decoded.get(index, held)
+                    frames.append(held)
             else:
                 indices = self.model.sample_clip_indices(total, vid_stride)
                 frames = []
