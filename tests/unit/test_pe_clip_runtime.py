@@ -110,6 +110,39 @@ def test_export_metadata_round_trips(embedder, tmp_path):
     assert json.loads(props["dynamic_frames"]) is False
 
 
+def test_exported_backend_uses_pe_normalization(embedder, tmp_path):
+    """A reloaded PE graph must preprocess with PE stats, not ImageNet stats.
+
+    Regression guard: without a ``pe`` branch in ``_preprocess_classify`` the
+    backend silently falls through to ImageNet normalization, so the exported
+    model sees different pixels than native PE and returns wrong embeddings.
+    """
+    import numpy as np_
+    import torch
+
+    from libreyolo.models.pe.nn import PE_MEAN, PE_STD
+
+    out = str(tmp_path / "embed.torchscript")
+    embedder.export(format="torchscript", output=out)
+
+    from libreyolo.backends.torchscript import TorchScriptBackend
+
+    backend = TorchScriptBackend(out, task="embed")
+    assert backend.model_family == "pe"
+
+    image = (np_.random.default_rng(0).random((240, 320, 3)) * 255).astype("uint8")
+    tensor, _, _, _ = backend._preprocess_classify(image, 384, "rgb")
+
+    # Reproduce the native transform and require an exact match.
+    native, _ = embedder._get_preprocess_numpy()(image, 384)
+    torch.testing.assert_close(
+        tensor[0], torch.from_numpy(native), rtol=0, atol=0
+    )
+
+    # And sanity-check the stats really are symmetric, not ImageNet.
+    assert PE_MEAN == (0.5, 0.5, 0.5) and PE_STD == (0.5, 0.5, 0.5)
+
+
 def test_torchscript_metadata_round_trips(embedder, tmp_path):
     import json
 
