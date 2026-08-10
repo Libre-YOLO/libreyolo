@@ -225,3 +225,37 @@ class CosineAnnealingScheduler(BaseScheduler):
                 1 + math.cos(math.pi * progress)
             )
         return lr
+
+
+class PolyLRScheduler(BaseScheduler):
+    """Polynomial decay with linear warmup.
+
+    ``lr * (1 - progress) ** power`` after warmup, where ``progress`` runs from
+    0 to 1 over the post-warmup iterations. This is the schedule the PP-LiteSeg
+    and STDC segmentation recipes use (power 0.9).
+    """
+
+    def __init__(
+        self,
+        lr: float,
+        iters_per_epoch: int,
+        total_epochs: int,
+        warmup_epochs: int = 0,
+        warmup_lr_start: float = 0.0,
+        power: float = 0.9,
+        min_lr_ratio: float = 0.0,
+    ):
+        super().__init__(lr, iters_per_epoch, total_epochs)
+        self.warmup_iters = iters_per_epoch * warmup_epochs
+        self.warmup_lr_start = _clamp_warmup_lr_start(lr, warmup_lr_start)
+        self.power = float(power)
+        self.min_lr = lr * min_lr_ratio
+
+    def update_lr(self, iters: int) -> float:
+        if self.warmup_iters > 0 and iters <= self.warmup_iters:
+            return (
+                self.lr - self.warmup_lr_start
+            ) * iters / self.warmup_iters + self.warmup_lr_start
+        progress = (iters - self.warmup_iters) / max(1, self.total_iters - self.warmup_iters)
+        progress = min(max(progress, 0.0), 1.0)
+        return self.min_lr + (self.lr - self.min_lr) * pow(1.0 - progress, self.power)
