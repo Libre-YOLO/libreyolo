@@ -965,6 +965,7 @@ _VAL_LOSS_FAMILIES = {
     "libreyolo.models.convnext.trainer": "ConvNeXtTrainer",
     "libreyolo.models.mobilenetv4.trainer": "MobileNetV4Trainer",
     "libreyolo.models.efficientnetv2.trainer": "EfficientNetV2Trainer",
+    "libreyolo.models.ppliteseg.trainer": "PPLiteSegTrainer",
     "libreyolo.models.segformer.trainer": "SegformerTrainer",
     "libreyolo.models.lingbotvision.trainer": "LingBotVisionTrainer",
     "libreyolo.models.dinov2.trainer": "DINOv2Trainer",
