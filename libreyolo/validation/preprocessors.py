@@ -882,6 +882,36 @@ class PICODETValPreprocessor(StandardValPreprocessor):
         return chw.astype(np.float32), padded_targets
 
 
+class PPYOLOEValPreprocessor(StandardValPreprocessor):
+    """PP-YOLOE preprocessor: stretch resize, RGB, ImageNet mean/std on 0-255.
+
+    Reproduces the source validation path (``DetectionRescale`` to a fixed
+    640x640 followed by ``Normalize``). The resize is a stretch, not a
+    letterbox, so aspect ratio is not preserved and the postprocessor reverses
+    the x and y scales independently.
+    """
+
+    _MEAN = np.array([123.675, 116.28, 103.53], dtype=np.float32).reshape(3, 1, 1)
+    _STD = np.array([58.395, 57.12, 57.375], dtype=np.float32).reshape(3, 1, 1)
+
+    @property
+    def custom_normalization(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True  # avoid the dataset's letterbox-then-stretch double resize
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        chw, padded_targets = super().__call__(
+            img[:, :, ::-1].copy(), targets, input_size
+        )
+        chw = (chw - self._MEAN) / self._STD
+        return chw.astype(np.float32), padded_targets
+
+
 class RTDETRv2ValPreprocessor(BaseValPreprocessor):
     """RT-DETRv2 val preprocessor matching upstream's PIL/torchvision Resize.
 

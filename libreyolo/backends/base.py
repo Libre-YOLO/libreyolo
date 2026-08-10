@@ -27,6 +27,7 @@ from ..postprocess.yolo9 import (
     _YOLO9_MAX_NMS_CANDIDATES,
     postprocess as yolo9_postprocess,
 )
+from ..postprocess.ppyoloe import PPYOLOE_PRE_NMS_TOP_K
 from ..postprocess.yolonas import (
     YOLO_NAS_OBB_PRE_NMS_TOP_K,
     YOLO_NAS_OBB_RESIZE_SIZE,
@@ -681,6 +682,14 @@ class BaseBackend(ABC):
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
+        elif self.model_family == "ppyoloe":
+            from ..models.ppyoloe.utils import (
+                preprocess_image as ppyoloe_preprocess_image,
+            )
+
+            return ppyoloe_preprocess_image(
+                image, input_size=effective_imgsz, color_format=color_format
+            )
         elif self.model_family == "picodet":
             tensor, img, size = self._preprocess_picodet(
                 image, effective_imgsz, color_format
@@ -1446,6 +1455,11 @@ class BaseBackend(ABC):
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
             return boxes, scores, cls, None
+        elif self.model_family == "ppyoloe":
+            boxes, scores, cls = self._parse_ppyoloe(
+                all_outputs, effective_imgsz, orig_w, orig_h, conf
+            )
+            return boxes, scores, cls, None
         elif self.model_family == "picodet":
             boxes, scores, cls = self._parse_picodet(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf
@@ -1702,6 +1716,51 @@ class BaseBackend(ABC):
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
 
         return boxes, max_scores, class_ids
+
+    @staticmethod
+    def _parse_ppyoloe(all_outputs, effective_imgsz, orig_w, orig_h, conf):
+        """Parse PP-YOLOE output: boxes ``(B, A, 4)`` xyxy + scores ``(B, A, C)``.
+
+        The graph emits both tensors already decoded into input-canvas pixels,
+        so this only mirrors the native selection sequence: multi-label
+        confidence filter, pre-NMS top-k, then the stretch-resize inverse with
+        independent x and y scales. NMS runs downstream in the shared path.
+        """
+        first = np.asarray(all_outputs[0])[0]
+        second = np.asarray(all_outputs[1])[0]
+        if first.shape[-1] == 4:
+            boxes_all, scores = first, second
+        else:
+            boxes_all, scores = second, first
+
+        # Multi-label per anchor, matching postprocess/ppyoloe.py: an anchor
+        # with two strong classes emits both candidates.
+        valid = scores > conf
+        if not valid.any():
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int64),
+            )
+        box_indices, class_ids = np.nonzero(valid)
+        max_scores = scores[box_indices, class_ids]
+
+        nms_top_k = PPYOLOE_PRE_NMS_TOP_K
+        if max_scores.shape[0] > nms_top_k:
+            top = np.argpartition(max_scores, -nms_top_k)[-nms_top_k:]
+            box_indices, class_ids, max_scores = (
+                box_indices[top],
+                class_ids[top],
+                max_scores[top],
+            )
+
+        boxes = boxes_all[box_indices].astype(np.float32, copy=True)
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        boxes[:, [0, 2]] *= orig_w / input_w
+        boxes[:, [1, 3]] *= orig_h / input_h
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        return boxes, max_scores, class_ids.astype(np.int64)
 
     @staticmethod
     def _parse_efficientdet(
@@ -3797,6 +3856,7 @@ class BaseBackend(ABC):
                 "efficientdet",
                 "fcos",
                 "picodet",
+                "ppyoloe",
                 "retinanet",
                 "rtmdet",
                 "ssd",
@@ -4011,6 +4071,7 @@ class BaseBackend(ABC):
             EfficientDetValPreprocessor,
             LWDETRValPreprocessor,
             PICODETValPreprocessor,
+            PPYOLOEValPreprocessor,
             RFDETRValPreprocessor,
             RTDETRValPreprocessor,
             RTDETRv2OBBValPreprocessor,
@@ -4045,6 +4106,7 @@ class BaseBackend(ABC):
             "efficientdet": EfficientDetValPreprocessor,
             "lwdetr": LWDETRValPreprocessor,
             "picodet": PICODETValPreprocessor,
+            "ppyoloe": PPYOLOEValPreprocessor,
             "rfdetr": RFDETRValPreprocessor,
             "rtdetr": RTDETRValPreprocessor,
             "rtdetrv2": (

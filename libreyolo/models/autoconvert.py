@@ -698,7 +698,14 @@ def _canonical_path(source: Path, prefix: str, size: str, task: str) -> Path:
     """Build a source-specific converted checkpoint path beside source."""
     suffix = task_to_suffix(task)
     task_part = f"-{suffix}" if suffix else ""
-    return source.parent / f"{source.stem}-{prefix}{size}{task_part}.pt"
+    canonical = f"{prefix}{size}{task_part}"
+    # Link-out families download the upstream artifact straight to its
+    # canonical LibreYOLO name, so appending the canonical stem again would
+    # produce e.g. LibrePPYOLOEs-LibrePPYOLOEs.pt. Keep the cache beside the
+    # source under a distinct name without repeating it.
+    if source.stem == canonical:
+        return source.parent / f"{canonical}-converted.pt"
+    return source.parent / f"{source.stem}-{canonical}.pt"
 
 
 def _atomic_torch_save(value: Any, path: Path, *, mode: int | None = None) -> None:
