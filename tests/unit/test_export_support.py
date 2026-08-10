@@ -726,6 +726,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("yolo9_e2e", "detect"),
         ("yolo9_p2", "detect"),
         ("yolonas", "detect"),
+        ("yolonas", "obb"),
         ("yolonas", "pose"),
         ("yolox", "detect"),
         ("zipdepth", "depth"),

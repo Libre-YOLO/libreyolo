@@ -2978,6 +2978,21 @@ _add(
 _add(
     "validated",
     ("yolonas",),
+    ("obb",),
+    ("onnx", "torchscript", "openvino", "tensorrt"),
+    since="1.6",
+    constraint=(
+        "fixed 1024x1024 export canvas, batch 1, FP32; the official "
+        "YOLO-NAS-R-S DOTA2 checkpoint exports, reloads through the factory, "
+        "and its public OBB results match native inference on the same image "
+        "(max xywhr delta 6e-08 px TorchScript, 0.06 px ONNX, 0.04 px "
+        "OpenVINO, 0.18 px TensorRT; max score delta 0.0, 1.0e-03, 1.5e-03 "
+        "and 1.6e-03 respectively). Rotated NMS is not embedded in the graph"
+    ),
+)
+_add(
+    "validated",
+    ("yolonas",),
     ("detect",),
     ("coreai",),
     since="1.5",

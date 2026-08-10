@@ -475,7 +475,7 @@ Detector-factory family support follows:
 | `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |
 | `segformer` | `("semantic",)`                     | semantic | SegFormer MiT-b0..b5 encoder + all-MLP decode head; ADE20K 150-class at 512 (b5 at 640). Pretrained weights are NON-COMMERCIAL (NVIDIA Source Code License, research/evaluation only); also trainable from scratch via `model.train(...)` for unrestricted use |
 | `lingbotvision` | `("semantic",)`                 | semantic | LingBot-Vision self-supervised ViT (Apache-2.0, arXiv:2607.05247) + 1x1 dense head (the report's linear probe); s/b/l/g at 512; ADE20K 150-class hosted weights for s/b/l; head-only training by default (`freeze_backbone=False` for full fine-tune) |
-| `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
+| `yolonas`   | `("detect", "pose", "obb")`         | detect | pose adds size `n`; obb is YOLO-NAS-R (DOTA2, s/m/l at 1024, trainable) |
 | `hrnet`     | `("pose",)`                          | pose   | inference-only top-down COCO-17 pose; `w32` uses 256x192 crops, `w48` uses 384x288; configurable person detector |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
@@ -552,12 +552,15 @@ LibreHRNetw48-pose.pt      # W48, fixed 384x288 person crop
 ### Multi-task families
 
 ```text
-# yolonas — detect + pose
+# yolonas — detect + pose + obb
 LibreYOLONASs.pt           # detect (default)
 LibreYOLONASn-pose.pt      # pose (note: size n only ships for pose)
 LibreYOLONASs-pose.pt
 LibreYOLONASm-pose.pt
 LibreYOLONASl-pose.pt
+LibreYOLONASs-obb.pt       # obb (YOLO-NAS-R, DOTA2; s/m/l only)
+LibreYOLONASm-obb.pt
+LibreYOLONASl-obb.pt
 
 # dfine - detect + segment
 LibreDFINEn.pt            # detect (default)
