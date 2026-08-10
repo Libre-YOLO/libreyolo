@@ -3,7 +3,7 @@
 import logging
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Generator, Iterator, Protocol, Tuple, Union
+from typing import Any, Callable, Generator, Iterator, List, Protocol, Tuple, Union
 
 import numpy as np
 
@@ -275,6 +275,71 @@ class VideoWriter:
 # ---------------------------------------------------------------------------
 
 _LARGE_VIDEO_THRESHOLD = 500
+
+
+def uniform_frame_indices(total_frames: int, num_frames: int) -> List[int]:
+    """Deterministic uniform frame indices over a finite video.
+
+    The sampling rule is fixed so validation and inference agree:
+
+    * the temporal endpoints are always included when at least two frames are
+      requested and available;
+    * the last available frame is repeated **only** when the video yields fewer
+      frames than requested.
+
+    Args:
+        total_frames: Number of frames the video actually decodes.
+        num_frames: Number of frames to sample (must be positive).
+
+    Returns:
+        A list of ``num_frames`` frame indices in non-decreasing order.
+    """
+    if num_frames < 1:
+        raise ValueError(f"num_frames must be positive; got {num_frames}.")
+    if total_frames < 1:
+        raise ValueError("Video decoded zero frames.")
+    if num_frames == 1 or total_frames == 1:
+        return [0] * num_frames if total_frames == 1 else [0]
+    if total_frames >= num_frames:
+        step = (total_frames - 1) / (num_frames - 1)
+        return [int(round(i * step)) for i in range(num_frames)]
+    # Short video: take every frame, then hold the last one.
+    return list(range(total_frames)) + [total_frames - 1] * (num_frames - total_frames)
+
+
+def sample_clip_frames(path: Union[str, Path], num_frames: int) -> List:
+    """Uniformly sample ``num_frames`` RGB ``PIL.Image`` frames from a finite video.
+
+    Family-independent: decoding and sampling live here, while tensor layout,
+    preprocessing and temporal pooling stay family-local.
+    """
+    import cv2
+    from PIL import Image
+
+    with VideoSource(path) as source:
+        total = int(source.total_frames)
+        cap = source._cap
+        if total < 1:
+            # Some containers do not report a frame count; fall back to a scan.
+            total = 0
+            while cap.grab():
+                total += 1
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        if total < 1:
+            raise ValueError(f"Video decoded zero frames: {path}")
+
+        wanted = uniform_frame_indices(total, num_frames)
+        frames = []
+        for index in wanted:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+            ok, frame_bgr = cap.read()
+            if not ok:
+                if not frames:
+                    raise ValueError(f"Could not decode frame {index} of {path}.")
+                frames.append(frames[-1])
+                continue
+            frames.append(Image.fromarray(frame_bgr[:, :, ::-1].copy()))
+    return frames
 
 
 def collect_video_results(

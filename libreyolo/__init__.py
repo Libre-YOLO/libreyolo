@@ -80,6 +80,7 @@ _MODEL_EXPORTS = (
     "LibreAlexNet",
     "LibreCLIP",
     "LibreSigLIP2",
+    "LibrePE",
     "LibrePPOCR",
     "LibreVJEPA2",
 )
@@ -300,6 +301,7 @@ __all__ = [
     "LibreAlexNet",
     "LibreCLIP",
     "LibreSigLIP2",
+    "LibrePE",
     "LibrePPOCR",
     "LibreVJEPA2",
     "LibreDINOv2",

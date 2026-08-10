@@ -320,12 +320,16 @@ class LibreVJEPA2(BaseModel):
         color_format: str = "auto",
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Any, Tuple[int, int], float]:
-        """Accept a still image, a list of frames, or an explicit 5D clip.
+        """Preprocess ONE frame to ``(1, C, H, W)``, or pass through a 5D clip.
 
-        Returns the shared 4-tuple contract
-        ``(input_tensor, original_image, original_size, ratio)``. The tensor is
-        5D ``(B, F, C, H, W)`` rather than the usual 4D image batch, since this
-        family consumes clips.
+        Returns the shared 4-tuple
+        ``(input_tensor, original_image, original_size, ratio)``.
+
+        The per-frame shape is deliberate: the shared whole-clip runner
+        preprocesses each sampled frame and concatenates them into
+        ``(1, F, C, H, W)``. Returning a whole clip from here would break that
+        contract. A still image therefore also arrives as one frame, and
+        ``_forward`` is what expands it into a static clip.
         """
         del input_size  # clip geometry is fixed by the checkpoint, not the call
 
@@ -335,7 +339,10 @@ class LibreVJEPA2(BaseModel):
             return tensor.to(self.device), image, size, 1.0
 
         if isinstance(image, (list, tuple)):
-            frames = [np.asarray(ImageLoader.load(f, color_format=color_format)) for f in image]
+            frames = [
+                np.asarray(ImageLoader.load(f, color_format=color_format))
+                for f in image
+            ]
             original = frames[-1]
             height, width = original.shape[:2]
             tensor = preprocess_frames(frames, self.crop_size)
@@ -344,23 +351,79 @@ class LibreVJEPA2(BaseModel):
         loaded = ImageLoader.load(image, color_format=color_format)
         frame = np.asarray(loaded)
         height, width = frame.shape[:2]
-        tensor = image_to_clip(frame, self.crop_size, self.clip_frames)
+        # (1, 1, C, H, W) -> (1, C, H, W): one frame, stackable by the runner.
+        tensor = preprocess_frames([frame], self.crop_size)[0]
         return tensor.to(self.device), loaded, (width, height), 1.0
 
     def _forward(self, input_tensor: torch.Tensor) -> Any:
+        # A 4D tensor is a single still frame. Represent it as a static clip:
+        # every frame identical, so there is no motion in it at all. This is a
+        # documented compatibility behaviour, not a motion representation.
+        if input_tensor.ndim == 4:
+            input_tensor = input_tensor.unsqueeze(1).repeat(
+                1, self.clip_frames, 1, 1, 1
+            )
         if self.task == "classify":
             return self.model(input_tensor)
         tokens = self.model(input_tensor)
         return self.pool_tokens(tokens)
 
-    def sample_clip_indices(self, total_frames: int, vid_stride: int = 1) -> list[int]:
-        """Deterministic centered clip indices for a finite video.
+    def sample_clip_frames(self, source, clip_frames: int) -> list:
+        """Family-local temporal sampling: a centered, strided window.
 
-        The generic runner owns decoding; temporal sampling stays here because
-        the frame count and stride belong to the checkpoint.
+        The shared runner samples uniformly across the whole video, which is
+        right for a general clip embedder but wrong here: the released
+        checkpoints were trained on a fixed window (64 frames at stride 2,
+        spanning 127 source frames), and spreading those frames across a long
+        video would feed the model statistics it never saw.
         """
-        stride = self.frame_stride * max(1, int(vid_stride))
-        return clip_frame_indices(total_frames, self.clip_frames, stride)
+        import cv2
+        from PIL import Image
+
+        capture = cv2.VideoCapture(str(source))
+        if not capture.isOpened():
+            raise ValueError(f"Could not open video: {source}")
+        try:
+            total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total < 1:
+                # Header has no frame count: count without decoding pixels,
+                # so memory stays proportional to the clip, not the video.
+                total = 0
+                while capture.grab():
+                    total += 1
+                capture.release()
+                capture = cv2.VideoCapture(str(source))
+            if total < 1:
+                raise ValueError(
+                    f"Video decoded zero frames: {source}; refusing to treat a "
+                    "corrupt or empty video as a black clip."
+                )
+
+            indices = clip_frame_indices(total, int(clip_frames), self.frame_stride)
+            wanted = set(indices)
+            decoded = {}
+            position = 0
+            highest = max(wanted)
+            while position <= highest:
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                if position in wanted:
+                    decoded[position] = Image.fromarray(
+                        cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    )
+                position += 1
+            if not decoded:
+                raise ValueError(f"Could not decode any frame from {source}.")
+
+            held = decoded[min(decoded)]
+            frames = []
+            for index in indices:
+                held = decoded.get(index, held)
+                frames.append(held)
+            return frames
+        finally:
+            capture.release()
 
     @staticmethod
     def pool_tokens(tokens: torch.Tensor) -> torch.Tensor:

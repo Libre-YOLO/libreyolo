@@ -109,6 +109,7 @@ the `alexnet` / `deit` / `mobilenetv4` / `convnext` / `efficientnetv2` /
 | `swin`      | `LibreSwin`      | Upstream brand casing preserved (`Swin Transformer V1`) — classify-only and inference-only |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot classify + image/text embed) — inference-only |
 | `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot classify + image/text embed); inference-only |
+| `pe`        | `LibrePE`       | All-caps acronym (`PE`, Perception Encoder) kept short so canonical filenames stay compact; zero-shot classify + image/text/video embed; inference-only |
 | `vjepa2`    | `LibreVJEPA2`   | All-caps acronym + version (`V-JEPA 2`), hyphen dropped; video clip embedding (`embed`) + attentive-probe video classification (`classify`) |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
 | `realesrgan` | `LibreRealESRGAN` | Upstream brand casing (`RealESRGAN`); restore-only super-resolution family |
@@ -239,6 +240,7 @@ ships:
 | `ppocr`     | `t` (PP-OCRv5 mobile det + mobile rec, CPU tier), `l` (PP-OCRv5 server det + server rec, quality tier); detection long side 960 |
 | `clip`      | `b32`, `b16`, `l14` (ViT patch size baked in, all at 224) |
 | `siglip2`   | `b16` (base patch-16 at 256), `so400m` (shape-optimized 400M patch-14 at 384) |
+| `pe`        | `t16`, `s16` (patch-16 at 384), `b16` (patch-16 at 224), `l14` (patch-14 at 336), `g14` (gigantic patch-14 at 448) — ViT patch size baked in, resolution varies per size |
 
 VLM snapshot families use model-specific size names:
 
@@ -392,9 +394,11 @@ carry `Results.embeddings` with shape `(1, D)` and no boxes; region results use
 image path and is never inferred to be text. `Gallery` stores named references
 for any shape, while `FaceGallery` remains its compatibility alias.
 
-Dedicated embed checkpoints use `-embed`. Dual-task CLIP and SigLIP2 reuse
+Dedicated embed checkpoints use `-embed`. Dual-task CLIP, SigLIP2 and PE reuse
 their existing `-cls` two-tower artifact with an explicit `task="embed"`; no
-duplicate artifact is published for identical weights. DINOv2 likewise loads
+duplicate artifact is published for identical weights. PE additionally accepts a
+finite video under `task="embed"` and returns one row for the whole clip rather
+than one per frame. DINOv2 likewise loads
 an existing family checkpoint and bypasses its task head. Task aliases
 `facial-recognition`, `face-recognition`, `recognition`, `face`, `faceid`,
 `embedding`, and `reid` resolve to `embed` at the API boundary. See ADR 0013
@@ -505,6 +509,7 @@ Detector-factory family support follows:
 | `swin`      | `("classify",)`             | classify | Swin Transformer V1 image classifier; t/s/b/l at 224; predict + top-1/top-5 `val` + ONNX/TorchScript/OpenVINO/TensorRT; inference-only |
 | `clip`      | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or whole-image/text embeddings in one space |
 | `siglip2`   | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or multilingual whole-image/text embeddings in one space |
+| `pe`        | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify, or image/text/whole-video embeddings in one space. The only family whose `embed` task pools a finite video into a single row (`VIDEO_EMBED_MODE = "clip"`) |
 | `facerec`   | `("embed",)`                | embed | two-stage face-region embeddings; rows align with face boxes; inference-only |
 
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
@@ -695,6 +700,14 @@ LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter read
 LibreSigLIP2b16-cls.pt    # google/siglip2-base-patch16-256 (Apache-2.0 weights), 256 px
 LibreSigLIP2so400m-cls.pt # google/siglip2-so400m-patch14-384 (Apache-2.0 weights), 384 px
 
+# pe: Perception Encoder Core zero-shot classify, or image/text/whole-video
+# embedding. Use the same -cls artifact with task="embed"; size codes bake in
+# patch size, and resolution varies per size.
+LibrePEt16-cls.pt         # timm/PE-Core-T-16-384 (Apache-2.0 weights), 384 px, dim 512
+LibrePEs16-cls.pt         # timm/PE-Core-S-16-384 (Apache-2.0 weights), 384 px, dim 512
+LibrePEb16-cls.pt         # timm/PE-Core-B-16 (Apache-2.0 weights), 224 px, dim 1024
+LibrePEl14-cls.pt         # timm/PE-Core-L-14-336 (Apache-2.0 weights), 336 px, dim 1024
+LibrePEg14-cls.pt         # timm/PE-Core-bigG-14-448 (Apache-2.0 weights), 448 px, dim 1280
 # vjepa2: V-JEPA 2 self-supervised video encoder. Consumes a CLIP, not a frame.
 # Size codes bake in the crop, because g256 and g384 are the same network at
 # different input resolutions. Every artifact carries a task suffix: a bare

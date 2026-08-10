@@ -11,7 +11,10 @@ import torch
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.general import COCO_CLASSES
-from ..utils.serialization import warn_on_metadata_schema_version
+from ..utils.serialization import (
+    reject_unsupported_input_kind,
+    warn_on_metadata_schema_version,
+)
 from .base import (
     BaseBackend,
     _read_metadata_imgsz,
@@ -60,6 +63,9 @@ class TorchScriptBackend(BaseBackend):
             metadata,
             artifact=f"TorchScript metadata for {model_path}",
             logger=logger,
+        )
+        reject_unsupported_input_kind(
+            metadata, artifact=f"TorchScript metadata for {model_path}"
         )
 
         input_size = 640

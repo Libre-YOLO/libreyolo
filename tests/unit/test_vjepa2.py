@@ -288,19 +288,28 @@ class TestInferenceContracts:
     """Regressions for the three review findings on the public paths."""
 
     def test_preprocess_returns_the_shared_four_tuple(self):
-        """The shared runner unpacks four values; returning a bare tensor breaks predict()."""
+        """The shared runner unpacks four values; a bare tensor breaks predict()."""
         import numpy as np
 
         model = LibreVJEPA2(size="l256", task="embed")
-        model._requested_clip_frames = 2
         frame = np.zeros((240, 320, 3), dtype=np.uint8)
         out = model._preprocess(frame, "rgb")
         assert isinstance(out, tuple) and len(out) == 4
         tensor, _original, original_size, ratio = out
-        assert tensor.ndim == 5                    # (B, F, C, H, W)
-        assert tensor.shape[2] == 3
+        # One frame, stackable by the shared whole-clip runner, which
+        # concatenates frames into (1, F, C, H, W) itself.
+        assert tensor.shape == (1, 3, 256, 256)
         assert original_size == (320, 240)         # (w, h) of the source
         assert ratio == 1.0
+
+    def test_forward_expands_a_still_frame_into_a_static_clip(self):
+        """A 4D still must become a clip, with every frame identical."""
+        model = LibreVJEPA2(size="l256", task="embed")
+        model._requested_clip_frames = 2
+        frame = torch.zeros(1, 3, 256, 256, device=model.device)
+        with torch.no_grad():
+            row = model._forward(frame)
+        assert row.shape == (1, 1024)
 
     def test_explicit_5d_clip_passes_through_preprocess(self):
         model = LibreVJEPA2(size="l256", task="embed")
@@ -326,19 +335,30 @@ class TestInferenceContracts:
 
         assert hasattr(InferenceRunner, "_predict_video_clip")
 
-    def test_sample_clip_indices_uses_checkpoint_geometry(self):
-        model = LibreVJEPA2(size="l256", task="embed")
-        model._requested_clip_frames = 8
-        idx = model.sample_clip_indices(500)
-        assert len(idx) == 8
-        assert idx[-1] - idx[0] == (8 - 1) * model.frame_stride
+    def test_family_overrides_the_shared_uniform_sampler(self):
+        """Temporal sampling is family-local; uniform sampling is wrong here.
 
-    def test_vid_stride_multiplies_the_family_stride(self):
-        model = LibreVJEPA2(size="l256", task="embed")
-        model._requested_clip_frames = 4
-        base = model.sample_clip_indices(500, 1)
-        doubled = model.sample_clip_indices(500, 2)
-        assert (doubled[-1] - doubled[0]) == 2 * (base[-1] - base[0])
+        The shared runner spreads frames across the whole video. These
+        checkpoints were trained on a fixed window, so the family supplies its
+        own centered, strided sampler and the runner must prefer it.
+        """
+        import inspect
+
+        from libreyolo.models.base.inference import InferenceRunner
+
+        assert callable(getattr(LibreVJEPA2, "sample_clip_frames", None))
+        source = inspect.getsource(InferenceRunner._predict_video_clip)
+        assert 'getattr(self.model, "sample_clip_frames", None)' in source
+
+    def test_centered_window_spans_the_trained_extent(self):
+        """64 frames at stride 2 is a 127-frame span, centered."""
+        from libreyolo.models.vjepa2.preprocess import clip_frame_indices
+
+        idx = clip_frame_indices(1000, 64, 2)
+        assert len(idx) == 64
+        assert idx[-1] - idx[0] == 126
+        # Centered, not anchored at the start.
+        assert idx[0] > 0
 
     def test_embed_tokens_unpacks_the_preprocess_tuple(self):
         """Regression: embed_tokens fed the whole 4-tuple to the encoder."""
@@ -353,15 +373,40 @@ class TestInferenceContracts:
         with pytest.raises(ValueError, match="requires task='embed'"):
             model.embed_tokens(torch.zeros(1, 2, 3, 256, 256))
 
-    def test_clip_mode_rejects_save_and_show_instead_of_ignoring_them(self):
-        """Clip mode yields one result, so there is no frame stream to write."""
+    def test_clip_mode_video_options_are_handled_not_ignored(self):
+        """Whole-clip inference must answer for save/show/vid_stride.
+
+        The shared route (introduced by the Perception Encoder port) saves an
+        annotated frame, and rejects show and vid_stride with reasons, rather
+        than accepting a flag and quietly doing nothing.
+        """
         import inspect
 
         from libreyolo.models.base.inference import InferenceRunner
 
-        source = inspect.getsource(InferenceRunner._predict_video)
-        # The flags must be handled in the clip branch, not silently dropped.
-        assert "save or show" in source
+        source = inspect.getsource(InferenceRunner.__call__)
+        assert "vid_stride does not apply" in source
+        assert "show=True displays annotated frames" in source
+        assert "_predict_video_clip" in source
+
+    def test_only_one_whole_clip_route_exists(self):
+        """This family must extend the shared route, not add a competing one.
+
+        Both this port and the Perception Encoder introduced a clip hook with
+        the same names. Two definitions would silently shadow each other.
+        """
+        import inspect
+
+        from libreyolo.models.base.inference import InferenceRunner
+
+        source = inspect.getsource(InferenceRunner)
+        assert source.count("def _predict_video_clip(") == 1
+
+    def test_classify_shares_the_whole_clip_route(self):
+        """A video probe collapses a video to one result, exactly like embed."""
+        from libreyolo.models.base.inference import _WHOLE_CLIP_TASKS
+
+        assert {"embed", "classify"} <= set(_WHOLE_CLIP_TASKS)
 
     def test_unknown_frame_count_decode_is_bounded(self):
         """A video with no header frame count must not be buffered whole.
@@ -374,7 +419,7 @@ class TestInferenceContracts:
 
         from libreyolo.models.base.inference import InferenceRunner
 
-        source = inspect.getsource(InferenceRunner._predict_video_clip)
+        source = inspect.getsource(LibreVJEPA2.sample_clip_frames)
         assert "capture.grab()" in source
         # The old unbounded accumulator must not come back.
         assert "frames_all" not in source

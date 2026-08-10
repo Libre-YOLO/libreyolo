@@ -6,7 +6,10 @@ from pathlib import Path
 import numpy as np
 
 from ..tasks import resolve_task
-from ..utils.serialization import warn_on_metadata_schema_version
+from ..utils.serialization import (
+    reject_unsupported_input_kind,
+    warn_on_metadata_schema_version,
+)
 from .base import (
     BaseBackend,
     ImageSize,
@@ -206,6 +209,9 @@ class OnnxBackend(BaseBackend):
                 meta,
                 artifact=f"ONNX metadata for {onnx_path}",
                 logger=logger,
+            )
+            reject_unsupported_input_kind(
+                meta, artifact=f"ONNX metadata for {onnx_path}"
             )
             parsed = parse_export_metadata(
                 meta,

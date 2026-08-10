@@ -767,6 +767,18 @@ class BaseBackend(ABC):
                 interpolation="bilinear",
                 square_resize=True,
             )
+        elif self.model_family == "pe":
+            # Must mirror LibrePE._build_transform: symmetric [-1, 1]
+            # normalization and a bilinear square resize, NOT ImageNet stats.
+            from ..models.pe.nn import PE_MEAN, PE_STD
+
+            transform_kwargs.update(
+                mean=PE_MEAN,
+                std=PE_STD,
+                crop_pct=1.0,
+                interpolation="bilinear",
+                square_resize=True,
+            )
         elif self.model_family == "vit":
             from ..models.vit.utils import VIT_MEAN, VIT_STD
 

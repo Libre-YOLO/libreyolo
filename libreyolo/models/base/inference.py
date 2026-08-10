@@ -75,10 +75,15 @@ from ...utils.video import (
     FrameSource,
     collect_video_results,
     run_video_inference,
+    sample_clip_frames,
 )
 from .cuda_graph import forward_maybe_graphed, with_cuda_graph_scope
 
 logger = logging.getLogger(__name__)
+
+# Tasks whose result is one row for a whole clip rather than one per frame.
+# A family still has to opt in via ``VIDEO_EMBED_MODE = "clip"``.
+_WHOLE_CLIP_TASKS = frozenset({"embed", "classify"})
 
 
 def _as_float_tensor(
@@ -245,7 +250,8 @@ class InferenceRunner:
             Results, list of Results, or generator of Results (stream=True).
         """
         kwargs = normalize_predict_kwargs(
-            kwargs, passthrough={"num_select", "gallery", "threshold"}
+            kwargs,
+            passthrough={"num_select", "gallery", "threshold", "clip_frames"},
         )
         if device is not None:
             self._set_device(device)
@@ -295,6 +301,58 @@ class InferenceRunner:
             )
 
         source_spec = classify_source(source)
+
+        # Whole-clip inference. Opt-in per family: only when the family declares
+        # clip support, the resolved task consumes a whole clip, and the source
+        # is a finite video. Every other family keeps the frame-by-frame path
+        # below.
+        #
+        # "embed" pools a clip into one row; "classify" scores a clip with a
+        # video head (V-JEPA 2's attentive probe). Both collapse the video to a
+        # single result, so they share this route rather than adding a second
+        # one.
+        if getattr(
+            self.model, "VIDEO_EMBED_MODE", "frames"
+        ) == "clip" and getattr(self.model, "task", None) in _WHOLE_CLIP_TASKS:
+            if source_spec.live or source_spec.kind == SourceKind.SCREEN:
+                raise ValueError(
+                    f"{type(self.model).__name__} embeds a whole video as a "
+                    "single vector, which requires a finite source with a known "
+                    "end. Live cameras, network streams and screen captures are "
+                    "unbounded and would have to be buffered indefinitely. Pass "
+                    "a video file, or use task='classify' to score frames as "
+                    "they arrive."
+                )
+            if source_spec.kind == SourceKind.VIDEO:
+                if vid_stride != 1:
+                    raise ValueError(
+                        "vid_stride does not apply when a whole video is "
+                        "embedded as a single vector: frames are sampled "
+                        "uniformly across the entire clip. Use clip_frames= to "
+                        "control how many frames are sampled."
+                    )
+                if show:
+                    raise NotImplementedError(
+                        "show=True displays annotated frames as they are "
+                        "processed, which does not apply to a whole-clip "
+                        "embedding that yields one result for the entire video."
+                    )
+                clip_results = self._predict_video_clip(
+                    source_spec.source,
+                    conf=conf,
+                    iou=iou,
+                    imgsz=imgsz,
+                    classes=classes,
+                    max_det=max_det,
+                    save=save,
+                    output_path=output_path,
+                    output_file_format=output_file_format,
+                    **kwargs,
+                )
+                # Honor the streaming contract: callers passing stream=True
+                # expect an iterator, even though a whole clip collapses to a
+                # single Results.
+                return iter(clip_results) if stream else clip_results
 
         # Handle finite video input.
         if source_spec.kind == SourceKind.VIDEO:
@@ -724,6 +782,73 @@ class InferenceRunner:
                 self._save_annotated_image(result, original_img, save_path)
             results.append(result)
         return results
+
+    def _predict_video_clip(
+        self,
+        source,
+        *,
+        conf,
+        iou,
+        imgsz=None,
+        classes=None,
+        max_det: int = 300,
+        save: bool = False,
+        output_path=None,
+        output_file_format=None,
+        **kwargs,
+    ) -> List[Results]:
+        """Embed a finite video as a single row (``VIDEO_EMBED_MODE == "clip"``).
+
+        Decoding and uniform sampling are family-independent; tensor layout and
+        temporal pooling belong to the family's ``_forward``. Returns a
+        one-element list holding one ``Results`` for the whole clip, not one per
+        frame.
+
+        ``save=True`` writes a single annotated image built from the first
+        sampled frame -- there is no per-frame video to render, because the
+        whole clip collapses to one result.
+        """
+        clip_frames = kwargs.pop(
+            "clip_frames", getattr(self.model, "clip_frames", 8)
+        )
+        clip_frames = int(clip_frames)
+        if clip_frames < 1:
+            raise ValueError(f"clip_frames must be positive; got {clip_frames}.")
+
+        # Decoding stays shared. Temporal sampling is family-local when the
+        # family says so: uniform sampling across the whole video is right for
+        # a general clip embedder, but a checkpoint trained on a fixed window
+        # (V-JEPA 2 uses 64 frames at stride 2, centered) must be fed that
+        # window or its pooled statistics no longer match training.
+        sampler = getattr(self.model, "sample_clip_frames", None)
+        if callable(sampler):
+            frames = sampler(source, clip_frames)
+        else:
+            frames = sample_clip_frames(source, clip_frames)
+        preprocessed = [
+            self.model._preprocess(frame, color_format="rgb", input_size=imgsz)
+            for frame in frames
+        ]
+        tensors = [item[0] for item in preprocessed]
+        original_size = preprocessed[0][2]
+
+        # (F, C, H, W) -> (1, F, C, H, W): one clip in the batch.
+        clip = torch.cat(tensors, dim=0).unsqueeze(0)
+        with torch.no_grad():
+            output = self.model._forward(clip)
+
+        detections = self.model._postprocess(
+            output, conf, iou, original_size, max_det=max_det, classes=classes, **kwargs
+        )
+        result = self._wrap_results(detections, original_size, str(source), classes)
+        result.path = str(source)
+
+        if save:
+            save_file = resolve_save_path(
+                output_path, str(source), ext=output_file_format or "jpg"
+            )
+            self._save_annotated_image(result, frames[0], save_file)
+        return [result]
 
     def _save_annotated_image(
         self, result: Results, original_img, save_path: Path
@@ -1340,35 +1465,10 @@ class InferenceRunner:
     ) -> Generator[Results, None, None]:
         """Run inference on a video file, yielding per-frame Results.
 
-        Families that declare ``VIDEO_EMBED_MODE = "clip"`` consume a clip
-        rather than a frame, and yield one result per sampled clip instead of
-        one per frame. Every other family keeps the per-frame path below.
+        Whole-clip families are dispatched earlier, in ``__call__``, so this
+        path is always frame-by-frame.
         """
         source_label = str(source) if source_label is None else source_label
-
-        if getattr(self.model, "VIDEO_EMBED_MODE", "frames") == "clip":
-            # Clip mode collapses the video to a single result, so there is no
-            # per-frame stream to annotate, write or display. Say so rather
-            # than accepting the flag and silently producing nothing.
-            if save or show:
-                raise NotImplementedError(
-                    "save=True / show=True are not supported for clip-mode "
-                    "video inference: the video collapses to one result per "
-                    "clip, so there is no annotated frame stream to write or "
-                    "display. Use the returned Results (for example "
-                    "result.embeddings) directly."
-                )
-            yield self._predict_video_clip(
-                source,
-                conf=conf,
-                iou=iou,
-                classes=classes,
-                max_det=max_det,
-                source_label=source_label,
-                vid_stride=vid_stride,
-                **kwargs,
-            )
-            return
 
         yield from run_video_inference(
             source,
@@ -1386,108 +1486,6 @@ class InferenceRunner:
             show=show,
             output_path=output_path,
         )
-
-    def _predict_video_clip(
-        self,
-        source: Union[str, Path, FrameSource],
-        *,
-        conf: float = 0.25,
-        iou: float = 0.45,
-        classes: Optional[List[int]] = None,
-        max_det: int = 300,
-        source_label: str = "",
-        vid_stride: int = 1,
-        **kwargs,
-    ) -> Results:
-        """Decode one clip from a finite video and run a single forward pass.
-
-        Temporal sampling is family-local: the model owns the frame count,
-        stride and clip position. Decoding and error handling stay here so
-        every clip-mode family shares them.
-        """
-        import cv2
-
-        if not isinstance(source, (str, Path)):
-            raise ValueError(
-                "Clip-mode inference needs a finite video path. An unbounded "
-                "source cannot be sampled into a centered clip without "
-                "buffering it, which this path deliberately refuses to do."
-            )
-
-        path = str(source)
-        capture = cv2.VideoCapture(path)
-        if not capture.isOpened():
-            raise ValueError(f"Could not open video: {path}")
-
-        try:
-            total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-            if total <= 0:
-                # Some containers do not report a frame count. Count in a first
-                # pass without retaining pixels, then decode only the frames the
-                # clip needs. Buffering the whole video here would make memory
-                # grow with its length and can exhaust RAM on a long file; the
-                # clip is bounded, so the decode should be too.
-                counted = 0
-                while capture.grab():  # grab() advances without decoding pixels
-                    counted += 1
-                if counted == 0:
-                    raise ValueError(
-                        f"Decoded no frames from {path}; refusing to treat a "
-                        "corrupt or empty video as a black clip."
-                    )
-                indices = self.model.sample_clip_indices(counted, vid_stride)
-                wanted = set(indices)
-                capture.release()
-                capture = cv2.VideoCapture(path)
-                decoded = {}
-                position = 0
-                highest = max(wanted)
-                while position <= highest:
-                    ok, frame = capture.read()
-                    if not ok:
-                        break
-                    if position in wanted:
-                        decoded[position] = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    position += 1
-                if not decoded:
-                    raise ValueError(
-                        f"Could not decode any frame from {path}; refusing to "
-                        "treat it as a black clip."
-                    )
-                held = decoded[min(decoded)]
-                frames = []
-                for index in indices:
-                    held = decoded.get(index, held)
-                    frames.append(held)
-            else:
-                indices = self.model.sample_clip_indices(total, vid_stride)
-                frames = []
-                for index in indices:
-                    capture.set(cv2.CAP_PROP_POS_FRAMES, int(index))
-                    ok, frame = capture.read()
-                    if not ok:
-                        if not frames:
-                            raise ValueError(
-                                f"Could not decode any frame from {path}; "
-                                "refusing to treat it as a black clip."
-                            )
-                        # Past the real end: hold the last decoded frame.
-                        frames.append(frames[-1])
-                        continue
-                    frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        finally:
-            capture.release()
-
-        input_tensor, _, original_size, ratio = self.model._preprocess(frames, "rgb")
-        with torch.no_grad():
-            output = forward_maybe_graphed(
-                self.model, input_tensor.to(self.model.device)
-            )
-        detections = self.model._postprocess(
-            output, conf, iou, original_size, max_det=max_det, ratio=ratio,
-            classes=classes, **kwargs,
-        )
-        return self._wrap_results(detections, original_size, source_label, classes)
 
     def _frame_predictor(
         self,

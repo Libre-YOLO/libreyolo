@@ -66,6 +66,8 @@ in preflight.
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
+| pe | classify | ✓ | ✓ | available | available | available |  |  |  |  |  |  |  |
+| pe | embed | ✓ | ✓ | available | available | available |  |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | available | ✓ |  |  | ✓ |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |  |  |  |  |  |
 | pidnet | semantic | ✓ | ✓ | ✓ | available | ✓ |  |  |  | ✓ | ✓ |  | ✓ |
@@ -278,6 +280,10 @@ A check mark applies only under any constraint listed here.
 - `nafnet` / `restore` / `openvino`: fixed-resolution export canvas
 - `nafnet` / `restore` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed-resolution export canvas; two-input raw parity, factory reload, metadata, and public predict parity
 - `nafnet` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `pe` / `classify` / `onnx`: fixed square input; dynamic batch only. Video graphs have a static frame count -- a dynamic F is not advertised. The classify graph freezes the class set present at export time.
+- `pe` / `classify` / `torchscript`: fixed square input; dynamic batch only. Video graphs have a static frame count -- a dynamic F is not advertised. The classify graph freezes the class set present at export time.
+- `pe` / `embed` / `onnx`: fixed square input; dynamic batch only. Video graphs have a static frame count -- a dynamic F is not advertised. The classify graph freezes the class set present at export time.
+- `pe` / `embed` / `torchscript`: fixed square input; dynamic batch only. Video graphs have a static frame count -- a dynamic F is not advertised. The classify graph freezes the class set present at export time.
 - `picodet` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `picodet` / `detect` / `tensorrt`: TensorRT 10.16 FP32 with a fixed canvas; YOLO1 requires 448x448
 - `picodet` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
@@ -490,6 +496,12 @@ These converter paths are callable with the recorded validation context.
 - `midas` / `depth` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
 - `midas` / `depth` / `ncnn`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
 - `moge2` / `normal` / `ncnn`: PNNX/NCNN 20260526 exports, reloads, and runs, but the measured two-image raw signal is only 4.5x conversion error; validation requires more than 20x.
+- `pe` / `classify` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `pe` / `classify` / `tensorrt`: The converter path is available, but the project has not yet recorded TensorRT runtime parity for this family and task.
+- `pe` / `classify` / `openvino`: The converter path is available, but the project has not yet recorded OpenVINO runtime parity for this family and task.
+- `pe` / `embed` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `pe` / `embed` / `tensorrt`: The converter path is available, but the project has not yet recorded TensorRT runtime parity for this family and task.
+- `pe` / `embed` / `openvino`: The converter path is available, but the project has not yet recorded OpenVINO runtime parity for this family and task.
 - `picodet` / `detect` / `rknn`: Exact small variants passed RKNN Toolkit2 2.3.2 compilation, RK3588 PC-simulator raw-output gates, and matched post-NMS detections on a real image. Support is limited to YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s; on-device latency and parity have not been measured. Constraint: RKNN Toolkit2 2.3.2, RK3588 PC simulator, vendor floating build, batch 1, fixed square input
 - `pidnet` / `semantic` / `tensorrt`: TensorRT 10.16 FP32 exports and runs, but repeated builds produced raw-logit cosine as low as 0.9970, below the 0.999 promotion gate.
 - `rfdetr` / `detect` / `coreml`: Conversion is available, but runtime parity requires a macOS runner.
@@ -1007,6 +1019,20 @@ These converter paths are callable with the recorded validation context.
 - `owlv2` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `coreai`: Open-vocabulary runtime export is out of scope for v1.
+- `pe` / `classify` / `paddle`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `classify` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
+- `pe` / `classify` / `rknn`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `classify` / `ncnn`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `classify` / `tflite`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `classify` / `coreml`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `classify` / `coreai`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `paddle`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
+- `pe` / `embed` / `rknn`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `ncnn`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `tflite`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `coreml`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
+- `pe` / `embed` / `coreai`: No parity-validated PE artifact exists for this runtime; the family ships only the ONNX and TorchScript graphs it was tested in.
 - `picodet` / `detect` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
 - `picodet` / `detect` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `picodet` / `detect` / `tflite`: LiteRT 2.1.2 cannot prepare the onnx2tf 2.6.7 artifact because a RESHAPE maps 19,200 input elements to 9,600 output elements.
