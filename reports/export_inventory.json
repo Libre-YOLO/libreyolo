@@ -1115,6 +1115,33 @@
     "available": true,
     "group": "s"
   },
+  "pe": {
+    "class": "libreyolo.models.pe.model.LibrePE",
+    "tasks": [
+      "classify",
+      "embed"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "t16": 384,
+      "s16": 384,
+      "b16": 224,
+      "l14": 336,
+      "g14": 448
+    },
+    "default_imgsz": {
+      "t16": 384,
+      "s16": 384,
+      "b16": 224,
+      "l14": 336,
+      "g14": 448
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "s"
+  },
   "picodet": {
     "class": "libreyolo.models.picodet.model.LibrePICODET",
     "tasks": [
@@ -1764,6 +1791,31 @@
     "available": true,
     "group": "g3"
   },
+  "vjepa2": {
+    "class": "libreyolo.models.vjepa2.model.LibreVJEPA2",
+    "tasks": [
+      "embed",
+      "classify"
+    ],
+    "default_task": "embed",
+    "sizes": {
+      "l256": 256,
+      "h256": 256,
+      "g256": 256,
+      "g384": 384
+    },
+    "default_imgsz": {
+      "l256": 256,
+      "h256": 256,
+      "g256": 256,
+      "g384": 384
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g2"
+  },
   "yolo1": {
     "class": "libreyolo.models.yolo1.model.LibreYOLO1",
     "tasks": [
@@ -2040,32 +2092,5 @@
     "optional_extra": null,
     "available": true,
     "group": "g3"
-  },
-  "pe": {
-    "class": "libreyolo.models.pe.model.LibrePE",
-    "tasks": [
-      "classify",
-      "embed"
-    ],
-    "default_task": "classify",
-    "sizes": {
-      "t16": 384,
-      "s16": 384,
-      "b16": 224,
-      "l14": 336,
-      "g14": 448
-    },
-    "default_imgsz": {
-      "t16": 384,
-      "s16": 384,
-      "b16": 224,
-      "l14": 336,
-      "g14": 448
-    },
-    "task_sizes": {},
-    "export_override": "custom",
-    "optional_extra": null,
-    "available": true,
-    "group": "s"
   }
 }

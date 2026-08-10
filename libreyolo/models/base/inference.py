@@ -81,6 +81,10 @@ from .cuda_graph import forward_maybe_graphed, with_cuda_graph_scope
 
 logger = logging.getLogger(__name__)
 
+# Tasks whose result is one row for a whole clip rather than one per frame.
+# A family still has to opt in via ``VIDEO_EMBED_MODE = "clip"``.
+_WHOLE_CLIP_TASKS = frozenset({"embed", "classify"})
+
 
 def _as_float_tensor(
     value,
@@ -298,13 +302,18 @@ class InferenceRunner:
 
         source_spec = classify_source(source)
 
-        # Whole-clip embedding. Opt-in per family: only when the resolved task
-        # is "embed", the family declares clip support, and the source is a
-        # finite video. Every other family keeps the frame-by-frame path below.
-        if (
-            getattr(self.model, "VIDEO_EMBED_MODE", "frames") == "clip"
-            and getattr(self.model, "task", None) == "embed"
-        ):
+        # Whole-clip inference. Opt-in per family: only when the family declares
+        # clip support, the resolved task consumes a whole clip, and the source
+        # is a finite video. Every other family keeps the frame-by-frame path
+        # below.
+        #
+        # "embed" pools a clip into one row; "classify" scores a clip with a
+        # video head (V-JEPA 2's attentive probe). Both collapse the video to a
+        # single result, so they share this route rather than adding a second
+        # one.
+        if getattr(
+            self.model, "VIDEO_EMBED_MODE", "frames"
+        ) == "clip" and getattr(self.model, "task", None) in _WHOLE_CLIP_TASKS:
             if source_spec.live or source_spec.kind == SourceKind.SCREEN:
                 raise ValueError(
                     f"{type(self.model).__name__} embeds a whole video as a "
@@ -806,7 +815,16 @@ class InferenceRunner:
         if clip_frames < 1:
             raise ValueError(f"clip_frames must be positive; got {clip_frames}.")
 
-        frames = sample_clip_frames(source, clip_frames)
+        # Decoding stays shared. Temporal sampling is family-local when the
+        # family says so: uniform sampling across the whole video is right for
+        # a general clip embedder, but a checkpoint trained on a fixed window
+        # (V-JEPA 2 uses 64 frames at stride 2, centered) must be fed that
+        # window or its pooled statistics no longer match training.
+        sampler = getattr(self.model, "sample_clip_frames", None)
+        if callable(sampler):
+            frames = sampler(source, clip_frames)
+        else:
+            frames = sample_clip_frames(source, clip_frames)
         preprocessed = [
             self.model._preprocess(frame, color_format="rgb", input_size=imgsz)
             for frame in frames
@@ -1445,8 +1463,13 @@ class InferenceRunner:
         source_label: Optional[str] = None,
         **kwargs,
     ) -> Generator[Results, None, None]:
-        """Run inference on a video file, yielding per-frame Results."""
+        """Run inference on a video file, yielding per-frame Results.
+
+        Whole-clip families are dispatched earlier, in ``__call__``, so this
+        path is always frame-by-frame.
+        """
         source_label = str(source) if source_label is None else source_label
+
         yield from run_video_inference(
             source,
             self._frame_predictor(

@@ -69,6 +69,42 @@ before 1.4.0 are documented in the
   Image, text, zero-shot-logit and video outputs are bit-identical
   (`max_abs_diff == 0.0`) to `open_clip_torch==3.2.0` on float32 CPU for all
   five sizes.
+- **V-JEPA 2** (`vjepa2`), a self-supervised video encoder, under the generic
+  `embed` task plus `classify` for its released attentive probes. Sizes
+  `l256`, `h256`, `g256` and `g384`; canonical checkpoints
+  `LibreVJEPA2<size>-embed.pt` and `LibreVJEPA2<size>-cls-<ssv2|diving48>.pt`.
+  The encoder is a native pure-PyTorch port, so inference and export do not
+  depend on `transformers` at runtime.
+
+  This is the first family to consume a *clip* rather than a frame. A finite
+  video produces one result per sampled clip, with one clip by default;
+  every other family keeps its per-frame video result cardinality. An image
+  is accepted as an explicitly documented single-frame input, which is a
+  static appearance representation and not a motion one.
+
+  The public embedding is a LibreYOLO pooling contract, defined as the
+  arithmetic mean of the final encoder tokens followed by L2 normalization.
+  Upstream designates no global retrieval vector, and no retrieval benchmark
+  is claimed for it. The native spatiotemporal token grid is available
+  separately through `model.embed_tokens(...)` as `(B, T', H', W', D)`.
+
+  Encoder token and pooled-vector parity against unmodified
+  `transformers==5.1.0` is exact (`max_abs_diff == 0.0`) on float32 CPU for
+  all four sizes, as is single-view logit parity for three of the four
+  released probes. The `g384` Diving48 probe differs by one float32 ULP
+  (9.54e-07 absolute, 1.1e-07 relative); it is documented rather than papered
+  over, and the parity script still asserts `== 0.0`. ONNX and TorchScript
+  ship fixed-frame 5D graphs with dynamic batch.
+
+  A frozen attentive-probe trainer ships behind the normal
+  `model.train(data="video_dataset.yaml")` entry point. The encoder is frozen
+  and kept in eval mode; only the three-layer attentive pooler and the linear
+  classifier are optimized, and best checkpoints are selected by top-1
+  accuracy. Datasets are entirely user-supplied: manifests are validated in
+  full before the first epoch, and no video corpus is ever downloaded.
+
+  Self-supervised encoder pretraining, predictor pretraining and full encoder
+  fine-tuning all reject with actionable messages before a dataset is built.
 
 ## [1.5.0] - 2026-08-09
 

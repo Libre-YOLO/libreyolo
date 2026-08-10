@@ -236,6 +236,23 @@ class _ImageEmbeddingExportWrapper(torch.nn.Module):
         return torch.nn.functional.normalize(self.image_tower(x).float(), dim=-1)
 
 
+class _VideoEmbeddingExportWrapper(torch.nn.Module):
+    """Trace a V-JEPA 2 encoder as a fixed-frame clip embedding graph.
+
+    Input is the public 5D video layout ``(B, F, C, H, W)``; output is the
+    pooled, L2-normalized ``(B, D)`` row. The raw token grid is deliberately
+    not an export target.
+    """
+
+    def __init__(self, encoder: torch.nn.Module):
+        super().__init__()
+        self.encoder = encoder
+
+    def forward(self, x):
+        tokens = self.encoder(x)
+        return torch.nn.functional.normalize(tokens.mean(dim=1).float(), dim=-1)
+
+
 class _YOLONASExportWrapper(torch.nn.Module):
     """Expose decoded YOLO-NAS tensors without training-only auxiliaries."""
 
@@ -824,6 +841,8 @@ class BaseExporter(ABC):
         # model is restored on exit.
         dfine_wrapped = False
         rfdetr_export_activated = False
+        # Non-None only for families whose graph consumes a 5D video clip.
+        video_export_frames = None
         rfdetr_export_snapshots = []
         rfdetr_inner = None
         family = self.model._get_model_name()
@@ -1034,6 +1053,15 @@ class BaseExporter(ABC):
             nn_model = _ImageEmbeddingExportWrapper(image_tower).to(device)
             nn_model.eval()
             dfine_wrapped = True
+        elif family == "vjepa2":
+            # Every V-JEPA 2 graph takes a 5D clip. The embed graph pools to a
+            # normalized row; the classify graph already ends at logits, so it
+            # only needs the 5D dummy below.
+            if task == "embed":
+                nn_model = _VideoEmbeddingExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            video_export_frames = int(getattr(self.model, "clip_frames", 64))
+            dfine_wrapped = True
         elif family in {"clip", "siglip2"} and task == "classify":
             text_embeds = getattr(self.model, "_text_embeds", None)
             if text_embeds is None:
@@ -1116,7 +1144,12 @@ class BaseExporter(ABC):
                 pass
 
         h, w = imgsz
-        dummy = torch.randn(batch, 3, h, w, device=device)
+        if video_export_frames is not None:
+            # Public clip layout (B, F, C, H, W). Frame count, crop and tubelet
+            # geometry are fixed per graph; only batch may be dynamic.
+            dummy = torch.randn(batch, video_export_frames, 3, h, w, device=device)
+        else:
+            dummy = torch.randn(batch, 3, h, w, device=device)
 
         if half and not int8 and self.apply_model_half:
             nn_model.half()

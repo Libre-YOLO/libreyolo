@@ -82,6 +82,7 @@ _MODEL_EXPORTS = (
     "LibreSigLIP2",
     "LibrePE",
     "LibrePPOCR",
+    "LibreVJEPA2",
 )
 _RESULTS_EXPORTS = (
     "Results",
@@ -302,6 +303,7 @@ __all__ = [
     "LibreSigLIP2",
     "LibrePE",
     "LibrePPOCR",
+    "LibreVJEPA2",
     "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
     "LibreVLM",
