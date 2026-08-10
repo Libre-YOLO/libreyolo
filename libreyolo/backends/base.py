@@ -556,6 +556,16 @@ class BaseBackend(ABC):
                 input_size=effective_imgsz,
                 color_format=color_format,
             )
+        if self.model_family == "dekr" and self.task == "pose":
+            # Bottom-up: the whole frame goes in, letterboxed to the square
+            # canvas with pad value 127 and ImageNet normalization.
+            from ..preprocess.dekr import preprocess_image as dekr_preprocess_image
+
+            return dekr_preprocess_image(
+                image,
+                input_size=effective_imgsz,
+                color_format=color_format,
+            )
         if self.model_family == "vjepa2":
             # Every V-JEPA 2 graph takes a rank-5 clip (B, F, C, H, W). The
             # image preprocessing below produces a rank-4 batch, which the
@@ -1298,6 +1308,15 @@ class BaseBackend(ABC):
                 max_det=max_det,
             )
 
+        if self.model_family == "dekr" and self.task == "pose":
+            return self._parse_dekr_pose(
+                all_outputs,
+                original_size,
+                conf,
+                ratio=ratio,
+                max_det=max_det,
+            )
+
         if self.model_family == "yolox":
             boxes, scores, cls = self._parse_yolox(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio
@@ -1511,6 +1530,46 @@ class BaseBackend(ABC):
             keypoint_threshold=0.2,
             oks_threshold=0.9,
             max_det=min(int(max_det), 1),
+        )
+        return (
+            decoded["boxes"],
+            decoded["scores"],
+            decoded["classes"],
+            None,
+            None,
+            decoded["keypoints"],
+        )
+
+    @staticmethod
+    def _parse_dekr_pose(
+        all_outputs: list,
+        original_size: Tuple[int, int],
+        conf: float,
+        *,
+        ratio: float | None,
+        max_det: int,
+    ):
+        """Decode exported DEKR heatmap logits and offsets into flat poses.
+
+        The graph emits only the two dense maps; centre extraction, offset
+        decode, pose NMS and the derived-box adapter all run here, so an
+        exported artifact returns the same Results as the native model.
+        """
+        if len(all_outputs) != 2:
+            raise ValueError(
+                "DEKR pose backend requires two outputs (heatmap_logits, "
+                f"offsets), got {len(all_outputs)}."
+            )
+        from ..postprocess.dekr import DEKR_MAX_NUM_PEOPLE, postprocess_dekr
+
+        heatmap = torch.as_tensor(np.asarray(all_outputs[0], dtype=np.float32))
+        offsets = torch.as_tensor(np.asarray(all_outputs[1], dtype=np.float32))
+        decoded = postprocess_dekr(
+            (heatmap, offsets),
+            conf_thres=float(conf),
+            original_size=original_size,
+            ratio=float(ratio if ratio else 1.0),
+            max_det=min(int(max_det), DEKR_MAX_NUM_PEOPLE),
         )
         return (
             decoded["boxes"],

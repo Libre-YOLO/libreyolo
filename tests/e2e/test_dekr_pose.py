@@ -182,6 +182,52 @@ def test_export_reload_matches_eager_outputs(model, batch, fmt):
 
 
 @pytest.mark.parametrize("fmt", ["onnx", "torchscript"])
+def test_public_backend_route_matches_native_results(model, fmt):
+    """An exported artifact reloaded through LibreYOLO must return the same poses.
+
+    Raw-tensor agreement is not enough: the backend has to select the DEKR
+    preprocessing and the DEKR decoder, or the dense maps reach the detection
+    parser and produce garbage.
+    """
+    native = model(str(IMAGE))
+    native = native[0] if isinstance(native, list) else native
+
+    path = model.export(format=fmt)
+    backend = LibreYOLO(path)
+    exported = backend(str(IMAGE))
+    exported = exported[0] if isinstance(exported, list) else exported
+
+    assert len(exported.boxes) == len(native.boxes)
+    assert exported.keypoints is not None
+    assert exported.keypoints.data.shape == native.keypoints.data.shape
+
+    # Sub-pixel rather than exact: the backend picks its own device, so this
+    # comparison can straddle CPU and CUDA, which differ at the usual FP32
+    # level. Raw-tensor exactness is asserted separately, same-device, in
+    # test_export_reload_matches_eager_outputs.
+    tolerance = 1.0
+    np.testing.assert_allclose(
+        np.sort(exported.boxes.conf.numpy()),
+        np.sort(native.boxes.conf.numpy()),
+        rtol=0,
+        atol=0.05,
+    )
+    np.testing.assert_allclose(
+        exported.keypoints.data.numpy()[:, :, :2],
+        native.keypoints.data.numpy()[:, :, :2],
+        rtol=0,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        exported.boxes.xyxy.numpy(),
+        native.boxes.xyxy.numpy(),
+        rtol=0,
+        atol=tolerance,
+    )
+    assert exported.boxes.cls.numpy().tolist() == native.boxes.cls.numpy().tolist()
+
+
+@pytest.mark.parametrize("fmt", ["onnx", "torchscript"])
 def test_exported_outputs_decode_to_the_same_poses(model, batch, fmt):
     single, _, _ = batch
     with torch.no_grad():
