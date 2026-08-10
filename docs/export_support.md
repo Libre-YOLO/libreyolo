@@ -20,6 +20,7 @@ in preflight.
 | deim | detect | ✓ | ✓ |  | available | available | ✓ | ✓ |  |  |  |  | ✓ |
 | deimv2 | detect | available | ✓ |  | available | available | ✓ | available |  |  |  |  | ✓ |
 | deit | classify | ✓ | ✓ | available | ✓ | ✓ |  |  |  | available |  |  |  |
+| dekr | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |  |
 | depth_anything | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  | ✓ |
 | depth_anything3 | depth | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |
 | detr | detect | ✓ | ✓ | available | available | available |  |  |  |  |  |  |  |
@@ -170,6 +171,10 @@ A check mark applies only under any constraint listed here.
 - `deit` / `classify` / `torchscript`: CPU FP32 with fixed 224x224 input
 - `deit` / `classify` / `tensorrt`: TensorRT 10.16 FP16 on RTX 5070 Ti, fixed 224x224 batch-1 input, 0.25 GiB tactic workspace
 - `deit` / `classify` / `openvino`: OpenVINO 2026.2 CPU FP32 with fixed 224x224 input
+- `dekr` / `pose` / `onnx`: PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU FP32, batch 1 and 2 through a dynamic batch axis, fixed 640x640 spatial input; the graph emits only raw heatmap_logits and offsets, so peak finding, pose NMS and the derived-box adapter stay out-of-graph
+- `dekr` / `pose` / `torchscript`: PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU FP32, batch 1 and 2 through a dynamic batch axis, fixed 640x640 spatial input; the graph emits only raw heatmap_logits and offsets, so peak finding, pose NMS and the derived-box adapter stay out-of-graph
+- `dekr` / `pose` / `tensorrt`: TensorRT 10.16.1.11, CUDA 12.8, RTX 5070 Ti, FP32, batch 1, fixed 640x640 input; decode and pose NMS stay out-of-graph
+- `dekr` / `pose` / `openvino`: OpenVINO 2026.2.1 CPU FP32, batch 1, fixed 640x640 input; decode and pose NMS stay out-of-graph
 - `depth_anything` / `depth` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape; Depth Anything uses the Apache-2.0 Small checkpoint
 - `depth_anything` / `depth` / `tensorrt`: FP32 with a fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `openvino`: fixed input resolution divisible by 14
@@ -638,6 +643,14 @@ These converter paths are callable with the recorded validation context.
 - `deit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `deit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
+- `dekr` / `pose` / `executorch`: The raw two-output DEKR pose graph export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `paddle`: The raw two-output DEKR pose graph export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `mnn`: The raw two-output DEKR pose graph export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `rknn`: The raw two-output DEKR pose graph export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `ncnn`: The raw two-output DEKR pose graph export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `tflite`: The raw two-output DEKR pose graph export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `coreml`: The raw two-output DEKR pose graph export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `coreai`: The raw two-output DEKR pose graph export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `depth_anything` / `depth` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
 - `depth_anything` / `depth` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `depth_anything` / `depth` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.

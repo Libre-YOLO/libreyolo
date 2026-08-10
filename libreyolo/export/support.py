@@ -3581,6 +3581,60 @@ _add(
 )
 
 
+_add(
+    "validated",
+    ("dekr",),
+    ("pose",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The released DEKR-W32-NO-DC checkpoint exports and reloads with raw "
+        "heatmap-logit and offset parity at batch 1 and batch 2, and the "
+        "reloaded raw outputs decode to the same poses as eager PyTorch, in "
+        "tests/e2e/test_dekr_pose.py. TorchScript is exact; ONNX agrees within "
+        "1e-2 absolute on the unbounded offset regressions. "
+        "weights/parity_dekr.py separately proves the native graph against the "
+        "pinned Apache-2.0 upstream implementation at max_abs_diff == 0."
+    ),
+    since="1.5",
+    constraint=(
+        "PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU "
+        "FP32, batch 1 and 2 through a dynamic batch axis, fixed 640x640 "
+        "spatial input; the graph emits only raw heatmap_logits and offsets, "
+        "so peak finding, pose NMS and the derived-box adapter stay out-of-graph"
+    ),
+)
+_add(
+    "validated",
+    ("dekr",),
+    ("pose",),
+    ("openvino",),
+    reason=(
+        "The released checkpoint converts to OpenVINO IR and reloads through "
+        "the public backend route."
+    ),
+    since="1.5",
+    constraint=(
+        "OpenVINO 2026.2.1 CPU FP32, batch 1, fixed 640x640 input; decode and "
+        "pose NMS stay out-of-graph"
+    ),
+)
+_add(
+    "validated",
+    ("dekr",),
+    ("pose",),
+    ("tensorrt",),
+    reason=(
+        "The released checkpoint builds and executes a TensorRT engine on the "
+        "validated GPU; parser success alone was not accepted as support."
+    ),
+    since="1.5",
+    constraint=(
+        "TensorRT 10.16.1.11, CUDA 12.8, RTX 5070 Ti, FP32, batch 1, fixed "
+        "640x640 input; decode and pose NMS stay out-of-graph"
+    ),
+)
+
+
 _TASK_BLOCKS = {
     "ocr": (
         "OCR uses two networks for detection and recognition with dynamic "
@@ -3628,6 +3682,10 @@ _FAMILY_BLOCKS = {
     ),
     "hrnet": (
         "The HRNet person-crop pose-head export contract supports ONNX, "
+        "TorchScript, OpenVINO, and TensorRT only."
+    ),
+    "dekr": (
+        "The raw two-output DEKR pose graph export contract supports ONNX, "
         "TorchScript, OpenVINO, and TensorRT only."
     ),
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",

@@ -300,6 +300,56 @@ Used for: YOLO-NAS model family and pose training references
           separate non-commercial terms and are not bundled here.
 
 --------------------------------------------------------------------
+SuperGradients / DEKR-W32-NO-DC (bottom-up pose)
+--------------------------------------------------------------------
+Source: https://github.com/Deci-AI/super-gradients
+        pinned commit 63de22c404d5740f34f7706c302b37fce3c8fe5d
+License: Apache License 2.0 (repository LICENSE.md at that commit)
+Copyright (c) 2021-2024 Deci AI
+Additional notice: the DEKR model file at that pin carries its own
+        upstream header, reproduced here and preserved in
+        libreyolo/models/dekr/nn.py:
+            Copyright (c) Microsoft
+            Licensed under the MIT License.
+            The code is based on HigherHRNet-Human-Pose-Estimation.
+            (https://github.com/HRNet/HigherHRNet-Human-Pose-Estimation)
+            Modified by Zigang Geng (zigang@mail.ustc.edu.cn).
+Used for: the DEKR-W32-NO-DC architecture, its decode behaviour, and
+          its evaluation preprocessing recipe, ported into
+          libreyolo/models/dekr/nn.py, libreyolo/postprocess/dekr.py
+          and libreyolo/preprocess/dekr.py.
+          Source paths used, at that pin:
+            src/super_gradients/training/models/pose_estimation_models/
+              dekr_hrnet.py
+            src/super_gradients/training/utils/pose_estimation/
+              dekr_decode_callbacks.py
+            src/super_gradients/training/transforms/keypoints/
+              keypoints_longest_max_size.py
+            src/super_gradients/training/transforms/keypoints/
+              keypoints_pad_if_needed.py
+            src/super_gradients/recipes/arch_params/
+              pose_dekr_w32_no_dc_arch_params.yaml
+          Published pretrained DEKR weights are served from the
+          source provider's CDN. No per-artifact redistribution grant
+          was found for them, so LibreYOLO links to that CDN and does
+          not bundle or mirror the checkpoint.
+
+--------------------------------------------------------------------
+HRNet / DEKR and HigherHRNet (architecture lineage)
+--------------------------------------------------------------------
+Source: https://github.com/HRNet/DEKR
+        pinned commit 7a303139e92bdf3eab8d899415ccac37374285a4
+        https://github.com/HRNet/HigherHRNet-Human-Pose-Estimation
+        pinned commit aa23881492ff511185acf756a2e14725cc4ab4d7
+License: MIT License (both repositories)
+Copyright (c) Microsoft Corporation
+Used for: architecture cross-check only for the LibreYOLO `dekr`
+          family. No code was copied from either repository; the
+          original DEKR implementation uses deformable convolution
+          and is not state-compatible with the no-DC model LibreYOLO
+          ships.
+
+--------------------------------------------------------------------
 SuperGradients / PP-YOLOE
 --------------------------------------------------------------------
 Source: https://github.com/Deci-AI/super-gradients

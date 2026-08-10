@@ -97,6 +97,7 @@ from .yolo2.model import LibreYOLO2  # noqa: E402
 from .yolo1.model import LibreYOLO1  # noqa: E402  (VOC museum; can_load keyed on unique yolo1. FC head)
 from .yolo7.model import LibreYOLO7  # noqa: E402  (can_load keyed on unique implicit_a.implicit)
 from .hrnet.model import LibreHRNet  # noqa: E402,F401  (top-down pose; unique stage-fusion fingerprint)
+from .dekr.model import LibreDEKR  # noqa: E402,F401  (bottom-up pose; unique offset_final_layer stack)
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
 from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 from .midas.model import LibreMiDaS  # noqa: E402,F401  (depth-only MiDaS museum family)
@@ -822,6 +823,7 @@ __all__ = [
     "LibreYOLO1",
     "LibreYOLO7",
     "LibreHRNet",
+    "LibreDEKR",
     "LibreRTDETR",
     "LibreRTDETRv2",
     "LibreRTDETRv4",
