@@ -33,16 +33,33 @@ def _get_hf_token() -> Optional[str]:
     return None
 
 
-def _notify_yolonas_license_once(url: str = "") -> None:
-    """Print Deci's weight license terms once per process before download.
+def _notify_deci_cdn_license_once(url: str = "") -> None:
+    """Print the governing weight-license notice once per process.
 
-    The rotated YOLO-NAS-R checkpoints ship a separate notice from the
-    detect/pose ones, so point at whichever actually governs this file.
+    Deci's CDN serves artifacts under more than one set of terms. The YOLO-NAS
+    checkpoints carry Deci's proprietary weight license; the DEKR checkpoint
+    comes from the Apache-2.0 SuperGradients repository but has no per-artifact
+    redistribution grant of its own, so it gets its own honest wording rather
+    than borrowing YOLO-NAS's proprietary text.
     """
     global _YOLONAS_LICENSE_NOTICE_SHOWN
     if _YOLONAS_LICENSE_NOTICE_SHOWN:
         return
     _YOLONAS_LICENSE_NOTICE_SHOWN = True
+    rule = "─" * 69
+    if "dekr_" in url.lower():
+        print(
+            "\n"
+            f"{rule}\n"
+            "DEKR weights are downloaded from Deci.AI's public CDN. The source\n"
+            "code is Apache-2.0, but no per-artifact redistribution grant was\n"
+            "found for this checkpoint, so LibreYOLO links to it rather than\n"
+            "mirroring it. Review the source repository's terms before\n"
+            "redistributing the file or anything derived from it:\n"
+            "  https://github.com/Deci-AI/super-gradients/blob/master/LICENSE.md\n"
+            f"{rule}\n"
+        )
+        return
     is_rotated = "yolo_nas_r_" in url.lower()
     name = "YOLO-NAS-R (rotated)" if is_rotated else "YOLO-NAS"
     license_file = "LICENSE.YOLONAS-R.md" if is_rotated else "LICENSE.YOLONAS.md"
@@ -326,7 +343,7 @@ def download_url_to_path(url: str, path: Path, *, verify=None) -> None:
     is_hf = host.endswith("huggingface.co")
 
     if "cloudfront.net" in host or host.endswith("deci.ai"):
-        _notify_yolonas_license_once(url)
+        _notify_deci_cdn_license_once(url)
 
     headers = {}
     token = _get_hf_token()

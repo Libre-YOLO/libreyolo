@@ -67,6 +67,7 @@ the `alexnet` / `deit` / `mobilenetv4` / `convnext` / `efficientnetv2` /
 | `yolo9_p2`  | `LibreYOLO9P2`  | All-caps acronym + version + variant (stride-4 small-object) |
 | `yolonas`   | `LibreYOLONAS`  | All-caps acronym (hyphen dropped from `YOLO-NAS`) |
 | `hrnet`     | `LibreHRNet`    | All-caps acronym (`HRNet`, High-Resolution Net); inference-only top-down pose |
+| `dekr`      | `LibreDEKR`     | All-caps acronym (`DEKR`, Disentangled Keypoint Regression); inference-only bottom-up pose |
 | `dfine`     | `LibreDFINE`    | All-caps acronym (hyphen dropped from `D-FINE`) |
 | `deim`      | `LibreDEIM`     | All-caps acronym |
 | `deimv2`    | `LibreDEIMv2`   | All-caps acronym + lowercase version |
@@ -186,6 +187,7 @@ ships:
 | `yolo9_p2`  | `t`, `s` |
 | `yolonas`   | `s`, `m`, `l` |
 | `hrnet`     | `w32`, `w48` (parallel-stream width; fixed person-crop canvases 256x192 and 384x288) |
+| `dekr`      | `w32` (HRNet parallel-stream width at 640; the export-friendly no-deformable-conv variant is recorded as `variant=no_dc` in checkpoint metadata, never in the size token) |
 | `dfine`     | `n`, `s`, `m`, `l`, `x` |
 | `deim`      | `n`, `s`, `m`, `l`, `x` |
 | `deimv2`    | per-cfg (see `SIZE_CONFIGS`) |
@@ -482,6 +484,7 @@ Detector-factory family support follows:
 | `lingbotvision` | `("semantic",)`                 | semantic | LingBot-Vision self-supervised ViT (Apache-2.0, arXiv:2607.05247) + 1x1 dense head (the report's linear probe); s/b/l/g at 512; ADE20K 150-class hosted weights for s/b/l; head-only training by default (`freeze_backbone=False` for full fine-tune) |
 | `yolonas`   | `("detect", "pose", "obb")`         | detect | pose adds size `n`; obb is YOLO-NAS-R (DOTA2, s/m/l at 1024, trainable) |
 | `hrnet`     | `("pose",)`                          | pose   | inference-only top-down COCO-17 pose; `w32` uses 256x192 crops, `w48` uses 384x288; configurable person detector |
+| `dekr`      | `("pose",)`                          | pose   | inference-only bottom-up COCO-17 pose; no person detector; `LibreDEKRw32-pose.pt` at 640; person boxes are derived from decoded keypoints, not predicted |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |

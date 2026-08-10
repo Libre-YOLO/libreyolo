@@ -9,6 +9,26 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **DEKR bottom-up pose.** New inference-only `dekr` family:
+  `LibreYOLO("LibreDEKRw32-pose.pt")` returns multi-person COCO-17 pose on the
+  original image canvas without running a person detector first, the first
+  genuinely bottom-up pose family in the library. The model emits a dense
+  keypoint-plus-centre heatmap and a dense per-keypoint offset field at stride
+  4; centres, offsets, joint scores and pose NMS are decoded outside the graph.
+  Ported from the Apache-2.0 SuperGradients DEKR-W32-NO-DC implementation at
+  pinned commit `63de22c404d5740f34f7706c302b37fce3c8fe5d` (that file also
+  carries an upstream Microsoft MIT notice). The port reproduces the pinned
+  upstream model exactly (`max_abs_diff == 0` for heatmap logits and offsets on
+  zeros, seeded noise, a real preprocessed image, batch 2 and a rectangular
+  input), and the decoder reproduces the pinned upstream decoder exactly across
+  14 cases including zero people, border candidates, overlapping centres,
+  more-than-`max_num_people` peaks and mixed per-item counts in a batch.
+  ONNX, TorchScript, TensorRT and OpenVINO export and reload. DEKR predicts no
+  boxes: `Results.boxes` is a documented LibreYOLO adapter fitted to the
+  confident decoded joints, not an upstream regression head. Weights stay
+  hosted by the source provider and are linked rather than redistributed, as
+  for YOLO-NAS. Training is not implemented and `model.train(...)` says so.
+
 - **YOLO-NAS-R oriented boxes.** The existing `yolonas` family gains an `obb`
   task: `LibreYOLO("LibreYOLONASs-obb.pt")` returns `Results.obb` on the
   original image canvas, in sizes `s`/`m`/`l` at 1024 on DOTA2's 18 classes.

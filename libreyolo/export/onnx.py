@@ -259,6 +259,7 @@ def export_onnx(
     is_seg = metadata.get("segmentation") == "true" or task == "segment"
     is_yolo9_pose = model_family == "yolo9" and task == "pose"
     is_hrnet_pose = model_family == "hrnet" and task == "pose"
+    is_dekr_pose = model_family == "dekr" and task == "pose"
     is_rfdetr_pose = model_family == "rfdetr" and task == "pose"
     is_ec_pose = model_family == "ec" and task == "pose"
     is_yolonas_pose = model_family == "yolonas" and task == "pose"
@@ -393,6 +394,21 @@ def export_onnx(
         output_names = ["heatmaps"]
         dynamic_axes = (
             {"images": {0: "people"}, "heatmaps": {0: "people"}} if dynamic else None
+        )
+    elif is_dekr_pose:
+        # DEKR emits two dense stride-4 maps and nothing else: raw heatmap
+        # logits (K + 1 channels, last one the person centre) and per-keypoint
+        # offsets (2K channels). Peak finding, pose NMS and the derived-box
+        # adapter all stay outside the graph.
+        output_names = ["heatmap_logits", "offsets"]
+        dynamic_axes = (
+            {
+                "images": {0: "batch"},
+                "heatmap_logits": {0: "batch"},
+                "offsets": {0: "batch"},
+            }
+            if dynamic
+            else None
         )
     elif is_classify:
         # Classification emits a single logits tensor (B, num_classes).

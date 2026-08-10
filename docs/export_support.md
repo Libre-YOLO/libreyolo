@@ -48,6 +48,7 @@ in preflight.
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | hrnet | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |  |
+| dekr | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | l2cs | gaze | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |
@@ -243,6 +244,10 @@ A check mark applies only under any constraint listed here.
 - `fomo` / `point` / `openvino`: fixed square input
 - `fomo` / `point` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed 96x96 input; two-input raw parity, factory reload, metadata, and public predict parity
 - `fomo` / `point` / `coreai`: native 96 canvas; a deterministic model state trained from scratch for eight steps on synthetic tensors is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion and the existing heatmap contract, not point-localization accuracy
+- `dekr` / `pose` / `onnx`: PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26, CPU FP32, batch 1 and 2 via a dynamic batch axis, fixed 640x640 spatial input; outputs are the raw `heatmap_logits` (K+1, 160, 160) and `offsets` (2K, 160, 160) only -- peak finding, pose NMS and the derived-box adapter run outside the graph
+- `dekr` / `pose` / `torchscript`: PyTorch 2.11 TorchScript trace, CPU FP32, batch 1 and 2, fixed 640x640 spatial input; raw outputs match eager PyTorch exactly (`max_abs_diff == 0`)
+- `dekr` / `pose` / `tensorrt`: TensorRT 10.16.1.11, CUDA 12.8, RTX 5070 Ti, FP32, batch 1, fixed 640x640 input; engine built and executed, not parser-only
+- `dekr` / `pose` / `openvino`: OpenVINO 2026.2.1 CPU FP32, batch 1, fixed 640x640 input
 - `hrnet` / `pose` / `onnx`: PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
 - `hrnet` / `pose` / `torchscript`: PyTorch 2.11, ONNX 1.20.1 / ONNX Runtime 1.26 or TorchScript, CPU FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
 - `hrnet` / `pose` / `tensorrt`: TensorRT 10.16.1.11, CUDA 12.8, RTX 5070 Ti, FP32, batch 1, fixed checkpoint-native 256x192 (W32) or 384x288 (W48) person-crop input; the full-image person detector is not in-graph
@@ -840,13 +845,21 @@ These converter paths are callable with the recorded validation context.
 - `grounding_dino` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `coreai`: Open-vocabulary runtime export is out of scope for v1.
+- `dekr` / `pose` / `executorch`: The raw two-output DEKR pose graph is validated for ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `executorch`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `paddle`: The raw two-output DEKR pose graph is validated for ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `paddle`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `mnn`: The raw two-output DEKR pose graph is validated for ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `mnn`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `rknn`: The raw two-output DEKR pose graph is validated for ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `rknn`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `ncnn`: The raw two-output DEKR pose graph is validated for ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `ncnn`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `tflite`: The raw two-output DEKR pose graph is validated for ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `tflite`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `coreml`: The raw two-output DEKR pose graph is validated for ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `coreml`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `dekr` / `pose` / `coreai`: The raw two-output DEKR pose graph is validated for ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `coreai`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `internvl3` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.

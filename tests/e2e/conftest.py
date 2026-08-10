@@ -629,6 +629,17 @@ YOLONAS_OBB_MODELS = [
 # which is detect-only, so the general-nightly count in docs/testing.md is
 # unchanged. The representative cases below are the two smallest artifacts:
 # one encoder and one released probe.
+# DEKR is bottom-up pose and does not belong in MODEL_CATALOG: that matrix feeds
+# the COCO detection mAP and training gates, which a keypoint-only model fails
+# by construction. It is also kept out of GENERAL_NIGHTLY_INFERENCE_MODELS,
+# which is detect-only, so the general-nightly count in docs/testing.md is
+# unchanged. The weights are not on the LibreYOLO HF org (no per-artifact
+# redistribution grant was found) but they do have a public auto-download route
+# through Deci's CDN, which ``_has_libreyolo_download_route`` already accepts.
+DEKR_POSE_MODELS = [
+    ("dekr", "w32", "LibreDEKRw32-pose.pt"),
+]
+
 VJEPA2_EMBED_MODELS = [
     ("vjepa2", "l256", "LibreVJEPA2l256-embed.pt"),
 ]
@@ -718,6 +729,7 @@ FAMILY_MARKERS = {
     "deformable_detr": pytest.mark.deformable_detr,
     "dinodetr": pytest.mark.dinodetr,
     "hrnet": pytest.mark.hrnet,
+    "dekr": pytest.mark.dekr,
     "dfine": pytest.mark.dfine,
     "domedetr": pytest.mark.domedetr,
     "deim": pytest.mark.deim,

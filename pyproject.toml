@@ -483,6 +483,7 @@ markers = [
     "rtmdet: tests covering the RTMDet model family",
     "l2cs: tests covering the L2CS gaze estimation family",
     "hrnet: tests covering the HRNet top-down pose family",
+    "dekr: tests covering the DEKR bottom-up pose family",
     "fomo: tests covering the LibreFOMO point-localizer family",
     "alexnet: tests covering the LibreAlexNet image-classification family",
     "vgg: tests covering the LibreVGG classification family",

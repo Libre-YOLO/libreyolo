@@ -230,6 +230,24 @@
     "available": true,
     "group": "g4"
   },
+  "dekr": {
+    "class": "libreyolo.models.dekr.model.LibreDEKR",
+    "tasks": [
+      "pose"
+    ],
+    "default_task": "pose",
+    "sizes": {
+      "w32": 640
+    },
+    "default_imgsz": {
+      "w32": 640
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "depth_anything": {
     "class": "libreyolo.models.depth_anything.model.LibreDepthAnythingV2",
     "tasks": [
