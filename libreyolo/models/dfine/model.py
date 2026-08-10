@@ -12,6 +12,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
 from ...training.callbacks import TrainCallbacks
+from ...training.config import DFINEConfig
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ...validation.preprocessors import DFINEValPreprocessor
@@ -21,6 +22,8 @@ from ...postprocess.dfine import postprocess, postprocess_seg
 from .utils import preprocess_image, unwrap_dfine_checkpoint
 
 logger = logging.getLogger(__name__)
+
+_TRAIN_DEFAULTS = DFINEConfig()
 
 
 class LibreDFINE(BaseModel):
@@ -296,7 +299,7 @@ class LibreDFINE(BaseModel):
         name: str = "dfine_exp",
         exist_ok: bool = False,
         resume: bool = False,
-        amp: bool = False,
+        amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = 50,
         callbacks: TrainCallbacks = None,
         loggers=None,

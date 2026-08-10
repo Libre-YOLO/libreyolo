@@ -91,7 +91,7 @@ class LibreRTDETRv4(LibreDFINE):
         name: str = _TRAIN_DEFAULTS.name,
         exist_ok: bool = False,
         resume: bool = False,
-        amp: bool = False,
+        amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = 50,
         callbacks: TrainCallbacks = None,
         loggers=None,

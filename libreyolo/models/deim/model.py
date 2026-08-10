@@ -19,6 +19,8 @@ from .nn import LibreDEIMModel
 from ...postprocess.deim import postprocess
 from .utils import preprocess_image, unwrap_deim_checkpoint
 
+_TRAIN_DEFAULTS = DEIMConfig()
+
 
 class LibreDEIM(BaseModel):
     """LibreYOLO wrapper for DEIM.
@@ -205,7 +207,7 @@ class LibreDEIM(BaseModel):
         name: str = "deim_exp",
         exist_ok: bool = False,
         resume: bool = False,
-        amp: bool = False,
+        amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = 50,
         callbacks: TrainCallbacks = None,
         loggers=None,

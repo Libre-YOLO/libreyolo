@@ -402,9 +402,10 @@ class DFINEConfig(TrainConfig):
     """D-FINE-specific training defaults.
 
     Training is a v1 cut: AdamW with no-wd on norms/biases, flat LR with
-    warmup + cosine tail, hflip-only aug, no mosaic/mixup. AMP off by
-    default — D-FINE's decoder clamps activations to ±65504 (FP16 max)
-    which strongly suggests FP32 is required.
+    warmup + cosine tail, hflip-only aug, no mosaic/mixup. AMP on by
+    default: upstream's official training commands all pass ``--use-amp``,
+    and the decoder's ±65504 clamp is the FP16-range guard that makes that
+    safe (it is not evidence that FP32 is required).
     """
 
     optimizer: str = "adamw"
@@ -448,7 +449,7 @@ class DFINEConfig(TrainConfig):
     mask_match_cost: float = 1.0
     mask_dice_match_cost: float = 1.0
 
-    amp: bool = False
+    amp: bool = True
     epochs: int = 132
     name: str = "dfine_exp"
 
@@ -487,6 +488,10 @@ class DOMEDETRConfig(DFINEConfig):
     defe_density_map_weight: float = 1.0
     density_recall_penalty: float = 0.3
     defe_reg_loss_weight: float = 1.0
+
+    # Upstream's dist_train.sh trains WITHOUT --use-amp (unlike D-FINE), so
+    # Dome-DETR pins fp32 rather than inheriting D-FINE's AMP default.
+    amp: bool = False
 
     epochs: int = 160
     name: str = "domedetr_exp"
@@ -538,7 +543,8 @@ class DEIMConfig(TrainConfig):
     multi_scale: bool = True
     aug_stop_epoch_ratio: float = 0.91
 
-    amp: bool = False
+    # Upstream's official training commands pass --use-amp, same as D-FINE.
+    amp: bool = True
     epochs: int = 132
     name: str = "deim_exp"
 
@@ -944,7 +950,8 @@ class YOLONASConfig(TrainConfig):
     mixup_scale: Tuple[float, float] = (0.5, 1.5)
     shear: float = 0.0
     ema_decay: float = 0.9997
-    amp: bool = False
+    # Upstream's coco2017_yolo_nas_s.yaml trains with mixed_precision: True.
+    amp: bool = True
     name: str = "yolonas_exp"
 
 
