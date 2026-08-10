@@ -6,7 +6,7 @@ everything here for backward compatibility.
 
 from __future__ import annotations
 
-import numpy as np
+from . import obb_ops
 from ..utils.lazy import lazy_module
 
 from typing import Dict, Tuple, Union
@@ -81,94 +81,12 @@ def _nms_keep_indices(
     return keep
 
 
-def _xywhr_to_corners(xywhr: torch.Tensor) -> torch.Tensor:
-    xy = xywhr[:, :2]
-    w = xywhr[:, 2] / 2
-    h = xywhr[:, 3] / 2
-    angle = xywhr[:, 4]
-    cos = torch.cos(angle)
-    sin = torch.sin(angle)
-    corners = torch.stack(
-        [
-            torch.stack([-w, -h], dim=1),
-            torch.stack([w, -h], dim=1),
-            torch.stack([w, h], dim=1),
-            torch.stack([-w, h], dim=1),
-        ],
-        dim=1,
-    )
-    rot = torch.stack(
-        [
-            torch.stack([cos, -sin], dim=1),
-            torch.stack([sin, cos], dim=1),
-        ],
-        dim=1,
-    )
-    return torch.matmul(corners, rot.transpose(1, 2)) + xy[:, None, :]
-
-
-def _xywhr_to_xyxy(xywhr: torch.Tensor) -> torch.Tensor:
-    if xywhr.numel() == 0:
-        return torch.zeros((0, 4), dtype=xywhr.dtype, device=xywhr.device)
-    corners = _xywhr_to_corners(xywhr)
-    x = corners[..., 0]
-    y = corners[..., 1]
-    return torch.stack(
-        [x.min(dim=1).values, y.min(dim=1).values, x.max(dim=1).values, y.max(dim=1).values],
-        dim=1,
-    )
-
-
-def _rotated_nms_keep_indices(
-    xywhr: torch.Tensor,
-    scores: torch.Tensor,
-    class_ids: torch.Tensor,
-    iou_thres: float,
-    max_det: int,
-) -> torch.Tensor:
-    # Imported here rather than at module scope: ``libreyolo.data`` pulls the
-    # dataset stack (and torch) at import time, and this module sits on the
-    # torch-free ONNX import path. Rotated NMS is OBB-only, which that path
-    # does not reach.
-    from ..data.obb import xywhr_iou
-
-    if xywhr.numel() == 0:
-        return torch.zeros(0, dtype=torch.long, device=xywhr.device)
-
-    finite_mask = torch.isfinite(xywhr).all(dim=1) & torch.isfinite(scores)
-    if not finite_mask.all():
-        valid_indices = torch.where(finite_mask)[0]
-        if len(valid_indices) == 0:
-            return torch.zeros(0, dtype=torch.long, device=xywhr.device)
-        xywhr = xywhr[finite_mask]
-        scores = scores[finite_mask]
-        class_ids = class_ids[finite_mask]
-    else:
-        valid_indices = None
-
-    order = torch.argsort(scores, descending=True)
-    rects = xywhr.detach().cpu().numpy().astype(np.float32)
-    classes = class_ids.detach().cpu().numpy().astype(np.int64)
-    ordered = order.detach().cpu().numpy().astype(np.int64).tolist()
-
-    keep_local: list[int] = []
-    while ordered and len(keep_local) < max_det:
-        current = ordered.pop(0)
-        keep_local.append(current)
-
-        remaining = []
-        for candidate in ordered:
-            if classes[candidate] != classes[current]:
-                remaining.append(candidate)
-                continue
-            if xywhr_iou(rects[current], rects[candidate]) <= iou_thres:
-                remaining.append(candidate)
-        ordered = remaining
-
-    keep = torch.as_tensor(keep_local, dtype=torch.long, device=xywhr.device)
-    if valid_indices is not None:
-        keep = valid_indices[keep]
-    return keep
+# Rotated-box geometry and NMS are task-level, not family-level: they moved to
+# ``libreyolo.postprocess.obb_ops`` so every OBB family shares one exact
+# implementation. The private aliases stay for backward compatibility.
+_xywhr_to_corners = obb_ops.xywhr_to_corners
+_xywhr_to_xyxy = obb_ops.xywhr_to_xyxy
+_rotated_nms_keep_indices = obb_ops.rotated_nms_keep_indices
 
 
 def _obb_prefilter_keep_indices(

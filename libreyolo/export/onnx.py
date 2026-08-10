@@ -263,6 +263,7 @@ def export_onnx(
     is_ec_pose = model_family == "ec" and task == "pose"
     is_yolonas_pose = model_family == "yolonas" and task == "pose"
     is_obb = task == "obb"
+    is_yolonas_obb = model_family == "yolonas" and is_obb
     is_classify = task == "classify"
     is_semantic = task == "semantic"
     is_restore = task == "restore"
@@ -457,6 +458,19 @@ def export_onnx(
                 "images": {0: "batch"},
                 "pred_logits": {0: "batch", 1: "queries"},
                 "pred_keypoints": {0: "batch", 1: "queries", 2: "keypoint_values"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_yolonas_obb:
+        # Raw OBB export contract: boxes [B, N, 5] as cx, cy, w, h, rotation
+        # plus sigmoid scores [B, N, C]. Rotated NMS stays out of the graph.
+        output_names = ["boxes", "scores"]
+        dynamic_axes = (
+            {
+                "images": {0: "batch"},
+                "boxes": {0: "batch", 1: "anchors"},
+                "scores": {0: "batch", 1: "anchors"},
             }
             if dynamic
             else None

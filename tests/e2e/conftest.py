@@ -615,6 +615,14 @@ RTDETRV2_OBB_MODELS = [
     ("rtdetrv2", "n", "LibreRTDETRv2n-obb.pt"),
 ]
 
+# YOLO-NAS-R (rotated). Same reasoning as above: OBB stays out of
+# MODEL_CATALOG. The weights are not on the LibreYOLO HF org (Deci's
+# non-redistributable licence) but they do have a public auto-download route
+# through Deci's CDN, which ``_has_libreyolo_download_route`` already accepts.
+YOLONAS_OBB_MODELS = [
+    ("yolonas", "s", "LibreYOLONASs-obb.pt"),
+]
+
 # V-JEPA 2 is a video family and does not belong in MODEL_CATALOG: that matrix
 # feeds the COCO detection mAP and training gates, which a clip embedder fails
 # by construction. It is also kept out of GENERAL_NIGHTLY_INFERENCE_MODELS,
@@ -806,6 +814,10 @@ DEEPLABV3_SMOKE_PARAMS = model_cases(
 )
 RTDETRV2_OBB_PARAMS = model_cases(
     RTDETRV2_OBB_MODELS,
+    with_weights=True,
+)
+YOLONAS_OBB_PARAMS = model_cases(
+    YOLONAS_OBB_MODELS,
     with_weights=True,
 )
 

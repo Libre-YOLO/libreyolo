@@ -110,6 +110,7 @@ in preflight.
 | yolo9_p2 | detect | ✓ | ✓ | ✓ | available | ✓ | ✓ | ✓ |  | available |  |  | ✓ |
 | yolonas | detect | ✓ | ✓ | ✓ | available | ✓ | ✓ | ✓ | available | ✓ | ✓ |  | ✓ |
 | yolonas | pose | ✓ | ✓ | ✓ | available | ✓ | ✓ |  |  | ✓ |  |  |  |
+| yolonas | obb | ✓ | ✓ | available | ✓ | ✓ |  |  |  | available |  |  |  |
 | yolox | detect | ✓ | ✓ | ✓ | available | ✓ |  |  |  | ✓ | ✓ | available | ✓ |
 | zipdepth | depth | ✓ | ✓ | ✓ | available | ✓ |  |  |  | ✓ |  |  | ✓ |
 
@@ -423,6 +424,10 @@ A check mark applies only under any constraint listed here.
 - `yolonas` / `pose` / `openvino`: fixed export canvas
 - `yolonas` / `pose` / `paddle`: X2Paddle 1.6.0, PaddlePaddle 2.6.2 CPU, ONNX 1.17/opset 15, FP32, batch 1, fixed square input; WSL2 Ubuntu 22.04
 - `yolonas` / `pose` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with deterministic synthetic trained fixtures; two-input raw parity, factory reload, metadata, and public predict parity; pose additionally validates matched keypoints; this validates conversion, not task accuracy
+- `yolonas` / `obb` / `onnx`: fixed 1024x1024 export canvas, batch 1, FP32; the official YOLO-NAS-R-S DOTA2 checkpoint exports, reloads through the factory, and its public OBB results match native inference on the same image (max xywhr delta 6e-08 px TorchScript, 0.06 px ONNX, 0.04 px OpenVINO, 0.18 px TensorRT; max score delta 0.0, 1.0e-03, 1.5e-03 and 1.6e-03 respectively). Rotated NMS is not embedded in the graph
+- `yolonas` / `obb` / `torchscript`: fixed 1024x1024 export canvas, batch 1, FP32; the official YOLO-NAS-R-S DOTA2 checkpoint exports, reloads through the factory, and its public OBB results match native inference on the same image (max xywhr delta 6e-08 px TorchScript, 0.06 px ONNX, 0.04 px OpenVINO, 0.18 px TensorRT; max score delta 0.0, 1.0e-03, 1.5e-03 and 1.6e-03 respectively). Rotated NMS is not embedded in the graph
+- `yolonas` / `obb` / `tensorrt`: fixed 1024x1024 export canvas, batch 1, FP32; the official YOLO-NAS-R-S DOTA2 checkpoint exports, reloads through the factory, and its public OBB results match native inference on the same image (max xywhr delta 6e-08 px TorchScript, 0.06 px ONNX, 0.04 px OpenVINO, 0.18 px TensorRT; max score delta 0.0, 1.0e-03, 1.5e-03 and 1.6e-03 respectively). Rotated NMS is not embedded in the graph
+- `yolonas` / `obb` / `openvino`: fixed 1024x1024 export canvas, batch 1, FP32; the official YOLO-NAS-R-S DOTA2 checkpoint exports, reloads through the factory, and its public OBB results match native inference on the same image (max xywhr delta 6e-08 px TorchScript, 0.06 px ONNX, 0.04 px OpenVINO, 0.18 px TensorRT; max score delta 0.0, 1.0e-03, 1.5e-03 and 1.6e-03 respectively). Rotated NMS is not embedded in the graph
 - `yolox` / `detect` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `yolox` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolox` / `detect` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with permissively licensed trained checkpoints; two-input raw parity, factory reload, metadata, and public predict parity
@@ -530,6 +535,8 @@ These converter paths are callable with the recorded validation context.
 - `yolonas` / `detect` / `tensorrt`: A deterministic synthetic trained fixture exports, reloads, and passes public predict parity, but image signal is only 4 to 5 times the TensorRT conversion error.
 - `yolonas` / `detect` / `rknn`: Exact small variants passed RKNN Toolkit2 2.3.2 compilation, RK3588 PC-simulator raw-output gates, and matched post-NMS detections on a real image. Support is limited to YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s; on-device latency and parity have not been measured. Constraint: RKNN Toolkit2 2.3.2, RK3588 PC simulator, vendor floating build, batch 1, fixed square input
 - `yolonas` / `pose` / `tensorrt`: A deterministic synthetic trained fixture exports, reloads, and passes public predict parity, but image signal is only 2 to 6 times the TensorRT conversion error.
+- `yolonas` / `obb` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `yolonas` / `obb` / `ncnn`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
 - `yolox` / `detect` / `tensorrt`: The permissively licensed trained checkpoint exports, reloads, and passes public predict parity, but normalized raw error is 1.6% and image signal is only 2.1 times the conversion error.
 - `yolox` / `detect` / `coreml`: Conversion is available, but runtime parity requires a macOS runner.
 - `zipdepth` / `depth` / `tensorrt`: TensorRT 10.16 FP32 exports, reloads, and predicts, but repeated builds produced raw depth PSNR as low as 30.27 dB, below the 40 dB promotion gate.
@@ -1296,6 +1303,12 @@ These converter paths are callable with the recorded validation context.
 - `yolonas` / `pose` / `tflite`: LiteRT rejects the converted pose graph because a CONCATENATION input has an unsupported/invalid tensor type.
 - `yolonas` / `pose` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolonas` / `pose` / `coreai`: This family and task have not been validated for Core AI export.
+- `yolonas` / `obb` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
+- `yolonas` / `obb` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
+- `yolonas` / `obb` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
+- `yolonas` / `obb` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `yolonas` / `obb` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `yolonas` / `obb` / `coreai`: This family and task have not been validated for Core AI export.
 - `yolox` / `detect` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
 - `yolox` / `detect` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `yolox` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.

@@ -28,6 +28,8 @@ from ..postprocess.yolo9 import (
     postprocess as yolo9_postprocess,
 )
 from ..postprocess.yolonas import (
+    YOLO_NAS_OBB_PRE_NMS_TOP_K,
+    YOLO_NAS_OBB_RESIZE_SIZE,
     YOLO_NAS_PRE_NMS_TOP_K,
     YOLO_NAS_POSE_RESIZE_SIZE,
     YOLO_NAS_RESIZE_SIZE,
@@ -36,6 +38,7 @@ from ..preprocess import as_batched_input, as_input
 from ..preprocess.yolo9 import preprocess_image
 from ..preprocess.yolonas import (
     preprocess_image as yolonas_preprocess_image,
+    preprocess_obb_image as yolonas_preprocess_obb_image,
     preprocess_pose_image as yolonas_preprocess_pose_image,
 )
 from ..preprocess.yolox import preprocess_image as yolox_preprocess_image
@@ -588,6 +591,10 @@ class BaseBackend(ABC):
         elif self.model_family == "yolonas":
             if self.task == "pose":
                 return yolonas_preprocess_pose_image(
+                    image, input_size=effective_imgsz, color_format=color_format
+                )
+            if self.task == "obb":
+                return yolonas_preprocess_obb_image(
                     image, input_size=effective_imgsz, color_format=color_format
                 )
             return yolonas_preprocess_image(
@@ -1292,6 +1299,17 @@ class BaseBackend(ABC):
                     orig_w,
                     orig_h,
                     conf,
+                    ratio=ratio,
+                    max_det=max_det,
+                )
+            if self.task == "obb":
+                return self._parse_yolonas_obb(
+                    all_outputs,
+                    effective_imgsz,
+                    orig_w,
+                    orig_h,
+                    conf,
+                    iou=iou,
                     ratio=ratio,
                     max_det=max_det,
                 )
@@ -2210,6 +2228,136 @@ class BaseBackend(ABC):
         max_scores = max_scores[valid_boxes]
         class_ids = class_ids[valid_boxes]
         return boxes, max_scores, class_ids
+
+    @staticmethod
+    def _parse_yolonas_obb(
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+        iou: float = 0.25,
+        ratio: Optional[float] = None,
+        max_det: int = 300,
+    ):
+        """Parse YOLO-NAS-R OBB output: [boxes(B,N,5) cxcywhr, scores(B,N,nc)].
+
+        Mirrors ``libreyolo.postprocess.yolonas.postprocess_obb`` step for step
+        (threshold -> top-K -> undo the longest-side rescale and bottom-right
+        pad -> canonicalise -> exact rotated NMS) but in numpy, so the ONNX
+        backend stays importable without torch.
+        """
+        from ..data.obb import canonicalize_xywhr, xywhr_iou
+
+        empty = (
+            np.zeros((0, 4), dtype=np.float32),
+            np.zeros((0,), dtype=np.float32),
+            np.zeros((0,), dtype=np.int64),
+            None,
+            np.zeros((0, 7), dtype=np.float32),
+        )
+
+        first = np.asarray(all_outputs[0][0], dtype=np.float32)
+        second = np.asarray(all_outputs[1][0], dtype=np.float32)
+        if first.shape[-1] == 5 and second.shape[-1] != 5:
+            boxes_raw, scores = first, second
+        elif second.shape[-1] == 5 and first.shape[-1] != 5:
+            boxes_raw, scores = second, first
+        else:
+            # A five-class checkpoint is indistinguishable by shape alone; the
+            # LibreYOLO export wrapper always emits (boxes, scores).
+            boxes_raw, scores = first, second
+
+        max_scores = scores.max(axis=1)
+        class_ids = scores.argmax(axis=1).astype(np.int64)
+        mask = max_scores >= conf
+        boxes_raw = boxes_raw[mask]
+        max_scores = max_scores[mask]
+        class_ids = class_ids[mask]
+        if boxes_raw.shape[0] == 0:
+            return empty
+
+        if YOLO_NAS_OBB_PRE_NMS_TOP_K and max_scores.size > YOLO_NAS_OBB_PRE_NMS_TOP_K:
+            keep = np.argpartition(-max_scores, YOLO_NAS_OBB_PRE_NMS_TOP_K - 1)[
+                :YOLO_NAS_OBB_PRE_NMS_TOP_K
+            ]
+            keep = keep[np.argsort(-max_scores[keep])]
+            boxes_raw = boxes_raw[keep]
+            max_scores = max_scores[keep]
+            class_ids = class_ids[keep]
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        if ratio is None or ratio <= 0:
+            resize_size = min(YOLO_NAS_OBB_RESIZE_SIZE, input_h, input_w)
+            ratio = min(resize_size / orig_h, resize_size / orig_w)
+        # Bottom-right padding leaves no offset to subtract, and the rescale is
+        # uniform, so centres and sides divide by the ratio while the angle is
+        # unchanged.
+        xywhr = boxes_raw.astype(np.float32, copy=True)
+        xywhr[:, :4] /= np.float32(ratio)
+        xywhr[:, 0] = np.clip(xywhr[:, 0], 0, orig_w)
+        xywhr[:, 1] = np.clip(xywhr[:, 1], 0, orig_h)
+
+        # Non-finite rows are dropped here rather than in NMS: the native path
+        # filters them inside rotated_nms_keep_indices, and canonicalization
+        # would otherwise carry NaN centres and angles into public results.
+        valid = (
+            np.isfinite(xywhr).all(axis=1)
+            & np.isfinite(max_scores)
+            & (xywhr[:, 2] > 0)
+            & (xywhr[:, 3] > 0)
+        )
+        xywhr = xywhr[valid]
+        max_scores = max_scores[valid]
+        class_ids = class_ids[valid]
+        if xywhr.shape[0] == 0:
+            return empty
+
+        xywhr = np.stack([canonicalize_xywhr(row) for row in xywhr]).astype(np.float32)
+
+        order = np.argsort(-max_scores).tolist()
+        keep_idx: List[int] = []
+        while order and len(keep_idx) < max_det:
+            current = order.pop(0)
+            keep_idx.append(current)
+            order = [
+                candidate
+                for candidate in order
+                if class_ids[candidate] != class_ids[current]
+                or xywhr_iou(xywhr[current], xywhr[candidate]) <= iou
+            ]
+        if not keep_idx:
+            return empty
+
+        keep_arr = np.asarray(keep_idx, dtype=np.int64)
+        xywhr = xywhr[keep_arr]
+        max_scores = max_scores[keep_arr]
+        class_ids = class_ids[keep_arr]
+
+        half_w = xywhr[:, 2] / 2
+        half_h = xywhr[:, 3] / 2
+        cos = np.abs(np.cos(xywhr[:, 4]))
+        sin = np.abs(np.sin(xywhr[:, 4]))
+        extent_x = cos * half_w + sin * half_h
+        extent_y = sin * half_w + cos * half_h
+        boxes = np.stack(
+            [
+                np.clip(xywhr[:, 0] - extent_x, 0, orig_w),
+                np.clip(xywhr[:, 1] - extent_y, 0, orig_h),
+                np.clip(xywhr[:, 0] + extent_x, 0, orig_w),
+                np.clip(xywhr[:, 1] + extent_y, 0, orig_h),
+            ],
+            axis=-1,
+        ).astype(np.float32)
+        obb = np.concatenate(
+            [
+                xywhr,
+                max_scores[:, None].astype(np.float32),
+                class_ids[:, None].astype(np.float32),
+            ],
+            axis=-1,
+        ).astype(np.float32)
+        return boxes, max_scores.astype(np.float32), class_ids, None, obb
 
     def _parse_yolonas_pose(
         self,
