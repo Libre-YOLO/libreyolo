@@ -36,6 +36,39 @@ before 1.4.0 are documented in the
   (corner conversion, axis-aligned proxy, exact rotated NMS, long-side
   canonicalization), extracted from the YOLO9 OBB postprocessor so OBB families
   share one implementation.
+- **Perception Encoder (PE) Core** (`pe` / `LibrePE`) — Meta's dual-tower
+  vision-language encoder, in all five released sizes (`t16`, `s16`, `b16`,
+  `l14`, `g14`). Zero-shot `classify` through `set_classes(...)` and `embed`
+  for images, text and **whole videos**, all in one normalized space:
+
+  ```python
+  model = LibreYOLO("LibrePEb16-cls.pt", task="embed")
+  model.predict("photo.jpg")          # (1, D) image row
+  model.embed_text(["a dog"])         # (1, D) text row
+  model.predict("clip.mp4")           # (1, D) row for the whole clip
+  ```
+
+  PE is the first family to embed a finite video as a *single* vector rather
+  than one result per frame: frames are sampled uniformly, encoded
+  independently, averaged, then L2-normalized once. This is opt-in per family
+  via the new `BaseModel.VIDEO_EMBED_MODE` (default `"frames"`), so CLIP,
+  SigLIP2, DINOv2 and every other family keep their existing frame-by-frame
+  behavior. Live cameras, network streams and screen captures are rejected for
+  whole-clip embedding rather than buffered without bound. `predict()` accepts
+  `clip_frames=` (default 8) to change how many frames are sampled.
+
+  Inference-only by design: PE Core has no closed-set supervised head, so
+  `train()` rejects immediately with an explanation instead of silently routing
+  to the generic classification trainer.
+
+  Exports: ONNX and TorchScript, for image embedding, frozen-class
+  classification, and fixed-frame video embedding.
+
+  The towers are a native `torch` re-implementation adapted from timm v1.0.28
+  (Apache-2.0) and OpenCLIP v3.2.0 (MIT); neither is imported at runtime.
+  Image, text, zero-shot-logit and video outputs are bit-identical
+  (`max_abs_diff == 0.0`) to `open_clip_torch==3.2.0` on float32 CPU for all
+  five sizes.
 
 ## [1.5.0] - 2026-08-09
 

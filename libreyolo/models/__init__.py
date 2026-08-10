@@ -142,6 +142,13 @@ from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
 # matter. NB: SigLIP carries logit_bias, which CLIP lacks.
 from .siglip2.model import LibreSigLIP2  # noqa: E402,F401  (import registers family)
 
+# Native Perception Encoder Core towers (no timm / open_clip at runtime; the
+# OpenAI BPE tokenizer is reused from LibreCLIP), so it registers eagerly.
+# can_load is uniquely keyed on visual.trunk.attn_pool.latent +
+# visual.trunk.patch_embed.proj.weight + text.text_projection, a signature no
+# other family carries, so order does not matter.
+from .pe.model import LibrePE  # noqa: E402,F401  (import registers family)
+
 # PP-OCRv5 text detection + recognition pipeline. can_load is uniquely keyed
 # on the composite det.*/rec.* checkpoint layout, so order does not matter.
 from .ppocr.model import LibrePPOCR  # noqa: E402,F401  (import registers family)
@@ -837,6 +844,7 @@ __all__ = [
     "LibreAlexNet",
     "LibreCLIP",
     "LibreSigLIP2",
+    "LibrePE",
     "LibrePPOCR",
     "LibreFaceEmbedder",
     "try_ensure_rfdetr",

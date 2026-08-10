@@ -49,6 +49,8 @@ MODEL_GROUPS: dict[str, str] = {
     "mobilenetv4": "g2",
     "efficientnetv2": "g2",
     "domedetr": "g2",
+    # s - sibling / zero-shot APIs covered separately
+    "pe": "s",
     # g3 - inference-only specialists
     "lwdetr": "g3",
     "detr": "g3",

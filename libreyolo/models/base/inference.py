@@ -75,6 +75,7 @@ from ...utils.video import (
     FrameSource,
     collect_video_results,
     run_video_inference,
+    sample_clip_frames,
 )
 from .cuda_graph import forward_maybe_graphed, with_cuda_graph_scope
 
@@ -245,7 +246,8 @@ class InferenceRunner:
             Results, list of Results, or generator of Results (stream=True).
         """
         kwargs = normalize_predict_kwargs(
-            kwargs, passthrough={"num_select", "gallery", "threshold"}
+            kwargs,
+            passthrough={"num_select", "gallery", "threshold", "clip_frames"},
         )
         if device is not None:
             self._set_device(device)
@@ -295,6 +297,53 @@ class InferenceRunner:
             )
 
         source_spec = classify_source(source)
+
+        # Whole-clip embedding. Opt-in per family: only when the resolved task
+        # is "embed", the family declares clip support, and the source is a
+        # finite video. Every other family keeps the frame-by-frame path below.
+        if (
+            getattr(self.model, "VIDEO_EMBED_MODE", "frames") == "clip"
+            and getattr(self.model, "task", None) == "embed"
+        ):
+            if source_spec.live or source_spec.kind == SourceKind.SCREEN:
+                raise ValueError(
+                    f"{type(self.model).__name__} embeds a whole video as a "
+                    "single vector, which requires a finite source with a known "
+                    "end. Live cameras, network streams and screen captures are "
+                    "unbounded and would have to be buffered indefinitely. Pass "
+                    "a video file, or use task='classify' to score frames as "
+                    "they arrive."
+                )
+            if source_spec.kind == SourceKind.VIDEO:
+                if vid_stride != 1:
+                    raise ValueError(
+                        "vid_stride does not apply when a whole video is "
+                        "embedded as a single vector: frames are sampled "
+                        "uniformly across the entire clip. Use clip_frames= to "
+                        "control how many frames are sampled."
+                    )
+                if show:
+                    raise NotImplementedError(
+                        "show=True displays annotated frames as they are "
+                        "processed, which does not apply to a whole-clip "
+                        "embedding that yields one result for the entire video."
+                    )
+                clip_results = self._predict_video_clip(
+                    source_spec.source,
+                    conf=conf,
+                    iou=iou,
+                    imgsz=imgsz,
+                    classes=classes,
+                    max_det=max_det,
+                    save=save,
+                    output_path=output_path,
+                    output_file_format=output_file_format,
+                    **kwargs,
+                )
+                # Honor the streaming contract: callers passing stream=True
+                # expect an iterator, even though a whole clip collapses to a
+                # single Results.
+                return iter(clip_results) if stream else clip_results
 
         # Handle finite video input.
         if source_spec.kind == SourceKind.VIDEO:
@@ -724,6 +773,64 @@ class InferenceRunner:
                 self._save_annotated_image(result, original_img, save_path)
             results.append(result)
         return results
+
+    def _predict_video_clip(
+        self,
+        source,
+        *,
+        conf,
+        iou,
+        imgsz=None,
+        classes=None,
+        max_det: int = 300,
+        save: bool = False,
+        output_path=None,
+        output_file_format=None,
+        **kwargs,
+    ) -> List[Results]:
+        """Embed a finite video as a single row (``VIDEO_EMBED_MODE == "clip"``).
+
+        Decoding and uniform sampling are family-independent; tensor layout and
+        temporal pooling belong to the family's ``_forward``. Returns a
+        one-element list holding one ``Results`` for the whole clip, not one per
+        frame.
+
+        ``save=True`` writes a single annotated image built from the first
+        sampled frame -- there is no per-frame video to render, because the
+        whole clip collapses to one result.
+        """
+        clip_frames = kwargs.pop(
+            "clip_frames", getattr(self.model, "clip_frames", 8)
+        )
+        clip_frames = int(clip_frames)
+        if clip_frames < 1:
+            raise ValueError(f"clip_frames must be positive; got {clip_frames}.")
+
+        frames = sample_clip_frames(source, clip_frames)
+        preprocessed = [
+            self.model._preprocess(frame, color_format="rgb", input_size=imgsz)
+            for frame in frames
+        ]
+        tensors = [item[0] for item in preprocessed]
+        original_size = preprocessed[0][2]
+
+        # (F, C, H, W) -> (1, F, C, H, W): one clip in the batch.
+        clip = torch.cat(tensors, dim=0).unsqueeze(0)
+        with torch.no_grad():
+            output = self.model._forward(clip)
+
+        detections = self.model._postprocess(
+            output, conf, iou, original_size, max_det=max_det, classes=classes, **kwargs
+        )
+        result = self._wrap_results(detections, original_size, str(source), classes)
+        result.path = str(source)
+
+        if save:
+            save_file = resolve_save_path(
+                output_path, str(source), ext=output_file_format or "jpg"
+            )
+            self._save_annotated_image(result, frames[0], save_file)
+        return [result]
 
     def _save_annotated_image(
         self, result: Results, original_img, save_path: Path

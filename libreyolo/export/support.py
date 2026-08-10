@@ -1054,6 +1054,35 @@ _add(
     ),
 )
 _add(
+    "validated",
+    ("pe",),
+    ("classify", "embed"),
+    ("onnx", "torchscript"),
+    reason=(
+        "Fixed-input graphs are compared against native PyTorch in "
+        "tests/unit/test_pe_export.py: TorchScript reproduces native exactly "
+        "(max_abs_diff 0.0) for the image-embed, frozen-class and fixed-frame "
+        "video graphs; ONNX matches to 4.3e-07 (embed), 1.3e-07 (video) and "
+        "1.5e-05 (classify, on logit_scale-amplified logits)."
+    ),
+    since="1.6",
+    constraint=(
+        "fixed square input; dynamic batch only. Video graphs have a static "
+        "frame count -- a dynamic F is not advertised. The classify graph "
+        "freezes the class set present at export time."
+    ),
+)
+_add(
+    "blocked",
+    ("pe",),
+    ("classify", "embed"),
+    ("ncnn", "coreml", "coreai", "tflite", "paddle", "rknn"),
+    reason=(
+        "No parity-validated PE artifact exists for this runtime; the family "
+        "ships only the ONNX and TorchScript graphs it was tested in."
+    ),
+)
+_add(
     "blocked",
     ("clip",),
     ("classify",),

@@ -80,6 +80,7 @@ file = name + ".pt"
 | Swin | `LibreSwin` | `LibreSwint-cls.pt` (Swin V1; MIT weights; inference-only) |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 | SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
+| PE | `LibrePE` | `LibrePEb16-cls.pt` (Perception Encoder Core; zero-shot classify + image/text/video embed) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
 | BiRefNet | `LibreBiRefNet` | `LibreBiRefNetl-matte.pt` (matte / background-removal; `l` is MIT, `t`/lite has no explicit weights-license tag) |
 | FeyNobg | `LibreFeyNobg` | `LibreFeyNobgl-matte.pt` (matte / background-removal; Apache-2.0 code+weights; also ships `-fp8`/`-nvfp4` pre-quantized repos, see below) |
@@ -241,6 +242,9 @@ LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 
 LibreSigLIP2b16-cls.pt, LibreSigLIP2so400m-cls.pt,
 
+LibrePEt16-cls.pt, LibrePEs16-cls.pt, LibrePEb16-cls.pt,
+LibrePEl14-cls.pt, LibrePEg14-cls.pt,
+
 LibreNAFNets-restore.pt, LibreNAFNetl-restore.pt,
 LibreNAFNetl-restore-sidd.pt,
 
@@ -348,6 +352,18 @@ use `pipeline_tag: zero-shot-image-classification`, `license: apache-2.0`
 upstream repo and commit pin), note the vendored SentencePiece tokenizer, and
 omit the VA Benchmarks section. Conversion is a metadata wrap
 (`weights/convert_siglip2_weights.py`); learned parameters are unchanged.
+
+LibrePE is the Perception Encoder Core zero-shot classifier and embedder. Its HF
+cards use `pipeline_tag: zero-shot-image-classification`, `license: apache-2.0`
+(weights derive from the Apache-2.0 OpenCLIP-compatible `timm/PE-Core-*`
+repositories — state the repo **and** the exact revision pin), and omit the VA
+Benchmarks section. The cards must say the artifact is a **converted
+OpenCLIP-compatible** PE Core checkpoint, not an unmodified official
+`facebook/PE-Core-*` package checkpoint, and must not repeat any claim from the
+official `perception_models` repository, whose `LICENSE.PE` (Apache-2.0)
+conflicts with its `setup.py` package license. Conversion is a metadata wrap
+(`weights/convert_pe_weights.py`); learned parameters are unchanged. Note the
+`g14` memory profile (1.88B-parameter vision tower) so users are not surprised.
 
 Common rule violations to reject before upload:
 

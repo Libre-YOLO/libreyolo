@@ -80,6 +80,7 @@ _MODEL_EXPORTS = (
     "LibreAlexNet",
     "LibreCLIP",
     "LibreSigLIP2",
+    "LibrePE",
     "LibrePPOCR",
 )
 _RESULTS_EXPORTS = (
@@ -299,6 +300,7 @@ __all__ = [
     "LibreAlexNet",
     "LibreCLIP",
     "LibreSigLIP2",
+    "LibrePE",
     "LibrePPOCR",
     "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])

@@ -115,7 +115,7 @@ libreyolo predict --model yolo9-t --source screen            # screen capture
 | **Depth** | Depth Anything 3, Depth Anything V2, ZipDepth, MiDaS |
 | **Surface normals** | MoGe-2 |
 | **Edges** | DexiNed, TEED |
-| **Embeddings** | LibreFaceEmbedder, CLIP, SigLIP2, DINOv2 |
+| **Embeddings** | LibreFaceEmbedder, CLIP, SigLIP2, Perception Encoder (image, text, whole-video; also zero-shot classify), DINOv2 |
 | **Body mesh** | SAM 3D Body |
 | **Restoration** | NAFNet, Real-ESRGAN, SwinIR |
 | **Background removal** | BiRefNet, FeyNobg |

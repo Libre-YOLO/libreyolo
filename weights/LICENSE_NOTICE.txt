@@ -297,6 +297,21 @@ project the weights were derived from. Per-family summary:
              google/siglip2-so400m-patch14-384 (Hugging Face).
              Convert with weights/convert_siglip2_weights.py.
 
+    Perception Encoder Core                            Apache-2.0
+             (LibrePE{t16,s16,b16,l14,g14}-cls)
+             upstream: the OpenCLIP-compatible converted repositories
+             timm/PE-Core-T-16-384 @ 7fe539ed578ac49a1c2b4f946e4b0747704c825a,
+             timm/PE-Core-S-16-384 @ 3249a38eb1c432ec19231c6fe1774acb6a4e4efe,
+             timm/PE-Core-B-16     @ 0038414f37721c5eafc1a5e0da802d291c909de3,
+             timm/PE-Core-L-14-336 @ 8eff41b3f687e50a323662c2dda5eb3588c6dd35,
+             timm/PE-Core-bigG-14-448 @ 17aa0c25addfa14198fa2ff73d845a22d433432e.
+             These are converted artifacts targeting the OpenCLIP-compatible
+             modeling implementation, NOT unmodified official
+             facebook/PE-Core-* package checkpoints. Each source model card
+             declares Apache-2.0. Convert with weights/convert_pe_weights.py;
+             see libreyolo/models/pe/NOTICE.md for the unresolved license
+             inconsistency in the official perception_models repository.
+
     OMDet-Turbo (LibreOMDetTurbot)                     Apache-2.0
              upstream: omlab/omdet-turbo-swin-tiny-hf
              pinned revision:

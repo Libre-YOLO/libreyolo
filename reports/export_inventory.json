@@ -2040,5 +2040,32 @@
     "optional_extra": null,
     "available": true,
     "group": "g3"
+  },
+  "pe": {
+    "class": "libreyolo.models.pe.model.LibrePE",
+    "tasks": [
+      "classify",
+      "embed"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "t16": 384,
+      "s16": 384,
+      "b16": 224,
+      "l14": 336,
+      "g14": 448
+    },
+    "default_imgsz": {
+      "t16": 384,
+      "s16": 384,
+      "b16": 224,
+      "l14": 336,
+      "g14": 448
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "s"
   }
 }
