@@ -258,6 +258,37 @@ Used for: PIDNet semantic segmentation family
           redistributed by LibreYOLO.
 
 --------------------------------------------------------------------
+SuperGradients / PP-LiteSeg
+--------------------------------------------------------------------
+Source: https://github.com/Deci-AI/super-gradients
+        pinned commit 63de22c404d5740f34f7706c302b37fce3c8fe5d
+License: Apache License 2.0
+Copyright (c) 2021-2024 Deci AI
+Used for: PP-LiteSeg semantic segmentation family
+          (libreyolo/models/ppliteseg/): the STDC backbone, SPPM context
+          module, UAFM decoder, segmentation and auxiliary heads, the
+          Dice + cross-entropy + edge compound loss, and the Cityscapes
+          training recipe. Architecture cross-checked against
+          PaddlePaddle/PaddleSeg (Apache-2.0, commit 3c4db66d); no
+          PaddleSeg code copied. The released PP-LiteSeg checkpoints are
+          trained on Cityscapes and are redistributed only under the
+          Cityscapes non-commercial terms, which do not apply to the
+          Apache-2.0 code above; see weights/LICENSE_NOTICE.txt and
+          libreyolo/models/ppliteseg/NOTICE.
+
+--------------------------------------------------------------------
+STDC-Seg (MichaelFan01)
+--------------------------------------------------------------------
+Source: https://github.com/MichaelFan01/STDC-Seg
+        pinned commit 59ff37fbd693b99972c76fcefe97caa14aeb619f
+License: MIT
+Copyright (c) 2021 Mingyuan Fan
+Used for: STDC backbone lineage in the PP-LiteSeg family
+          (libreyolo/models/ppliteseg/nn.py). The adapted SuperGradients
+          stdc.py states it is based on this exact commit, so the MIT
+          notice travels with the STDC-derived blocks.
+
+--------------------------------------------------------------------
 SuperGradients / YOLO-NAS
 --------------------------------------------------------------------
 Source: https://github.com/Deci-AI/super-gradients

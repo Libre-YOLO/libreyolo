@@ -1236,6 +1236,62 @@ class SegformerConfig(TrainConfig):
 
 
 @dataclass(kw_only=True)
+class PPLiteSegConfig(TrainConfig):
+    """PP-LiteSeg training defaults — the source Cityscapes recipe.
+
+    SGD (momentum 0.9, weight decay 5e-4) with the STDC backbone at ``lr0`` and
+    every other parameter at ``lr0 * head_lr_mult``; polynomial decay (power
+    0.9) after 10 warmup epochs; EMA at 0.9999; mixed precision off, as the
+    released recipe specifies. ``lr0=0.01`` is the source value for an
+    *effective* batch of 32 (8 per GPU across 4 GPUs) — scale it if you train
+    at a different effective batch.
+
+    ``imgsz`` here is the train crop, which is not the validation canvas for
+    the 75 sizes: ``LibrePPLiteSeg.train()`` fills it from the size's recipe
+    and validation runs at ``semantic_val_imgsz``.
+    """
+
+    optimizer: str = "sgd"
+    lr0: float = 0.01
+    momentum: float = 0.9
+    weight_decay: float = 5e-4
+    # Non-backbone LR multiplier (source `multiply_head_lr: 10.`).
+    head_lr_mult: float = 10.0
+    zero_weight_decay_on_bias_and_bn: bool = True
+
+    scheduler: str = "poly"
+    poly_power: float = 0.9
+    warmup_epochs: int = 10
+    warmup_lr_start: float = 0.0
+    min_lr_ratio: float = 0.0
+
+    # Edge-attention kernel of the compound loss (source `edge_kernel: 5`).
+    edge_kernel: int = 5
+
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    flip_prob: float = 0.5
+    degrees: float = 0.0
+    translate: float = 0.0
+    shear: float = 0.0
+    # Photometric jitter is family-local (LibrePPLiteSeg.semantic_photometric);
+    # SemanticDataset never reads config.hsv_prob, so declaring it here would
+    # be a knob that silently does nothing.
+
+    ema: bool = True
+    ema_decay: float = 0.9999
+    # The released recipe trains in full precision; opting into AMP changes it.
+    amp: bool = False
+
+    imgsz: Union[int, Tuple[int, int], List[int], str] = (512, 1024)
+    epochs: int = 800
+    batch: int = 8
+    eval_interval: int = 1
+
+    name: str = "ppliteseg_exp"
+
+
+@dataclass(kw_only=True)
 class LingBotVisionConfig(TrainConfig):
     """LingBot-Vision semantic training defaults — the report's linear probe.
 

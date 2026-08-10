@@ -9,6 +9,41 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **PP-LiteSeg semantic segmentation.** New `ppliteseg` family:
+  `LibreYOLO("LibrePPLiteSegt50-sem.pt")` returns `Results.semantic_mask` on the
+  original image canvas for Cityscapes' 19 classes. Four released sizes, all
+  natively rectangular: `t50`/`b50` at 512x1024 and `t75`/`b75` at 768x1536,
+  where `t`/`b` selects the STDC1/STDC2 backbone and `50`/`75` is the source
+  validation scale, not a width multiplier. Architecture, compound loss, and
+  training recipe adapted from the Apache-2.0 SuperGradients implementation at
+  pinned commit `63de22c404d5740f34f7706c302b37fce3c8fe5d`, with STDC backbone
+  lineage from the MIT STDC-Seg repository; the port reproduces the pinned
+  upstream exactly (`max_abs_diff == 0` for the main logits on all four
+  checkpoints and for all three auxiliary logits on `t50` and `b75`, see
+  `weights/parity_ppliteseg.py`). ONNX, TorchScript, TensorRT, and OpenVINO
+  export and reload at each size's native rectangle with backend results
+  matching native inference. **The released checkpoints are trained on
+  Cityscapes and are NON-COMMERCIAL** under the Cityscapes dataset terms; that
+  restriction covers the pretrained weights only, never LibreYOLO's MIT code or
+  the architecture, and weights trained from scratch carry none of it.
+- **PP-LiteSeg training.** `model.train(data=...)` runs the source Cityscapes
+  recipe through the public API: the main head plus all three auxiliary heads,
+  Dice + cross-entropy + edge-attention loss (edge kernel 5) honoring ignore
+  index 255 with no extra ignore class, SGD with two explicit parameter groups
+  (STDC backbone at `lr0`, everything else at 10x) and zero weight decay on
+  BatchNorm and bias parameters, polynomial decay after 10 warmup epochs, EMA at
+  0.9999, and full precision. Best-checkpoint selection uses `metrics/mIoU`.
+  Fine-tuning on another dataset rebuilds the main and every auxiliary
+  classifier together. `imgsz` defaults to the size's source *train crop*
+  (512x1024 for `t50`/`b50`, 768x768 for `t75`/`b75`) while validation runs at
+  the native rectangle, keeping the two geometries distinct as the recipe
+  intends.
+- **Rectangular semantic datasets.** `SemanticDataset` accepts an explicit
+  `(height, width)` canvas alongside the existing scalar, which stays exactly
+  equivalent to the equal pair. It also gains the `rescale_crop` sampler (random
+  absolute rescale, ignore-pad, random crop) used by the PP-LiteSeg and STDC
+  recipes, and an optional family-local `photometric` transform that replaces
+  the shared HSV-gain jitter. `PolyLRScheduler` is available to every trainer.
 - **PP-YOLOE detection family.** `LibreYOLO("LibrePPYOLOEs.pt")` runs the
   anchor-free PP-YOLOE detector in sizes `s`/`m`/`l`/`x` at 640 on COCO's 80
   classes: CSPResNet backbone, CSP-PAN neck, and an Efficient Task-aligned

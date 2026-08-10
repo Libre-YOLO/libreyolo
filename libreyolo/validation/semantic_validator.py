@@ -58,11 +58,14 @@ class SemanticValidator(ValidationLossMixin, BaseValidator):
         split = self.config.split or "val"
 
         divisor = getattr(self.model, "semantic_imgsz_divisor", None)
-        if divisor and self.config.imgsz % int(divisor):
-            raise ValueError(
-                f"Semantic validation imgsz={self.config.imgsz} must be "
-                f"divisible by {int(divisor)} for this model family."
-            )
+        if divisor:
+            imgsz = self.config.imgsz
+            sides = imgsz if isinstance(imgsz, (tuple, list)) else (imgsz,)
+            if any(int(side) % int(divisor) for side in sides):
+                raise ValueError(
+                    f"Semantic validation imgsz={self.config.imgsz} must be "
+                    f"divisible by {int(divisor)} for this model family."
+                )
         resize_mode = getattr(self.model, "semantic_resize_mode", "letterbox")
         self._resize_mode = resize_mode
         dataset = SemanticDataset(
