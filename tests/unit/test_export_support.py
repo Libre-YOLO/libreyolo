@@ -705,6 +705,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("nafnet", "restore"),
         ("picodet", "detect"),
         ("pidnet", "semantic"),
+        ("ppyoloe", "detect"),
         ("realesrgan", "restore"),
         ("resnet", "classify"),
         ("rfdetr", "detect"),

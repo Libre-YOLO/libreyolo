@@ -28,7 +28,30 @@ before 1.4.0 are documented in the
   confident decoded joints, not an upstream regression head. Weights stay
   hosted by the source provider and are linked rather than redistributed, as
   for YOLO-NAS. Training is not implemented and `model.train(...)` says so.
-
+- **PP-YOLOE detection family.** `LibreYOLO("LibrePPYOLOEs.pt")` runs the
+  anchor-free PP-YOLOE detector in sizes `s`/`m`/`l`/`x` at 640 on COCO's 80
+  classes: CSPResNet backbone, CSP-PAN neck, and an Efficient Task-aligned
+  head with Efficient Squeeze-and-Excitation attention. Ported from the
+  Apache-2.0 SuperGradients implementation at pinned commit
+  `63de22c404d5740f34f7706c302b37fce3c8fe5d`; all four sizes reproduce the
+  pinned upstream model exactly (`max_abs_diff == 0.0` on decoded boxes,
+  class scores and the training-form raw tuple, see
+  `weights/parity_ppyoloe.py`). Preprocessing is the source's stretch resize
+  with ImageNet mean/std on the 0-255 scale, and postprocessing keeps the
+  source selection sequence with no invented objectness term. ONNX,
+  TorchScript, TensorRT and OpenVINO export, reload and match native
+  detections. Pretrained weights stay hosted by the source provider and are
+  linked, SHA256-verified and loaded through the restricted loader rather
+  than mirrored by LibreYOLO.
+- **PP-YOLOE training.** `model.train(data=...)` fine-tunes PP-YOLOE on
+  standard YOLO detection datasets through the public API, reusing the
+  in-tree `PPYoloELoss` (ATSS, task-aligned assignment, GIoU, DFL) and
+  adding the source recipe's two-stage assigner schedule: ATSS first, then
+  the task-aligned assigner, with the switch point scaled to the requested
+  epoch budget or pinned via `static_assigner_epochs`. Augmentation follows
+  the source recipe (affine, mixup, HSV, horizontal flip, random
+  90-degree rotation, random RGB-to-BGR swap). Fine-tuning on a different
+  class count rebuilds only the class-prediction convolutions.
 - **YOLO-NAS-R oriented boxes.** The existing `yolonas` family gains an `obb`
   task: `LibreYOLO("LibreYOLONASs-obb.pt")` returns `Results.obb` on the
   original image canvas, in sizes `s`/`m`/`l` at 1024 on DOTA2's 18 classes.

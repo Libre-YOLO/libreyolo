@@ -96,6 +96,7 @@ the `alexnet` / `deit` / `mobilenetv4` / `convnext` / `efficientnetv2` /
 | `segformer` | `LibreSegformer` | CamelCase preserved (upstream brand casing) — semantic-only transformer family; weights are non-commercial |
 | `lingbotvision` | `LibreLingBotVision` | Upstream brand casing preserved (`LingBot-Vision`, hyphen dropped) — semantic-only ViT family; Apache-2.0 backbone weights |
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
+| `ppyoloe`   | `LibrePPYOLOE`  | All-caps, hyphen dropped (`PP-YOLOE` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
 | `fomo`      | `LibreFOMO`     | All-caps acronym (Faster Objects, More Objects) |
@@ -215,6 +216,7 @@ ships:
 | `segformer` | `b0`, `b1`, `b2`, `b3`, `b4`, `b5` (MiT-b0..b5 encoder depth/width tiers; ADE20K at 512, b5 at 640) |
 | `lingbotvision` | `s`, `b`, `l`, `g` (ViT-S/B/L distilled from the ViT-g teacher; g is the 1.1B teacher, loadable but no hosted weights; all at 512) |
 | `picodet`   | `s`, `m`, `l` (320 / 416 / 640 input) |
+| `ppyoloe`   | `s`, `m`, `l`, `x` (all at 640) |
 | `ec`     | `s`, `m`, `l`, `x` |
 | `l2cs`      | `r18`, `r34`, `r50`, `r101`, `r152` (ResNet backbone depth) |
 | `fomo`      | `s`, `m`, `l` |
@@ -476,6 +478,7 @@ Detector-factory family support follows:
 | `efficientdet` | `("detect",)`                    | detect | EfficientDet D0-D4; inference-only; fixed native resolution per size; ONNX, TorchScript, OpenVINO, and TensorRT export parity validated |
 | `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is implemented and directly callable, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
+| `ppyoloe`   | `("detect",)` (default)             | detect | detect-only; no task suffix; pretrained weights linked from the source CDN, not mirrored |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
 | `dinov2`    | `("semantic", "classify", "embed")` | semantic | DINOv2 backbone + task head; embed bypasses heads and returns the 384-d final CLS token at 224 (all sizes share DINOv2-S); no text tower |
 | `eomt`      | `("semantic", "segment", "panoptic")` | semantic | DINOv2 backbone; sizes s/b/l. Semantic: ADE20K 150-class at 512. Instance segment: COCO 80-class at 640 (l also at 1280). Panoptic: COCO 133-class at 640. Upstream ships no COCO instance checkpoint at s/b. DINOv3 variants excluded |

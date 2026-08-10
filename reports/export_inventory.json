@@ -1242,6 +1242,30 @@
     "available": true,
     "group": "g3"
   },
+  "ppyoloe": {
+    "class": "libreyolo.models.ppyoloe.model.LibrePPYOLOE",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "default_imgsz": {
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g2"
+  },
   "qwen3vl": {
     "class": "libreyolo.models.vlm.qwen3vl.LibreQwen3VL",
     "tasks": [

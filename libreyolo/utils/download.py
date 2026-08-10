@@ -342,7 +342,13 @@ def download_url_to_path(url: str, path: Path, *, verify=None) -> None:
     host = urlparse(url).netloc
     is_hf = host.endswith("huggingface.co")
 
-    if "cloudfront.net" in host or host.endswith("deci.ai"):
+    # The same CDN also serves PP-YOLOE, whose weights are covered by neither
+    # the YOLO-NAS nor the DEKR notice, so key the notice on the object name
+    # rather than on the host alone.
+    object_name = url.lower()
+    if ("cloudfront.net" in host or host.endswith("deci.ai")) and (
+        "yolo_nas" in object_name or "dekr_" in object_name
+    ):
         _notify_deci_cdn_license_once(url)
 
     headers = {}

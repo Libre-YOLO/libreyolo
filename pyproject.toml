@@ -456,6 +456,7 @@ markers = [
     "yolo9: tests covering the YOLO9 model family",
     "yolo9_e2e: tests covering the YOLOv9-E2E model family",
     "yolonas: tests covering the YOLO-NAS model family",
+    "ppyoloe: tests covering the PP-YOLOE model family",
     "rfdetr: tests covering the RF-DETR model family",
     "detr: tests covering the original DETR model family",
     "deit: tests covering the DeiT image-classification family",

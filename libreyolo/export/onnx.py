@@ -574,6 +574,20 @@ def export_onnx(
             if dynamic
             else None
         )
+    elif model_family == "ppyoloe":
+        # Raw export contract: boxes [B, A, 4] as xyxy in input-canvas pixels
+        # plus sigmoid scores [B, A, C]. NMS stays outside the graph and there
+        # is no objectness column for a backend to multiply in twice.
+        output_names = ["boxes", "scores"]
+        dynamic_axes = (
+            {
+                "images": {0: "batch"},
+                "boxes": {0: "batch", 1: "anchors"},
+                "scores": {0: "batch", 1: "anchors"},
+            }
+            if dynamic
+            else None
+        )
     elif known_detr_detection or num_outputs == 2:
         # DETR-style detection: (pred_logits, pred_boxes) as a tuple
         output_names = ["pred_logits", "pred_boxes"]
