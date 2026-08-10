@@ -63,6 +63,16 @@ class LibreMoGe2(BaseModel):
         768: "b",
         1024: "l",
     }
+    # Sizes LibreYOLO mirrors on its own Hugging Face org. MoGe-2 is MIT, which
+    # permits redistribution, so these no longer depend on a third-party repo
+    # staying put. The mirror ships the converted LibreYOLO checkpoint, so the
+    # upstream SHA-256 below does not describe it: verification for these sizes
+    # is the org's own, exactly as for every other LibreYOLO weight.
+    #
+    # Sizes absent from this set still download from upstream and are still
+    # checksum-pinned against _OFFICIAL_WEIGHTS.
+    _MIRRORED_SIZES: ClassVar[frozenset[str]] = frozenset({"s", "l"})
+
     _OFFICIAL_WEIGHTS: ClassVar[Dict[str, tuple[str, str]]] = {
         "s": (
             "https://huggingface.co/Ruicheng/moge-2-vits-normal/resolve/"
@@ -117,11 +127,19 @@ class LibreMoGe2(BaseModel):
         size = cls.detect_size_from_filename(filename)
         if size is None or cls.detect_task_from_filename(filename) != "normal":
             return None
+        if size in cls._MIRRORED_SIZES:
+            # BaseModel builds the LibreYOLO org URL for the canonical filename.
+            return super().get_download_url(filename)
         entry = cls._OFFICIAL_WEIGHTS.get(size)
         return entry[0] if entry else None
 
     @classmethod
     def verify_downloaded_file(cls, local_path: str, source_url: str) -> None:
+        # Weights served from LibreYOLO's own org are the converted checkpoint,
+        # not upstream's file, so the upstream digest below cannot describe
+        # them. They are trusted the same way every other LibreYOLO weight is.
+        if source_url.startswith("https://huggingface.co/LibreYOLO/"):
+            return
         size = next(
             (
                 size
