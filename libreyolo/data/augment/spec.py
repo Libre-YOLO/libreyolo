@@ -88,6 +88,7 @@ FAMILY_DISPLAY_NAMES: Dict[str, str] = {
     "ec": "EC",
     "rtmdet": "RTMDet",
     "picodet": "PICODET",
+    "ppyoloe": "PP-YOLOE",
     "rfdetr": "RF-DETR",
     "fomo": "FOMO",
     "resnet": "ResNet",
@@ -219,6 +220,28 @@ FAMILY_AUG_SUPPORT: Dict[str, Dict[str, Support]] = {
         "shear": _u("Applied by the always-on per-sample affine."),
         "perspective": _u("Applied by the always-on per-sample affine."),
         "flipud": _u(),
+        "no_aug_epochs": _u("Disables the affine and MixUp for the final epochs."),
+        **_CLS_KNOBS_IGNORED,
+    },
+    # PP-YOLOE reuses YOLO-NAS's affine + MixUp wrapper, so the geometric
+    # knobs behave the same. Its own transform adds the source recipe's
+    # rot90 and RGB-to-BGR swap, which have their own config fields rather
+    # than shared knobs.
+    "ppyoloe": {
+        "mosaic_prob": _i("The source recipe uses a per-sample affine, not mosaic."),
+        "mixup_prob": _u("MixUp is independent of mosaic here."),
+        "hsv_prob": _u(),
+        "flip_prob": _u(),
+        "degrees": _u("Applied by the always-on per-sample affine."),
+        "translate": _u("Applied by the always-on per-sample affine."),
+        "mosaic_scale": _u("Reused as the per-sample affine scale range."),
+        "mixup_scale": _u(),
+        "shear": _u("Applied by the always-on per-sample affine."),
+        "perspective": _u("Applied by the always-on per-sample affine."),
+        "flipud": _i(
+            "The source recipe has no vertical flip; it uses a random "
+            "90-degree rotation (rot90_prob) instead."
+        ),
         "no_aug_epochs": _u("Disables the affine and MixUp for the final epochs."),
         **_CLS_KNOBS_IGNORED,
     },

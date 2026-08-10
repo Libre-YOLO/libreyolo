@@ -84,6 +84,7 @@ from .ssd.model import LibreSSD  # noqa: E402  (VGG extras + paired MultiBox hea
 from .centernet.model import LibreCenterNet  # noqa: E402
 from .efficientdet.model import LibreEfficientDet  # noqa: E402  (BiFPN keys are unique; inference-only)
 from .picodet.model import LibrePICODET  # noqa: E402
+from .ppyoloe.model import LibrePPYOLOE  # noqa: E402  (head.pred_cls/pred_reg + CSPResNet stem keys are unique)
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
 from .rtmdet.model import LibreRTMDet  # noqa: E402

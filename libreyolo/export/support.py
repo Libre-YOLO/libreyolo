@@ -304,6 +304,50 @@ _add(
     constraint="MNN 3.6.1, CPU, FP32, batch 1, fixed NCHW input shape",
 )
 _add(
+    "validated",
+    ("ppyoloe",),
+    ("detect",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The raw graph emits the decoded (boxes, scores) pair. TorchScript "
+        "reproduces eager output exactly and ONNX to ~1e-3 px on boxes and "
+        "~1e-7 on scores; public post-NMS detections match on batch 1 and 2 "
+        "(tests/e2e/test_ppyoloe_export.py)."
+    ),
+    since="1.7",
+    constraint="Fixed 640 canvas, FP32, batch 1 and 2",
+)
+_add(
+    "validated",
+    ("ppyoloe",),
+    ("detect",),
+    ("tensorrt",),
+    reason=(
+        "Real engine build and inference, not an ONNX parse. A fixed-shape "
+        "FP32 engine matches native post-NMS boxes to ~3e-02 px. Two "
+        "limitations are deliberate: FP16 engines drift box localization "
+        "materially on this head, and a dynamic-batch profile diverges at "
+        "batch 2, so the validated claim is FP32 at fixed batch 1. OpenVINO "
+        "carries the batch-1-and-2 compiled-backend coverage."
+    ),
+    since="1.7",
+    constraint=(
+        "TensorRT 10.16, FP32 engine (half=False), fixed 640 canvas, fixed batch 1"
+    ),
+)
+_add(
+    "validated",
+    ("ppyoloe",),
+    ("detect",),
+    ("openvino",),
+    reason=(
+        "CPU FP32 conversion, raw two-tensor parity, factory reload and "
+        "matching public post-NMS detections."
+    ),
+    since="1.7",
+    constraint="OpenVINO CPU FP32, fixed 640 canvas, batch 1 and 2",
+)
+_add(
     "available",
     ("yolo9", "yolo9_e2e", "yolonas", "picodet"),
     ("detect",),

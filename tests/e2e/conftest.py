@@ -556,6 +556,10 @@ MODEL_CATALOG = [
     ("picodet", "s", "LibrePICODETs.pt"),
     ("picodet", "m", "LibrePICODETm.pt"),
     ("picodet", "l", "LibrePICODETl.pt"),
+    ("ppyoloe", "s", "LibrePPYOLOEs.pt"),
+    ("ppyoloe", "m", "LibrePPYOLOEm.pt"),
+    ("ppyoloe", "l", "LibrePPYOLOEl.pt"),
+    ("ppyoloe", "x", "LibrePPYOLOEx.pt"),
     ("vit", "ti", "LibreViTti-cls.pt"),
     ("vit", "s", "LibreViTs-cls.pt"),
     ("vit", "b", "LibreViTb-cls.pt"),
@@ -588,6 +592,7 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("rtdetrv4", "s", "weights/LibreRTDETRv4s.pt"),
     ("picodet", "s", "LibrePICODETs.pt"),
     ("rtmdet", "t", "LibreRTMDett.pt"),
+    ("ppyoloe", "s", "LibrePPYOLOEs.pt"),
 ]
 
 # Non-detect families keep task-specific opt-in checks outside the default
@@ -653,6 +658,7 @@ RTDETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 RTDETRV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv2"]
 RTDETRV4_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv4"]
 PICODET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "picodet"]
+PPYOLOE_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "ppyoloe"]
 FASTER_RCNN_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "faster_rcnn"]
 RETINANET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "retinanet"]
 SSD_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "ssd"]
@@ -727,6 +733,7 @@ FAMILY_MARKERS = {
     "rtdetrv2": pytest.mark.rtdetrv2,
     "rtdetrv4": pytest.mark.rtdetrv4,
     "picodet": pytest.mark.picodet,
+    "ppyoloe": pytest.mark.ppyoloe,
     "rtmdet": pytest.mark.rtmdet,
     "l2cs": pytest.mark.l2cs,
     "fomo": pytest.mark.fomo,

@@ -912,7 +912,10 @@ class BaseExporter(ABC):
             nn_model = YOLO7ExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
-        elif family == "yolonas":
+        elif family in {"yolonas", "ppyoloe"}:
+            # Both heads return ``(decoded, raw)`` in eval; the wrapper keeps
+            # the decoded (boxes, scores) pair and drops the training-only
+            # auxiliaries.
             nn_model = _YOLONASExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
