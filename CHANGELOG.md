@@ -184,6 +184,23 @@ before 1.4.0 are documented in the
   Self-supervised encoder pretraining, predictor pretraining and full encoder
   fine-tuning all reject with actionable messages before a dataset is built.
 
+### Changed
+
+- **D-FINE, DEIM, RT-DETRv4 and YOLO-NAS now train with AMP by default**,
+  matching the recipes their upstream projects publish. With those four
+  flipped, every G0 and G1 detection family defaults to `amp=True` with
+  `amp_dtype="float16"` rather than silently training in FP32. D-FINE, DEIM
+  and RT-DETRv4 upstream pass `--use-amp` in every documented training
+  command; the D-FINE decoder's clamp to ±65504 is the FP16-range guard that
+  makes that safe, not evidence that FP32 is required, which is what the
+  previous default assumed. YOLO-NAS upstream trains its released COCO recipe
+  with `mixed_precision: True`. Dome-DETR stays FP32 and now pins `amp=False`
+  explicitly instead of inheriting from D-FINE, because its `dist_train.sh` is
+  the one upstream launcher that omits `--use-amp`; PP-YOLOE and YOLO-NAS OBB
+  keep their existing FP32 defaults. Pass `amp=False` to restore the previous
+  behavior on any family, or `amp_dtype="bfloat16"` for BF16 on Ampere and
+  newer.
+
 ## [1.5.0] - 2026-08-09
 
 The largest release so far: 28 new model families, four new tasks (`edge`,
