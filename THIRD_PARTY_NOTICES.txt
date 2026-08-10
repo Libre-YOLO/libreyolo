@@ -300,6 +300,46 @@ Used for: YOLO-NAS model family and pose training references
           separate non-commercial terms and are not bundled here.
 
 --------------------------------------------------------------------
+SuperGradients / PP-YOLOE
+--------------------------------------------------------------------
+Source: https://github.com/Deci-AI/super-gradients
+        pinned commit 63de22c404d5740f34f7706c302b37fce3c8fe5d
+License: Apache License 2.0 (repository LICENSE.md at that commit)
+Copyright (c) 2021-2024 Deci AI
+Used for: the PP-YOLOE architecture, decoder, postprocessing reference
+          and training recipe, ported into libreyolo/models/ppyoloe/
+          and libreyolo/postprocess/ppyoloe.py.
+          Source paths used, at that pin:
+            src/super_gradients/training/models/detection_models/
+              csp_resnet.py
+              pp_yolo_e/pp_yolo_e.py
+              pp_yolo_e/pp_yolo_head.py
+              pp_yolo_e/pan.py
+              pp_yolo_e/post_prediction_callback.py
+            src/super_gradients/modules/
+              conv_bn_act_block.py
+              repvgg_block.py
+              se_blocks.py
+            src/super_gradients/training/utils/bbox_utils.py
+            src/super_gradients/recipes/arch_params/
+              ppyoloe_arch_params.yaml
+              ppyoloe_{s,m,l,x}_arch_params.yaml
+            src/super_gradients/recipes/training_hyperparams/
+              coco2017_ppyoloe_train_params.yaml
+          The PP-YOLOE architecture was introduced by PaddleDetection
+          (https://github.com/PaddlePaddle/PaddleDetection, Apache-2.0,
+          pinned commit b25522a0f4bde8c80603f3ba5e3472059972e3b5) and
+          the paper arXiv:2203.16250. PaddleDetection was consulted for
+          semantic cross-checking only; no PaddleDetection code was
+          copied.
+          The pretrained COCO PP-YOLOE checkpoints are published on the
+          source provider's CDN. This audit found no per-artifact
+          license grant authorizing LibreYOLO to rehost them, so
+          LibreYOLO does not mirror them: they are downloaded from that
+          CDN on demand and SHA256-verified before loading. COCO
+          training data is not bundled.
+
+--------------------------------------------------------------------
 SuperGradients / YOLO-NAS-R (rotated / OBB)
 --------------------------------------------------------------------
 Source: https://github.com/Deci-AI/super-gradients

@@ -39,6 +39,7 @@ MODEL_GROUPS: dict[str, str] = {
     "yolo7": "g2",
     "rtmdet": "g2",
     "picodet": "g2",
+    "ppyoloe": "g2",
     "fomo": "g2",
     "ppliteseg": "g2",
     "segformer": "g2",
