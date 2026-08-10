@@ -55,7 +55,18 @@ validation, and LoRA remain rejected.
 
 - Depth results never fabricate boxes; `Results.boxes` is `None`.
 - Metric depth requires user-side calibration against known distances.
-- Hosted depth weights must be trained only on data whose license permits the
-  intended redistribution and commercial use.
+- Hosted depth weights must be redistributable. Redistribution rests on the
+  licence the publisher applied to the released checkpoint, not on clearing
+  every dataset in the training mixture: a permissive checkpoint licence is
+  the grant LibreYOLO relies on, and any non-commercial terms inherited from
+  the training data are stated on the model card and in the download notice so
+  the user can judge their own use.
+
+  This supersedes the original wording, which additionally required the
+  training data itself to permit commercial use. That bar kept MiDaS
+  unhostable indefinitely despite isl-org publishing the checkpoints under
+  MIT, and it does not match how LibreYOLO treats non-commercial weights
+  elsewhere (SegFormer, the NVIDIA Source Code License tier), which are hosted
+  with the licence shipped verbatim.
 - Future model families can implement `depth` without redefining dataset,
   results, validator, or checkpoint behavior.

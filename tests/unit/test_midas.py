@@ -114,8 +114,15 @@ def test_filename_and_download_routing():
     assert LibreMiDaS.detect_size_from_filename("LibreMiDaSl-depth.pt") == "l"
     assert LibreMiDaS.detect_task_from_filename("LibreMiDaSl-depth.pt") == "depth"
     assert LibreMiDaS.detect_size_from_filename("LibreMiDaSs.pt") is None
-    assert LibreMiDaS.get_download_url("LibreMiDaSs-depth.pt") == UPSTREAM_URLS["s"]
-    assert LibreMiDaS.get_download_url("LibreMiDaSl-depth.pt") == UPSTREAM_URLS["l"]
+    # Mirrored sizes resolve to the LibreYOLO org; anything not mirrored still
+    # falls back to the official upstream asset.
+    for size in ("s", "l"):
+        url = LibreMiDaS.get_download_url(f"LibreMiDaS{size}-depth.pt")
+        assert url == (
+            f"https://huggingface.co/LibreYOLO/LibreMiDaS{size}-depth"
+            f"/resolve/main/LibreMiDaS{size}-depth.pt"
+        )
+        assert url != UPSTREAM_URLS[size]
     assert LibreMiDaS.get_download_url("LibreMiDaSs.pt") is None
 
 
