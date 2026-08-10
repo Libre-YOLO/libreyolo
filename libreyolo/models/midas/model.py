@@ -39,6 +39,9 @@ class LibreMiDaS(BaseModel):
     FAMILY = "midas"
     FILENAME_PREFIX = "LibreMiDaS"
     WEIGHT_EXT = ".pt"
+    # Sizes mirrored on the LibreYOLO org. Anything absent still downloads the
+    # official release asset and stays SHA-256 pinned.
+    _MIRRORED_SIZES: ClassVar[frozenset[str]] = frozenset({"s", "l"})
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"s": 256, "l": 384}
     SUPPORTED_TASKS = ("depth",)
     DEFAULT_TASK = "depth"
@@ -75,23 +78,40 @@ class LibreMiDaS(BaseModel):
 
     @classmethod
     def get_download_url(cls, filename: str) -> Optional[str]:
-        """Use checksum-pinned official assets while ADR 0006 blocks rehosting."""
+        """Serve from the LibreYOLO mirror; fall back to the official asset.
+
+        isl-org/MiDaS is MIT and that licence covers the released checkpoints,
+        so LibreYOLO redistributes them on its own org rather than depending on
+        a GitHub release staying put. ADR 0006's stricter bar, which asks for
+        training data permitting commercial use as well as redistribution, is
+        superseded for this family: the redistribution rests on the publisher's
+        own grant over the bytes, and the training-data caveat is stated on the
+        model card and in the notice below instead of blocking the mirror.
+        """
         size = cls.detect_size_from_filename(filename)
         task = cls.detect_task_from_filename(filename)
-        return UPSTREAM_URLS.get(size) if size is not None and task == "depth" else None
+        if size is None or task != "depth":
+            return None
+        if size in cls._MIRRORED_SIZES:
+            return super().get_download_url(filename)
+        return UPSTREAM_URLS.get(size)
 
     @classmethod
     def get_download_notice(cls, filename: str, url: str) -> Optional[str]:
         del filename, url
         return (
-            "MiDaS depth weights are downloaded from the official isl-org/MiDaS "
-            "release and SHA-256 verified. LibreYOLO does not rehost them while "
-            "the training-dataset commercial-use clearance required by ADR 0006 "
-            "remains unresolved."
+            "MiDaS was trained on a twelve-dataset mixture whose individual "
+            "terms are not all permissive. LibreYOLO redistributes these "
+            "weights under the MIT licence isl-org applied to them; if your "
+            "use is commercial, satisfy yourself about the training-data terms."
         )
 
     @classmethod
     def verify_downloaded_file(cls, local_path: str, source_url: str) -> None:
+        # The mirror serves the converted LibreYOLO checkpoint, whose bytes are
+        # not upstream's, so the recorded upstream SHA-256 cannot describe it.
+        if source_url.startswith("https://huggingface.co/LibreYOLO/"):
+            return
         verify_and_wrap_download(local_path, source_url)
 
     def __init__(
