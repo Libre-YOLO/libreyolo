@@ -71,6 +71,7 @@ in preflight.
 | picodet | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | available | ✓ |  |  | ✓ |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |  |  |  |  |  |
 | pidnet | semantic | ✓ | ✓ | ✓ | available | ✓ |  |  |  | ✓ | ✓ |  | ✓ |
+| ppliteseg | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |  |
 | ppocr | ocr |  |  |  |  |  |  |  |  |  |  |  |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | realesrgan | restore | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ | ✓ |  | ✓ |
@@ -294,6 +295,10 @@ A check mark applies only under any constraint listed here.
 - `pidnet` / `semantic` / `openvino`: fixed square input
 - `pidnet` / `semantic` / `ncnn`: PNNX/NCNN 20260526 CPU FP32 with a fixed export canvas; two-input raw parity, factory reload, metadata, and public predict parity
 - `pidnet` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
+- `ppliteseg` / `semantic` / `onnx`: fixed native rectangle per size (512x1024 for t50/b50, 768x1536 for t75/b75). All four sizes were exported and run in each format: raw-logit cosine vs eager >= 0.999994 at batch 1 and batch 2 (ONNX is exact to 8e-05 max abs diff), and original-canvas semantic-mask agreement >= 99.6% through the factory reload. TensorRT 10.x FP32 engines were built and executed, not just parsed
+- `ppliteseg` / `semantic` / `torchscript`: fixed native rectangle per size (512x1024 for t50/b50, 768x1536 for t75/b75). All four sizes were exported and run in each format: raw-logit cosine vs eager >= 0.999994 at batch 1 and batch 2 (ONNX is exact to 8e-05 max abs diff), and original-canvas semantic-mask agreement >= 99.6% through the factory reload. TensorRT 10.x FP32 engines were built and executed, not just parsed
+- `ppliteseg` / `semantic` / `tensorrt`: fixed native rectangle per size (512x1024 for t50/b50, 768x1536 for t75/b75). All four sizes were exported and run in each format: raw-logit cosine vs eager >= 0.999994 at batch 1 and batch 2 (ONNX is exact to 8e-05 max abs diff), and original-canvas semantic-mask agreement >= 99.6% through the factory reload. TensorRT 10.x FP32 engines were built and executed, not just parsed
+- `ppliteseg` / `semantic` / `openvino`: fixed native rectangle per size (512x1024 for t50/b50, 768x1536 for t75/b75). All four sizes were exported and run in each format: raw-logit cosine vs eager >= 0.999994 at batch 1 and batch 2 (ONNX is exact to 8e-05 max abs diff), and original-canvas semantic-mask agreement >= 99.6% through the factory reload. TensorRT 10.x FP32 engines were built and executed, not just parsed
 - `realesrgan` / `restore` / `onnx`: dynamic spatial input
 - `realesrgan` / `restore` / `torchscript`: fixed-resolution export canvas
 - `realesrgan` / `restore` / `executorch`: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
@@ -1052,6 +1057,14 @@ These converter paths are callable with the recorded validation context.
 - `pidnet` / `semantic` / `mnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `pidnet` / `semantic` / `rknn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `pidnet` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
+- `ppliteseg` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `ppliteseg` / `semantic` / `paddle`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `ppliteseg` / `semantic` / `mnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `ppliteseg` / `semantic` / `rknn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `ppliteseg` / `semantic` / `ncnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `ppliteseg` / `semantic` / `tflite`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `ppliteseg` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `ppliteseg` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `ppocr` / `ocr` / `onnx`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `torchscript`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `executorch`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.

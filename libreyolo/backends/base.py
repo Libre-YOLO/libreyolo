@@ -158,6 +158,9 @@ _RECTANGULAR_BACKEND_FAMILIES = {
     "yolo9_e2e",
     "yolo9_p2",
     "nafnet",
+    # Every PP-LiteSeg size is natively rectangular (512x1024 / 768x1536), so
+    # its exported artifacts always carry a rectangular imgsz_h/imgsz_w pair.
+    "ppliteseg",
     "realesrgan",
 }
 
