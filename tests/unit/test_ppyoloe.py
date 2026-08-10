@@ -345,6 +345,32 @@ def test_family_metadata_is_declared_explicitly():
     assert set(LibrePPYOLOE.INPUT_SIZES.values()) == {640}
 
 
+def test_exported_backends_use_class_aware_nms():
+    """Native postprocess uses batched_nms; exported runtimes must match.
+
+    ``_parse_ppyoloe`` emits one candidate per (anchor, class) pair above the
+    threshold, so a shared anchor can carry two classes with the same box.
+    Class-agnostic NMS downstream would delete the lower-scored class and make
+    exported results disagree with native inference.
+    """
+    import inspect
+
+    from libreyolo.backends import base as backend_base
+
+    source = inspect.getsource(backend_base.BaseBackend)
+    marker = source.index("_batched_nms_numpy(boxes, max_scores, class_ids, iou)")
+    allowlist = source[source.rindex("if self.model_family in (", 0, marker) : marker]
+    assert '"ppyoloe"' in allowlist
+
+
+def test_postprocess_keeps_overlapping_classes_on_one_anchor():
+    """Two classes on the same box must both survive class-aware NMS."""
+    out = _fake_output([[10.0, 10.0, 110.0, 110.0]], [[0.9, 0.8]])
+    result = postprocess(out, conf_thres=0.5, input_size=640, original_size=(640, 640))
+    assert result["num_detections"] == 2
+    assert sorted(result["classes"]) == [0, 1]
+
+
 def test_registered_in_model_groups():
     from libreyolo.models.registry import MODEL_GROUPS
 

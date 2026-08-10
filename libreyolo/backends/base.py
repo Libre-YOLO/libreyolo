@@ -3856,6 +3856,7 @@ class BaseBackend(ABC):
                 "efficientdet",
                 "fcos",
                 "picodet",
+                "ppyoloe",
                 "retinanet",
                 "rtmdet",
                 "ssd",

@@ -7,10 +7,18 @@ convention. Reusing the YOLO-NAS letterbox ``/255`` transform here would put
 train and val in different colour spaces (skill landmines 1 and 17).
 
 Beyond the shared HSV / horizontal-flip knobs this adds the two PP-YOLOE
-specific photometric-geometric augmentations from the source recipe: random
-90-degree rotation (p=0.5) and a random RGB-to-BGR channel swap (p=0.25).
+specific augmentations from the source recipe: random 90-degree rotation
+(p=0.5) and a random RGB-to-BGR channel swap (p=0.25). Operation order follows
+the source dataset params: rotate90, channel swap, HSV, horizontal flip,
+resize, normalize. Both the swap-before-normalize and the swap-before-HSV
+orderings matter, because normalization statistics are per-channel and HSV is
+not channel-order independent.
+
 Affine and mixup come from the shared ``YOLONASAffineMixupDataset`` wrapper,
-which operates on the raw image before this transform runs.
+which operates on the raw image before this transform runs. That places mixup
+earlier in the chain than the source does (upstream mixes after the horizontal
+flip); the constituent operations are the same, and the reordering is recorded
+here rather than by forking the shared wrapper.
 """
 
 from __future__ import annotations
@@ -82,13 +90,22 @@ class PPYOLOETrainTransform:
         self.rot90_prob = rot90_prob
         self.rgb2bgr_prob = rgb2bgr_prob
 
-    def _finalize(self, image, input_dim):
-        chw, _ = ppyoloe_preproc(image, input_dim)
+    def _photometric(self, image):
+        """Channel swap then HSV, in the source's order.
+
+        ``DetectionRGB2BGR`` runs *before* ``DetectionNormalize`` upstream, and
+        the normalization statistics are per-channel, so swapping after
+        normalizing would pair each channel with the wrong mean and std. It
+        also runs before ``DetectionHSV``, which is not order-independent
+        either. Both are applied here on the raw pixels.
+        """
         if self.rgb2bgr_prob > 0 and random.random() < self.rgb2bgr_prob:
-            # Source applies the channel swap after normalization, so the
-            # per-channel statistics stay attached to their original channel.
-            chw = np.ascontiguousarray(chw[::-1])
-        return chw
+            image = np.ascontiguousarray(image[:, :, ::-1])
+        if self.hsv_prob > 0 and random.random() < self.hsv_prob:
+            # augment_hsv mutates in place; the copy above may be a view.
+            image = np.ascontiguousarray(image)
+            augment_hsv(image)
+        return image
 
     def __call__(self, image, targets, input_dim):
         boxes = targets[:, :4].copy()
@@ -96,22 +113,24 @@ class PPYOLOETrainTransform:
 
         if len(boxes) == 0:
             padded_labels = np.zeros((self.max_labels, 5), dtype=np.float32)
-            return self._finalize(image, input_dim), padded_labels
+            chw, _ = ppyoloe_preproc(self._photometric(image), input_dim)
+            return chw, padded_labels
 
         image_o = image.copy()
         boxes_o = xyxy2cxcywh(boxes.copy())
         labels_o = labels.copy()
         src_h_o, src_w_o = image_o.shape[:2]
 
-        if self.hsv_prob > 0 and random.random() < self.hsv_prob:
-            augment_hsv(image)
-
-        image_t, boxes = mirror(image, boxes, self.flip_prob)
+        # Source order: affine (shared wrapper) -> rot90 -> RGB2BGR -> HSV ->
+        # horizontal flip -> resize -> normalize.
+        image_t = image
         if self.rot90_prob > 0 and random.random() < self.rot90_prob:
             image_t, boxes = rot90_with_boxes(image_t, boxes)
+        image_t = self._photometric(image_t)
+        image_t, boxes = mirror(image_t, boxes, self.flip_prob)
 
         src_h, src_w = image_t.shape[:2]
-        chw = self._finalize(image_t, input_dim)
+        chw, _ = ppyoloe_preproc(image_t, input_dim)
         input_h, input_w = int(input_dim[0]), int(input_dim[1])
         boxes = xyxy2cxcywh(boxes)
         boxes[:, 0::2] *= input_w / src_w
@@ -122,7 +141,7 @@ class PPYOLOETrainTransform:
         labels_t = labels[mask_b]
 
         if len(boxes_t) == 0:
-            chw = self._finalize(image_o, input_dim)
+            chw, _ = ppyoloe_preproc(image_o, input_dim)
             boxes_o[:, 0::2] *= input_w / src_w_o
             boxes_o[:, 1::2] *= input_h / src_h_o
             boxes_t = boxes_o

@@ -263,13 +263,28 @@ def test_flip_and_rot90_knobs_change_pixels_when_enabled():
     assert not np.allclose(base_labels[0, 1:], rot_labels[0, 1:])
 
 
-def test_rgb2bgr_swaps_channels_without_touching_geometry():
+def test_rgb2bgr_swaps_raw_channels_before_normalization():
+    """The swap must land on raw pixels, not on the normalized tensor.
+
+    Normalization statistics are per-channel, so swapping afterwards would pair
+    each channel with the wrong mean and std. Undoing the normalization has to
+    recover a channel-reversed copy of the un-swapped raw canvas.
+    """
+    from libreyolo.models.ppyoloe.utils import PPYOLOE_MEAN, PPYOLOE_STD
+
     img, targets = _sample()
     off = PPYOLOETrainTransform(flip_prob=0.0, hsv_prob=0.0, rot90_prob=0.0, rgb2bgr_prob=0.0)
     baseline, base_labels = off(img.copy(), targets.copy(), (IMGSZ, IMGSZ))
     on = PPYOLOETrainTransform(flip_prob=0.0, hsv_prob=0.0, rot90_prob=0.0, rgb2bgr_prob=1.0)
     swapped, swap_labels = on(img.copy(), targets.copy(), (IMGSZ, IMGSZ))
-    np.testing.assert_allclose(swapped, baseline[::-1])
+
+    mean = np.array(PPYOLOE_MEAN, dtype=np.float32).reshape(3, 1, 1)
+    std = np.array(PPYOLOE_STD, dtype=np.float32).reshape(3, 1, 1)
+    raw_baseline = baseline * std + mean
+    raw_swapped = swapped * std + mean
+    np.testing.assert_allclose(raw_swapped, raw_baseline[::-1], rtol=1e-4, atol=1e-2)
+    # A post-normalization swap would instead satisfy swapped == baseline[::-1].
+    assert not np.allclose(swapped, baseline[::-1])
     np.testing.assert_allclose(base_labels, swap_labels)
 
 
