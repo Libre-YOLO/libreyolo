@@ -368,6 +368,36 @@ class TestInferenceContracts:
         # (B, T', H', W', D) with T' = frames / tubelet, H' = W' = 256/16
         assert tokens.shape == (1, 1, 16, 16, 1024)
 
+    @pytest.mark.parametrize("source", ["still_image", "frame_tensor"])
+    def test_embed_tokens_accepts_a_still_frame(self, source):
+        """Regression: _preprocess returns a 4D frame, the encoder is 5D-only.
+
+        The earlier test only passed an explicit 5D clip, which takes the
+        passthrough branch, so it never exercised the still-image path that
+        actually broke.
+        """
+        import numpy as np
+
+        model = LibreVJEPA2(size="l256", task="embed")
+        model._requested_clip_frames = 2
+        if source == "still_image":
+            payload = np.zeros((240, 320, 3), dtype=np.uint8)
+        else:
+            payload = torch.zeros(1, 3, 256, 256, device=model.device)
+        tokens = model.embed_tokens(payload)
+        assert tokens.shape == (1, 1, 16, 16, 1024)
+
+    def test_every_encoder_entry_point_promotes_to_a_clip(self):
+        """_forward and embed_tokens must share one promotion path.
+
+        They diverged once already: _forward expanded a 4D still into a clip
+        while embed_tokens called the encoder directly and hit a rank error.
+        """
+        import inspect
+
+        for method in (LibreVJEPA2._forward, LibreVJEPA2.embed_tokens):
+            assert "_as_clip" in inspect.getsource(method), method.__name__
+
     def test_embed_tokens_rejects_a_classify_model(self):
         model = LibreVJEPA2(size="l256", task="classify", nb_classes=174)
         with pytest.raises(ValueError, match="requires task='embed'"):

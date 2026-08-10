@@ -355,14 +355,29 @@ class LibreVJEPA2(BaseModel):
         tensor = preprocess_frames([frame], self.crop_size)[0]
         return tensor.to(self.device), loaded, (width, height), 1.0
 
-    def _forward(self, input_tensor: torch.Tensor) -> Any:
-        # A 4D tensor is a single still frame. Represent it as a static clip:
-        # every frame identical, so there is no motion in it at all. This is a
-        # documented compatibility behaviour, not a motion representation.
+    def _as_clip(self, input_tensor: torch.Tensor) -> torch.Tensor:
+        """Promote a 4D still frame to a 5D static clip; pass 5D through.
+
+        Every caller that reaches the encoder must go through here. The encoder
+        is 5D-only, and ``_preprocess`` returns a single frame so the shared
+        whole-clip runner can concatenate frames itself, so a still image
+        arrives here as 4D and would otherwise hit a bare rank error.
+
+        A static clip repeats one frame, so it contains no motion at all. That
+        is a documented compatibility behaviour, not a motion representation.
+        """
         if input_tensor.ndim == 4:
-            input_tensor = input_tensor.unsqueeze(1).repeat(
-                1, self.clip_frames, 1, 1, 1
+            return input_tensor.unsqueeze(1).repeat(1, self.clip_frames, 1, 1, 1)
+        if input_tensor.ndim != 5:
+            raise ValueError(
+                "V-JEPA 2 consumes a 5D clip (B, F, C, H, W) or a 4D still "
+                f"frame (B, C, H, W); got {input_tensor.ndim}D shape "
+                f"{tuple(input_tensor.shape)}."
             )
+        return input_tensor
+
+    def _forward(self, input_tensor: torch.Tensor) -> Any:
+        input_tensor = self._as_clip(input_tensor)
         if self.task == "classify":
             return self.model(input_tensor)
         tokens = self.model(input_tensor)
@@ -447,6 +462,8 @@ class LibreVJEPA2(BaseModel):
                 f"task={self.task!r}."
             )
         tensor, _, _, _ = self._preprocess(source, **kwargs)
+        # A still image arrives as a 4D frame; the encoder is 5D-only.
+        tensor = self._as_clip(tensor)
         with torch.no_grad():
             encoder = self.model
             tokens = encoder(tensor)
