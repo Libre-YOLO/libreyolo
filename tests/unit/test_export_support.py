@@ -680,6 +680,7 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("clip", "embed"),
         ("convnext", "classify"),
         ("deeplabv3", "semantic"),
+        ("dekr", "pose"),
         ("deit", "classify"),
         ("depth_anything", "depth"),
         ("depth_anything3", "depth"),
