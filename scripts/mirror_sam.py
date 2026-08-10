@@ -24,16 +24,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from _mirror_common import fetch_text, gitattributes, parse_args
 from huggingface_hub import HfApi, snapshot_download
 
-ASSETS = Path(
-    "C:/Users/Usuario/AppData/Local/Temp/claude/C--Users-Usuario/"
-    "c6dfe57f-09e9-40c8-afb6-aaa1e472f308/scratchpad/mirror-assets"
-)
-STAGING = Path(
-    "C:/Users/Usuario/AppData/Local/Temp/claude/C--Users-Usuario/"
-    "c6dfe57f-09e9-40c8-afb6-aaa1e472f308/scratchpad/mirror-staging"
-)
+# Exact upstream revisions the mirrors were taken from, recorded so a consumer
+# can identify the precise source. Refresh when re-mirroring.
+UPSTREAM_REVISIONS = {
+    "base": "70c1a07f894ebb5b307fd9eaaee97b9dfc16068f",
+    "large": "6851e0441005b0fb96f2cc4dfac472f3d1b14af1",
+    "huge": "87aecf0df4ce6b30cd7de76e87673c49644bdf67",
+}
 
 UPSTREAM = {
     "base": "facebook/sam-vit-base",
@@ -43,6 +43,8 @@ UPSTREAM = {
 
 # Everything transformers needs to rebuild the model and its processor.
 KEEP = ["config.json", "preprocessor_config.json", "model.safetensors"]
+
+LICENSE_URL = "https://raw.githubusercontent.com/facebookresearch/segment-anything/main/LICENSE"
 
 README = """---
 license: apache-2.0
@@ -95,14 +97,19 @@ This product contains weights from Segment Anything (SAM)
 Copyright (c) Meta Platforms, Inc. and affiliates.
 Licensed under the Apache License, Version 2.0.
 
-The weights are redistributed unmodified.
+Source artifact:  https://huggingface.co/{upstream}
+Source revision:  {revision}
+Source files:     config.json, preprocessor_config.json, model.safetensors
+Modification:     none. The weights and configuration are redistributed
+                  unmodified. Upstream's pytorch_model.bin (a duplicate of the
+                  safetensors weights) and tf_model.h5 are not mirrored.
 """
 
 
-def stage(size: str) -> Path:
+def stage(size: str, staging: Path) -> Path:
     upstream = UPSTREAM[size]
     repo_name = f"LibreSAM{size}"
-    out = STAGING / repo_name
+    out = staging / repo_name
     out.mkdir(parents=True, exist_ok=True)
 
     print(f"  downloading {upstream} ({', '.join(KEEP)}) ...", flush=True)
@@ -113,9 +120,12 @@ def stage(size: str) -> Path:
     )
 
     (out / "LICENSE").write_text(
-        (ASSETS / "LICENSE-sam").read_text(encoding="utf-8"), encoding="utf-8"
+        fetch_text(LICENSE_URL), encoding="utf-8"
     )
-    (out / "NOTICE").write_text(NOTICE, encoding="utf-8")
+    (out / "NOTICE").write_text(
+        NOTICE.format(upstream=upstream, revision=UPSTREAM_REVISIONS[size]),
+        encoding="utf-8",
+    )
     (out / "README.md").write_text(
         README.format(repo=repo_name, size=size, size_title=size.title(), upstream=upstream),
         encoding="utf-8",
@@ -141,12 +151,17 @@ def upload(size: str, folder: Path) -> None:
 
 
 def main() -> int:
-    sizes = sys.argv[1:] or ["base"]
-    for size in sizes:
+    args = parse_args(__doc__ or "Mirror SAM-1", list(UPSTREAM))
+    print(f"staging under {args.staging}", flush=True)
+    for size in args.sizes:
         if size not in UPSTREAM:
             raise SystemExit(f"unknown size {size!r}; expected one of {list(UPSTREAM)}")
         print(f"\n=== {size} ===", flush=True)
-        upload(size, stage(size))
+        folder = stage(size, args.staging)
+        if args.no_upload:
+            print("  --no-upload: staged only", flush=True)
+        else:
+            upload(size, folder)
     return 0
 
 

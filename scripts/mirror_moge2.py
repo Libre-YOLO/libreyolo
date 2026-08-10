@@ -21,15 +21,12 @@ from pathlib import Path
 
 import torch
 
+from _mirror_common import fetch_text, gitattributes, parse_args
+
 from libreyolo.utils.serialization import validate_checkpoint_metadata
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WEIGHTS = REPO_ROOT / "weights"
-ASSETS = Path(
-    "C:/Users/Usuario/AppData/Local/Temp/claude/C--Users-Usuario/"
-    "c6dfe57f-09e9-40c8-afb6-aaa1e472f308/scratchpad/mirror-assets"
-)
-
 # Upstream repo and the exact revision LibreYOLO pins today, so the mirror
 # records which bytes it came from rather than "latest".
 SIZES = {
@@ -46,6 +43,8 @@ SIZES = {
         "arch": "MoGe-2 ViT-S/14",
     },
 }
+
+LICENSE_URL = "https://raw.githubusercontent.com/microsoft/MoGe/main/LICENSE"
 
 README = """---
 license: mit
@@ -99,6 +98,13 @@ This product contains weights derived from MoGe-2
 Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 
+Source artifact:  https://huggingface.co/{upstream}
+Source revision:  {revision}
+Source file:      model.pt
+Modification:     state-dict key remapping only, by
+                  weights/convert_moge2_weights.py in LibreYOLO. Learned
+                  parameters are unchanged.
+
 The DINOv2 encoder these weights build on is separately licensed under the
 Apache License, Version 2.0, by Meta AI
 (https://github.com/facebookresearch/dinov2).
@@ -119,9 +125,11 @@ def stage(size: str, spec: dict, out_root: Path) -> Path:
     out = out_root / repo
     out.mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(ASSETS / ".gitattributes", out / ".gitattributes")
-    shutil.copy2(ASSETS / "LICENSE", out / "LICENSE")
-    (out / "NOTICE").write_text(NOTICE, encoding="utf-8")
+    (out / ".gitattributes").write_text(gitattributes(), encoding="utf-8")
+    (out / "LICENSE").write_text(fetch_text(LICENSE_URL), encoding="utf-8")
+    (out / "NOTICE").write_text(
+        NOTICE.format(upstream=spec["upstream"], revision=spec["revision"]), encoding="utf-8"
+    )
     (out / "README.md").write_text(
         README.format(repo=repo, arch=spec["arch"], upstream=spec["upstream"],
                       revision=spec["revision"]),
@@ -139,12 +147,13 @@ def stage(size: str, spec: dict, out_root: Path) -> Path:
 
 
 def main() -> int:
-    out_root = Path(sys.argv[1] if len(sys.argv) > 1 else "mirror-staging")
-    out_root.mkdir(parents=True, exist_ok=True)
-    print(f"staging MoGe-2 mirrors under {out_root}", flush=True)
-    for size, spec in SIZES.items():
-        stage(size, spec, out_root)
-    print("staged. nothing uploaded yet.", flush=True)
+    args = parse_args(__doc__ or "Mirror MoGe-2", list(SIZES))
+    print(f"staging MoGe-2 mirrors under {args.staging}", flush=True)
+    for size in args.sizes:
+        if size not in SIZES:
+            raise SystemExit(f"unknown size {size!r}; expected one of {list(SIZES)}")
+        stage(size, SIZES[size], args.staging)
+    print("staged. upload with huggingface_hub.HfApi().upload_folder(...).", flush=True)
     return 0
 
 

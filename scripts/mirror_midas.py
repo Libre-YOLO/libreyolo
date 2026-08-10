@@ -24,24 +24,18 @@ import sys
 from pathlib import Path
 
 import torch
+from _mirror_common import fetch_text, gitattributes, parse_args
 from huggingface_hub import HfApi
 
-from libreyolo.models.midas.convert import UPSTREAM_URLS
+from libreyolo.models.midas.convert import UPSTREAM_SHA256, UPSTREAM_URLS
 from libreyolo.utils.serialization import validate_checkpoint_metadata
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WEIGHTS = REPO_ROOT / "weights"
-ASSETS = Path(
-    "C:/Users/Usuario/AppData/Local/Temp/claude/C--Users-Usuario/"
-    "c6dfe57f-09e9-40c8-afb6-aaa1e472f308/scratchpad/mirror-assets"
-)
-STAGING = Path(
-    "C:/Users/Usuario/AppData/Local/Temp/claude/C--Users-Usuario/"
-    "c6dfe57f-09e9-40c8-afb6-aaa1e472f308/scratchpad/mirror-staging"
-)
-
 ARCH = {"s": "EfficientNet-Lite3 (MiDaS v2.1 small, 256 px)",
         "l": "ViT-L/16 (DPT-Large, 384 px)"}
+
+LICENSE_URL = "https://raw.githubusercontent.com/isl-org/MiDaS/master/LICENSE"
 
 README = """---
 license: mit
@@ -98,13 +92,19 @@ This product contains weights derived from MiDaS
 Copyright (c) Intel ISL.
 Licensed under the MIT License.
 
+Source artifact:  {asset_url}
+Source SHA-256:   {upstream_sha256}
+Modification:     state-dict key remapping only, by
+                  weights/convert_midas_weights.py in LibreYOLO. Learned
+                  parameters are unchanged.
+
 MiDaS was trained on a mixture of twelve datasets whose individual terms are
 not all permissive. The redistribution here rests on the MIT licence applied
 by the publisher to the released checkpoints.
 """
 
 
-def stage(size: str) -> Path:
+def stage(size: str, staging: Path) -> Path:
     repo = f"LibreMiDaS{size}-depth"
     src = WEIGHTS / f"{repo}.pt"
     if not src.exists():
@@ -118,12 +118,15 @@ def stage(size: str) -> Path:
     if errors:
         raise SystemExit(f"{repo}: checkpoint metadata invalid: {errors}")
 
-    out = STAGING / repo
+    out = staging / repo
     out.mkdir(parents=True, exist_ok=True)
     for name, text in (
-        (".gitattributes", (ASSETS / ".gitattributes").read_text(encoding="utf-8")),
-        ("LICENSE", (ASSETS / "LICENSE-midas").read_text(encoding="utf-8")),
-        ("NOTICE", NOTICE),
+        (".gitattributes", gitattributes()),
+        ("LICENSE", fetch_text(LICENSE_URL)),
+        ("NOTICE", NOTICE.format(
+            asset_url=UPSTREAM_URLS[size],
+            upstream_sha256=UPSTREAM_SHA256[UPSTREAM_URLS[size].rsplit("/", 1)[-1]],
+        )),
         ("README.md", README.format(repo=repo, arch=ARCH[size],
                                     asset=UPSTREAM_URLS[size].rsplit("/", 1)[-1])),
     ):
@@ -152,9 +155,15 @@ def upload(size: str, folder: Path) -> None:
 
 
 def main() -> int:
-    for size in sys.argv[1:] or ["s"]:
+    args = parse_args(__doc__ or "Mirror MiDaS", ["s", "l"])
+    print(f"staging under {args.staging}", flush=True)
+    for size in args.sizes:
         print(f"\n=== {size} ===", flush=True)
-        upload(size, stage(size))
+        folder = stage(size, args.staging)
+        if args.no_upload:
+            print("  --no-upload: staged only", flush=True)
+        else:
+            upload(size, folder)
     return 0
 
 
