@@ -20,6 +20,8 @@ from ..base import BaseModel
 from .nn import DEFAULT_VARIANT, VARIANT_QUERY_BUDGET, LibreDOMEDETRModel
 from .utils import preprocess_image, unwrap_domedetr_checkpoint
 
+_TRAIN_DEFAULTS = DOMEDETRConfig()
+
 logger = logging.getLogger(__name__)
 
 # The stride-4 encoder projection width is the cheapest size fingerprint:
@@ -292,7 +294,7 @@ class LibreDOMEDETR(BaseModel):
         name: str = "domedetr_exp",
         exist_ok: bool = False,
         resume: bool = False,
-        amp: bool = False,
+        amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = 50,
         callbacks: TrainCallbacks = None,
         loggers=None,

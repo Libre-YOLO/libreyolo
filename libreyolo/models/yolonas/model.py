@@ -21,6 +21,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
 from ...training.callbacks import TrainCallbacks
+from ...training.config import YOLONASConfig, YOLONASPoseConfig
 from ..base import BaseModel
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
@@ -698,7 +699,11 @@ class LibreYOLONAS(BaseModel):
         if epochs is None:
             epochs = 1000 if self.task == "pose" else 300
         if amp is None:
-            amp = self.task == "pose"
+            amp = (
+                YOLONASPoseConfig().amp
+                if self.task == "pose"
+                else YOLONASConfig().amp
+            )
 
         if self.task == "pose":
             return self._train_pose(
