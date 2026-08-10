@@ -677,6 +677,59 @@ class YOLONASValPreprocessor(YOLO9ValPreprocessor):
         return img_chw, padded_targets
 
 
+class YOLONASOBBValPreprocessor(YOLONASValPreprocessor):
+    """YOLO-NAS-R preprocessor: longest side to 1024, bottom-right pad 114, BGR.
+
+    Deliberately delegates the pixel work to ``preprocess_obb_numpy`` -- the
+    exact function the OBB inference path uses -- so validation, training and
+    prediction cannot drift apart (the centre-pad/bottom-right-pad mismatch
+    this class's detect parent documents is precisely that failure mode).
+
+    Targets are the OBB dataset's six columns
+    ``[x1, y1, x2, y2, class, angle]`` where the ``xyxy`` block encodes
+    ``cx, cy, w, h`` un-rotated. The rescale is uniform and the padding has no
+    offset, so the angle passes through untouched.
+    """
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..preprocess.yolonas import preprocess_obb_numpy
+
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError(
+                "YOLO-NAS OBB validation does not support rectangular input "
+                f"sizes, got ({target_h}, {target_w}). Use a square imgsz."
+            )
+
+        # The dataset hands us BGR from cv2; preprocess_obb_numpy takes RGB and
+        # reverses the channels itself, so flip once here rather than
+        # duplicating its recipe.
+        img_rgb = np.ascontiguousarray(img[:, :, ::-1])
+        img_chw, ratio = preprocess_obb_numpy(img_rgb, input_size=target_h)
+
+        ncol = targets.shape[1] if getattr(targets, "ndim", 0) == 2 else 6
+        padded_targets = np.zeros((self.max_labels, ncol), dtype=np.float32)
+        if len(targets) > 0:
+            targets = np.array(targets, dtype=np.float32).copy()
+            n = min(len(targets), self.max_labels)
+            targets[:n, :4] *= ratio
+            padded_targets[:n] = targets[:n]
+
+        return img_chw, padded_targets
+
+    def letterbox_scale(
+        self, orig_h: int, orig_w: int, imgsz: int
+    ) -> Tuple[float, float, float]:
+        from ..postprocess.yolonas import YOLO_NAS_OBB_RESIZE_SIZE
+
+        resize = min(YOLO_NAS_OBB_RESIZE_SIZE, imgsz)
+        r = min(resize / orig_h, resize / orig_w)
+        return r, 0.0, 0.0  # bottom-right padding: no offset
+
+
 class DFINEValPreprocessor(StandardValPreprocessor):
     """D-FINE preprocessor: plain resize + 0-1 + RGB, no letterbox, no ImageNet norm.
 

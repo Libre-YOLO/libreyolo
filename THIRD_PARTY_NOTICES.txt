@@ -269,6 +269,36 @@ Used for: YOLO-NAS model family and pose training references
           separate non-commercial terms and are not bundled here.
 
 --------------------------------------------------------------------
+SuperGradients / YOLO-NAS-R (rotated / OBB)
+--------------------------------------------------------------------
+Source: https://github.com/Deci-AI/super-gradients
+        pull request 2014, pinned commit
+        69141b55c1161d939939a270523a7eca5a645f72
+License: Apache License 2.0 (repository LICENSE.md at that commit)
+Copyright (c) 2021-2024 Deci AI
+Used for: the YOLO-NAS-R rotated head, its decode, and the evaluation
+          preprocessing recipe, ported into the existing YOLO-NAS
+          family (libreyolo/models/yolonas/nn.py -- YoloNASRDFLHead,
+          YoloNASRNDFLHeads, LibreYOLONASOBBModel;
+          libreyolo/preprocess/yolonas.py; libreyolo/postprocess/yolonas.py).
+          Source paths used, at that pin:
+            src/super_gradients/training/models/detection_models/
+              yolo_nas_r/yolo_nas_r_dfl_head.py
+              yolo_nas_r/yolo_nas_r_ndfl_heads.py
+              yolo_nas_r/yolo_nas_r_variants.py
+              yolo_nas_r/yolo_nas_r_post_prediction_callback.py
+            src/super_gradients/recipes/arch_params/
+              yolo_nas_r_{s,m,l}_arch_params.yaml
+          The pretrained DOTA2 YOLO-NAS-R weights are covered by a
+          SEPARATE, non-redistributable license (LICENSE.YOLONAS-R.md
+          at the same pin: no resale, sublicensing or distribution, and
+          no commercial use). LibreYOLO does not mirror them; they are
+          downloaded from Deci's CDN on demand and SHA256-verified
+          before loading. See weights/LICENSE_NOTICE.txt.
+          DOTA2 training data is not bundled and must be obtained from
+          its own source under its own terms.
+
+--------------------------------------------------------------------
 EdgeCrafter
 --------------------------------------------------------------------
 Source: https://github.com/EC-codehub/EdgeCrafter

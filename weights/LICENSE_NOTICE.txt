@@ -51,6 +51,29 @@ project the weights were derived from. Per-family summary:
              (9 classes) and VisDrone (12), hence the dataset suffix on every
              canonical filename and the absence of a bare LibreDOMEDETRs.pt.
 
+    YOLO-NAS (LibreYOLONAS{s,m,l}, {n,s,m,l}-pose,
+              {s,m,l}-obb)                             NOT REDISTRIBUTED
+             upstream code: https://github.com/Deci-AI/super-gradients
+                            (Apache-2.0); the rotated/OBB variant is
+                            YOLO-NAS-R from pull request 2014, pinned commit
+                            69141b55c1161d939939a270523a7eca5a645f72.
+             upstream weights: Deci's CDN,
+                            https://d2gjn4b69gu75n.cloudfront.net/models/
+             The pretrained checkpoints are NOT under the repository's
+             Apache-2.0 license. Detect/pose weights carry Deci's YOLO-NAS
+             license and the rotated weights carry LICENSE.YOLONAS-R.md at
+             the pin above: a revocable, non-transferable, non-commercial
+             use grant that forbids resale, sublicensing and distribution.
+             That is not a redistribution grant, so LibreYOLO mirrors none
+             of them on its Hugging Face organization. Instead
+             LibreYOLO("LibreYOLONASs-obb.pt") downloads
+             yolo_nas_r_s_dota2.pth from Deci's CDN on demand and verifies
+             it against a pinned SHA256 before unpickling. Offline
+             conversion: weights/convert_yolonas_obb_weights.py.
+             Complying with Deci's terms is the downstream user's
+             responsibility. The DOTA2 training data is likewise not
+             bundled and carries its own terms.
+
     YOLOv7   (LibreYOLO7b)                             MIT
              upstream: MultimediaTechLab/YOLO (Kin-Yiu Wong & Hao-Tang Tsui)
              The authors' MIT re-release, not WongKinYiu/yolov7 (GPL-3.0).

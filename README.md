@@ -110,7 +110,7 @@ libreyolo predict --model yolo9-t --source screen            # screen capture
 | **Semantic segmentation** | SegFormer, PIDNet, DeepLabv3, FCN, LingBot-Vision, DINOv2, EoMT |
 | **Panoptic segmentation** | EoMT |
 | **Pose** | RF-DETR, YOLO-NAS, HRNet, EC |
-| **Oriented boxes** | RF-DETR, RT-DETRv2 |
+| **Oriented boxes** | RF-DETR, RT-DETRv2, YOLO-NAS-R |
 | **Classification** | MobileNetV4, ConvNeXt, EfficientNetV2, ResNet, ViT, Swin, DeiT, VGG, AlexNet, CLIP, SigLIP2, DINOv2 |
 | **Depth** | Depth Anything 3, Depth Anything V2, ZipDepth, MiDaS |
 | **Surface normals** | MoGe-2 |
