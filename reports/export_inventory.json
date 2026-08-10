@@ -1222,6 +1222,54 @@
     "available": true,
     "group": "g3"
   },
+  "ppliteseg": {
+    "class": "libreyolo.models.ppliteseg.model.LibrePPLiteSeg",
+    "tasks": [
+      "semantic"
+    ],
+    "default_task": "semantic",
+    "sizes": {
+      "t50": [
+        512,
+        1024
+      ],
+      "b50": [
+        512,
+        1024
+      ],
+      "t75": [
+        768,
+        1536
+      ],
+      "b75": [
+        768,
+        1536
+      ]
+    },
+    "default_imgsz": {
+      "t50": [
+        512,
+        1024
+      ],
+      "b50": [
+        512,
+        1024
+      ],
+      "t75": [
+        768,
+        1536
+      ],
+      "b75": [
+        768,
+        1536
+      ]
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true,
+    "group": "g2"
+  },
   "ppocr": {
     "class": "libreyolo.models.ppocr.model.LibrePPOCR",
     "tasks": [

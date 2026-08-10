@@ -441,6 +441,25 @@ project the weights were derived from. Per-family summary:
              VisDrone research-preview weights. NOT covered by LibreYOLO's
              permissive license. Train from scratch for unrestricted use.
 
+    PP-LiteSeg (LibrePPLiteSeg{t50,b50,t75,b75}-sem)  NON-COMMERCIAL weights
+             upstream code: Deci-AI/super-gradients ppliteseg.py / stdc.py /
+             common.py / context_modules.py / dice_ce_edge_loss.py
+             (Apache-2.0, commit 63de22c4), with STDC backbone lineage from
+             MichaelFan01/STDC-Seg (MIT, commit 59ff37fb). Weights: the four
+             released Cityscapes checkpoints, converted from
+             pp_lite_{t,b}_seg{50,75}_cityscapes.pth (SHA-256 pinned in
+             weights/convert_ppliteseg_weights.py). The Cityscapes license
+             (https://www.cityscapes-dataset.com/license/) permits
+             distributing abstract derivative models from which the dataset
+             cannot be recovered, and restricts the dataset and its
+             derivatives to NON-COMMERCIAL use. Hosted with the restriction
+             stated in checkpoint metadata (weight_license), in the download
+             notice printed before auto-download, and on the model card. NOT
+             covered by LibreYOLO's permissive license; the MIT code and the
+             PP-LiteSeg architecture are unaffected. Weights trained from
+             scratch on your own data carry no such restriction; a fine-tune
+             started from a released checkpoint inherits it.
+
     PP-OCRv5 (LibrePPOCR{t,l}-ocr)                     Apache-2.0
              upstream: PaddlePaddle/PaddleOCR (code and released
              weights Apache-2.0). Converted from the official

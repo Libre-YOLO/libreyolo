@@ -91,7 +91,18 @@ RECTANGULAR_TRAINING_FAMILIES = {
     "yolo7": 32,
     "rtmdet": 32,
     "picodet": 64,
+    # PP-LiteSeg is natively rectangular: its released recipes train at
+    # 512x1024 (the 50 sizes) and validate at 512x1024 / 768x1536. A square
+    # canvas would not be the model the checkpoints were trained as.
+    "ppliteseg": 32,
 }
+# Tasks each family may train on rectangularly. Detection is the historical
+# case and stays the default; a family whose rectangular support is not
+# detect-shaped declares its own tasks here.
+RECTANGULAR_TRAINING_TASKS = {
+    "ppliteseg": frozenset({"semantic"}),
+}
+_DEFAULT_RECTANGULAR_TRAINING_TASKS = frozenset({"detect"})
 
 
 class BaseTrainer(ABC):
@@ -1083,11 +1094,17 @@ class BaseTrainer(ABC):
         )
         resize_mode = getattr(self.wrapper_model, "semantic_resize_mode", "letterbox")
         divisor = getattr(self.wrapper_model, "semantic_imgsz_divisor", None)
-        if divisor and self.config.imgsz % int(divisor):
-            raise ValueError(
-                f"Semantic training imgsz={self.config.imgsz} must be divisible "
-                f"by {int(divisor)} for this model family."
+        if divisor:
+            sides = (
+                self.config.imgsz
+                if isinstance(self.config.imgsz, (tuple, list))
+                else (self.config.imgsz,)
             )
+            if any(int(side) % int(divisor) for side in sides):
+                raise ValueError(
+                    f"Semantic training imgsz={self.config.imgsz} must be divisible "
+                    f"by {int(divisor)} for this model family."
+                )
         # Family-scoped scale-jitter range. Families that do not define this
         # attribute (default None) keep the SemanticDataset default jitter,
         # unchanged. Input standardization is family-internal (applied in the
@@ -1105,6 +1122,12 @@ class BaseTrainer(ABC):
         hsv_prob = getattr(self.wrapper_model, "semantic_hsv_prob", None)
         if hsv_prob is not None:
             semantic_kwargs["hsv_prob"] = float(hsv_prob)
+        # A family whose reference recipe uses a different photometric
+        # transform than the shared HSV-gain jitter supplies it here; families
+        # that do not define the attribute keep the shared path unchanged.
+        photometric = getattr(self.wrapper_model, "semantic_photometric", None)
+        if photometric is not None:
+            semantic_kwargs["photometric"] = photometric
         train_dataset = SemanticDataset(
             data_config,
             split="train",
@@ -1446,10 +1469,14 @@ class BaseTrainer(ABC):
                     f"input. Supported families: {sorted(RECTANGULAR_TRAINING_FAMILIES)}."
                 )
             task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
-            if task != "detect":
+            allowed_tasks = RECTANGULAR_TRAINING_TASKS.get(
+                family.lower(), _DEFAULT_RECTANGULAR_TRAINING_TASKS
+            )
+            if task not in allowed_tasks:
                 raise ValueError(
                     f"Rectangular imgsz={tuple(imgsz)} is only supported for the "
-                    f"detect task, got task='{task}'."
+                    f"{'/'.join(sorted(allowed_tasks))} task for {family}, "
+                    f"got task='{task}'."
                 )
             stride = RECTANGULAR_TRAINING_FAMILIES.get(family.lower(), 32)
             h, w = int(imgsz[0]), int(imgsz[1])
@@ -2844,10 +2871,17 @@ class BaseTrainer(ABC):
                 return None
 
             logger.info(f"Running semantic validation for epoch {epoch + 1}")
+            # A family whose reference recipe validates on a canvas different
+            # from its train crop (PP-LiteSeg's 75 sizes train on 768x768 and
+            # validate on 768x1536) declares it here; everyone else keeps
+            # validating at the training imgsz.
+            val_imgsz = (
+                getattr(self.wrapper_model, "semantic_val_imgsz", None) or self.config.imgsz
+            )
             val_config = ValidationConfig(
                 data=self.config.data,
                 batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
-                imgsz=self.config.imgsz,
+                imgsz=val_imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
                 amp_dtype=self.config.amp_dtype,

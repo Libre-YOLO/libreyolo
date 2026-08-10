@@ -1467,6 +1467,21 @@ _add(
 )
 _add(
     "validated",
+    ("ppliteseg",),
+    ("semantic",),
+    ("onnx", "torchscript", "openvino", "tensorrt"),
+    since="1.5",
+    constraint=(
+        "fixed native rectangle per size (512x1024 for t50/b50, 768x1536 for "
+        "t75/b75). All four sizes were exported and run in each format: "
+        "raw-logit cosine vs eager >= 0.999994 at batch 1 and batch 2 (ONNX is "
+        "exact to 8e-05 max abs diff), and original-canvas semantic-mask "
+        "agreement >= 99.6% through the factory reload. TensorRT 10.x FP32 "
+        "engines were built and executed, not just parsed"
+    ),
+)
+_add(
+    "validated",
     ("l2cs",),
     ("gaze",),
     ("onnx", "torchscript"),

@@ -89,6 +89,7 @@ file = name + ".pt"
 | SwinIR | `LibreSwinIR` | `LibreSwinIRm-restore.pt` (4x super-resolution; sizes `s`/`m`/`l`; Apache-2.0) |
 | PPOCR | `LibrePPOCR` | `LibrePPOCRt-ocr.pt` (PP-OCRv5 text det+rec; sizes `t`/`l`; Apache-2.0) |
 | PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
+| PPLiteSeg | `LibrePPLiteSeg` | `LibrePPLiteSegt50-sem.pt` (semantic-only; sizes `t50`/`b50`/`t75`/`b75`, natively rectangular. Weights are **non-commercial** — Cityscapes dataset terms, see below) |
 | LingBotVision | `LibreLingBotVision` | `LibreLingBotVisions-sem.pt` (semantic-only; Apache-2.0 backbone + LibreYOLO-trained ADE20K head) |
 | SegFormer | `LibreSegformer` | `LibreSegformerb0-sem.pt` (semantic-only; ADE20K. Weights are **non-commercial** — NVIDIA Source Code License, see below) |
 | EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic), `LibreEoMTl-seg.pt` (COCO instance), `LibreEoMTs-panoptic.pt` (COCO panoptic) |
@@ -268,6 +269,9 @@ LibreFeyNobgl-matte-fp8.pt,
 
 LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
 
+LibrePPLiteSegt50-sem.pt, LibrePPLiteSegb50-sem.pt,
+LibrePPLiteSegt75-sem.pt, LibrePPLiteSegb75-sem.pt,
+
 LibreLingBotVisions-sem.pt, LibreLingBotVisionb-sem.pt,
 LibreLingBotVisionl-sem.pt,
 
@@ -312,6 +316,17 @@ through derivative works. Their cards use `license: other` +
 `license_name: nvidia-source-code-license-segformer` + `license_link`, lead with
 a non-commercial banner, and the loader prints the restriction before every
 auto-download. Never tag them `apache-2.0` because the *code* is Apache.
+**LibrePPLiteSeg t50/b50/t75/b75 are NON-COMMERCIAL** for the same shape of
+reason, but the restriction comes from the *training data*, not the code: the
+checkpoints are Cityscapes-trained, and the
+[Cityscapes license](https://www.cityscapes-dataset.com/license/) allows
+distributing abstract derivative models while restricting the dataset and its
+derivatives to non-commercial use. Their cards use `license: other` +
+`license_name: cityscapes-non-commercial` + `license_link`, lead with a
+non-commercial banner, and the loader prints the restriction before every
+auto-download. The `LICENSE` file carries the Apache-2.0 (super-gradients) and
+MIT (STDC-Seg) code texts *plus* the Cityscapes weight terms, because the code
+and the weights are genuinely different surfaces. Never tag them `apache-2.0`.
 Faster R-CNN's four torchvision checkpoints and FCOS's torchvision checkpoint
 have no per-object license file; the maintainer approved BSD-3-Clause rehosting
 on the releasing-project **implied** basis. Every card and NOTICE must say that

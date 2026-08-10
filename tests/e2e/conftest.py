@@ -612,6 +612,20 @@ DEEPLABV3_SMOKE_MODELS = [
     ("deeplabv3", "mv3", "LibreDeepLabv3mv3-sem.pt"),
 ]
 
+# PP-LiteSeg, same reasoning: MODEL_CATALOG feeds the COCO detection mAP gate,
+# which a dense semantic family fails by construction. All four released
+# Cityscapes checkpoints, plus the smallest one as the smoke case. These
+# weights are NON-COMMERCIAL (Cityscapes terms); the tests only run inference.
+PPLITESEG_SEMANTIC_MODELS = [
+    ("ppliteseg", "t50", "LibrePPLiteSegt50-sem.pt"),
+    ("ppliteseg", "b50", "LibrePPLiteSegb50-sem.pt"),
+    ("ppliteseg", "t75", "LibrePPLiteSegt75-sem.pt"),
+    ("ppliteseg", "b75", "LibrePPLiteSegb75-sem.pt"),
+]
+PPLITESEG_SMOKE_MODELS = [
+    ("ppliteseg", "t50", "LibrePPLiteSegt50-sem.pt"),
+]
+
 # OBB checkpoints do not belong in MODEL_CATALOG because that matrix feeds the
 # COCO detection mAP and training gates. Keep the task-appropriate smoke case
 # separate, as for the semantic-only matrices above. The representative N
@@ -729,6 +743,7 @@ FAMILY_MARKERS = {
     "ssd": pytest.mark.ssd,
     "mask_rcnn": pytest.mark.mask_rcnn,
     "fcn": pytest.mark.fcn,
+    "ppliteseg": pytest.mark.ppliteseg,
     "centernet": pytest.mark.centernet,
     "fcos": pytest.mark.fcos,
     "efficientdet": pytest.mark.efficientdet,
@@ -829,6 +844,14 @@ DEEPLABV3_SEMANTIC_PARAMS = model_cases(
 )
 DEEPLABV3_SMOKE_PARAMS = model_cases(
     DEEPLABV3_SMOKE_MODELS,
+    with_weights=True,
+)
+PPLITESEG_SEMANTIC_PARAMS = model_cases(
+    PPLITESEG_SEMANTIC_MODELS,
+    with_weights=True,
+)
+PPLITESEG_SMOKE_PARAMS = model_cases(
+    PPLITESEG_SMOKE_MODELS,
     with_weights=True,
 )
 RTDETRV2_OBB_PARAMS = model_cases(
