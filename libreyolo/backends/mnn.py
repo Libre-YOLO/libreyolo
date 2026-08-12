@@ -32,7 +32,6 @@ _SUPPORTED_FAMILIES = {
     "dfine",
     "deim",
     "deimv2",
-    "tinyformer",
     "yolonas",
 }
 

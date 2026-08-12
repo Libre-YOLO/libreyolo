@@ -15,7 +15,7 @@ from .loss import ValidationLossMixin
 
 logger = logging.getLogger(__name__)
 
-COCO_TOPK_FAMILIES = {"dfine", "deim", "deimv2", "ec", "rfdetr", "rtdetr", "rtdetrv2", "rtdetrv4"}
+COCO_TOPK_FAMILIES = {"dfine", "deim", "deimv2", "tinyformer", "ec", "rfdetr", "rtdetr", "rtdetrv2", "rtdetrv4"}
 _N_VAL_SAMPLES = 8  # maximum sample images stored for visualisation
 
 if TYPE_CHECKING:
