@@ -85,6 +85,7 @@ FAMILY_DISPLAY_NAMES: Dict[str, str] = {
     "domedetr": "Dome-DETR",
     "deim": "DEIM",
     "deimv2": "DEIMv2",
+    "tinyformer": "TinyFormer",
     "ec": "EC",
     "rtmdet": "RTMDet",
     "picodet": "PICODET",
@@ -254,6 +255,8 @@ FAMILY_AUG_SUPPORT: Dict[str, Dict[str, Support]] = {
     "domedetr": dict(_DETR_STYLE),
     "deim": dict(_DETR_STYLE),
     "deimv2": dict(_DETR_STYLE),
+    # TinyFormer trains through DEIMv2's transform path unchanged.
+    "tinyformer": dict(_DETR_STYLE),
     # EC is multi-task (detect/segment/pose). Its pose pipeline honors
     # hsv_prob/degrees/translate, so those cannot be marked IGNORED for the
     # family as a whole; the CLI warning must never be wrong for any task.
