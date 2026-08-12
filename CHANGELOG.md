@@ -26,7 +26,9 @@ before 1.4.0 are documented in the
   released recipes, and the DEIM postprocess. ONNX and OpenVINO export and
   reload with detection parity; NCNN is blocked like every DETR family. The
   `l`/`x`/`xl` weights embed finetuned DINOv3 towers and inherit Meta's DINOv3
-  License Agreement; `s`/`m` use the DEIMv2-distilled ViT-Tiny towers.
+  License Agreement; `s`/`m` use the DEIMv2-distilled ViT-Tiny towers
+  (themselves DINOv3-distilled), so the hosted weight repos carry the
+  Apache-2.0 + DINOv3 dual license for every size, as the DEIMv2 DINO sizes do.
 
 - **DEKR bottom-up pose.** New inference-only `dekr` family:
   `LibreYOLO("LibreDEKRw32-pose.pt")` returns multi-person COCO-17 pose on the

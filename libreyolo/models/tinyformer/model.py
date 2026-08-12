@@ -38,7 +38,9 @@ class LibreTinyFormer(BaseModel):
 
     License split (mirrors DEIMv2): the family code is Apache-2.0, but the
     l/x/xl sizes run on vendored DINOv3 towers whose *weights* carry Meta's
-    DINOv3 License Agreement; s/m use the DEIMv2-distilled ViT-Tiny towers.
+    DINOv3 License Agreement; s/m use the DEIMv2-distilled ViT-Tiny towers,
+    which are themselves DINOv3-distilled, so the hosted weight repos ship the
+    Apache-2.0 + DINOv3 dual license for every size (DEIMv2-s precedent).
     See ``libreyolo/models/deimv2/engine/backbone/dinov3/LICENSE.md``.
     """
 
