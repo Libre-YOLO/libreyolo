@@ -64,6 +64,14 @@ class LibreDEIMv2(BaseModel):
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
+        # TinyFormer (a DEIMv2 derivative) shares the backbone.dinov3.* keys
+        # but carries its own SSA markers (backbone.sda./backbone.proj_c1.);
+        # routing between the two families is enforced here in both directions
+        # (LibreTinyFormer.can_load requires those markers), not by registry
+        # order — importing models.tinyformer pulls in models.deimv2 first, so
+        # DEIMv2 registers earlier regardless of import position.
+        if any(k.startswith("backbone.sda.") for k in weights_dict):
+            return False
         return any(
             "swish_ffn" in k
             or k.startswith("backbone.dinov3.")

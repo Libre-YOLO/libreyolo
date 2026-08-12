@@ -160,6 +160,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "dfine",
     "deim",
     "deimv2",
+    "tinyformer",
     "ec",
     "lwdetr",
     "moge2",
@@ -888,6 +889,13 @@ class BaseExporter(ABC):
 
             nn_model = copy.deepcopy(nn_model)
             nn_model = DEIMv2ExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "tinyformer":
+            from ..models.tinyformer.nn import TinyFormerExportWrapper
+
+            nn_model = copy.deepcopy(nn_model)
+            nn_model = TinyFormerExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
         elif family == "ec":

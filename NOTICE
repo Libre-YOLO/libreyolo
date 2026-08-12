@@ -502,6 +502,31 @@ Dome-DETR (Apache License 2.0)
     restricts use to "academic research purposes only". Users download from
     upstream and convert locally.
 
+TinyFormer (Apache License 2.0)
+    Path:    libreyolo/models/tinyformer/,
+             weights/convert_tinyformer_weights.py,
+             weights/parity_tinyformer.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/mmpmmpmmpjosh/TinyFormer
+             commit 9075d9fdf5ce989ca3c7e830a780dfc7fbbe4ec1
+             Copyright (C) 2026 AICVlab, National Yang Ming Chiao Tung
+             University (NYCU). The upstream LICENSE also carries the
+             DEIM/DEIMv2 lineage copyright (Intellindust Information
+             Technology (Shenzhen) Co., Ltd.).
+
+    The Spatial Semantic Adapter backbone (DINOv3SSAs_4Scale) and the
+    Parallel Bi-fusion 4-scale hybrid encoder (HybridEncoder_4Scale,
+    RepNCSPMSP5) are ported from engine/. Everything the port shares with
+    DEIMv2 (the DEIM transformer decoder, the DINOv3 and distilled ViT-Tiny
+    towers, the CSP encoder blocks) is imported from
+    libreyolo/models/deimv2/ rather than re-vendored, so the DINOv3 entry
+    above continues to cover the DINOv3 subtree; a dinov3_vitb16
+    configuration entry was added to that subtree for the xl size.
+
+    Model weights are redistributed at https://huggingface.co/LibreYOLO
+    under Apache-2.0 plus the DINOv3 License (the checkpoints bundle
+    DINOv3-derived backbone parameters).
+
 D-FINE-seg (Apache License 2.0)
     Path:    libreyolo/models/dfine/, libreyolo/postprocess/dfine.py
     Source:  https://github.com/ArgoHA/D-FINE-seg

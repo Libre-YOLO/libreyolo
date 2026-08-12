@@ -71,6 +71,7 @@ the `alexnet` / `deit` / `mobilenetv4` / `convnext` / `efficientnetv2` /
 | `dfine`     | `LibreDFINE`    | All-caps acronym (hyphen dropped from `D-FINE`) |
 | `deim`      | `LibreDEIM`     | All-caps acronym |
 | `deimv2`    | `LibreDEIMv2`   | All-caps acronym + lowercase version |
+| `tinyformer` | `LibreTinyFormer` | PascalCase word (`TinyFormer`) |
 | `detr`      | `LibreDETR`     | All-caps acronym |
 | `rtdetr`    | `LibreRTDETR`   | All-caps acronym (hyphen dropped from `RT-DETR`) |
 | `rtdetrv2`  | `LibreRTDETRv2` | All-caps acronym + lowercase version |
@@ -193,6 +194,7 @@ ships:
 | `dfine`     | `n`, `s`, `m`, `l`, `x` |
 | `deim`      | `n`, `s`, `m`, `l`, `x` |
 | `deimv2`    | per-cfg (see `SIZE_CONFIGS`) |
+| `tinyformer` | `s`, `m`, `l`, `x`, `xl` (all 640; `xl` must match before `x`/`l` in filename parsing) |
 | `detr`      | `r50`, `r50dc5`, `r101`, `r101dc5` (ResNet depth plus optional dilated C5; all use a fixed 800 square) |
 | `rtdetr`    | `r18`, `r34`, `r50`, `r50m`, `r101`, `l`, `x` |
 | `rtdetrv2`  | detect: `r18`, `r34`, `r50`, `r50m`, `r101`; OBB: `n`, `s`, `m`, `l`, `x` (fixed 1024) |
@@ -464,6 +466,7 @@ Detector-factory family support follows:
 | `dfine`     | `("detect", "segment")`             | detect | segment uses the D-FINE-seg mask head; same sizes as detect; COCO `-seg` weights on HF (detect-to-segment fine-tune needs an explicit transfer flag) |
 | `deim`      | `("detect",)` (default)             | detect | detect-only |
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
+| `tinyformer` | `("detect",)`                      | detect | detect-only; dataset-variant weights `-visdrone` (nc=10) and `-obj2coco` |
 | `detr`      | `("detect",)`                       | detect | original DETR; inference-only (no trainer, `train()` raises); fixed 800 square |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetrv2`  | `("detect", "obb")`               | detect | OBB uses the DOTA `n`/`s`/`m`/`l`/`x` graph and is inference-only; detect remains trainable |

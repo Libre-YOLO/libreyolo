@@ -33,6 +33,7 @@ MODEL_GROUPS: dict[str, str] = {
     "dfine": "g1",
     "deim": "g1",
     "deimv2": "g1",
+    "tinyformer": "g1",
     "yolonas": "g1",
     # g2 - supporting trainables
     "yolox": "g2",

@@ -366,6 +366,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "domedetr",
         "deim",
         "deimv2",
+        "tinyformer",
         "ec",
         "faster_rcnn",
         "mask_rcnn",
@@ -679,6 +680,11 @@ class BaseBackend(ABC):
         elif self.model_family == "deimv2":
             tensor, img, size = self._preprocess_deimv2(
                 image, effective_imgsz, color_format, self.model_size
+            )
+            return tensor, img, size, 1.0
+        elif self.model_family == "tinyformer":
+            tensor, img, size = self._preprocess_tinyformer(
+                image, effective_imgsz, color_format
             )
             return tensor, img, size, 1.0
         elif self.model_family == "ec":
@@ -1195,6 +1201,22 @@ class BaseBackend(ABC):
         return img_tensor, original_img, original_size
 
     @staticmethod
+    def _preprocess_tinyformer(image, input_size, color_format):
+        """TinyFormer preprocessing; every size uses ImageNet normalization."""
+        from ..preprocess.deimv2 import preprocess_numpy as deimv2_preprocess_numpy
+
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+
+        img_chw, _ = deimv2_preprocess_numpy(
+            np.array(img), input_size, imagenet_norm=True
+        )
+        img_tensor = as_batched_input(img_chw)
+
+        return img_tensor, original_img, original_size
+
+    @staticmethod
     def _preprocess_ec(image, input_size, color_format):
         """EC preprocessing: plain resize + RGB + /255 + ImageNet (mean, std)."""
         from ..preprocess.ec import preprocess_numpy as ec_preprocess_numpy
@@ -1446,6 +1468,11 @@ class BaseBackend(ABC):
             )
             return boxes, scores, cls, None
         elif self.model_family == "deimv2":
+            boxes, scores, cls = self._parse_dfine(
+                all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
+            return boxes, scores, cls, None
+        elif self.model_family == "tinyformer":
             boxes, scores, cls = self._parse_dfine(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
@@ -4156,6 +4183,9 @@ class BaseBackend(ABC):
                 else DEIMv2ValPreprocessor
             )
             return preprocessor_cls(img_size=_imgsz_hw(img_size))
+
+        if self.model_family == "tinyformer":
+            return DEIMv2DINOValPreprocessor(img_size=_imgsz_hw(img_size))
 
         preprocessor_cls = {
             "deim": DEIMValPreprocessor,

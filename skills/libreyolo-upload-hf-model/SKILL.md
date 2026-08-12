@@ -161,6 +161,12 @@ LibreDEIMv2atto.pt, LibreDEIMv2femto.pt, LibreDEIMv2pico.pt,
 LibreDEIMv2n.pt, LibreDEIMv2s.pt, LibreDEIMv2m.pt,
 LibreDEIMv2l.pt, LibreDEIMv2x.pt,
 
+LibreTinyFormers.pt, LibreTinyFormerm.pt, LibreTinyFormerl.pt,
+LibreTinyFormerx.pt, LibreTinyFormerxl.pt,
+LibreTinyFormers-visdrone.pt, LibreTinyFormerm-visdrone.pt,
+LibreTinyFormerl-visdrone.pt, LibreTinyFormerx-visdrone.pt,
+LibreTinyFormerx-obj2coco.pt, LibreTinyFormerxl-obj2coco.pt,
+
 LibrePICODETs.pt, LibrePICODETm.pt, LibrePICODETl.pt,
 
 LibreRTDETRr18.pt, LibreRTDETRr34.pt, LibreRTDETRr50.pt,
@@ -342,6 +348,10 @@ A name being *valid* does not make it *hostable*; run the gate.
 The `-visdrone` suffix is a `WEIGHT_VARIANTS` dataset variant (grammar in
 `docs/nomenclature.md`): only families that declare `WEIGHT_VARIANTS` in
 their `model.py` may carry one, and plain COCO-default weights never do.
+TinyFormer declares `("visdrone", "obj2coco")`; its `l`/`x`/`xl` checkpoints
+embed finetuned DINOv3 towers, so those repos ship Meta's DINOv3 License
+Agreement alongside the Apache-2.0 code license (same split as the DEIMv2
+DINO sizes), while `s`/`m` use the DEIMv2-distilled ViT-Tiny towers.
 
 Pre-quantized variant repos (`-fp8`, `-nvfp4`; FeyNobg only today): built by
 `weights/upload_feynobg_hf.py --recipe <r>` from a finalized quantized

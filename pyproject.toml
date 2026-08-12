@@ -476,6 +476,7 @@ markers = [
     "domedetr: tests covering the Dome-DETR tiny-object model family",
     "deim: tests covering the DEIM model family",
     "deimv2: tests covering the DEIMv2 model family",
+    "tinyformer: tests covering the TinyFormer model family",
     "ec: tests covering the ECDet model family",
     "rtdetr: tests covering the RT-DETR model family",
     "rtdetrv2: tests covering the RT-DETRv2 model family",

@@ -238,6 +238,8 @@ class TensorRTBackend(BaseBackend):
         # sidecar is authoritative, but filename hints keep sidecar-less engines
         # routed to the right family when the user keeps LibreYOLO's names.
         stem = Path(self.model_path).stem.lower()
+        if "tinyformer" in stem:
+            return "tinyformer"
         if "deimv2" in stem:
             return "deimv2"
         # "ec" must be a whole token, not a bare substring (else "detector"/
@@ -562,6 +564,8 @@ class TensorRTBackend(BaseBackend):
             return "deim"
         elif self.model_family == "deimv2":
             return "deimv2"
+        elif self.model_family == "tinyformer":
+            return "tinyformer"
         elif self.model_family == "rtdetr":
             return "rtdetr"
         elif self.model_family == "ec":

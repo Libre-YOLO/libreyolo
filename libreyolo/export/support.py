@@ -3714,6 +3714,7 @@ _NCNN_BLOCKS = {
     "lwdetr": "LW-DETR",
     "deim": "DEIM",
     "deimv2": "DEIMv2",
+    "tinyformer": "TinyFormer",
     "rtdetr": "RT-DETR",
     "rtdetrv2": "RT-DETRv2",
     "rtdetrv4": "RT-DETRv4",
