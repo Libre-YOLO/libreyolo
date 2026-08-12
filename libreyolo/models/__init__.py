@@ -50,6 +50,7 @@ from .yolo9_e2e.model import LibreYOLO9E2E  # noqa: E402
 from .yolo9_p2.model import LibreYOLO9P2  # noqa: E402  (must precede LibreYOLO9: P2 checkpoints also match the base backbone/neck patterns)
 from .yolo9.model import LibreYOLO9  # noqa: E402
 from .yolonas.model import LibreYOLONAS  # noqa: E402
+from .tinyformer.model import LibreTinyFormer  # noqa: E402  (must precede LibreDEIMv2: TinyFormer checkpoints also match DEIMv2's backbone.dinov3.* pattern)
 from .deimv2.model import LibreDEIMv2  # noqa: E402
 from .rtdetrv4.model import LibreRTDETRv4  # noqa: E402  (must precede LibreDFINE — sibling arch, more-specific can_load)
 from .domedetr.model import LibreDOMEDETR  # noqa: E402  (D-FINE derivative; routing is enforced by can_load on encoder.DeFE. in both directions, not by this line — importing it pulls in models.dfine first, so it registers *after* LibreDFINE regardless of position here)
@@ -631,7 +632,7 @@ def LibreYOLO(
         # and DEIMv2 legitimately match D-FINE/DEIM-ish decoder keys and should
         # be allowed to win via their more-specific detectors.
         if {"dfine", "deim"}.issubset(matching_families) and not (
-            matching_families & {"ec", "deimv2"}
+            matching_families & {"ec", "deimv2", "tinyformer"}
         ):
             raise ValueError(
                 "Ambiguous D-FINE/DEIM checkpoint: both families share the same "

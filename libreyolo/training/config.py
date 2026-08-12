@@ -787,6 +787,51 @@ class DEIMv2Config(TrainConfig):
     name: str = "deimv2_exp"
 
 
+TINYFORMER_SIZE_DEFAULTS = {
+    # Released TinyFormer PBM COCO recipes, flattened from
+    # configs/tinyformer/tinyformer_dinov3_*_coco_pbm.yml in
+    # mmpmmpmmpjosh/TinyFormer. s/m/l/x reuse DEIMv2's DINO-size recipes
+    # verbatim; xl is TinyFormer's ViT-B addition (halved base LR).
+    "s": dict(DEIMV2_SIZE_DEFAULTS["s"]),
+    "m": dict(DEIMV2_SIZE_DEFAULTS["m"]),
+    "l": dict(DEIMV2_SIZE_DEFAULTS["l"]),
+    "x": dict(DEIMV2_SIZE_DEFAULTS["x"]),
+    "xl": {
+        "imgsz": 640,
+        "epochs": 58,
+        "batch": 32,
+        "lr0": 2.5e-4,
+        "weight_decay": 1.25e-4,
+        "warmup_iters": 2000,
+        "flat_epochs": 29,
+        "no_aug_epochs": 8,
+        "min_lr_ratio": 0.5,
+        "backbone_lr_mult": 0.02,
+        "base_size_repeat": 3,
+        "sanitize_min_size": 1,
+        "aug_stop_epoch_ratio": 50 / 58,
+        "losses": ("mal", "boxes", "local"),
+        "use_uni_set": True,
+        "change_matcher": True,
+        "iou_order_alpha": 4.0,
+        "matcher_change_epoch": 45,
+    },
+}
+
+
+@dataclass(kw_only=True)
+class TinyFormerConfig(DEIMv2Config):
+    """TinyFormer fine-tuning defaults.
+
+    TinyFormer keeps DEIMv2's Dense O2O training contract and DINOv3 optimizer
+    grouping; every size runs a DINO-lineage tower, so ImageNet normalisation
+    is unconditional. Size-specific recipes are applied by
+    ``TinyFormerTrainer`` from ``TINYFORMER_SIZE_DEFAULTS``.
+    """
+
+    name: str = "tinyformer_exp"
+
+
 @dataclass(kw_only=True)
 class ECConfig(TrainConfig):
     """EC-specific training defaults.
