@@ -15,6 +15,7 @@ _DETR_TUPLE_OUTPUT_FAMILIES = {
     "dfine",
     "deim",
     "deimv2",
+    "tinyformer",
     "ec",
     "lwdetr",
     "rfdetr",
