@@ -1833,6 +1833,32 @@
     "available": true,
     "group": "g3"
   },
+  "tinyformer": {
+    "class": "libreyolo.models.tinyformer.model.LibreTinyFormer",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640,
+      "xl": 640
+    },
+    "default_imgsz": {
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640,
+      "xl": 640
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g1"
+  },
   "vgg": {
     "class": "libreyolo.models.vgg.model.LibreVGG",
     "tasks": [

@@ -101,6 +101,7 @@ in preflight.
 | swin | classify | ✓ | ✓ | available | ✓ | ✓ |  |  |  | available |  |  |  |
 | swinir | restore | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  | ✓ |  |  |
 | teed | edge | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  | ✓ |  |  |
+| tinyformer | detect | available | available | available | available | available |  |  |  |  |  |  |  |
 | vgg | classify | ✓ | ✓ | available | ✓ | ✓ |  |  |  | available |  |  |  |
 | vit | classify | ✓ | available | available | available | available |  |  |  | available |  |  |  |
 | vjepa2 | embed | ✓ | ✓ | available | available | available |  |  |  |  |  |  |  |
@@ -539,6 +540,11 @@ These converter paths are callable with the recorded validation context.
 - `rtmdet` / `detect` / `executorch`: The export-only graph unshares RTMDet's cross-level head convolutions to avoid duplicate XNNPACK batch-norm fusion parameter names. Full conversion, runtime execution, input sensitivity, deterministic random-weight raw parity, and detection parsing are covered. Constraint: ExecuTorch 1.2, XNNPACK, CPU, FP32, batch 1, fixed input shape
 - `swin` / `classify` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
 - `swin` / `classify` / `ncnn`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `tinyformer` / `detect` / `onnx`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `tinyformer` / `detect` / `torchscript`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `tinyformer` / `detect` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `tinyformer` / `detect` / `tensorrt`: The converter path is available, but the project has not yet recorded TensorRT runtime parity for this family and task.
+- `tinyformer` / `detect` / `openvino`: The converter path is available, but the project has not yet recorded OpenVINO runtime parity for this family and task.
 - `vgg` / `classify` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
 - `vgg` / `classify` / `ncnn`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
 - `vit` / `classify` / `torchscript`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
@@ -1305,6 +1311,13 @@ These converter paths are callable with the recorded validation context.
 - `teed` / `edge` / `ncnn`: PNNX 20260526 leaves an unsupported Tensor.index channel-reversal node, so the generated NCNN network has no runnable input.
 - `teed` / `edge` / `coreml`: This edge runtime has no parity-valid artifact for the requested format.
 - `teed` / `edge` / `coreai`: This edge runtime has no parity-valid artifact for the requested format.
+- `tinyformer` / `detect` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
+- `tinyformer` / `detect` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
+- `tinyformer` / `detect` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
+- `tinyformer` / `detect` / `ncnn`: NCNN export is not supported for TinyFormer: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
+- `tinyformer` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `tinyformer` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `tinyformer` / `detect` / `coreai`: This family and task have not been validated for Core AI export.
 - `vgg` / `classify` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
 - `vgg` / `classify` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `vgg` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.

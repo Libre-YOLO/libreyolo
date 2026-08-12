@@ -9,6 +9,25 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **TinyFormer detection.** New trainable `tinyformer` family:
+  `LibreYOLO("LibreTinyFormers.pt")` loads the DEIMv2-derived YOLO-DETR hybrid
+  from "TinyFormer: Preserving Tiny Objects in YOLO-DETR Hybrid Real-time
+  Detectors" (arXiv:2605.25046), specialised for tiny objects via the Spatial
+  Semantic Adapter and the 4-scale Parallel Bi-fusion neck (the decoder keeps
+  3 levels at strides 8/16/32). Sizes `s`/`m`/`l`/`x`/`xl` (51.5 to 60.6 COCO
+  AP), all from the release's PBM checkpoints; official VisDrone (`-visdrone`,
+  nc=10) and Objects365-to-COCO (`-obj2coco`) variants convert with the same
+  script. Ported from the Apache-2.0 official release
+  (mmpmmpmmpjosh/TinyFormer); every size reproduces the upstream engine
+  exactly (`max_abs_diff == 0` on `pred_logits`/`pred_boxes` for all 5
+  released checkpoints, `weights/parity_tinyformer.py`). Reuses the vendored
+  DEIMv2 engine (decoder, DINOv3/ViT-Tiny towers; a `dinov3_vitb16` config was
+  added for `xl`), the DEIMv2 Dense O2O-style trainer with TinyFormer's
+  released recipes, and the DEIM postprocess. ONNX and OpenVINO export and
+  reload with detection parity; NCNN is blocked like every DETR family. The
+  `l`/`x`/`xl` weights embed finetuned DINOv3 towers and inherit Meta's DINOv3
+  License Agreement; `s`/`m` use the DEIMv2-distilled ViT-Tiny towers.
+
 - **DEKR bottom-up pose.** New inference-only `dekr` family:
   `LibreYOLO("LibreDEKRw32-pose.pt")` returns multi-person COCO-17 pose on the
   original image canvas without running a person detector first, the first

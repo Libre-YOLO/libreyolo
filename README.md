@@ -104,7 +104,7 @@ libreyolo predict --model yolo9-t --source screen            # screen capture
 | Task | Models |
 | --- | --- |
 | **Detection** | YOLOv9, RF-DETR, YOLOX, YOLO-NAS, D-FINE, DEIM, RT-DETR v1/v2/v4, RTMDet, PicoDet, PP-YOLOE, YOLOv7, EfficientDet, and the classics: DETR, Deformable DETR, DINO-DETR, LW-DETR, Faster R-CNN, RetinaNet, SSD, FCOS, CenterNet |
-| **Tiny objects** | Dome-DETR (aerial, drone, remote sensing) |
+| **Tiny objects** | TinyFormer, Dome-DETR (aerial, drone, remote sensing) |
 | **Instance segmentation** | RF-DETR, RTMDet, D-FINE, Mask R-CNN |
 | **Promptable segmentation** | SAM, SAM 2, SAM 3, MobileSAM, EdgeTAM, PicoSAM3 |
 | **Semantic segmentation** | SegFormer, PIDNet, PP-LiteSeg, DeepLabv3, FCN, LingBot-Vision, DINOv2, EoMT |

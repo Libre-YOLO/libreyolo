@@ -255,9 +255,9 @@ make test_e2e E2E_TIMEOUT=1800
 
 V3.0 contract:
 
-- `general_nightly`: a curated matrix of the smallest public checkpoint for 15
+- `general_nightly`: a curated matrix of the smallest public checkpoint for 16
   detector families. It checks stable native inference and batched/sequential
-  parity, plus two open-vocabulary smoke cases; currently 32 tests.
+  parity, plus two open-vocabulary smoke cases; currently 34 tests.
 - `flagship_nightly`: native YOLO9/RF-DETR validation, video, tracking, CLI, and
   one RF1 training/reload size per flagship family; currently 44 tests. The full
   RF1 size matrix remains available under `-m rf1` for manual or future
