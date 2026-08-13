@@ -283,6 +283,54 @@ def test_hub_matches_portable_on_cuda():
         torch.testing.assert_close(hub_grad, ref_grad, rtol=1e-3, atol=1e-4)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+@pytest.mark.parametrize("half_dtype", [torch.float16, torch.bfloat16])
+def test_hub_accepts_autocast_half_inputs_on_cuda(half_dtype):
+    """Half inputs must take the fused path via the fp32 upcast boundary.
+
+    Autocast hands the slot a fp16/bf16 ``value`` with fp32 sampling
+    locations and softmax weights (softmax stays fp32 under autocast); the
+    provider upcasts everything, runs the fp32 kernel, and returns the
+    value's dtype. The output must be bit-identical to feeding the same
+    quantized inputs through the fp32 path and casting the result.
+    """
+    value, shapes, locations, weights = _classic_inputs()
+    value_half = value.cuda().to(half_dtype).requires_grad_(True)
+    shapes = shapes.cuda()
+    locations = locations.cuda()
+    weights = weights.cuda()
+
+    out = hub_ms_deform_attn(value_half, shapes, locations, weights)
+    if out is None:
+        pytest.skip("hub kernel unavailable on this box (load failed)")
+    assert out.dtype == half_dtype
+
+    ref = hub_ms_deform_attn(
+        value_half.detach().float(), shapes, locations, weights
+    )
+    torch.testing.assert_close(out, ref.to(half_dtype), rtol=0, atol=0)
+
+    out.sum().backward()
+    assert value_half.grad is not None
+    assert value_half.grad.dtype == half_dtype
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_supported_inputs_dtype_gate_on_cuda():
+    from libreyolo.kernels.attention.ms_deform_attn import _supported_inputs
+
+    value, shapes, locations, weights = _classic_inputs()
+    value = value.cuda()
+    shapes = shapes.cuda()
+    locations = locations.cuda()
+    weights = weights.cuda()
+    assert _supported_inputs(value, shapes, locations, weights)
+    # The dtype mix autocast produces: half value, fp32 locations/weights.
+    assert _supported_inputs(value.half(), shapes, locations, weights)
+    assert _supported_inputs(value.bfloat16(), shapes, locations, weights)
+    assert not _supported_inputs(value.double(), shapes, locations, weights)
+
+
 # =============================================================================
 # Pinned-snapshot fallback loader (the ``kernels``-resolver compatibility path)
 # =============================================================================
