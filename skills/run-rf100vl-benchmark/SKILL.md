@@ -39,12 +39,28 @@ knowledge those two do not cover.
 | Selection | validate every epoch, EMA weights, keep best AP50:95 | Roboflow reference code |
 | Epoch budget | fixed 100, early stopping DISABLED (`patience: 0`) | Roboflow reference code; the harness enforces it |
 | Effective batch | 16 (physical batch x gradient accumulation) | Roboflow reference code |
-| Precision | fp32; bf16 only via explicit `amp_dtype`; never fp16 autocast | LibreYOLO policy |
+| Precision | whatever the family's upstream reference trains at, declared in the recipe and recorded in every submission. fp32 for the YOLO trio, fp16 for `ec`, bf16 for `rfdetr`. Never a precision its authors do not use, in either direction | harness #10; measured 2026-08 |
 | Eval thresholds | conf 0.001; NMS IoU 0.65 for NMS families, identical at selection and final eval; DETR families are NMS-free top-k | LibreYOLO policy |
 | Seed | 0 | LibreYOLO policy |
 | Recipes | one pinned JSON per family in the harness (`va_bench/recipes/rf100vl/`), sha recorded in every run, same recipe for all 100 datasets | LibreYOLO policy |
 | Execution (YOLO) | `cuda_graph: true` and `cache: "disk"` in the recipe protocol when the installed LibreYOLO supports them (bit-identical; covered by recipe hash). Verify capture per family, per commit and per card: see "CUDA graphs and cache" | measured 2026-08 |
 | COCO evaluator | faster-coco-eval (Apache-2.0), now the LibreYOLO default; record the backend in artifacts | measured 2026-08 |
+
+**"Roboflow reference code" means what they RAN, not what the library
+defaults to.** For RF-DETR those differ, and the difference is invisible in a
+result table. Their maintainer states it in
+[rf-detr#266](https://github.com/roboflow/rf-detr/issues/266): the published
+RF100-VL numbers used "the default arguments but with batch size 16 and grad
+accum 1", posted three hours after the 1.2.0 release, so read the defaults off
+that tag rather than off `develop`, which has since drifted (`batch_size` now
+takes `"auto"`, `amp_dtype` became a selector). The library default is batch 4
+with accum 4. Both give effective batch 16, but `multi_scale` draws a fresh
+resolution per forward, so accum 4 averages four scales into an optimizer step
+where they averaged one. Two things in their numbers are not reproducible at
+all and belong in the recipe as disclosed deviations: they initialised from
+private Objects365 checkpoints that were never released (they estimate ~0.1
+mAP), and their table predates their own fix for an incorrectly initialised
+head.
 
 Never report toolkit-native trapezoidal mAP; it inflates up to 2.7 AP on
 RF100-VL versus pycocotools (paper, App B). LibreYOLO validation is
@@ -59,8 +75,9 @@ scoring against 112 s training** — 4.4×, and 6.9 of that dataset's 9.6 h.
 faster-coco-eval removes it: verified across all 100 test splits at
 max_det=500, **1381/1400 metric values bit-identical, max deviation 2.22e-16
 (one float64 ULP), headline mean AP delta exactly 0**, wall 131.4 s → 8.4 s
-(15.6× overall, 56× on gwhd2021). The dense outliers to expect are
-`gwhd2021`, `recode-waste`, `uavdet-small`. Keep stock pycocotools as the
+(15.6× overall, 56× on gwhd2021). Scoring cost tracks the MEAN boxes/image, so
+the datasets to expect it on are `uavdet-small` (75.9), `recode-waste` (44.3)
+and `gwhd2021` (42.9), against a median of 4.9. Keep stock pycocotools as the
 reference implementation for audit; do not silently swap backends without
 recording which one ran.
 
@@ -260,8 +277,22 @@ for how much memory a lane needs.
 
 Pick a **dense** dataset for the smoke, not a convenient one. `actions` is
 sparse and gave ec-m 13939 MB; the real campaign peaked at 14787 MB on
-`gwhd2021` (43.6 boxes/image). The three dense outliers are `gwhd2021`,
-`recode-waste`, `uavdet-small`.
+`gwhd2021` (43.6 boxes/image).
+
+**Dense for memory and dense for scoring are different lists, and this skill
+used to give the scoring one for both jobs.** Peak VRAM is set by the WORST
+SINGLE IMAGE in a batch, not the average, so size a lane against max
+boxes/image: `exploratorium-daphnia` (349), `all-elements` (279),
+`penguin-finder-seg` (246). The scoring-cost trio above is a poor proxy for it:
+`gwhd2021` maxes at 190 and `uavdet-small`, densest of all by mean, at only
+109. Measured on the train splits, which is what the harness reads when it
+builds the batch plan.
+
+The same asymmetry sets the OOM fallback: `dense_oom_fallback` triggers on
+`max_annotations_per_image`, so at the recipes' threshold of 200 exactly those
+three datasets drop to the fallback batch, on every family. That is a protocol
+deviation on 3 of 100 datasets which fires whether or not the lane would
+actually have OOM'd, so check it is the trade you want before dataset one.
 
 Take ~20% headroom. The registry's `params_millions`/`gflops` fields are `0.0`
 for most non-flagship specs, and parameter count does not predict memory
