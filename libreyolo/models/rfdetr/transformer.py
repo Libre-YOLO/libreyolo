@@ -287,11 +287,15 @@ class MSDeformAttn(nn.Module):
         # Eq(u0, 1)"). The check is a developer sanity check over spatial
         # shapes that are constant for a fixed export canvas, so evaluate it
         # in Python when the shapes are concrete and skip the tensor path.
-        if self._export and input_spatial_shapes_hw is not None:
-            # Export callers already carry the fixed canvas geometry as Python
-            # integer pairs. Validate against those values instead of reading
-            # back from input_spatial_shapes, which creates an unbacked symbol
-            # under strict torch.export capture.
+        if input_spatial_shapes_hw is not None and not isinstance(
+            len_input, torch.Tensor
+        ):
+            # Callers that carry the geometry as Python integer pairs (the
+            # RF-DETR decoder always does) validate against those values: it
+            # avoids the unbacked symbol under strict torch.export capture,
+            # and it avoids the device readback below, which is a full GPU
+            # pipeline drain per decoder layer in eager training
+            # (Tensor.__int__ syncs, invisibly to Python-level profiling).
             expected_len_in = sum(h * w for h, w in input_spatial_shapes_hw)
             assert expected_len_in == len_input, error_msg
         # The int() readback below is a host sync, which CUDA graph capture

@@ -565,9 +565,12 @@ class SetCriterion(nn.Module):
                 mode="nearest",
             ).squeeze(1)
 
+        # The jit-scripted losses are annotated ``num_masks: float`` (and are
+        # shared with ec/seg_loss.py), while ``num_boxes`` is a 0-dim tensor
+        # here; run them unnormalized and divide outside — identical math.
         losses = {
-            "loss_mask_ce": sigmoid_ce_loss_jit(point_logits, point_labels, num_boxes),
-            "loss_mask_dice": dice_loss_jit(point_logits, point_labels, num_boxes),
+            "loss_mask_ce": sigmoid_ce_loss_jit(point_logits, point_labels, 1.0) / num_boxes,
+            "loss_mask_dice": dice_loss_jit(point_logits, point_labels, 1.0) / num_boxes,
         }
 
         del src_masks
@@ -646,14 +649,17 @@ class SetCriterion(nn.Module):
         if not self.sum_group_losses:
             num_boxes *= group_detr
         num_boxes = torch.as_tensor(
-            [num_boxes],
+            float(num_boxes),
             dtype=torch.float,
             device=next(iter(outputs.values())).device,
         )
         if self.distributed_normalize and is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_boxes)
             num_boxes = num_boxes / get_world_size()
-        return torch.clamp(num_boxes, min=1).item()
+        # Returned as a 0-dim device tensor rather than ``.item()``: the value
+        # is only ever a divisor, and ``.item()`` here cost one full GPU
+        # pipeline drain per training step.
+        return torch.clamp(num_boxes, min=1)
 
     def forward(self, outputs, targets):
         """This performs the loss computation.
@@ -665,8 +671,23 @@ class SetCriterion(nn.Module):
         group_detr = self.group_detr if self.training else 1
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
 
-        # Retrieve the matching between the outputs of the last layer and the targets
-        indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
+        # Match every output level with a single host transfer: build all the
+        # cost matrices on the GPU first (no syncs between levels), then let
+        # the first ``.cpu()`` drain the pipeline once for all of them, then
+        # run the Hungarian solves. This replaces one full GPU drain per
+        # level (main + each aux + enc) with one per step.
+        aux_outputs_list = outputs.get("aux_outputs", [])
+        levels = [outputs_without_aux, *aux_outputs_list]
+        if "enc_outputs" in outputs:
+            levels.append(outputs["enc_outputs"])
+        cost_matrices = [
+            self.matcher.compute_cost_matrix(level, targets) for level in levels
+        ]
+        level_indices = [
+            self.matcher.solve(cost.cpu(), targets, group_detr=group_detr)
+            for cost in cost_matrices
+        ]
+        indices = level_indices[0]
 
         # Training uses the global average box count. Rank-0-only validation
         # selects the local path so it never enters a collective while other
@@ -679,21 +700,20 @@ class SetCriterion(nn.Module):
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
-        if "aux_outputs" in outputs:
-            for i, aux_outputs in enumerate(outputs["aux_outputs"]):
-                indices = self.matcher(aux_outputs, targets, group_detr=group_detr)
-                for loss in self.losses:
-                    kwargs = {}
-                    if loss == "labels":
-                        # Logging is enabled only for the last layer
-                        kwargs = {"log": False}
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
-                    l_dict = {k + f"_{i}": v for k, v in l_dict.items()}
-                    losses.update(l_dict)
+        for i, aux_outputs in enumerate(aux_outputs_list):
+            indices = level_indices[1 + i]
+            for loss in self.losses:
+                kwargs = {}
+                if loss == "labels":
+                    # Logging is enabled only for the last layer
+                    kwargs = {"log": False}
+                l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
+                l_dict = {k + f"_{i}": v for k, v in l_dict.items()}
+                losses.update(l_dict)
 
         if "enc_outputs" in outputs:
             enc_outputs = outputs["enc_outputs"]
-            indices = self.matcher(enc_outputs, targets, group_detr=group_detr)
+            indices = level_indices[-1]
             for loss in self.losses:
                 kwargs = {}
                 if loss == "labels":
