@@ -99,8 +99,10 @@ class HungarianMatcher(nn.Module):
         else:
             cost_class = -out_prob[:, tgt_ids]
 
-        # L1 cost
-        cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
+        # L1 cost. The broadcast form is bit-identical to ``torch.cdist(
+        # out_bbox, tgt_bbox, p=1)`` but avoids cdist's slow one-thread-per-
+        # pair p=1 CUDA kernel (issue #763; measured on rfdetr in PR #761).
+        cost_bbox = (out_bbox[:, None, :] - tgt_bbox[None, :, :]).abs().sum(-1)
 
         # GIoU cost
         cost_giou = -generalized_box_iou(

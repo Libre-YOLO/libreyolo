@@ -52,6 +52,7 @@ from ...training.config import (
     resolve_dfine_base_size_repeat,
 )
 from ...training.scheduler import FlatCosineScheduler
+from ...training.optim import build_optimizer
 from ...training.trainer import BaseTrainer
 from .loss import DFINECriterion
 from .matcher import HungarianMatcher
@@ -324,7 +325,7 @@ class DFINETrainer(DETREncoderCudaGraphMixin, BaseTrainer):
                 }
             )
 
-        return torch.optim.AdamW(param_groups, betas=(0.9, 0.999))
+        return build_optimizer(torch.optim.AdamW, param_groups, betas=(0.9, 0.999))
 
     def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
         """Forward + loss in one go.

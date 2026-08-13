@@ -47,6 +47,7 @@ from ...data import (
 from ...data.dataset import COCODataset, YOLODataset
 from ...training.config import DEIMConfig, TrainConfig
 from ...training.scheduler import FlatCosineScheduler
+from ...training.optim import build_optimizer
 from ...training.trainer import BaseTrainer
 from .loss import DEIMCriterion
 from .matcher import HungarianMatcher
@@ -282,7 +283,7 @@ class DEIMTrainer(DETREncoderCudaGraphMixin, BaseTrainer):
                 }
             )
 
-        return torch.optim.AdamW(param_groups, betas=(0.9, 0.999))
+        return build_optimizer(torch.optim.AdamW, param_groups, betas=(0.9, 0.999))
 
     def _targets_to_detr(self, imgs: torch.Tensor, targets: torch.Tensor):
         """Translate padded LibreYOLO labels to DETR target dictionaries."""

@@ -20,6 +20,7 @@ from ...training.config import (
     TinyFormerConfig,
     TrainConfig,
 )
+from ...training.optim import build_optimizer
 from ..deimv2.trainer import DEIMv2Trainer
 from ..deimv2.transforms import DEIMPassThroughDataset, DEIMTrainTransform
 from .nn import normalize_size
@@ -128,4 +129,4 @@ class TinyFormerTrainer(DEIMv2Trainer):
                 }
             )
 
-        return torch.optim.AdamW(param_groups, betas=(0.9, 0.999))
+        return build_optimizer(torch.optim.AdamW, param_groups, betas=(0.9, 0.999))

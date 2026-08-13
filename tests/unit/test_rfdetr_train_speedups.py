@@ -182,6 +182,11 @@ def test_num_boxes_is_tensor_and_losses_stay_scalar():
 
 
 def test_adamw_helper_falls_back_when_fused_unsupported(monkeypatch):
+    # The helper now routes through libreyolo.training.optim.build_optimizer,
+    # whose device gate skips fused off-CUDA; force the gate open so the
+    # construction-time fallback path is exercised on CPU params.
+    import libreyolo.training.optim as optim_mod
+
     param = torch.nn.Parameter(torch.randn(3))
     real_adamw = torch.optim.AdamW
     calls = []
@@ -193,11 +198,20 @@ def test_adamw_helper_falls_back_when_fused_unsupported(monkeypatch):
                 raise RuntimeError("fused not supported here")
             super().__init__(params, **kwargs)
 
+    monkeypatch.setattr(optim_mod, "_all_params_cuda", lambda groups: True)
     monkeypatch.setattr(torch.optim, "AdamW", Picky)
     opt = RFDETRTrainer._adamw([{"params": [param]}], lr=1e-3, betas=(0.9, 0.999))
     assert isinstance(opt, real_adamw)
     assert calls[0].get("fused") is True
     assert "fused" not in calls[1]
+
+
+def test_adamw_helper_keeps_cpu_construction_stock():
+    # Non-CUDA params must never be handed fused=True, even though recent
+    # torch would silently accept them (issue #763 portability guarantee).
+    param = torch.nn.Parameter(torch.randn(3))
+    opt = RFDETRTrainer._adamw([{"params": [param]}], lr=1e-3, betas=(0.9, 0.999))
+    assert not any(group.get("fused") for group in opt.param_groups)
 
 
 def test_adamw_helper_constructs_and_steps():
