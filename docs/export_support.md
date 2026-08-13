@@ -64,6 +64,7 @@ in preflight.
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |  |  |  |
 | moge2 | normal | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | available |  |  |  |
 | nafnet | restore | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ |
+| northmicrovision | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
@@ -1014,6 +1015,18 @@ These converter paths are callable with the recorded validation context.
 - `nafnet` / `restore` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `nafnet` / `restore` / `tflite`: onnx2tf 2.6.7 converts the fixed-canvas graph, but LiteRT 2.1.2 fails at invoke time because input tensor 4539 lacks data.
 - `nafnet` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `northmicrovision` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `paddle`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
+- `northmicrovision` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `omdet_turbo` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `executorch`: Open-vocabulary runtime export is out of scope for v1.

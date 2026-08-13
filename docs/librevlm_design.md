@@ -31,7 +31,8 @@ size marked with `*`. The authoritative alias tables are in
 | Aliases                                      | Family    | License             | Notes                                    |
 |----------------------------------------------|-----------|---------------------|------------------------------------------|
 | `qwen3-vl`, `-2b`, `-4b`*, `-8b`             | Qwen3-VL  | Apache-2.0          | default model; strongest detector here   |
-| `lfm2-vl`, `-450m`*, `-1.6b`                 | LFM2-VL   | LFM Open License v1.0 | edge VLM; non-permissive, logs notice   |
+| `lfm2-vl`, `-450m`*, `-1.6b`, `-3b`          | LFM2-VL   | LFM Open License v1.0 | edge VLM; non-permissive, logs notice   |
+| `north-micro-vision`, `-2.4b`*               | North Micro Vision | Apache-2.0    | Cohere Labs native-resolution VLM; needs transformers>=5.16 |
 | `internvl3`, `-1b`, `-2b`*, `-8b`            | InternVL3 | Qwen License        | Qwen-backbone weights, logs notice; weak small |
 | `florence-2`, `-base`*, `-large`             | Florence-2 | MIT                | small purpose-built detector; tight boxes |
 | `kosmos-2`*                                   | Kosmos-2  | MIT                 | 2023 grounder; loads clean, coarse boxes |
@@ -165,10 +166,12 @@ synthetic image with a known box and read back the numbers. Verified so far:
 | Model      | Box key   | Scale  | Layout | Knobs                                   |
 |------------|-----------|--------|--------|-----------------------------------------|
 | Qwen3-VL   | `bbox_2d` | 0-1000 | xyxy   | `COORD_DIVISOR=1000`                    |
-| LFM2-VL    | `bbox`    | [0, 1] | xyxy   | defaults                                |
+| LFM2-VL 450m/1.6b | `bbox` | [0, 1] | xyxy | defaults                              |
+| LFM2.5-VL-3B | `bbox`/`bbox_2d` | 0-1000 | xyxy | per-size divisor; the 3B keeps its trained 0-1000 scale no matter what the prompt asks, and drifts between the two key names |
 | SmolVLM2   | `bbox`    | [0, 1] | xyxy   | defaults                                |
 | InternVL3  | `bbox`    | 0-1000 | xyxy   | `COORD_DIVISOR=1000` + flatten override |
 | LocateAnything | `bbox` | 0-1000 | xyxy   | remote-code adapter, boxes + points     |
+| North Micro Vision | bare `[[x1,y1,x2,y2], ...]` | 0-1000 | xyxy | per-class grounding queries; labels assigned by the adapter |
 
 Three knobs cover the output variation without touching the parser:
 
@@ -184,9 +187,14 @@ InternVL3 wraps each object's boxes in an extra list, so its family overrides
 `_postprocess` to flatten before the shared builder runs; a grounding-token
 model whose boxes come from a processor `post_process_generation` call overrides
 `_preprocess`/`_forward`/`_postprocess` (Florence-2 and Kosmos-2 do exactly this).
-The tier ships seven distinct families (Qwen3-VL, LFM2-VL, SmolVLM2, InternVL3,
-Florence-2, Kosmos-2, LocateAnything) spanning all three integration styles,
-confirming it is
+North Micro Vision is a fourth style: a chat model that refuses labeled-JSON
+output but grounds single-class queries extremely well, so its family runs one
+"Locate every <label> ..." generation per vocabulary entry and assigns the
+labels itself (which also means `predict()` cost scales with the vocabulary
+size, and a query for an absent but plausible label can hallucinate a box).
+The tier ships eight distinct families (Qwen3-VL, LFM2-VL, SmolVLM2, InternVL3,
+Florence-2, Kosmos-2, LocateAnything, North Micro Vision) spanning all these
+integration styles, confirming it is
 genuinely model-agnostic. Detection *quality* varies a lot by model and size
 (Qwen3-VL, LFM2-VL, and Florence-2 are the strong ones); the framework is what is
 general, not every model's accuracy.

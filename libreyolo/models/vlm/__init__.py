@@ -25,6 +25,7 @@ from .internvl3 import LibreInternVL3
 from .kosmos2 import LibreKosmos2
 from .lfm2 import LibreLFM2VL
 from .locateanything import LibreLocateAnything
+from .northmicro import LibreNorthMicroVision
 from .qwen3vl import LibreQwen3VL
 from .smolvlm import LibreSmolVLM2
 
@@ -37,6 +38,10 @@ _ALIASES: Dict[str, Tuple[Type[LibreVLMModel], str]] = {
     "lfm2-vl": (LibreLFM2VL, "450m"),
     "lfm2-vl-450m": (LibreLFM2VL, "450m"),
     "lfm2-vl-1.6b": (LibreLFM2VL, "1.6b"),
+    "lfm2-vl-3b": (LibreLFM2VL, "3b"),
+    "north-micro-vision": (LibreNorthMicroVision, "2.4b"),
+    "north-micro-vision-2.4b": (LibreNorthMicroVision, "2.4b"),
+    "northmicrovision": (LibreNorthMicroVision, "2.4b"),
     "internvl3": (LibreInternVL3, "2b"),
     "internvl3-1b": (LibreInternVL3, "1b"),
     "internvl3-2b": (LibreInternVL3, "2b"),
@@ -128,6 +133,7 @@ __all__ = [
     "LibreFlorence2",
     "LibreKosmos2",
     "LibreLocateAnything",
+    "LibreNorthMicroVision",
     "LibreSenseNovaVision",
     "LibreMODUS",
     "LibreModus",

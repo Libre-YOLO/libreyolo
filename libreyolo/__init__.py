@@ -194,6 +194,7 @@ def __getattr__(name):
         "LibreFlorence2": (".models.vlm", "LibreFlorence2"),
         "LibreKosmos2": (".models.vlm", "LibreKosmos2"),
         "LibreLocateAnything": (".models.vlm", "LibreLocateAnything"),
+        "LibreNorthMicroVision": (".models.vlm", "LibreNorthMicroVision"),
         "LibreSenseNovaVision": (".models.sensenova", "LibreSenseNovaVision"),
         "LibreMODUS": (".models.modus", "LibreMODUS"),
         "LibreModus": (".models.modus", "LibreModus"),
@@ -322,6 +323,7 @@ __all__ = [
     "LibreFlorence2",
     "LibreKosmos2",
     "LibreLocateAnything",
+    "LibreNorthMicroVision",
     "LibreMODUS",
     "LibreModus",
     # Promptable-segmentation tier (optional, requires libreyolo[sam])

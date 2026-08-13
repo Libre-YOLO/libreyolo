@@ -114,6 +114,7 @@ MODEL_GROUPS: dict[str, str] = {
     "internvl3": "s",
     "lfm2vl": "s",
     "locateanything": "s",
+    "northmicrovision": "s",
     "qwen3vl": "s",
     "smolvlm2": "s",
     "clip": "s",
