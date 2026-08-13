@@ -16,6 +16,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from ...training.config import TrainConfig
+from ...training.optim import build_optimizer
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.trainer import BaseTrainer
 from ..base.classify_validation_loss import ClassifyValidationLossMixin
@@ -107,8 +108,8 @@ class VJEPA2Trainer(ClassifyValidationLossMixin, BaseTrainer):
             len(trainable),
             ", ".join(trainable[:3]),
         )
-        return torch.optim.AdamW(
-            params, lr=self.config.lr0, weight_decay=self.config.weight_decay
+        return build_optimizer(
+            torch.optim.AdamW, params, lr=self.config.lr0, weight_decay=self.config.weight_decay
         )
 
     def _setup_data(self):

@@ -52,6 +52,7 @@ from .distributed import (
     wants_distributed,
 )
 from .ema import ModelEMA
+from .optim import build_optimizer, restore_optimizer_state
 from .freezing import FreezeGroup, apply_freeze, default_freeze_groups
 from ..data.dataset import YOLODataset, COCODataset, create_dataloader
 from ..data import (
@@ -566,16 +567,17 @@ class BaseTrainer(ABC):
             )
 
         if opt_name == "sgd":
-            optimizer = torch.optim.SGD(
+            optimizer = build_optimizer(
+                torch.optim.SGD,
                 param_groups,
                 lr=lr,
                 momentum=self.config.momentum,
                 nesterov=self.config.nesterov,
             )
         elif opt_name == "adam":
-            optimizer = torch.optim.Adam(param_groups, lr=lr)
+            optimizer = build_optimizer(torch.optim.Adam, param_groups, lr=lr)
         elif opt_name == "adamw":
-            optimizer = torch.optim.AdamW(param_groups, lr=lr)
+            optimizer = build_optimizer(torch.optim.AdamW, param_groups, lr=lr)
         else:
             raise ValueError(f"Unknown optimizer: {opt_name}")
 
@@ -1586,7 +1588,7 @@ class BaseTrainer(ABC):
         # _initialize_scheduler_lr() sets the correct LR on top.
         if getattr(self, "_resume_optimizer_state", None) is not None:
             try:
-                self.optimizer.load_state_dict(self._resume_optimizer_state)
+                restore_optimizer_state(self.optimizer, self._resume_optimizer_state)
                 logger.info("Optimizer state restored from resume checkpoint")
             except Exception as e:
                 logger.warning(f"Could not load deferred optimizer state: {e}")
@@ -3225,7 +3227,7 @@ class BaseTrainer(ABC):
         if "optimizer" in checkpoint:
             if self.optimizer is not None:
                 try:
-                    self.optimizer.load_state_dict(checkpoint["optimizer"])
+                    restore_optimizer_state(self.optimizer, checkpoint["optimizer"])
                     logger.info("Optimizer state restored")
                 except Exception as e:
                     logger.warning(f"Could not load optimizer state: {e}")

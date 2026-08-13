@@ -136,14 +136,18 @@ class YOLO9Trainer(BaseTrainer):
             raise ValueError(f"Unknown scheduler: {scheduler_name}")
 
     def get_loss_components(self, outputs: Dict) -> Dict[str, float]:
-        def _scalar(v):
-            return v.item() if isinstance(v, torch.Tensor) else v
-
-        return {
-            "box": _scalar(outputs.get("box", 0)),
-            "cls": _scalar(outputs.get("cls", 0)),
-            "dfl": _scalar(outputs.get("dfl", 0)),
-        }
+        # Transfer every logging scalar with ONE .cpu() call (the rfdetr
+        # pattern from PR #761): a per-key ``.item()`` here would be one GPU
+        # pipeline drain each per logged step (issue #763).
+        values = {name: outputs.get(name, 0) for name in ("box", "cls", "dfl")}
+        tensor_names = [n for n, v in values.items() if isinstance(v, torch.Tensor)]
+        if tensor_names:
+            stacked = torch.stack(
+                [values[n].detach().reshape(()).float() for n in tensor_names]
+            ).cpu()
+            for i, name in enumerate(tensor_names):
+                values[name] = stacked[i]
+        return {name: float(v) for name, v in values.items()}
 
     def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
         return self.model(imgs, targets=targets)

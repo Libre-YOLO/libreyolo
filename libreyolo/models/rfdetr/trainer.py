@@ -25,6 +25,7 @@ from ...data import (
 from ...training.config import TrainConfig
 from ...training.distributed import is_main_process, unwrap_model
 from ...training.freezing import FreezeGroup
+from ...training.optim import build_optimizer
 from ...training.scheduler import BaseScheduler, CosineAnnealingScheduler, FlatCosineScheduler
 from ...training.trainer import BaseTrainer
 from .config import RFDETRConfig
@@ -691,20 +692,14 @@ class RFDETRTrainer(BaseTrainer):
 
     @staticmethod
     def _adamw(groups, **kwargs) -> torch.optim.Optimizer:
-        """AdamW, preferring the fused CUDA implementation.
+        """AdamW via the shared fused-on-CUDA construction helper.
 
-        The fused step is one multi-tensor kernel per dtype instead of the
-        foreach implementation's per-op launches, and under a GradScaler it
-        also consumes the scale/found_inf tensors directly, skipping the
-        per-group unscale pass and its device sync. Measured on rfdetr-s
-        512px b8 fp16: optimizer phase 62 -> 24 ms (1.16x on the whole
-        step). Falls back to the default implementation where fused is
-        unsupported (CPU params, exotic dtypes, older builds).
+        The previous inline try/except requested ``fused=True`` uncondition-
+        ally, which recent torch silently accepts for CPU (and MPS) params
+        too — the device gate in ``build_optimizer`` restores stock behavior
+        off-CUDA. See ``libreyolo.training.optim`` for the full rationale.
         """
-        try:
-            return torch.optim.AdamW(groups, **kwargs, fused=True)
-        except (RuntimeError, ValueError, TypeError):
-            return torch.optim.AdamW(groups, **kwargs)
+        return build_optimizer(torch.optim.AdamW, groups, **kwargs)
 
     def _setup_optimizer(self) -> torch.optim.Optimizer:
         if getattr(getattr(self, "wrapper_model", None), "task", "detect") in (

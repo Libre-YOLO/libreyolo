@@ -20,6 +20,7 @@ import torch
 
 from ...training.config import PPLiteSegConfig, TrainConfig
 from ...training.distributed import is_main_process, unwrap_model
+from ...training.optim import build_optimizer
 from ...training.scheduler import PolyLRScheduler
 from ...training.trainer import BaseTrainer
 from ..base.semantic_cuda_graph import SemanticLogitsCudaGraphMixin
@@ -88,7 +89,8 @@ class PPLiteSegTrainer(SemanticLogitsCudaGraphMixin, SemanticValidationLossMixin
             }
             for (lr_mult, group_wd), params in buckets.items()
         ]
-        optimizer = torch.optim.SGD(
+        optimizer = build_optimizer(
+            torch.optim.SGD,
             param_groups,
             lr=base_lr,
             momentum=float(getattr(self.config, "momentum", 0.9)),

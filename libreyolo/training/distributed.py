@@ -234,6 +234,29 @@ def all_reduce_avg_scalar(
     This is a COLLECTIVE under DDP: every rank must reach it or the callers
     deadlock. Only call it from code that runs symmetrically on all ranks
     (the training loss); never from rank-0-only paths like validation.
+
+    The trailing ``.item()`` is a full pipeline drain every step. Hot loss
+    paths that only need a divisor should call
+    ``all_reduce_avg_scalar_tensor`` and keep the value on device
+    (issue #763); this float form stays for callers that genuinely need a
+    Python number.
+    """
+    return float(
+        all_reduce_avg_scalar_tensor(value, device=device, min_value=min_value).item()
+    )
+
+
+def all_reduce_avg_scalar_tensor(
+    value: Union[float, torch.Tensor],
+    *,
+    device: Optional[torch.device] = None,
+    min_value: float = 1.0,
+) -> torch.Tensor:
+    """``all_reduce_avg_scalar`` without the final device sync.
+
+    Returns the clamped global average as a 0-dim fp32 tensor on the input
+    tensor's device, so callers that use it as a loss normalizer never force
+    a GPU-to-CPU transfer. Same collective contract as the float form.
     """
     if isinstance(value, torch.Tensor):
         # .sum() materializes a fresh tensor even for 0-dim input, so the
@@ -249,9 +272,8 @@ def all_reduce_avg_scalar(
                 "GPU) so the collective can run."
             )
         dist.all_reduce(v)
-        v = v.clamp_min(min_value) / float(get_world_size())
-        return float(v.item())
-    return float(v.clamp_min(min_value).item())
+        return v.clamp_min(min_value) / float(get_world_size())
+    return v.clamp_min(min_value)
 
 
 def scale_loss_for_ddp(loss: torch.Tensor) -> torch.Tensor:
