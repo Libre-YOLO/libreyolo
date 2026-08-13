@@ -54,6 +54,7 @@ _HUB_REPO = "kernels-community/deformable-detr"
 # (tests/unit/kernels/test_ms_deform_attn.py::test_hub_matches_portable_on_cuda).
 _HUB_REVISION = "4d2393e5d7879f7cf68db04cc7c9c7342272bc05"
 _MAX_IM2COL_STEP = 64
+_SLOT_DTYPES = (torch.float32, torch.float16, torch.bfloat16)
 
 _hub_kernel = None
 _hub_failed = False
@@ -250,12 +251,15 @@ def _supported_inputs(
         and spatial_shapes.is_cuda
     ):
         return False
-    # The compiled kernel dispatches on fp32; half inputs (e.g. autocast)
-    # take the portable path.
+    # Half inputs are eligible: the provider upcasts them to fp32 at the
+    # call boundary so autocast runs share the fp32 fused path's numerics
+    # (the compiled kernel also has native fp16/bf16 paths, but autocast
+    # hands the slot a mix — fp16 value with fp32 softmax weights — and a
+    # common fp32 dtype is both required and the more precise choice).
     if not (
-        value.dtype == torch.float32
-        and sampling_locations.dtype == torch.float32
-        and attention_weights.dtype == torch.float32
+        value.dtype in _SLOT_DTYPES
+        and sampling_locations.dtype in _SLOT_DTYPES
+        and attention_weights.dtype in _SLOT_DTYPES
     ):
         return False
     if value.dim() != 4 or sampling_locations.dim() != 6 or attention_weights.dim() != 5:
@@ -291,14 +295,18 @@ def hub_ms_deform_attn(
     step = batch if batch < _MAX_IM2COL_STEP else _MAX_IM2COL_STEP
     shapes = spatial_shapes.to(dtype=torch.int64)
     try:
-        return _MSDeformAttnFunction.apply(
-            value.contiguous(),
+        # ``float()`` is a no-op view of an fp32 tensor and an autograd-tracked
+        # cast otherwise, so half inputs (autocast) run the fp32 kernel and
+        # their gradients flow back in the input dtype.
+        output = _MSDeformAttnFunction.apply(
+            value.float().contiguous(),
             shapes,
             level_start_index(shapes),
-            sampling_locations.contiguous(),
-            attention_weights.contiguous(),
+            sampling_locations.float().contiguous(),
+            attention_weights.float().contiguous(),
             step,
         )
+        return output if value.dtype == torch.float32 else output.to(value.dtype)
     except Exception as exc:
         # A kernel that loads but rejects this torch/GPU combination must
         # never break inference: disable the provider and fall back.
