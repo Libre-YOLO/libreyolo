@@ -297,22 +297,36 @@ def test_hub_accepts_autocast_half_inputs_on_cuda(half_dtype):
     value, shapes, locations, weights = _classic_inputs()
     value_half = value.cuda().to(half_dtype).requires_grad_(True)
     shapes = shapes.cuda()
-    locations = locations.cuda()
-    weights = weights.cuda()
+    locations = locations.cuda().requires_grad_(True)
+    weights = weights.cuda().requires_grad_(True)
 
     out = hub_ms_deform_attn(value_half, shapes, locations, weights)
     if out is None:
         pytest.skip("hub kernel unavailable on this box (load failed)")
     assert out.dtype == half_dtype
 
-    ref = hub_ms_deform_attn(
-        value_half.detach().float(), shapes, locations, weights
-    )
+    # Reference: the same quantized inputs through the pure-fp32 path, on
+    # fresh leaves so both paths' gradients can be compared.
+    ref_value = value_half.detach().float().requires_grad_(True)
+    ref_locations = locations.detach().clone().requires_grad_(True)
+    ref_weights = weights.detach().clone().requires_grad_(True)
+    ref = hub_ms_deform_attn(ref_value, shapes, ref_locations, ref_weights)
     torch.testing.assert_close(out, ref.to(half_dtype), rtol=0, atol=0)
 
+    # Backward parity through the cast boundary: the fp32 kernel sees
+    # identical inputs and an identical (exactly representable) grad seed,
+    # so the fp32 grads must match bitwise; the value grad additionally
+    # crosses the .float() cast node, which casts it back to the input
+    # dtype.
     out.sum().backward()
+    ref.sum().backward()
     assert value_half.grad is not None
     assert value_half.grad.dtype == half_dtype
+    torch.testing.assert_close(
+        value_half.grad, ref_value.grad.to(half_dtype), rtol=0, atol=0
+    )
+    torch.testing.assert_close(locations.grad, ref_locations.grad, rtol=0, atol=0)
+    torch.testing.assert_close(weights.grad, ref_weights.grad, rtol=0, atol=0)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
