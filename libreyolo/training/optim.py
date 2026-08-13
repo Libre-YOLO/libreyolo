@@ -13,10 +13,15 @@ ParamsLike = Iterable[Union[torch.Tensor, Dict[str, Any]]]
 
 def _materialized_groups(params: ParamsLike) -> List[Union[torch.Tensor, Dict[str, Any]]]:
     """Materialize params (and each group's params) so they can be inspected
-    for the device gate and still be consumed by the optimizer afterwards."""
+    for the device gate and still be consumed by the optimizer afterwards.
+
+    A group's ``params`` may legally be one bare tensor (torch wraps it in a
+    list); it must NOT be ``list()``-ed, which would iterate its rows into
+    non-leaf views (rfdetr builds per-parameter groups exactly this way).
+    """
     groups = list(params)
     for group in groups:
-        if isinstance(group, dict):
+        if isinstance(group, dict) and not isinstance(group["params"], torch.Tensor):
             group["params"] = list(group["params"])
     return groups
 
@@ -25,7 +30,10 @@ def _all_params_cuda(groups: List[Union[torch.Tensor, Dict[str, Any]]]) -> bool:
     tensors: List[torch.Tensor] = []
     for group in groups:
         if isinstance(group, dict):
-            tensors.extend(p for p in group["params"] if isinstance(p, torch.Tensor))
+            group_params = group["params"]
+            if isinstance(group_params, torch.Tensor):
+                group_params = [group_params]
+            tensors.extend(p for p in group_params if isinstance(p, torch.Tensor))
         elif isinstance(group, torch.Tensor):
             tensors.append(group)
     return bool(tensors) and all(p.is_cuda for p in tensors)

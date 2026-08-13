@@ -169,6 +169,28 @@ def test_build_optimizer_materializes_generators_and_group_dicts():
     assert [len(g["params"]) for g in opt.param_groups] == [2, 2]
 
 
+def test_build_optimizer_accepts_bare_tensor_group_params():
+    # rfdetr builds per-parameter groups as {"params": tensor} with a BARE
+    # tensor; list()-ing it would iterate rows into non-leaf views and torch
+    # would raise "can't optimize a non-leaf Tensor" (found by the #765
+    # all-family smoke).
+    p1, p2 = _cpu_params()
+    opt = build_optimizer(
+        torch.optim.AdamW,
+        [{"params": p1, "lr": 1e-3}, {"params": p2, "lr": 2e-3}],
+        lr=1e-3,
+    )
+    assert [g["params"] for g in opt.param_groups] == [[p1], [p2]]
+    assert opt.param_groups[0]["params"][0] is p1
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_build_optimizer_bare_tensor_groups_fuse_on_cuda():
+    p = torch.nn.Parameter(torch.randn(3, 3, device="cuda"))
+    opt = build_optimizer(torch.optim.AdamW, [{"params": p, "lr": 1e-3}], lr=1e-3)
+    assert all(group.get("fused") for group in opt.param_groups)
+
+
 def test_build_optimizer_falls_back_when_fused_unsupported(monkeypatch):
     calls = []
 
