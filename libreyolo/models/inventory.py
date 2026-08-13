@@ -32,6 +32,12 @@ OPTIONAL_MODELS = (
         "vlm",
         "transformers",
     ),
+    (
+        "libreyolo.models.vlm.northmicro",
+        "LibreNorthMicroVision",
+        "vlm",
+        "transformers",
+    ),
     ("libreyolo.models.vlm.qwen3vl", "LibreQwen3VL", "vlm", "transformers"),
     ("libreyolo.models.vlm.smolvlm", "LibreSmolVLM2", "vlm", "transformers"),
     (

@@ -864,11 +864,13 @@
     "default_task": "detect",
     "sizes": {
       "450m": 512,
-      "1.6b": 512
+      "1.6b": 512,
+      "3b": 512
     },
     "default_imgsz": {
       "450m": 512,
-      "1.6b": 512
+      "1.6b": 512,
+      "3b": 512
     },
     "task_sizes": {},
     "export_override": "blocked",
@@ -1072,6 +1074,24 @@
     "optional_extra": null,
     "available": true,
     "group": "g2"
+  },
+  "northmicrovision": {
+    "class": "libreyolo.models.vlm.northmicro.LibreNorthMicroVision",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "2.4b": 1024
+    },
+    "default_imgsz": {
+      "2.4b": 1024
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true,
+    "group": null
   },
   "omdet_turbo": {
     "class": "libreyolo.models.openvocab.omdet_turbo.LibreOMDetTurbo",

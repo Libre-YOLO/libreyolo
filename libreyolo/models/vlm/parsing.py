@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Tuple
 
 __all__ = [
     "extract_detections",
+    "extract_bare_boxes",
     "normalize_bbox",
     "to_xyxy",
     "resolve_label",
@@ -136,6 +137,25 @@ def extract_detections(text: str) -> List[dict]:
     if fallback is not None:
         return fallback
     return recovered
+
+
+_BARE_QUAD = re.compile(
+    r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,"
+    r"\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]"
+)
+
+
+def extract_bare_boxes(text: str) -> List[List[float]]:
+    """Extract unlabeled ``[x1, y1, x2, y2]`` quads from model text.
+
+    For grounding-style models (North Micro Vision) that answer a single-class
+    query with ``[[x1, y1, x2, y2], ...]``, a flat ``[x1, y1, x2, y2]``, or
+    newline-separated quads, never with labeled objects. A prose refusal ("No
+    dogs are present ...") contains no numeric quad and maps to zero boxes.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return []
+    return [[float(v) for v in match] for match in _BARE_QUAD.findall(text)]
 
 
 def normalize_bbox(bbox) -> Optional[Tuple[float, float, float, float]]:
@@ -263,6 +283,15 @@ def build_detection_dict(
         if allowed_classes is not None and class_id not in allowed_classes:
             continue
         raw = item.get(bbox_key)
+        if raw is None:
+            # Generative models drift between key conventions even within one
+            # family (LFM2.5-VL-3B emits "bbox" on synthetic scenes but
+            # Qwen-style "bbox_2d" on natural photos), so fall back to the
+            # known aliases. The family's coord_divisor still applies.
+            for alt in ("bbox", "bbox_2d"):
+                if alt != bbox_key and alt in item:
+                    raw = item[alt]
+                    break
         box = None
         if isinstance(raw, (list, tuple)) and len(raw) == 4:
             try:

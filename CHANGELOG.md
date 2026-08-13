@@ -9,6 +9,26 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **North Micro Vision VLM detector.** New `northmicrovision` LibreVLM family
+  (issue #758): `LibreVLM("north-micro-vision")` loads Cohere Labs'
+  North-Micro-Vision-Instruct (2.4B, Apache-2.0, native-resolution) as an
+  open-vocabulary detector. The model answers single-class grounding queries
+  with unlabeled `[[x1, y1, x2, y2], ...]` boxes on a 0-1000 scale and does not
+  follow the tier's labeled-JSON ask, so the family runs one "Locate every
+  <label> ..." generation per vocabulary entry and assigns labels itself
+  (`predict()` cost scales with the vocabulary size; an absent but plausible
+  label can hallucinate a box). Requires transformers >= 5.16.0 (native
+  `CohereCompass` architecture, no remote code); the family fails fast with an
+  install hint on older versions instead of downloading ~5 GB first. `chat()`
+  is supported.
+- **LFM2.5-VL-3B.** The `lfm2-vl` family gains the largest LFM2.5-VL size:
+  `LibreVLM("lfm2-vl-3b")` (LFM Open License v1.0, same one-time notice as the
+  smaller sizes). Unlike the 450M/1.6B, the 3B emits boxes on a 0-1000 scale
+  regardless of the prompt's stated convention, and drifts between `bbox` and
+  Qwen-style `bbox_2d` keys, both verified on known boxes; the family now
+  carries a per-size coordinate divisor and the shared parser falls back
+  across the known box-key aliases.
+
 - **TinyFormer detection.** New trainable `tinyformer` family:
   `LibreYOLO("LibreTinyFormers.pt")` loads the DEIMv2-derived YOLO-DETR hybrid
   from "TinyFormer: Preserving Tiny Objects in YOLO-DETR Hybrid Real-time
