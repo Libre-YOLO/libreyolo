@@ -488,12 +488,15 @@ class COCOEvaluator:
     ) -> Optional[Dict[int, Tuple[np.ndarray, np.ndarray, int]]]:
         """Replay COCO's greedy assignment on the retained IoU matrices.
 
-        Faithful port of the ``evaluateImg`` matching loop at a single IoU
-        threshold and the "all" area range: detections are visited in score
-        order, each takes the best still-free ground truth above ``iou_thr``
+        Original reimplementation (no upstream code copied) of the greedy
+        matching rule COCO evaluation defines, at a single IoU threshold and
+        the "all" area range: detections are visited in score order, each
+        takes the best still-free ground truth above ``iou_thr``
         (crowd/ignored ground truths only when no normal one qualifies) and
         a detection matched to an ignored ground truth is dropped from the
-        sweep (neither TP nor FP).
+        sweep (neither TP nor FP). Behavioral equivalence with the reference
+        evaluator is pinned by the cross-backend parity tests in
+        tests/unit/test_best_conf_threshold.py.
         """
         from collections import defaultdict
 
