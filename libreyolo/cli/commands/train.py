@@ -281,6 +281,12 @@ def train_cmd(
     cache: str = typer.Option(
         "false", help="Cache images to speed dataloading: ram, disk, true, false"
     ),
+    min_samples: int = typer.Option(
+        0,
+        help="Epoch-length floor for tiny datasets: when the dataset has "
+        "fewer images, draw this many samples per epoch with replacement "
+        "(0 = off)",
+    ),
     seed: int = typer.Option(0, help="Random seed"),
     resume: str = typer.Option("", help="Resume training: true, or path to checkpoint"),
     amp: bool = typer.Option(True, help="Automatic Mixed Precision"),
@@ -549,6 +555,7 @@ def train_cmd(
         "device": device,
         "workers": workers,
         "cache": cache_val,
+        "min_samples": min_samples,
         "seed": seed,
         "resume": resume_val,
         "amp": amp,

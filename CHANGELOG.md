@@ -9,6 +9,21 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **`min_samples` epoch-length floor for tiny datasets.** New opt-in training
+  knob (`model.train(..., min_samples=640)` /
+  `libreyolo train --min-samples 640`, issue #768): when the training dataset
+  has fewer images than `min_samples`, each epoch draws `min_samples` samples
+  with replacement instead of one short pass over the dataset, so per-epoch
+  overhead (dataloader spin-up, validation, checkpointing) stops dominating
+  wall-clock time on ~100-image datasets. Under DDP the draw is sharded across
+  ranks (rounded up to a multiple of the world size) and reshuffled each epoch;
+  dataloader workers are clamped to the dataset length while the floor is
+  active. Default `min_samples=0` keeps training byte-identical to before.
+  Honored by the families that build their train loader through the shared
+  detection dataloader; families with hand-built loaders (DEIM/DEIMv2/D-FINE
+  lineage, RF-DETR, FOMO, EC pose, YOLO-NAS pose, V-JEPA 2) and the
+  classify/semantic/depth/restore task loaders ignore it for now.
+
 - **North Micro Vision VLM detector.** New `northmicrovision` LibreVLM family
   (issue #758): `LibreVLM("north-micro-vision")` loads Cohere Labs'
   North-Micro-Vision-Instruct (2.4B, Apache-2.0, native-resolution) as an

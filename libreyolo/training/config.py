@@ -208,6 +208,17 @@ class TrainConfig:
     # flag also enables caching in the per-epoch validation loop. 'disk' is
     # the safest choice with dataloader workers; default is off.
     cache: Union[bool, str] = False
+    # Opt-in epoch-length floor for tiny datasets. When min_samples > 0 and
+    # the training dataset has fewer images, each epoch draws min_samples
+    # samples with replacement instead of one short pass over the dataset, so
+    # per-epoch overhead (dataloader spin-up, validation, checkpointing) stops
+    # dominating wall-clock time on ~100-image datasets. Under DDP the draw is
+    # sharded across ranks (rounded up to a multiple of world_size) and
+    # reshuffled per epoch via set_epoch. Dataloader workers are clamped to
+    # the dataset length while the floor is active. 0 (the default) is off:
+    # behavior is identical to before the knob existed. Only families that
+    # build their train loader through the shared create_dataloader honor it.
+    min_samples: int = 0
     patience: int = 50
     resume: bool = False
     log_interval: int = 10
@@ -241,6 +252,9 @@ class TrainConfig:
             self.eval_max_det = int(self.eval_max_det)
             if self.eval_max_det < 1:
                 raise ValueError(f"eval_max_det must be >= 1, got {self.eval_max_det}")
+        self.min_samples = int(self.min_samples)
+        if self.min_samples < 0:
+            raise ValueError(f"min_samples must be >= 0, got {self.min_samples}")
 
     @classmethod
     def from_kwargs(cls, **kwargs):

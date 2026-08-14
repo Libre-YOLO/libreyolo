@@ -17,7 +17,7 @@ from typing import List, Tuple
 import cv2
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, RandomSampler, Sampler
 from PIL import Image, UnidentifiedImageError
 from tqdm import tqdm
 
@@ -995,6 +995,56 @@ def _pad_stack_mask_tensors(masks_list):
     return out
 
 
+class DistributedWithReplacementSampler(Sampler):
+    """With-replacement, DDP-aware sampler for the ``min_samples`` epoch floor.
+
+    Mirrors ``DistributedSampler`` semantics: every rank makes the same
+    per-epoch draw of ``total_size`` indices with replacement, seeded with
+    ``seed + epoch`` (call ``set_epoch`` each epoch, exactly like
+    ``DistributedSampler``, so draws differ per epoch while staying
+    deterministic for resume), then keeps its ``rank::num_replicas`` slice.
+    ``num_samples`` is rounded up to ``ceil(num_samples / num_replicas)`` per
+    rank so every rank yields the same count and no rank runs out of batches
+    before the others.
+    """
+
+    def __init__(
+        self,
+        dataset,
+        num_samples: int,
+        num_replicas: int,
+        rank: int,
+        seed: int = 0,
+    ):
+        if num_samples <= 0:
+            raise ValueError(f"num_samples must be positive, got {num_samples}")
+        if not 0 <= rank < num_replicas:
+            raise ValueError(
+                f"rank must be in [0, {num_replicas - 1}], got {rank}"
+            )
+        self.dataset = dataset
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.seed = seed
+        self.num_samples = math.ceil(num_samples / num_replicas)
+        self.total_size = self.num_samples * num_replicas
+        self.epoch = 0
+
+    def __iter__(self):
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.epoch)
+        indices = torch.randint(
+            len(self.dataset), (self.total_size,), generator=g
+        ).tolist()
+        return iter(indices[self.rank : self.total_size : self.num_replicas])
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+
 def create_dataloader(
     dataset,
     batch_size: int = 16,
@@ -1002,6 +1052,7 @@ def create_dataloader(
     shuffle: bool = True,
     pin_memory: bool = True,
     sampler=None,
+    min_samples: int = 0,
 ):
     """
     Create a DataLoader for YOLOX training.
@@ -1016,7 +1067,43 @@ def create_dataloader(
         sampler: Optional sampler (e.g. ``DistributedSampler`` for DDP). When
             provided, the sampler's own shuffling takes over and ``shuffle``
             is forced to False to satisfy PyTorch's mutual-exclusion check.
+        min_samples: Opt-in epoch-length floor for tiny datasets. When > 0
+            and ``len(dataset) < min_samples``, each epoch draws
+            ``min_samples`` samples with replacement instead of one short
+            pass over the dataset: a with-replacement ``RandomSampler``
+            replaces shuffling, a ``DistributedSampler`` passed via
+            ``sampler`` is swapped for its with-replacement equivalent (any
+            other custom sampler is respected as-is), and ``num_workers`` is
+            clamped to ``len(dataset)``. 0 (the default) leaves the loader
+            exactly as before the knob existed.
     """
+    if min_samples > 0 and 0 < len(dataset) < min_samples:
+        num_workers = min(num_workers, len(dataset))
+        if sampler is None:
+            # Draws from the global torch RNG, the same source the default
+            # ``shuffle=True`` RandomSampler uses, so sampling stays
+            # reproducible under torch.manual_seed and differs epoch to
+            # epoch.
+            sampler = RandomSampler(
+                dataset, replacement=True, num_samples=min_samples
+            )
+        else:
+            from torch.utils.data.distributed import DistributedSampler
+
+            if isinstance(sampler, DistributedSampler):
+                sampler = DistributedWithReplacementSampler(
+                    dataset,
+                    num_samples=min_samples,
+                    num_replicas=sampler.num_replicas,
+                    rank=sampler.rank,
+                    seed=sampler.seed,
+                )
+        if is_main_process():
+            logger.info(
+                f"min_samples={min_samples} epoch floor active: dataset has "
+                f"{len(dataset)} images; drawing {len(sampler)} samples per "
+                f"epoch per rank with replacement"
+            )
     try:
         visible_samples = len(sampler) if sampler is not None else len(dataset)
     except TypeError:
