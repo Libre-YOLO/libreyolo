@@ -273,6 +273,10 @@ dvclive = [
 dvc = [
     "libreyolo[dvclive]",
 ]
+hf = [
+    # Hugging Face Hub loading (LibreYOLO("owner/repo")) and push_to_hub.
+    "huggingface_hub>=0.34.0",
+]
 all = [
     "libreyolo[stream]",
     "libreyolo[onnx]",
@@ -306,6 +310,7 @@ all = [
     "libreyolo[comet]",
     "libreyolo[clearml]",
     "libreyolo[dvclive]",
+    "libreyolo[hf]",
     # Keep Neptune separate: stable neptune-scale requires protobuf<7 while
     # the TFLite/onnx2tf extra included above requires protobuf 7.
 ]

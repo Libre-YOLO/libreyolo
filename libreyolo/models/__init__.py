@@ -312,7 +312,10 @@ def LibreYOLO(
     Args:
         model_path: Path to weights (.pt), ONNX (.onnx), ExecuTorch (.pte),
                     MNN (.mnn), TensorRT (.engine), OpenVINO/Paddle/ncnn
-                    directory, or a Triton HTTP(S) model URL.
+                    directory, a Triton HTTP(S) model URL, or a Hugging Face
+                    Hub reference: "owner/repo" or
+                    "hf://owner/repo[@revision][/file.pt]" (requires the
+                    optional huggingface_hub package).
         size: Model size variant (auto-detected from weights if omitted).
         reg_max: Regression max for DFL (YOLOv9 only, default: 16).
         nb_classes: Number of classes (auto-detected if omitted).
@@ -336,6 +339,17 @@ def LibreYOLO(
         from ..backends.triton import TritonBackend
 
         return TritonBackend(model_path, device=device, task=task)
+
+    # Hugging Face Hub references ("owner/repo" or "hf://owner/repo") resolve
+    # to a checkpoint in the shared huggingface_hub cache, then flow through
+    # the exact same safe-load + metadata-validation path as a local file.
+    from ..utils.hf_hub import maybe_resolve_hub_reference
+
+    hub_source = None
+    hub_checkpoint = maybe_resolve_hub_reference(model_path)
+    if hub_checkpoint is not None:
+        hub_source = model_path
+        model_path = hub_checkpoint
 
     model_path = _resolve_weights_path(model_path)
 
@@ -479,10 +493,22 @@ def LibreYOLO(
                 except ModuleNotFoundError:
                     pass
             if size is None:
+                from ..utils.hf_hub import looks_like_repo_id
+
+                hub_hint = ""
+                if looks_like_repo_id(model_path):
+                    # A same-named local file or directory shadowed the bare
+                    # owner/repo form (local always wins), so point at the
+                    # explicit Hub syntax that bypasses that precedence.
+                    hub_hint = (
+                        f"\nIf you meant a Hugging Face Hub model, use the "
+                        f"explicit form: LibreYOLO('hf://{model_path}')."
+                    )
                 raise ValueError(
                     f"Model weights file not found: {model_path}\n"
                     f"Cannot auto-download: unable to determine size from filename.\n"
-                    f"Please specify size explicitly or provide a valid weights file path."
+                    f"Please specify size explicitly or provide a valid weights "
+                    f"file path.{hub_hint}"
                 )
 
         try:
@@ -569,6 +595,22 @@ def LibreYOLO(
                 model_path,
                 "; ".join(metadata_errors),
                 _METADATA_CONVERSION_HELP,
+            )
+        elif hub_source is not None:
+            # Guessing a family from raw tensor keys is a coin flip for a file
+            # pulled off the open Hub: an unrelated model can satisfy some
+            # family's can_load() and then fail with a nonsense error about
+            # that family. Metadata is the contract for Hub loads, so refuse
+            # here and name the repo instead.
+            raise ValueError(
+                f"'{hub_source}' does not contain a LibreYOLO checkpoint.\n"
+                f"Hugging Face models are loaded by their LibreYOLO metadata "
+                f"(schema v1.0), and this file has none, so its architecture "
+                f"cannot be identified.\n"
+                f"If it is an upstream checkpoint LibreYOLO can convert, "
+                f"download it and load it from a local path, which enables "
+                f"the legacy architecture-detection path.\n"
+                f"{_METADATA_CONVERSION_HELP}"
             )
         else:
             logger.warning(
