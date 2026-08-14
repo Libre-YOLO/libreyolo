@@ -47,7 +47,7 @@ from typing import Optional
 
 import torch
 
-from .. import register, resolve
+from .. import clear_cache, iter_impls, register, resolve
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +177,7 @@ def _load_hub_kernel():
             logger.warning("Hub kernel %s unavailable: %s", _HUB_REPO, exc2)
     if _hub_kernel is None:
         _hub_failed = True
+        clear_cache()
     return _hub_kernel
 
 
@@ -315,6 +316,7 @@ def hub_ms_deform_attn(
         # A kernel that loads but rejects this torch/GPU combination must
         # never break inference: disable the provider and fall back.
         _hub_failed = True
+        clear_cache()
         logger.warning("Hub kernel %s failed, falling back: %s", _HUB_REPO, exc)
         return None
 
@@ -384,10 +386,15 @@ def maybe_ms_deform_attn(
     """
     if not ms_deform_attn_available():
         return None
-    impl = resolve("ms_deform_attn")
-    if impl is None:
-        return None
-    return impl(value, spatial_shapes, sampling_locations, attention_weights)
+    # Walk eligible providers. Hub is preferred but may return None for an
+    # input or disable itself after a launch failure; Triton must still run.
+    for _name, impl in iter_impls("ms_deform_attn"):
+        output = impl(
+            value, spatial_shapes, sampling_locations, attention_weights
+        )
+        if output is not None:
+            return output
+    return None
 
 
 def maybe_ms_deform_attn_v2(

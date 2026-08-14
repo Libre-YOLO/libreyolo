@@ -44,7 +44,7 @@ import importlib
 import importlib.util
 import logging
 import os
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 from ..quant import fake_quant as _reference
 
@@ -86,6 +86,39 @@ def unregister(op: str, name: str):
 
 def clear_cache():
     _RESOLVED.clear()
+
+
+def _entry_allowed(entry: dict, forced: str) -> bool:
+    if forced in ("off", "reference") and entry["name"] != "reference":
+        return False
+    if forced and forced not in ("off", "reference") and entry["name"] not in (
+        forced,
+        "reference",
+    ):
+        return False
+    predicate = entry["predicate"]
+    try:
+        return predicate is None or predicate()
+    except Exception as exc:  # a broken predicate must never break inference
+        logger.warning(
+            "Kernel predicate failed for %s: %s", entry["name"], exc
+        )
+        return False
+
+
+def iter_impls(op: str) -> Iterator[Tuple[str, Callable]]:
+    """Yield eligible ``(name, impl)`` pairs newest-first.
+
+    Unlike :func:`resolve`, this does not cache and does not stop at the
+    first eligible provider. Slots that can return None for a given input
+    (attention, GEMM) walk the rest so a rejected newer impl does not hide
+    an older one.
+    """
+    _ensure_intree_loaded()
+    forced = _forced()
+    for entry in _REGISTRY.get(op, ()):
+        if _entry_allowed(entry, forced):
+            yield entry["name"], entry["impl"]
 
 
 def _forced() -> str:
@@ -140,23 +173,9 @@ def resolve(op: str) -> Optional[Callable]:
         return _RESOLVED[cache_key]
 
     impl = None
-    for entry in _REGISTRY.get(op, ()):
-        if forced in ("off", "reference") and entry["name"] != "reference":
-            continue
-        if forced and forced not in ("off", "reference") and entry["name"] not in (
-            forced,
-            "reference",
-        ):
-            continue
-        predicate = entry["predicate"]
-        try:
-            if predicate is None or predicate():
-                impl = entry["impl"]
-                break
-        except Exception as exc:  # a broken predicate must never break inference
-            logger.warning(
-                "Kernel predicate failed for %s/%s: %s", op, entry["name"], exc
-            )
+    for _name, candidate in iter_impls(op):
+        impl = candidate
+        break
     _RESOLVED[cache_key] = impl
     return impl
 
