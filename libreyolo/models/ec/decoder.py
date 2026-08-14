@@ -40,6 +40,33 @@ from .utils import (
 )
 
 
+def _cached_weighting_function(module, reg_max, up, reg_scale):
+    """Memoised ``weighting_function`` for frozen ``up`` / ``reg_scale``.
+
+    The project vector is a deterministic function of frozen parameters, but
+    recomputing it launches ~2x ``reg_max`` tiny device ops every forward.
+    ``_version`` bumps on in-place updates only (``load_state_dict``, EMA);
+    rebinding the parameter object itself would not invalidate the key, so
+    callers must mutate ``up`` / ``reg_scale`` in place.
+    """
+    if not (torch.is_tensor(up) and torch.is_tensor(reg_scale)):
+        return weighting_function(reg_max, up, reg_scale)
+    if up.requires_grad or reg_scale.requires_grad:
+        # A cached tensor would either carry a stale autograd graph or
+        # silently cut gradients; unfrozen parameters take the direct path.
+        return weighting_function(reg_max, up, reg_scale)
+    key = (up.device, up.dtype, up._version, reg_scale._version, int(reg_max))
+    cache = getattr(module, "_weighting_cache", None)
+    if cache is None:
+        cache = module._weighting_cache = {}
+    project = cache.get(key)
+    if project is None:
+        cache.clear()
+        project = weighting_function(reg_max, up, reg_scale)
+        cache[key] = project
+    return project
+
+
 class MLP(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers=3, act="relu"):
         super().__init__()
@@ -376,7 +403,7 @@ class TransformerDecoder(nn.Module):
         project = (
             self.project
             if hasattr(self, "project")
-            else weighting_function(self.reg_max, up, reg_scale)
+            else _cached_weighting_function(self, self.reg_max, up, reg_scale)
         )
 
         ref_points_detach = F.sigmoid(ref_points_unact)
@@ -805,13 +832,34 @@ class ECTransformer(nn.Module):
             anchors, valid_mask = cached
         return anchors, valid_mask
 
+    def _get_training_anchors(self, spatial_shapes, memory):
+        """Anchor cache for the training branch (and eval without a fixed size).
+
+        ``_generate_anchors`` builds the grids on the host and copies them to
+        the device, which stalls every training step even though the result is
+        a pure function of the spatial shapes. Cache per (shape, device); kept
+        separate from ``_anchor_cache`` so this path stays bitwise identical to
+        the fresh ``_generate_anchors`` call it replaces (the eval cache may
+        hold buffer-derived values instead).
+        """
+        key = (self._spatial_shape_key(spatial_shapes), memory.device)
+        cache = getattr(self, "_train_anchor_cache", None)
+        if cache is None:
+            cache = self._train_anchor_cache = OrderedDict()
+        cached = cache.get(key)
+        if cached is None:
+            cached = self._generate_anchors(spatial_shapes, device=memory.device)
+            cache[key] = cached
+        cache.move_to_end(key)
+        while len(cache) > EVAL_CONSTANT_CACHE_LIMIT:
+            cache.popitem(last=False)
+        return cached
+
     def _get_decoder_input(
         self, memory, spatial_shapes, denoising_logits=None, denoising_bbox_unact=None
     ):
         if self.training or self.eval_spatial_size is None:
-            anchors, valid_mask = self._generate_anchors(
-                spatial_shapes, device=memory.device
-            )
+            anchors, valid_mask = self._get_training_anchors(spatial_shapes, memory)
         else:
             anchors, valid_mask = self._get_anchors_for_spatial_shapes(
                 spatial_shapes, memory
@@ -1908,12 +1956,29 @@ class ECPoseTransformer(nn.Module):
         )
         self.deploy = True
 
+    def _get_training_anchors(self, spatial_shapes, memory):
+        """Training-branch anchor cache; see ``ECTransformer._get_training_anchors``."""
+        key = (self._spatial_shape_key(spatial_shapes), memory.device, memory.dtype)
+        cache = getattr(self, "_train_anchor_cache", None)
+        if cache is None:
+            cache = self._train_anchor_cache = OrderedDict()
+        cached = cache.get(key)
+        if cached is None:
+            cached = self._generate_anchors(
+                spatial_shapes, device=memory.device, dtype=memory.dtype
+            )
+            cache[key] = cached
+        cache.move_to_end(key)
+        while len(cache) > EVAL_CONSTANT_CACHE_LIMIT:
+            cache.popitem(last=False)
+        return cached
+
     def forward(self, feats, targets=None, samples=None):
         memory, spatial_shapes, split_sizes = self._get_encoder_input(feats)
 
         if self.training:
-            output_proposals, valid_mask = self._generate_anchors(
-                spatial_shapes, device=memory.device, dtype=memory.dtype
+            output_proposals, valid_mask = self._get_training_anchors(
+                spatial_shapes, memory
             )
             output_memory = memory.masked_fill(valid_mask, 0.0)
             output_proposals = output_proposals.repeat(memory.size(0), 1, 1)
@@ -2010,7 +2075,7 @@ class ECPoseTransformer(nn.Module):
         project = (
             self.project
             if hasattr(self, "project")
-            else weighting_function(self.reg_max, self.up, self.reg_scale)
+            else _cached_weighting_function(self, self.reg_max, self.up, self.reg_scale)
         )
 
         out_poses, out_logits, _, _, out_pre_poses, out_pre_scores = self.decoder(
