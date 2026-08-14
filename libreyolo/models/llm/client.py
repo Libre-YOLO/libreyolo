@@ -10,27 +10,26 @@ public API. It does not wrap provider-specific response types.
 
 from __future__ import annotations
 
-import base64
-import io
 import os
-from pathlib import Path
 from typing import Any, Optional, Union
 
-import numpy as np
-from PIL import Image, ImageOps
+# Image encoding, payload building, and SDK loading live in the transport
+# module shared with the remote LibreVLM path. Re-imported here so existing
+# ``client._load_openai`` / ``client._as_image_url`` references keep working.
+from .openai_transport import (
+    SUPPORTED_APIS as _SUPPORTED_APIS,
+    _as_image_url,
+    _is_image_object,
+    _load_openai,
+    build_user_payload,
+    client_kwargs,
+)
 
 _DEFAULT_MODEL = "gpt-5.6-luna"
-_SUPPORTED_APIS = ("responses", "chat.completions")
-_INSTALL_HINT = (
-    "LibreLLM requires the 'llm' extra. Install with:\n"
-    "    pip install 'libreyolo[llm]'"
-)
 _UNSUPPORTED = (
     "LibreLLM is inference-only. Use LibreYOLO for train, val, export, "
     "track, and benchmark."
 )
-_DATA_URI_PREFIX = "data:"
-_HTTP_PREFIXES = ("http://", "https://")
 
 # Optional ``provider/`` prefixes, for symmetry with ``LibreVLM``. The bare
 # form (``LibreLLM("gpt-5.6-luna")``) stays primary and is never deprecated.
@@ -73,77 +72,6 @@ def _is_vlm_alias(model: str) -> bool:
         return False
     key = model.strip().lower()
     return key in _ALIASES or key in _LAZY_ALIASES or key in _MODUS_ALIASES
-
-
-def _load_openai():
-    try:
-        import openai
-    except ImportError as exc:
-        raise ImportError(_INSTALL_HINT) from exc
-    return openai
-
-
-def _data_uri(jpeg_bytes: bytes) -> str:
-    encoded = base64.standard_b64encode(jpeg_bytes).decode("ascii")
-    return f"data:image/jpeg;base64,{encoded}"
-
-
-def _encode_pil(img: Image.Image) -> str:
-    transposed = ImageOps.exif_transpose(img)
-    if transposed is not None:
-        img = transposed
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=95)
-    return _data_uri(buf.getvalue())
-
-
-def _encode_path(path: str) -> str:
-    file_path = Path(path)
-    if not file_path.is_file():
-        raise FileNotFoundError(f"Image file not found: {path}")
-    with Image.open(file_path) as img:
-        return _encode_pil(img)
-
-
-def _encode_bgr_numpy(arr: np.ndarray) -> str:
-    """Encode an OpenCV-style BGR (or gray) array as a JPEG data URI."""
-    import cv2
-
-    image = np.ascontiguousarray(arr)
-    if image.ndim == 3 and image.shape[0] in (1, 3, 4) and image.shape[0] < image.shape[2]:
-        image = np.transpose(image, (1, 2, 0))
-    if image.dtype != np.uint8:
-        if np.issubdtype(image.dtype, np.floating) and float(np.max(image)) <= 1.0:
-            image = (image * 255.0).clip(0, 255).astype(np.uint8)
-        else:
-            image = image.clip(0, 255).astype(np.uint8)
-    ok, buf = cv2.imencode(".jpg", image)
-    if not ok:
-        raise ValueError("Failed to encode NumPy image as JPEG")
-    return _data_uri(buf.tobytes())
-
-
-def _is_image_object(value: Any) -> bool:
-    return isinstance(value, (Image.Image, np.ndarray, Path))
-
-
-def _as_image_url(value: Any) -> str:
-    if isinstance(value, str):
-        if value.startswith(_HTTP_PREFIXES) or value.startswith(_DATA_URI_PREFIX):
-            return value
-        return _encode_path(value)
-    if isinstance(value, Path):
-        return _encode_path(str(value))
-    if isinstance(value, Image.Image):
-        return _encode_pil(value)
-    if isinstance(value, np.ndarray):
-        return _encode_bgr_numpy(value)
-    raise TypeError(
-        "image must be a path, HTTP URL, data URI, NumPy array, or PIL image, "
-        f"got {type(value).__name__}"
-    )
 
 
 def _compose_text(prompt: Optional[str], source_text: Optional[str]) -> Optional[str]:
@@ -212,12 +140,7 @@ class LibreLLM:
         self._async = None
 
     def _client_kwargs(self) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {}
-        if self.api_key is not None:
-            kwargs["api_key"] = self.api_key
-        if self.base_url is not None:
-            kwargs["base_url"] = self.base_url
-        return kwargs
+        return client_kwargs(self.api_key, self.base_url)
 
     def _make_sync_client(self):
         return _load_openai().OpenAI(**self._client_kwargs())
@@ -280,24 +203,7 @@ class LibreLLM:
     def _build_payload(
         self, text: Optional[str], image_url: Optional[str]
     ) -> Union[str, list]:
-        if self.api == "responses":
-            if image_url is None:
-                return text
-            content: list[dict[str, Any]] = []
-            if text:
-                content.append({"type": "input_text", "text": text})
-            content.append({"type": "input_image", "image_url": image_url})
-            return [{"role": "user", "content": content}]
-
-        if image_url is None:
-            return [{"role": "user", "content": text}]
-        content = []
-        if text:
-            content.append({"type": "text", "text": text})
-        content.append(
-            {"type": "image_url", "image_url": {"url": image_url}}
-        )
-        return [{"role": "user", "content": content}]
+        return build_user_payload(self.api, text, image_url)
 
     def _request_body(self, prepared: Union[str, list], kwargs: dict[str, Any]) -> dict[str, Any]:
         body = {**self.defaults, **kwargs}
