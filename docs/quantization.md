@@ -98,7 +98,10 @@ Two histogram-based algorithms complement those. `mse` sweeps candidate
 clipping thresholds over a 2048-bin histogram of absolute activation values
 and picks the threshold minimizing the quantization reconstruction error, so
 it only clips as far as squared error actually improves; on clean
-distributions it lands next to minmax. `entropy` picks the threshold
+distributions it lands next to minmax. The sweep simulates the affine
+codebook the calibrated layer actually deploys: activations that never
+cross zero (post-ReLU layers) keep all 256 int8 codes on one side, so they
+are judged at that doubled resolution rather than a symmetric stand-in. `entropy` picks the threshold
 minimizing the KL divergence between the original and quantized activation
 distributions, which clips more aggressively because it optimizes
 information preservation rather than squared error. Both help on layers

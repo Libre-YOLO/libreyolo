@@ -195,10 +195,15 @@ class _ActObserverMixin:
         else:
             self._q_obs_lo_run = min(lo_run, x_lo)
             self._q_obs_hi_run = max(self._q_obs_hi_run, x_hi)
-        self._q_obs_hist, self._q_obs_hist_amax = accumulate_abs_histogram(
+        (
+            self._q_obs_hist,
+            self._q_obs_hist_amax,
+            self._q_obs_hist_top,
+        ) = accumulate_abs_histogram(
             getattr(self, "_q_obs_hist", None),
             getattr(self, "_q_obs_hist_amax", 0.0),
             x,
+            getattr(self, "_q_obs_hist_top", 0.0),
         )
 
     def finalize_observation(self):
@@ -207,8 +212,9 @@ class _ActObserverMixin:
             from .calibrate import entropy_amax, mse_amax
 
             hist = getattr(self, "_q_obs_hist", None)
-            if hist is None:
-                # Every calibration batch was all zeros.
+            if hist is None or getattr(self, "_q_obs_hist_amax", 0.0) == 0.0:
+                # Every calibration sample was zero: mass sits in bin 0 and
+                # no range was ever established.
                 lo, hi = 0.0, 0.0
             else:
                 select = (
@@ -220,6 +226,11 @@ class _ActObserverMixin:
                     hist,
                     self._q_obs_hist_amax,
                     getattr(self, "_q_aformat", "int8"),
+                    # One-sided (post-ReLU style) distributions deploy all
+                    # 256 int8 codes on one side of zero after the window
+                    # intersection below; the sweep must simulate that
+                    # resolution or it systematically over-clips.
+                    one_sided=self._q_obs_lo_run >= 0.0 or self._q_obs_hi_run <= 0.0,
                 )
                 # The sweep chose a symmetric clip; intersect it with the
                 # observed signed range so one-sided activations (post-ReLU)
@@ -251,6 +262,7 @@ class _ActObserverMixin:
             "_q_obs_hi_run",
             "_q_obs_hist",
             "_q_obs_hist_amax",
+            "_q_obs_hist_top",
         ):
             if hasattr(self, attr):
                 delattr(self, attr)

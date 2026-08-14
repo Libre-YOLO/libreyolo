@@ -159,7 +159,7 @@ def test_histogram_calibrators_clip_outliers():
     )
 
     x = _outlier_data()
-    hist, hist_amax = accumulate_abs_histogram(None, 0.0, x)
+    hist, hist_amax, _ = accumulate_abs_histogram(None, 0.0, x)
     assert hist_amax == 25.0
     for select in (mse_amax, entropy_amax):
         chosen = select(hist, hist_amax)
@@ -172,7 +172,7 @@ def test_mse_amax_keeps_clean_uniform_range():
 
     torch.manual_seed(0)
     u = torch.rand(100_000) * 2 - 1
-    hist, hist_amax = accumulate_abs_histogram(None, 0.0, u)
+    hist, hist_amax, _ = accumulate_abs_histogram(None, 0.0, u)
     assert mse_amax(hist, hist_amax) > 0.95 * hist_amax
 
 
@@ -184,8 +184,8 @@ def test_histogram_calibrators_deterministic():
     )
 
     x = _outlier_data()
-    h1, a1 = accumulate_abs_histogram(None, 0.0, x)
-    h2, a2 = accumulate_abs_histogram(None, 0.0, x.clone())
+    h1, a1, _ = accumulate_abs_histogram(None, 0.0, x)
+    h2, a2, _ = accumulate_abs_histogram(None, 0.0, x.clone())
     assert a1 == a2
     assert torch.equal(h1, h2)
     assert mse_amax(h1, a1) == mse_amax(h2, a2)
@@ -196,11 +196,107 @@ def test_histogram_range_growth_preserves_counts():
     from libreyolo.quant.calibrate import accumulate_abs_histogram
 
     torch.manual_seed(1)
-    hist, amax = accumulate_abs_histogram(None, 0.0, torch.randn(50_000))
+    hist, amax, top = accumulate_abs_histogram(None, 0.0, torch.randn(50_000))
     assert amax < 25.0
-    hist, amax = accumulate_abs_histogram(hist, amax, _outlier_data())
+    hist, amax, top = accumulate_abs_histogram(hist, amax, _outlier_data(), top)
     assert amax >= 25.0  # range doubled to cover the spike
     assert float(hist.sum()) == 450_000.0  # pair-merge rescale loses no counts
+
+
+def test_one_sided_mse_sweep_matches_deployed_codebook():
+    """Regression: the sweep used to simulate a symmetric 128-level codebook
+    while the deployed one-sided affine window carries all 256 int8 codes,
+    so post-ReLU distributions were judged at half the real resolution and
+    systematically over-clipped. Reviewer case: a positive gaussian bulk
+    plus one far outlier made mse pick a window whose TRUE fake-quant error
+    was 24 percent worse than plain minmax."""
+    from libreyolo.quant.calibrate import accumulate_abs_histogram, mse_amax
+
+    torch.manual_seed(0)
+    x = (torch.randn(200_000) * 0.05 + 3.0).clamp_min(0.0)
+    x[0] = 8.0
+    hist, hist_amax, _ = accumulate_abs_histogram(None, 0.0, x)
+    amax = mse_amax(hist, hist_amax, one_sided=True)
+    # The buggy sweep chose 3.97 here; the fixed one must not clip so deep
+    # that the deployed reconstruction loses to the minmax window.
+    assert amax > 4.0
+    assert _recon_mse(x, amax) <= _recon_mse(x, float(x.abs().max()))
+
+
+def test_histogram_accumulation_matches_direct_any_split():
+    """Property: the accumulated histogram equals a direct ``torch.histc``
+    of the concatenated data on the final grid, bit for bit, for any batch
+    split, including samples exactly on old and new top edges (which move
+    across a pair-merge boundary when the range doubles) and all-zero
+    batches (whose mass carries no range but still belongs in bin 0)."""
+    from libreyolo.quant.calibrate import HIST_BINS, accumulate_abs_histogram
+
+    torch.manual_seed(0)
+    parts = [
+        torch.full((1000,), 1.0),  # sits exactly on the first top edge
+        torch.zeros(5_000),  # all-zero batch: mass but no range
+        torch.tensor([2.0]),  # doubles the range; 1.0 becomes interior
+        torch.rand(30_000) * 4.0,  # bulk below the final top edge
+        torch.tensor([1.0, 2.0, 4.0]),  # doubles again; old edges revisited
+        torch.zeros(2_000),
+    ]
+    data = torch.cat(parts)
+
+    def accumulate(batches):
+        hist, amax, top = None, 0.0, 0.0
+        for b in batches:
+            hist, amax, top = accumulate_abs_histogram(hist, amax, b, top)
+        return hist, amax
+
+    results = [
+        accumulate([data]),
+        accumulate(parts),
+        accumulate(list(data.split(997))),
+    ]
+    # Every tested split starts from a max that the 4.0 global max is a
+    # power-of-two multiple of, so all splits share the same final grid.
+    ref_hist, ref_amax = results[0]
+    assert ref_amax == 4.0
+    direct = torch.histc(data.abs(), bins=HIST_BINS, min=0.0, max=4.0).double()
+    assert torch.equal(ref_hist, direct)
+    for hist, amax in results[1:]:
+        assert amax == ref_amax
+        assert torch.equal(hist, ref_hist)
+    # The extra split prepends 7000 more zeros; account for them separately.
+    extra_hist, extra_amax = accumulate([torch.zeros(7_000), data])
+    assert extra_amax == 4.0
+    assert float(extra_hist[0]) == float(ref_hist[0]) + 7_000.0
+    assert torch.equal(extra_hist[1:], ref_hist[1:])
+
+
+def test_histogram_partition_invariance_with_zero_batches():
+    """Regression: an all-zero batch used to be dropped from the histogram,
+    so the final window depended on how the same samples were batched
+    (measured: entropy chose 2.0 with zeros in their own batch versus 0.125
+    with the identical multiset concatenated)."""
+    torch.manual_seed(0)
+    uni = torch.rand(10_000) * 2.0
+    zeros = torch.zeros(100_000)
+    partitions = [
+        [zeros, uni],
+        [uni, zeros],
+        [torch.cat([zeros, uni])],
+        [zeros[:50_000], uni, zeros[50_000:]],
+    ]
+    for method in ("mse", "entropy"):
+        windows = []
+        for batches in partitions:
+            q = QuantConv2d.from_float(nn.Conv2d(1, 4, 1))
+            q._q_obs_method = method
+            q._q_observing = True
+            with torch.no_grad():
+                for b in batches:
+                    q(b.reshape(1, 1, 1, -1))
+            q._q_observing = False
+            q.finalize_observation()
+            assert q.q_calibrated, method
+            windows.append((float(q._q_act_lo), float(q._q_act_hi)))
+        assert len(set(windows)) == 1, (method, windows)
 
 
 def test_histogram_observation_clips_below_minmax():
