@@ -128,6 +128,44 @@ ResNet / timm (Apache License 2.0)
     naming mirrors timm/torchvision so weights load unchanged and inference is
     bit-identical.
 
+ViT / timm (Apache License 2.0)
+    Path:    libreyolo/models/vit/
+    License: libreyolo/models/vit/NOTICE  (Apache-2.0)
+    Source:  https://github.com/huggingface/pytorch-image-models
+             commit 8ef73809f622e0031bd7f4940265734aef8b9978 (v1.0.28)
+
+    The native Vision Transformer graph (libreyolo/models/vit/nn.py) is
+    derived from timm's vision_transformer.py and supporting timm/layers
+    modules (Ross Wightman and the timm contributors, Apache-2.0). Only the
+    classic fixed-224 patch-16 classifier graph used by the shipped AugReg
+    ImageNet-1k checkpoints is retained; later extensions (dynamic sizes,
+    register tokens, layer scale, patch dropout) are omitted. The
+    architecture and AugReg checkpoint lineage originate from
+    google-research/vision_transformer at commit
+    64801f1b3b367b3611cc27a3d45cc22870a36fb3 (Apache-2.0). Module and
+    parameter names remain aligned with timm so all learned tensors load
+    unchanged and inference parity can be tested.
+
+EfficientDet (Apache License 2.0)
+    Path:    libreyolo/models/efficientdet/
+    License: libreyolo/models/efficientdet/NOTICE  (Apache-2.0)
+    Source:  https://github.com/rwightman/efficientdet-pytorch
+             commit c6dff775a36cea0bf9b76c58e59f936411c5ce01 (effdet 0.4.1)
+
+    The EfficientDet D0-D4 architecture, TensorFlow-compatible EfficientNet
+    backbones, BiFPN topology, prediction heads, anchor generation,
+    checkpoint configuration, and evaluation transform are derived from
+    rwightman/efficientdet-pytorch (Apache-2.0, Copyright 2020 Ross
+    Wightman). The native EfficientNet block structure and timm-compatible
+    parameter names follow timm v1.0.28 at commit
+    8ef73809f622e0031bd7f4940265734aef8b9978, and the BiFPN and anchor
+    lineage traces to Google Research's original TensorFlow implementation
+    (google/automl, Apache-2.0). Official D0-D4 COCO checkpoints are
+    unmodified tensors from the upstream v0.1 release, rehosted on an
+    explicitly disclosed implied Apache-2.0 basis. No source from the
+    LGPL-licensed zylo117/Yet-Another-EfficientDet-Pytorch project was
+    consulted or used.
+
 Swin Transformer V1 / timm (Apache-2.0 code + MIT weights)
     Path:    libreyolo/models/swin/
     License: libreyolo/models/swin/NOTICE
@@ -193,6 +231,7 @@ LingBot-Vision (Apache License 2.0)
     Path:    libreyolo/models/lingbotvision/
     License: libreyolo/models/lingbotvision/NOTICE
     Source:  https://github.com/robbyant/lingbot-vision
+    Commit:  151e46321bae4399f8568829f190c7bdec216b49
 
     The LingBot-Vision ViT backbone (libreyolo/models/lingbotvision/nn.py)
     is a native PyTorch port of Robbyant's Apache-2.0 lingbot-vision
@@ -247,6 +286,23 @@ Real-ESRGAN / BasicSR (BSD-3-Clause / Apache-2.0)
     realesr-general-x4v3) are distributed under the BSD-3-Clause License;
     LibreYOLO mirrors converted checkpoints with this provenance stated in the
     model cards.
+
+FeyNobg (Apache License 2.0)
+    Path:    libreyolo/models/feynobg/
+    License: libreyolo/models/feynobg/NOTICE
+    Source:  https://huggingface.co/feyninc/FeyNobg
+             (reference library: https://github.com/feyninc/nobg)
+             Copyright (c) 2026 Feyn Inc.
+
+    FeyNobg (Apache-2.0, code and weights) is architecturally BiRefNet (MIT)
+    with the third Swin-L stage deepened from 18 to 24 blocks. The family
+    instantiates LibreYOLO's BiRefNet nn module with a family-local dimension
+    table (libreyolo/models/feynobg/nn.py); no code was copied from the nobg
+    library, and the port is parity-gated against the nobg reference at fp32
+    (weights/parity_feynobg.py, max_abs_diff == 0). The released Apache-2.0
+    weights are converted and rehosted at LibreYOLO/LibreFeyNobgl-matte,
+    including post-training-quantized fp16/fp8 variants; upstream training
+    data is not disclosed, and only the released weights are redistributed.
 
 PaddleOCR / PP-OCRv5 (Apache-2.0)
     Path:    libreyolo/models/ppocr/, libreyolo/postprocess/ppocr.py
@@ -356,6 +412,25 @@ Faster R-CNN / TorchVision (BSD-3-Clause)
     not an explicit checkpoint-specific grant, and repeat torchvision's
     pretrained-model terms caveat.
 
+RetinaNet / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/retinanet/
+    License: libreyolo/models/retinanet/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreRetinaNet inference graph is derived from torchvision
+    v0.26.0's RetinaNet, classification and regression heads, anchor
+    generator, box coder, transform, and FPN-backbone builders (BSD-3-Clause,
+    Copyright (c) Soumith Chintala 2016). Upstream state-dict names are
+    retained for strict conversion. The port adds LibreYOLO factory,
+    checkpoint metadata, validation, class mapping, and export/backend
+    integration; training-only matching and focal-loss code is excluded.
+    Official COCO checkpoints are not bundled in the source distribution.
+    Separate weight mirrors disclose that their BSD-3-Clause redistribution
+    basis is implied by the releasing project, not an explicit
+    checkpoint-specific grant, and repeat torchvision's pretrained-model
+    terms caveat.
+
 SSD300 / TorchVision (BSD-3-Clause; VGG weight lineage CC BY 4.0)
     Path:    libreyolo/models/ssd/, libreyolo/postprocess/ssd.py,
              weights/convert_ssd_weights.py
@@ -420,6 +495,25 @@ AlexNet / TorchVision (BSD-3-Clause)
     separate weight mirror discloses that BSD-3-Clause is an implied
     redistribution basis rather than a checkpoint-specific publisher grant,
     and repeats torchvision's pretrained-model terms caveat.
+
+VGG / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/vgg/
+    License: libreyolo/models/vgg/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 10f68dbd78b9aa5cab9328f3b2e99cfb0b608122
+
+    The native LibreVGG graph is derived from torchvision's VGG
+    implementation (torchvision/models/vgg.py, BSD-3-Clause, Copyright (c)
+    Soumith Chintala 2016). The upstream feature and classifier module layout
+    is retained so the official VGG-16, VGG-19, VGG-16-BN, and VGG-19-BN
+    state dicts load unchanged. The port adds LibreYOLO factory, checkpoint
+    metadata, preprocessing, result payload, and export/backend integration;
+    training is excluded. The four official ImageNet-1k V1 checkpoints are
+    not bundled in the source distribution. Separate weight mirrors disclose
+    that BSD-3-Clause is an implied redistribution basis rather than a
+    checkpoint-specific publisher grant, and repeat torchvision's
+    pretrained-model terms caveat.
+
 DeepLabv3 / TorchVision (BSD-3-Clause)
     Path:    libreyolo/models/deeplabv3/,
              libreyolo/postprocess/deeplabv3.py,
@@ -435,6 +529,24 @@ DeepLabv3 / TorchVision (BSD-3-Clause)
     port adds LibreYOLO metadata, semantic results, validation, and fixed-520
     export/backend integration; it excludes the training-only auxiliary FCN
     classifier and training recipe. Official COCO checkpoints are not bundled
+    in the source distribution. Separate weight mirrors disclose that their
+    BSD-3-Clause redistribution basis is implied by the releasing project,
+    not an explicit checkpoint-specific grant, and repeat torchvision's
+    pretrained-model terms caveat.
+
+FCN / TorchVision (BSD-3-Clause)
+    Path:    libreyolo/models/fcn/
+    License: libreyolo/models/fcn/NOTICE
+    Source:  https://github.com/pytorch/vision
+             commit 336d36e8db990a905498c73933e35231876e28bc
+
+    The native LibreFCN inference graph is derived from torchvision v0.26.0's
+    FCN model, head, dilated-ResNet builder configuration, and feature-layer
+    routing (BSD-3-Clause, Copyright (c) Soumith Chintala 2016 and the
+    torchvision contributors). Upstream state-dict names are retained for
+    strict conversion. The port adds LibreYOLO factory, checkpoint metadata,
+    semantic result conversion, validation, and export/backend integration;
+    training losses are excluded. Official COCO checkpoints are not bundled
     in the source distribution. Separate weight mirrors disclose that their
     BSD-3-Clause redistribution basis is implied by the releasing project,
     not an explicit checkpoint-specific grant, and repeat torchvision's
@@ -456,8 +568,9 @@ LW-DETR (Apache License 2.0)
     against the official implementation for all five released sizes. Upstream's
     own Conditional DETR / DETR / Deformable DETR / ViTDet lineage headers are
     preserved in the ported modules and cited separately in
-    THIRD_PARTY_NOTICES.txt. Ported inference only — the Group-DETR training
-    recipe is not included. See docs/provenance/lwdetr.md.
+    THIRD_PARTY_NOTICES.txt. Ported inference only: the Group-DETR training
+    recipe is not included. Family-level details live in
+    libreyolo/models/lwdetr/NOTICE; see docs/provenance/lwdetr.md.
 
 Deformable DETR (Apache License 2.0)
     Path:    libreyolo/models/deformable_detr/,
@@ -475,6 +588,28 @@ Deformable DETR (Apache License 2.0)
     Apache-2.0 SenseTime COCO weights are converted and rehosted for all five
     released variants. Source-file lineage headers are preserved; see
     docs/provenance/deformable_detr.md.
+
+DINO-DETR (Apache License 2.0)
+    Path:    libreyolo/models/dinodetr/,
+             libreyolo/postprocess/dinodetr.py,
+             weights/convert_dinodetr_weights.py
+    License: libreyolo/models/dinodetr/NOTICE
+    Source:  https://github.com/IDEA-Research/DINO
+             commit d84a491d41898b3befd8294d1cf2614661fc0953
+             Copyright (c) 2022 IDEA. All Rights Reserved.
+
+    LibreDINO-DETR ports only the three released inference architectures
+    (ResNet-50 4-scale, ResNet-50 5-scale, Swin-L). The pinned DINO
+    implementation carries Conditional DETR, DETR, and Deformable DETR
+    lineage notices, reproduced in the family NOTICE, and the Swin-L backbone
+    is ported through DINO's modified Swin Transformer implementation (MIT,
+    Copyright (c) 2021 Microsoft). Training-only denoising, matching,
+    criteria, losses, data pipelines, and the compiled CUDA multi-scale
+    deformable-attention extension are not included; the ResNet tensor
+    container and pure-PyTorch deformable-attention core reuse LibreYOLO's
+    existing Deformable DETR port. Official checkpoints are rehosted on an
+    explicitly disclosed implied Apache-2.0 basis; see
+    docs/provenance/dinodetr.md.
 
 Dome-DETR (Apache License 2.0)
     Path:    libreyolo/models/domedetr/,
