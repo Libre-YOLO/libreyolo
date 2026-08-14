@@ -338,7 +338,7 @@ def apply_family_defaults(
 ) -> dict[str, Any]:
     """Apply family-specific defaults to parameters that weren't explicitly set.
 
-    Discovers defaults from the model's TRAIN_CONFIG dataclass — no hardcoded
+    Discovers defaults from the model's TRAIN_CONFIG dataclass, no hardcoded
     dicts. Only overrides values that came from Typer defaults (not user input).
     """
     if mode != "train":
@@ -373,7 +373,7 @@ def build_train_kwargs(params: dict[str, Any]) -> dict[str, Any]:
 
     Iterates TrainConfig fields and maps CLI-facing parameter names to
     internal field names using TRAIN_ALIASES.  Adding a new field to
-    TrainConfig automatically makes it available — no manual dict needed.
+    TrainConfig automatically makes it available, no manual dict needed.
     """
     from .aliases import TRAIN_ALIASES
     from libreyolo.training.config import TrainConfig
@@ -538,7 +538,7 @@ def _to_json_safe(val: Any) -> Any:
 def get_cfg_defaults() -> dict[str, Any]:
     """Build configuration defaults from dataclasses for the cfg command.
 
-    All values are derived from TrainConfig and ValidationConfig — nothing
+    All values are derived from TrainConfig and ValidationConfig, nothing
     hardcoded.  Family overrides are auto-discovered from the model registry.
     """
     from libreyolo.models.base.model import BaseModel
