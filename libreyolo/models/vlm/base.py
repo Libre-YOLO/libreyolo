@@ -67,7 +67,7 @@ class LibreVLMModel(BaseModel):
     BBOX_KEY: ClassVar[str] = "bbox"
     COORD_DIVISOR: ClassVar[float] = 1.0
     # Box layout the model emits: "xyxy" (corners, default), "xywh" (top-left +
-    # size), or "cxcywh" (center + size). Set by families whose output differs.
+    # size), "cxcywh" (center + size), or "yxyx" ([ymin, xmin, ymax, xmax]).
     BOX_FORMAT: ClassVar[str] = "xyxy"
     # Greedy decoding on a small VLM can fall into a repetition loop, emitting
     # the same box until the token budget is exhausted. A mild penalty breaks
@@ -214,6 +214,31 @@ class LibreVLMModel(BaseModel):
         self.task = self._resolve_task(task)
         return self
 
+    def _chat_template_kwargs(self) -> Dict[str, Any]:
+        """Extra kwargs for ``processor.apply_chat_template``.
+
+        Families whose template needs a generation-mode flag (for example
+        Gemma 4 ``enable_thinking=False``) override this. Unknown kwargs are
+        dropped so an older processor still loads.
+        """
+        return {}
+
+    def _apply_chat_template(self, conversation):
+        kwargs = {
+            "add_generation_prompt": True,
+            "return_tensors": "pt",
+            "return_dict": True,
+            "tokenize": True,
+        }
+        extra = self._chat_template_kwargs()
+        kwargs.update(extra)
+        try:
+            return self.processor.apply_chat_template(conversation, **kwargs)
+        except TypeError:
+            for key in extra:
+                kwargs.pop(key, None)
+            return self.processor.apply_chat_template(conversation, **kwargs)
+
     def chat(
         self,
         image: ImageInput,
@@ -237,13 +262,7 @@ class LibreVLMModel(BaseModel):
                 ],
             }
         ]
-        inputs = self.processor.apply_chat_template(
-            conversation,
-            add_generation_prompt=True,
-            return_tensors="pt",
-            return_dict=True,
-            tokenize=True,
-        ).to(self.device)
+        inputs = self._apply_chat_template(conversation).to(self.device)
         inputs = self._prepare_generation_inputs(inputs)
         with torch.no_grad():
             generated = self.model.generate(
@@ -542,13 +561,7 @@ class LibreVLMModel(BaseModel):
                 ],
             }
         ]
-        inputs = self.processor.apply_chat_template(
-            conversation,
-            add_generation_prompt=True,
-            return_tensors="pt",
-            return_dict=True,
-            tokenize=True,
-        )
+        inputs = self._apply_chat_template(conversation)
         # original_size is (W, H); ratio is unused because boxes come back
         # normalized to the image, so no letterbox/unpad bookkeeping is needed.
         return inputs, img, img.size, 1.0

@@ -9,6 +9,18 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **Gemma 4 and Moondream in LibreVLM.** `LibreVLM("gemma-4")` loads
+  Gemma 4 E4B (Apache-2.0; `e2b` also aliased) and parses the official
+  y-first `box_2d` 0-1000 JSON. `LibreVLM("moondream")` loads Moondream 2
+  (Apache-2.0) through its native `detect`/`point`/`query` skills, one
+  class per call; `moondream-3` is the BSL 1.1 preview and logs a license
+  notice. Both are inference-only. Gemma 3 stays out: gated license, no
+  native boxes. Snapshots are mirrored at `LibreYOLO/LibreGemma4e2b`,
+  `LibreYOLO/LibreGemma4e4b`, `LibreYOLO/LibreMoondream2`, and
+  `LibreYOLO/LibreMoondream3`. Moondream 3 is BSL 1.1 (redistributable;
+  competing paid hosted API forbidden); the card ships the license
+  verbatim and a banner.
+
 - **EC pose on the `ms_deform_attn` slot.** The pose decoder's pre-split
   `(bs*heads, c, hw)` value tuple now adapts onto the classic slot layout
   used by detect EC and the other DETR-lineage families. Export and any

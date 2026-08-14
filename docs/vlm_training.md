@@ -81,7 +81,7 @@ tier's `val()` support (blocked on real per-box confidence; see the ADR).
 | Family | train() | Why |
 |---|---|---|
 | qwen3-vl | yes | grounding-pretrained, Apache-2.0, official upstream recipe mirrored |
-| lfm2-vl, florence-2, north-micro-vision, internvl3 | not yet | planned; see the training ADR draft |
+| lfm2-vl, florence-2, north-micro-vision, internvl3, gemma-4, moondream | not yet | planned; see the training ADR draft |
 | smolvlm2 | no | not grounding-pretrained; cannot reliably learn box emission |
 | kosmos-2 | no | no established recipe; 224px 32x32 grid caps localization |
 | locate-anything | no | research-only non-commercial upstream weights |

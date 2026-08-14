@@ -616,6 +616,24 @@ research-use agreement; Diving48's redistribution terms are not clearly
 established by the selected official source. Users training on either dataset
 are responsible for accepting its terms themselves.
 
+    Gemma 4 (LibreGemma4e2b, LibreGemma4e4b)           Apache-2.0
+             mirrored snapshots of google/gemma-4-E2B-it and
+             google/gemma-4-E4B-it. Learned parameters unchanged.
+
+    Moondream 2 (LibreMoondream2)                      Apache-2.0
+             mirrored snapshot of vikhyatk/moondream2 @ 9a7d402
+             (2025-06-21). Learned parameters unchanged.
+
+    Moondream 3 (LibreMoondream3)                      BSL 1.1
+             mirrored snapshot of moondream/moondream3-preview @
+             5112966d1a723413b1c9a1e8bea272b72e647b35. Business Source
+             License 1.1 with Additional Use Grant: redistribution is
+             allowed; production use is allowed except offering the model
+             to third parties as a paid hosted or embedded service that
+             competes with M87 Labs's paid versions. Hosted with the
+             upstream license verbatim and a banner on the card. Change
+             License is Apache-2.0. NOT covered by LibreYOLO's MIT license.
+
 Third-party SOURCE CODE bundled inside the LibreYOLO Python package
 (separate from weights) is disclosed in the top-level NOTICE file.
 Notably, the DEIMv2 family bundles DINOv3 backbone code under Meta's

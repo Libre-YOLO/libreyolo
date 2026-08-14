@@ -38,6 +38,8 @@ size marked with `*`. The authoritative alias tables are in
 | `kosmos-2`*                                   | Kosmos-2  | MIT                 | 2023 grounder; loads clean, coarse boxes |
 | `smolvlm2`, `-2.2b`*, `-500m`                | SmolVLM2  | Apache-2.0          | tiny; weak detector, zero-code family    |
 | `locate-anything`, `-3b`*                     | LocateAnything | NVIDIA non-commercial | remote-code grounder; boxes and points |
+| `gemma-4`, `-e2b`, `-e4b`*                    | Gemma 4   | Apache-2.0          | native `box_2d` y-first 0-1000; needs transformers>=5.10 |
+| `moondream`, `-2`*, `-3`                      | Moondream | Apache-2.0 (`-2`); BSL 1.1 (`-3`) | native detect/point skills; `-3` logs a notice; both mirrored |
 | `sensenova-vision`, `-7b`*                    | SenseNova-Vision | Apache-2.0 code, CC BY-NC 4.0 weights | unified multimodal; 7 tasks, vendored port, heavy |
 | `libremodus`, `-14b-a7b`*, `modus`            | MODUS | Apache-2.0 code, external custom-term weights | analysis-only; four standard tasks plus `any2any()` |
 
@@ -55,11 +57,12 @@ Larger Qwen3-VL tiers (30B and up) and Qwen2.5-VL are not included: the big ones
 do not fit a single consumer GPU, and Qwen2.5-VL uses a different coordinate
 convention that would need its own family. Some strong models are deliberately
 left out for being remote-code without enough payoff (Ovis2.5, MiniCPM-V,
-Moondream2, Molmo2; fragile on current transformers), gated (PaliGemma2, Gemma3),
-too large for ~16 GB (GLM-4.1V-9B), or not a clean drop-in (Rex-Omni crashes on
-the standard Qwen2.5-VL path despite being the strongest generative detector).
+Molmo2), gated (PaliGemma2, Gemma 3), too large for ~16 GB (GLM-4.1V-9B), or
+not a clean drop-in (Rex-Omni crashes on the standard Qwen2.5-VL path despite
+being the strongest generative detector). Gemma 4 replaces Gemma 3 here:
+Apache-2.0 weights and a documented `box_2d` detection format.
 `LibreVLM()` defaults to `qwen3-vl-4b`. Detection quality varies a lot by family
-and size; Qwen3-VL, LFM2-VL, and Florence-2 are the strong ones.
+and size; Qwen3-VL, LFM2-VL, Florence-2, Gemma 4, and Moondream are the strong ones.
 
 ## Decision 1: two layers, raw chat under a detection convenience
 
@@ -82,7 +85,8 @@ reasoning are all one call away. This is the property that makes the tier
 future-proof, so it is a first-class method rather than an internal detail.
 
 `chat()` applies to the chat-template families (Qwen3-VL, LFM2-VL, SmolVLM2,
-InternVL3). The task-prompt families (Florence-2, Kosmos-2) are not chat models:
+InternVL3, Gemma 4) and to Moondream via its native `query` skill. The
+task-prompt families (Florence-2, Kosmos-2) are not chat models:
 they are driven by fixed task / grounding tokens, so their `chat()` raises
 `NotImplementedError` and only `predict()` is supported. `predict()` (the
 detection layer) works on every family.
@@ -171,13 +175,15 @@ synthetic image with a known box and read back the numbers. Verified so far:
 | SmolVLM2   | `bbox`    | [0, 1] | xyxy   | defaults                                |
 | InternVL3  | `bbox`    | 0-1000 | xyxy   | `COORD_DIVISOR=1000` + flatten override |
 | LocateAnything | `bbox` | 0-1000 | xyxy   | remote-code adapter, boxes + points     |
+| Gemma 4    | `box_2d`  | 0-1000 | yxyx   | official Gemini-style `[ymin, xmin, ymax, xmax]` |
+| Moondream  | named `x_min..y_max` | [0, 1] | xyxy | native `detect`/`point` skills; one call per class |
 | North Micro Vision | bare `[[x1,y1,x2,y2], ...]` | 0-1000 | xyxy | per-class grounding queries; labels assigned by the adapter |
 
 Three knobs cover the output variation without touching the parser:
 
 - `BBOX_KEY` : the JSON key holding the box (`bbox`, `bbox_2d`, ...).
 - `COORD_DIVISOR` : the numeric scale (1.0 for [0,1], 1000.0 for 0-1000).
-- `BOX_FORMAT` : the box layout, `xyxy` (default), `xywh`, or `cxcywh`.
+- `BOX_FORMAT` : the box layout, `xyxy` (default), `xywh`, `cxcywh`, or `yxyx`.
 
 A model that already emits the default shape (a `bbox` key, [0,1], xyxy, through
 a chat template) needs no code at all; SmolVLM2 is such a case and its family is
