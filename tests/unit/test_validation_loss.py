@@ -291,7 +291,7 @@ def test_yolo9_rank_local_normalizer_skips_collective(monkeypatch):
         raise AssertionError("rank-local validation entered a collective")
 
     monkeypatch.setattr(
-        yolo9_loss_module, "all_reduce_avg_scalar", _unexpected_collective
+        yolo9_loss_module, "all_reduce_avg_scalar_tensor", _unexpected_collective
     )
     loss = YOLO9Loss(
         num_classes=2,

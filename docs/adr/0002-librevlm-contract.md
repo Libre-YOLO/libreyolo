@@ -160,7 +160,10 @@ executing mutable upstream model-repository code under the same alias.
 
 ## Out Of Scope (v1)
 
-- Training / fine-tuning (`train()` raises; fine-tune upstream).
+- Training / fine-tuning (`train()` raises; fine-tune upstream). Superseded
+  for Qwen3-VL: LoRA detection fine-tuning shipped later behind the same
+  `train()` surface, with untrainable families keeping documented refusal
+  messages. See `docs/vlm_training.md`.
 - Dataset validation / mAP (`val()` raises; see "Confidence").
 - Export to ONNX/TensorRT/etc. (`export()` raises; generative decode).
 - CLI: the `libreyolo` command does not resolve VLM aliases in v1. The tier is a
