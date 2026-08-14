@@ -95,3 +95,18 @@ Install extra: `pip install "libreyolo[llm]"`.
   Responses or Chat Completions, including localhost.
 - The detector contract stays honest.
 - The `openai` package is an optional extra, not a core dependency.
+
+## Amendment (2026-08-15): name routing locked
+
+Locked alongside the remote `LibreVLM` transport (ADR 0020):
+
+- Bare model names stay remote model ids forever. There is no closed
+  allowlist of valid provider ids: it could never be maintained, and it
+  would break every newly shipped remote model until a release.
+- The billing-accident protection is a denylist: a bare name matching a
+  `LibreVLM` local alias raises with a pointer to `LibreVLM`. `base_url=`
+  is the escape hatch (the name becomes opaque and is sent there).
+- Optional known `provider/` prefixes (`openai/`, `openrouter/`) strip and
+  supply the provider's default host and env key. Unknown prefixes leave
+  the whole string as the model id (unchanged behavior). The bare form
+  stays primary.

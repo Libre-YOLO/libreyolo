@@ -325,6 +325,55 @@ def test_public_import_does_not_need_openai():
     assert instance.api == "responses"
 
 
+def test_vlm_alias_denylist_raises():
+    with pytest.raises(ValueError, match="LibreVLM local alias"):
+        LibreLLM("qwen3-vl-4b")
+
+
+def test_vlm_alias_allowed_with_base_url(fake_client):
+    llm = LibreLLM("qwen3-vl-4b", base_url="http://localhost:8000/v1")
+    assert llm.model == "qwen3-vl-4b"
+    assert llm.base_url == "http://localhost:8000/v1"
+
+
+def test_openai_prefix_strips_to_bare_model(fake_client):
+    llm = LibreLLM("openai/gpt-5.6-luna")
+    llm("hi")
+    assert fake_client.responses.calls[0]["model"] == "gpt-5.6-luna"
+    assert llm.base_url is None
+
+
+def test_openrouter_prefix_sets_host_and_env_key(monkeypatch, fake_client):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    llm = LibreLLM("openrouter/qwen/qwen3-max")
+    assert llm.model == "qwen/qwen3-max"
+    assert llm.base_url == "https://openrouter.ai/api/v1"
+    assert llm.api_key == "or-key"
+
+
+def test_openrouter_prefix_without_key_raises(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+        LibreLLM("openrouter/qwen/qwen3-max")
+
+
+def test_unknown_prefix_stays_whole_model_id(fake_client):
+    llm = LibreLLM("qwen/qwen3-max", base_url="https://openrouter.ai/api/v1")
+    llm("hi")
+    assert fake_client.responses.calls[0]["model"] == "qwen/qwen3-max"
+
+
+def test_explicit_base_url_wins_over_prefix_default(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    llm = LibreLLM("openrouter/qwen/qwen3-max", base_url="http://proxy.local/v1")
+    assert llm.base_url == "http://proxy.local/v1"
+
+
+def test_prefix_model_id_case_preserved(fake_client):
+    llm = LibreLLM("openai/GPT-5.6-Luna")
+    assert llm.model == "GPT-5.6-Luna"
+
+
 def test_missing_local_image_raises(fake_client, tmp_path):
     llm = LibreLLM()
     missing = tmp_path / "nope.jpg"

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -30,6 +31,48 @@ _UNSUPPORTED = (
 )
 _DATA_URI_PREFIX = "data:"
 _HTTP_PREFIXES = ("http://", "https://")
+
+# Optional ``provider/`` prefixes, for symmetry with ``LibreVLM``. The bare
+# form (``LibreLLM("gpt-5.6-luna")``) stays primary and is never deprecated.
+# A known prefix is stripped and supplies the provider's default host and env
+# key; anything else is an opaque model id sent to the configured host.
+_KNOWN_PROVIDERS: dict[str, tuple[Optional[str], str]] = {
+    # prefix -> (default base_url, env key)
+    "openai": (None, "OPENAI_API_KEY"),
+    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+}
+
+
+def _resolve_provider(model: str) -> tuple[str, Optional[str], Optional[str]]:
+    """Strip a known ``provider/`` prefix from *model*.
+
+    Returns ``(model_id, default_base_url, env_key)``. Splits on the first
+    slash only, before lowercasing, so case-sensitive provider model ids
+    survive. An unknown prefix leaves the whole string as the model id
+    (current behavior; OpenRouter slugs like ``qwen/qwen3-max`` keep working
+    against an explicit ``base_url=``).
+    """
+    if "/" in model:
+        prefix, rest = model.split("/", 1)
+        known = _KNOWN_PROVIDERS.get(prefix.lower())
+        if known is not None:
+            return rest, known[0], known[1]
+    return model, None, None
+
+
+def _is_vlm_alias(model: str) -> bool:
+    """True when *model* is a ``LibreVLM`` local alias (detector, not chat).
+
+    The bare-name namespace stays open (a hosted model that ships tomorrow
+    must work today), so protection against billing accidents is this small
+    denylist against the disjoint VLM alias table, never a closed allowlist.
+    """
+    try:
+        from ..vlm import _ALIASES, _LAZY_ALIASES, _MODUS_ALIASES
+    except Exception:  # pragma: no cover - torch-less or partial installs
+        return False
+    key = model.strip().lower()
+    return key in _ALIASES or key in _LAZY_ALIASES or key in _MODUS_ALIASES
 
 
 def _load_openai():
@@ -138,7 +181,28 @@ class LibreLLM:
             raise ValueError(
                 f"api must be one of {_SUPPORTED_APIS}, got {api!r}"
             )
-        self.model = str(model)
+        model_id, provider_base_url, provider_env_key = _resolve_provider(str(model))
+        if base_url is None and "/" not in str(model) and _is_vlm_alias(model_id):
+            raise ValueError(
+                f"{model_id!r} is a LibreVLM local alias (a detector), not a "
+                "hosted model id.\n"
+                f"  detector: LibreVLM({model_id!r})\n"
+                "  really a hosted model with this exact id: pass base_url= "
+                "to send it there"
+            )
+        if base_url is None:
+            base_url = provider_base_url
+        if api_key is None and provider_env_key is not None:
+            # Resolved explicitly so a non-OpenAI prefix never silently bills
+            # whatever OPENAI_API_KEY happens to point at.
+            api_key = os.environ.get(provider_env_key)
+            if api_key is None and provider_env_key != "OPENAI_API_KEY":
+                raise ValueError(
+                    f"Model {model!r} uses a provider prefix whose key is "
+                    f"read from {provider_env_key}, which is not set. Set it "
+                    "or pass api_key=."
+                )
+        self.model = model_id
         self.api = api
         self.base_url = base_url
         self.api_key = api_key

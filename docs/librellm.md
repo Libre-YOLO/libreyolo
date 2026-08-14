@@ -105,6 +105,34 @@ print(response.choices[0].message.content)
 
 The same configuration works with compatible local servers.
 
+## Provider prefixes and model-name routing
+
+Bare model names are remote model ids, sent to the configured (or default
+OpenAI) host. That namespace stays open on purpose: a model that ships
+tomorrow works today, with no libreyolo release in between.
+
+Two refinements on top of the bare form:
+
+- An optional `provider/` prefix supplies that provider's default host and
+  env key, for symmetry with `LibreVLM`. Known prefixes: `openai/` (strip,
+  default host, `OPENAI_API_KEY`) and `openrouter/` (strip,
+  `https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`). An unknown prefix
+  is not an error; the whole string stays the model id (OpenRouter slugs
+  like `"qwen/qwen3-max"` keep working against an explicit `base_url=`).
+
+```python
+LibreLLM("gpt-5.6-luna")                 # bare form, primary
+LibreLLM("openai/gpt-5.6-luna")          # synonym for the line above
+LibreLLM("openrouter/qwen/qwen3-max")    # host + key from the prefix
+```
+
+- A bare name that matches a `LibreVLM` local alias (e.g.
+  `"qwen3-vl-4b"`) raises instead of silently billing the default host for
+  a 404: that string names a local detector, not a hosted chat model. Pass
+  `base_url=` if you really run a hosted model under that exact id. This is
+  a denylist against the (small, disjoint) VLM alias table, not an
+  allowlist of valid provider ids.
+
 ## Combine a detector and an LLM
 
 ```python
