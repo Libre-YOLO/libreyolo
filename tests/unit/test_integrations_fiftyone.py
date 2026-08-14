@@ -334,6 +334,49 @@ class TestWithFiftyOneInstalled:
         finally:
             dataset.delete()
 
+    def test_two_splits_accumulate_in_one_yaml(self, tmp_path):
+        fo = pytest.importorskip("fiftyone")
+        import yaml as pyyaml
+        from PIL import Image
+
+        from libreyolo.data.utils import load_data_config
+        from libreyolo.integrations.fiftyone import from_fiftyone
+
+        def make(name, label):
+            image = tmp_path / f"{name}.jpg"
+            Image.new("RGB", (200, 100)).save(image)
+            sample = fo.Sample(filepath=str(image))
+            sample["ground_truth"] = fo.Detections(
+                detections=[
+                    fo.Detection(label=label, bounding_box=[0.4, 0.3, 0.2, 0.4])
+                ]
+            )
+            dataset = fo.Dataset()
+            dataset.add_samples([sample])
+            return dataset
+
+        train = make("train_a", "person")
+        val = make("val_a", "bicycle")
+        export_dir = tmp_path / "export"
+        try:
+            classes = ["person", "bicycle"]
+            from_fiftyone(train, export_dir, split="train", classes=classes)
+            yaml_path = from_fiftyone(val, export_dir, split="val", classes=classes)
+
+            # The second export must add its split rather than replace the
+            # first: a training yaml needs train and val together.
+            written = pyyaml.safe_load(yaml_path.read_text())
+            assert "train" in written and "val" in written
+
+            config = load_data_config(str(yaml_path), autodownload=False)
+            assert len(config["train_img_files"]) == 1
+            assert len(config["val_img_files"]) == 1
+            assert config["train_img_files"][0].name == "train_a.jpg"
+            assert config["val_img_files"][0].name == "val_a.jpg"
+        finally:
+            train.delete()
+            val.delete()
+
     def test_round_trip_through_a_dataset_yaml(self, tmp_path):
         pytest.importorskip("fiftyone")
         import yaml
