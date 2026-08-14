@@ -466,6 +466,24 @@ class YOLO9MosaicMixupDataset:
         img, label = self.preproc(img, label, self.input_dim)
         return img, label, img_info, img_id
 
+    def _rand_partner_index(self):
+        """Sample a partner index, preferring images with annotations.
+
+        Uniform draws on background-heavy datasets frequently land on
+        label-free images, silently degrading mosaic tiles (and mixup
+        partners) to unsupervised pixels. Retry like the YOLOX mixup does;
+        if every sampled candidate is background, keep the last draw so
+        the augmentation still works on datasets with no foreground
+        labels. Extra RNG draws happen only after an empty candidate, so
+        fully annotated datasets sample identically.
+        """
+        index = 0
+        for _ in range(20):
+            index = random.randint(0, len(self.dataset) - 1)
+            if len(self.dataset.load_anno(index)) > 0:
+                break
+        return index
+
     def _get_mosaic_item(self, idx):
         """Get a mosaic-augmented item."""
         input_h, input_w = self.input_dim
@@ -474,8 +492,8 @@ class YOLO9MosaicMixupDataset:
         yc = int(random.uniform(0.5 * input_h, 1.5 * input_h))
         xc = int(random.uniform(0.5 * input_w, 1.5 * input_w))
 
-        # Get 4 random indices
-        indices = [idx] + [random.randint(0, len(self.dataset) - 1) for _ in range(3)]
+        # Get 4 random indices, preferring annotated partners
+        indices = [idx] + [self._rand_partner_index() for _ in range(3)]
 
         # Create mosaic canvas
         mosaic_img = np.full((input_h * 2, input_w * 2, 3), 114, dtype=np.uint8)
@@ -632,9 +650,10 @@ class YOLO9MosaicMixupDataset:
         then re-pad. Mirrors the shared YOLOX mixup, which merges labels before
         padding.
         """
-        # Get another random image (mixup only runs on the non-segment path,
-        # so _get_normal_item returns (img, label, ...); ignore the tail).
-        idx2 = random.randint(0, len(self.dataset) - 1)
+        # Get another random image, preferring an annotated partner (mixup
+        # only runs on the non-segment path, so _get_normal_item returns
+        # (img, label, ...); ignore the tail).
+        idx2 = self._rand_partner_index()
         img2, labels2, *_ = self._get_normal_item(idx2)
 
         # Mix images (beta(32, 32) ≈ 0.5, so both images are ~equally visible
