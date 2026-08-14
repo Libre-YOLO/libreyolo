@@ -409,7 +409,7 @@ finite video under `task="embed"` and returns one row for the whole clip rather
 than one per frame. DINOv2 likewise loads
 an existing family checkpoint and bypasses its task head. Task aliases
 `facial-recognition`, `face-recognition`, `recognition`, `face`, `faceid`,
-`embedding`, and `reid` resolve to `embed` at the API boundary. See ADR 0013
+`embedding`, and `reid` resolve to `embed` at the API boundary. See ADR 0017
 for the face-region contract and ADR 0015 for the general contract.
 `mesh` is the task for human body mesh recovery: recovering a posed 3D body per
 detected person. Models expose `Results.meshes`, row-aligned with

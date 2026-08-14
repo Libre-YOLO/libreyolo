@@ -251,6 +251,17 @@ project the weights were derived from. Per-family summary:
              adds LibreYOLO checkpoint metadata. Every Hugging Face weight
              repository carries the upstream Apache-2.0 LICENSE and NOTICE.
 
+    LW-DETR  (LibreLWDETR{t,s,m,l,x})                  Apache-2.0
+             upstream code: Atten4Vis/LW-DETR at commit
+               d5e6e6c4add2d24dafb965ced8b50163c50b9788
+             upstream weights: xbsu/LW-DETR on Hugging Face, declared
+             Apache-2.0 in the model-card metadata. Converted and rehosted
+             at LibreYOLO/LibreLWDETR{t,s,m,l,x}; learned tensors are
+             unchanged and conversion only adds LibreYOLO checkpoint
+             metadata. Ported outputs are bit-exact against the official
+             implementation for all five sizes; source SHA-256 hashes and
+             evidence are in docs/provenance/lwdetr.md.
+
     EoMT     (LibreEoMTl-sem, LibreEoMTl-seg,          MIT
               LibreEoMTl-seg-1280, LibreEoMT{s,b,l}-panoptic)
              upstream: tue-mps/eomt
@@ -424,8 +435,8 @@ project the weights were derived from. Per-family summary:
              GitHub), code and weights explicitly Apache-2.0 (YAML license
              tag) -> rehosted under the LibreYOLO org
              (LibreYOLO/LibreFeyNobgl-matte), including
-             post-training-quantized fp8/nvfp4 variants
-             (LibreFeyNobgl-matte-{fp8,nvfp4}). Upstream training data is
+             post-training-quantized fp16/fp8 variants
+             (LibreFeyNobgl-matte-{fp16,fp8}). Upstream training data is
              not disclosed; only the released weights are redistributed.
              Convert with weights/convert_feynobg_weights.py.
 
@@ -459,6 +470,15 @@ project the weights were derived from. Per-family summary:
              PP-LiteSeg architecture are unaffected. Weights trained from
              scratch on your own data carry no such restriction; a fine-tune
              started from a released checkpoint inherits it.
+
+    LingBot-Vision (LibreLingBotVision{s,b,l}-sem)     Apache-2.0
+             upstream: robbyant/lingbot-vision (code and released backbone
+             weights Apache-2.0, Copyright 2026 LingBot-Vision Contributors; backbone
+             checkpoints published in the robbyant lingbot-vision Hugging
+             Face collection). Each hosted checkpoint combines the unchanged
+             Apache-2.0 backbone tensors with an ADE20K dense head trained
+             by LibreYOLO; see each weight repo's README for the training
+             data.
 
     PP-OCRv5 (LibrePPOCR{t,l}-ocr)                     Apache-2.0
              upstream: PaddlePaddle/PaddleOCR (code and released
@@ -501,6 +521,36 @@ project the weights were derived from. Per-family summary:
              converted because they contain the older PicoSAM2 network.
              Distilled by upstream from SAM 2.1 and SAM 3; teacher weights
              are not included or redistributed.
+
+    SAM 3D Body (LibreSAM3DBody{d3,h}-mesh)           SAM License (restricted)
+             upstream: facebookresearch/sam-3d-body (Meta Platforms, Inc.)
+             The SAM License is NOT a permissive license: it carries
+             field-of-use restrictions (military, nuclear, espionage and
+             weapons use), a no-reverse-engineering clause, and unilateral
+             amendment by Meta. It permits redistribution provided its terms
+             are passed through, so the checkpoints are mirrored
+             byte-identically at LibreYOLO/LibreSAM3DBodyd3-mesh and
+             LibreYOLO/LibreSAM3DBodyh-mesh, each carrying the SAM License
+             text and an access gate recording acceptance. Mirroring does
+             not change the license: the weights remain SAM-licensed, not
+             MIT, and are NOT covered by LibreYOLO's permissive license.
+             No upstream code is ported; libreyolo/models/sam3dbody/ is
+             LibreYOLO's own MIT wrapper around the optional upstream
+             package. See THIRD_PARTY_NOTICES.txt for the full description.
+
+    Face recognition (librefacerec-l.onnx,             per-file, see below
+              librefacerec-det.onnx)
+             librefacerec-l.onnx: the AuraFace-v1 embedding graph
+             (glintr100.onnx from fal/AuraFace-v1 on Hugging Face,
+             Apache-2.0 weights), mirrored unmodified to the LibreYOLO
+             organization. Upstream training data is undisclosed; only this
+             single Apache-2.0 file is mirrored, none of the other artifacts
+             in the upstream repository.
+             librefacerec-det.onnx: the YuNet face detector
+             (face_detection_yunet_2023mar.onnx from opencv/opencv_zoo,
+             MIT, Copyright (c) Shiqi Yu), mirrored unmodified.
+             No code is ported from either project; both graphs are
+             consumed opaquely at runtime.
 
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting

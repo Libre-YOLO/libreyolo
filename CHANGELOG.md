@@ -275,10 +275,10 @@ and **Removed** before upgrading.
   suffix (`-edge`, `-normal`, `-embed`, `-mesh`). New public result types
   `EdgeMap`, `NormalMap`, `Embeddings`, `Identities` and `Meshes`; new
   validators `EdgeValidator` (ODS/OIS) and `NormalValidator` (angular error).
-  Contracts in `docs/adr/`: `0013-embed-task-contract`,
-  `0013-mesh-task-contract`, `0014-normal-task-contract` and
-  `0015-edge-task-contract`. The two 0013s and the two 0015s genuinely collide;
-  the numbering needs a pass.
+  Contracts in `docs/adr/`: `0013-mesh-task-contract`,
+  `0014-normal-task-contract`, `0017-embed-task-contract` and
+  `0018-edge-task-contract`. The embed and edge contracts first shipped as a
+  second 0013 and a second 0015; they were renumbered after the release.
 
 - `embed`: L2-normalized image and region embeddings. Ships `LibreFaceEmbedder`
   (ONNX Runtime only, `libreyolo[onnx]`), a `Gallery` / `FaceGallery` API, and

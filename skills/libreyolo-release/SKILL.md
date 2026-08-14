@@ -342,14 +342,19 @@ hotfix, use the "Minor vs patch" branch-off-`release` variant instead.
    preflight check 3 told you if there are any). Resolve conflicts on dev;
    the version line auto-merges to the clean release value, so **manually
    set dev back to the next `X.Y.Z.dev0`** (the number the user chose).
-2. **Bump + hand over the PR link.** Branch off merged dev, set
-   `pyproject.toml` to the clean `X.Y.Z` the user chose, push, then hand the
-   user the one-click compare URL
-   `https://github.com/LibreYOLO/libreyolo/compare/release...<branch>?expand=1`.
-   Per `AGENTS.md`, the **agent does not open the PR**; the human submits
-   it. Remind them: this PR shows no CI checks by design, and it must be
-   merged with a **merge commit, never squash** (squash collapses the whole
-   cycle's history).
+2. **Bump + open the release PR.** Branch off merged dev, set
+   `pyproject.toml` to the clean `X.Y.Z` the user chose, and push. Per
+   `AGENTS.md`, the agent **may open the `dev -> release` PR itself**. The
+   description must follow `.github/pull_request_template.md` with a
+   `## Code provenance` section that is accurate for the actual diff, and
+   must state that the PR shows no CI checks by design and must be merged
+   with a **merge commit, never squash** (squash collapses the whole
+   cycle's history). Opening the PR is where the agent's authority stops:
+   the human reviews, approves and merges. Handing over the one-click
+   compare URL
+   `https://github.com/LibreYOLO/libreyolo/compare/release...<branch>?expand=1`
+   instead of opening the PR remains a valid alternative, and is the better
+   one when the human wants the description in their own words.
 3. **GitHub release (human action).** Cutting the release is the user's. By
    default the agent creates **no** release object: hand over the changelog
    file and the New Release URL and let the human fill it in, so no

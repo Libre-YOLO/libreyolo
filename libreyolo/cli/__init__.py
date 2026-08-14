@@ -9,7 +9,7 @@ import typer
 
 app = typer.Typer(
     name="libreyolo",
-    help="LibreYOLO — open source YOLO detection toolkit.",
+    help="LibreYOLO: open source YOLO detection toolkit.",
     add_completion=False,
     no_args_is_help=True,
 )
@@ -34,7 +34,7 @@ def _root(
         help="Show LibreYOLO version and exit.",
     ),
 ) -> None:
-    """LibreYOLO — open source YOLO detection toolkit."""
+    """LibreYOLO: open source YOLO detection toolkit."""
 
 
 def _configure_warning_filters() -> None:
@@ -101,7 +101,7 @@ def entrypoint() -> None:
     # handed to ``app()`` stay in their raw key=value form so each command's
     # ``KeyValueCommand`` does the per-command rewrite (it knows whether a flag
     # has a real ``--no-<flag>`` form). Emitting ``--no-verbose`` here would break
-    # commands whose ``--verbose`` is one-way (e.g. predict) — see issue #490 #41.
+    # commands whose ``--verbose`` is one-way (e.g. predict), see issue #490 #41.
     logging_argv = _normalize_logging_flags(argv)
     _setup_logging_from_argv(logging_argv)
 

@@ -1,7 +1,7 @@
 """Family-specific config discovery and model name resolution for the CLI.
 
 Config defaults come from the dataclass source of truth (TrainConfig subclasses).
-The CLI discovers them via BaseModel._registry → TRAIN_CONFIG, so adding a new
+The CLI discovers them via BaseModel._registry -> TRAIN_CONFIG, so adding a new
 model family requires zero CLI changes.
 """
 
@@ -99,7 +99,7 @@ def _register_cli_names_for_class(cls) -> None:
 
 
 def _build_name_map() -> None:
-    """Populate CLI name → weight filename mapping from model registry."""
+    """Populate CLI name -> weight filename mapping from model registry."""
     if _CLI_NAME_TO_WEIGHTS:
         return
     from libreyolo.models import try_ensure_rfdetr
@@ -141,8 +141,8 @@ def is_known_weight_filename(model: str) -> bool:
 def resolve_model_name(model: str) -> str:
     """Resolve a CLI model name to a weight filename or passthrough.
 
-    ``yolox-s`` → ``LibreYOLOXs.pt``
-    ``best.pt`` → ``best.pt`` (unchanged)
+    ``yolox-s`` -> ``LibreYOLOXs.pt``
+    ``best.pt`` -> ``best.pt`` (unchanged)
     """
     _build_name_map()
     return _CLI_NAME_TO_WEIGHTS.get(model.lower(), model)
@@ -338,7 +338,7 @@ def apply_family_defaults(
 ) -> dict[str, Any]:
     """Apply family-specific defaults to parameters that weren't explicitly set.
 
-    Discovers defaults from the model's TRAIN_CONFIG dataclass — no hardcoded
+    Discovers defaults from the model's TRAIN_CONFIG dataclass, no hardcoded
     dicts. Only overrides values that came from Typer defaults (not user input).
     """
     if mode != "train":
@@ -348,7 +348,7 @@ def apply_family_defaults(
     if not family_diffs:
         return params
 
-    # Reverse alias map: internal name → CLI name (for user_provided check)
+    # Reverse alias map: internal name -> CLI name (for user_provided check)
     from .aliases import TRAIN_ALIASES
 
     internal_to_cli = {v: k for k, v in TRAIN_ALIASES.items()}
@@ -373,7 +373,7 @@ def build_train_kwargs(params: dict[str, Any]) -> dict[str, Any]:
 
     Iterates TrainConfig fields and maps CLI-facing parameter names to
     internal field names using TRAIN_ALIASES.  Adding a new field to
-    TrainConfig automatically makes it available — no manual dict needed.
+    TrainConfig automatically makes it available, no manual dict needed.
     """
     from .aliases import TRAIN_ALIASES
     from libreyolo.training.config import TrainConfig
@@ -538,7 +538,7 @@ def _to_json_safe(val: Any) -> Any:
 def get_cfg_defaults() -> dict[str, Any]:
     """Build configuration defaults from dataclasses for the cfg command.
 
-    All values are derived from TrainConfig and ValidationConfig — nothing
+    All values are derived from TrainConfig and ValidationConfig, nothing
     hardcoded.  Family overrides are auto-discovered from the model registry.
     """
     from libreyolo.models.base.model import BaseModel

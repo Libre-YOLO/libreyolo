@@ -588,6 +588,28 @@ learned parameters are NVIDIA's, unchanged. Models the user trains from
 scratch carry no such restriction.
 
 --------------------------------------------------------------------
+LingBot-Vision (Robbyant / Ant Group)
+--------------------------------------------------------------------
+Source: https://github.com/robbyant/lingbot-vision
+Commit: 151e46321bae4399f8568829f190c7bdec216b49
+License: Apache License 2.0
+Copyright 2026 LingBot-Vision Contributors.
+Used for: the LibreLingBotVision semantic family
+          (libreyolo/models/lingbotvision/). The ViT backbone in nn.py is a
+          native port of the upstream DINOv3-style Vision Transformer (axial
+          RoPE over the patch grid, [CLS] plus 4 register tokens, LayerScale,
+          masked-K-bias fused QKV); module and parameter names mirror the
+          reference implementation so the Apache-2.0 backbone checkpoints
+          load unchanged. Only the inference forward path is ported; the
+          upstream self-supervised pretraining machinery is not. The dense
+          head and training recipe are LibreYOLO's own (the upstream report's
+          linear-probing protocol). Hosted LibreLingBotVision{s,b,l}-sem
+          checkpoints combine the unchanged Apache-2.0 Robbyant backbones
+          with an ADE20K head trained by LibreYOLO. Reference: "Vision
+          Pretraining for Dense Spatial Perception", Fu et al., 2026,
+          arXiv:2607.05247. See libreyolo/models/lingbotvision/NOTICE.
+
+--------------------------------------------------------------------
 Grounding DINO (IDEA-Research)
 --------------------------------------------------------------------
 Source: https://github.com/IDEA-Research/GroundingDINO
@@ -1280,7 +1302,7 @@ Used for: the FeyNobg background-removal model family
           from 18 to 24 blocks; the family reuses the LibreYOLO BiRefNet
           port's nn module with a family-local dimension table and
           converts the released Apache-2.0 weights (state-dict
-          metadata-wrap plus post-training-quantized fp8/nvfp4
+          metadata-wrap plus post-training-quantized fp16/fp8
           variants). No code was copied from the nobg library. Upstream
           training data is not disclosed; LibreYOLO redistributes only
           the released weights.

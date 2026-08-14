@@ -859,3 +859,41 @@ def test_generated_docs_expose_validated_constraints():
     assert "## Validated constraints" in docs
     assert "`yolonas` / `detect` / `coreai`" in docs
     assert "raw-image preprocessing" in docs
+
+
+def test_shipping_rows_never_claim_a_future_since_version():
+    """A validated/available row cannot postdate the library's own version.
+
+    During 1.5.0 development 176 rows were stamped ``since="1.6"`` or
+    ``since="1.7"`` for capabilities that ship in the 1.5 line. Nothing
+    rendered ``since`` at the time, but the field becomes a lie the day the
+    docs or CLI surface it. ``since`` names the major.minor release LINE a
+    capability first ships in (see ``SupportEntry``), so rows added between
+    the ``v1.5.0`` tag and the next point release legitimately carry "1.5".
+    The floor is the source tree's declared major.minor from pyproject;
+    installed dist metadata can lag a source checkout, so pyproject wins.
+    """
+    import re
+
+    match = re.search(
+        r'^\[project\][^\[]*?^version\s*=\s*"(\d+)\.(\d+)',
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+        re.MULTILINE | re.DOTALL,
+    )
+    if match is None:
+        import libreyolo
+
+        match = re.match(r"(\d+)\.(\d+)", libreyolo.__version__)
+    assert match is not None
+    floor = (int(match.group(1)), int(match.group(2)))
+
+    offenders = {}
+    for key, entry in SUPPORT.items():
+        if entry.tier not in ("validated", "available") or entry.since is None:
+            continue
+        since = tuple(int(part) for part in entry.since.split("."))
+        if since > floor:
+            offenders[key] = entry.since
+    assert not offenders, (
+        f"Rows claim since > {'.'.join(map(str, floor))}: {sorted(offenders.items())}"
+    )

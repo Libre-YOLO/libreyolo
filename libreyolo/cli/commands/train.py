@@ -697,7 +697,7 @@ def train_cmd(
             import yaml
 
             data_out["_human_text"] = (
-                f"Dry run — resolved config for {model}:\n"
+                f"Dry run: resolved config for {model}:\n"
                 + yaml.dump(data_out["resolved_config"], default_flow_style=False)
             )
         out.result(data_out)
