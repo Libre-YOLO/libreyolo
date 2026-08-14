@@ -123,8 +123,189 @@ def test_percentile_observation_rejects_outliers():
 
 
 def test_invalid_calibration_algorithm_rejected(yolo9t):
-    with pytest.raises(QuantizationError, match="calibration algorithm"):
-        yolo9t.quantize(recipe="int8", calib=None, algorithm="entropy")
+    # The error must list the valid choices, including the histogram pair.
+    with pytest.raises(
+        QuantizationError, match="calibration algorithm.*mse, entropy"
+    ):
+        yolo9t.quantize(recipe="int8", calib=None, algorithm="kldiv")
+
+
+# ---------------------------------------------------------------------------
+# Histogram calibrators (mse / entropy)
+# ---------------------------------------------------------------------------
+
+
+def _outlier_data():
+    """Gaussian bulk with a lone symmetric spike pair far outside it."""
+    torch.manual_seed(0)
+    x = torch.randn(400_000)
+    x[0], x[1] = 25.0, -25.0
+    return x
+
+
+def _recon_mse(x, amax):
+    from libreyolo.quant.fake_quant import fake_quant_int8_affine as fq
+
+    lo = torch.tensor([max(float(x.min()), -amax)])
+    hi = torch.tensor([min(float(x.max()), amax)])
+    return float(((x - fq(x, lo, hi)) ** 2).mean())
+
+
+def test_histogram_calibrators_clip_outliers():
+    from libreyolo.quant.calibrate import (
+        accumulate_abs_histogram,
+        entropy_amax,
+        mse_amax,
+    )
+
+    x = _outlier_data()
+    hist, hist_amax = accumulate_abs_histogram(None, 0.0, x)
+    assert hist_amax == 25.0
+    for select in (mse_amax, entropy_amax):
+        chosen = select(hist, hist_amax)
+        assert chosen < hist_amax, select.__name__
+        assert _recon_mse(x, chosen) <= _recon_mse(x, hist_amax), select.__name__
+
+
+def test_mse_amax_keeps_clean_uniform_range():
+    from libreyolo.quant.calibrate import accumulate_abs_histogram, mse_amax
+
+    torch.manual_seed(0)
+    u = torch.rand(100_000) * 2 - 1
+    hist, hist_amax = accumulate_abs_histogram(None, 0.0, u)
+    assert mse_amax(hist, hist_amax) > 0.95 * hist_amax
+
+
+def test_histogram_calibrators_deterministic():
+    from libreyolo.quant.calibrate import (
+        accumulate_abs_histogram,
+        entropy_amax,
+        mse_amax,
+    )
+
+    x = _outlier_data()
+    h1, a1 = accumulate_abs_histogram(None, 0.0, x)
+    h2, a2 = accumulate_abs_histogram(None, 0.0, x.clone())
+    assert a1 == a2
+    assert torch.equal(h1, h2)
+    assert mse_amax(h1, a1) == mse_amax(h2, a2)
+    assert entropy_amax(h1, a1) == entropy_amax(h2, a2)
+
+
+def test_histogram_range_growth_preserves_counts():
+    from libreyolo.quant.calibrate import accumulate_abs_histogram
+
+    torch.manual_seed(1)
+    hist, amax = accumulate_abs_histogram(None, 0.0, torch.randn(50_000))
+    assert amax < 25.0
+    hist, amax = accumulate_abs_histogram(hist, amax, _outlier_data())
+    assert amax >= 25.0  # range doubled to cover the spike
+    assert float(hist.sum()) == 450_000.0  # pair-merge rescale loses no counts
+
+
+def test_histogram_observation_clips_below_minmax():
+    conv = nn.Conv2d(3, 8, 3, padding=1)
+
+    def calibrate(method):
+        q = QuantConv2d.from_float(conv)
+        q._q_obs_method = method
+        q._q_observing = True
+        torch.manual_seed(0)
+        with torch.no_grad():
+            for _ in range(4):
+                x = torch.randn(2, 3, 64, 64)
+                x[0, 0, 0, 0] = 50.0  # single extreme outlier per batch
+                q(x)
+        q._q_observing = False
+        q.finalize_observation()
+        assert q.q_calibrated
+        # Observer scratch state must not outlive finalization.
+        assert not hasattr(q, "_q_obs_hist")
+        assert not hasattr(q, "_q_obs_lo_run")
+        return float(q._q_act_lo), float(q._q_act_hi)
+
+    _, hi_minmax = calibrate("minmax")
+    assert hi_minmax >= 50.0
+    for method in ("mse", "entropy"):
+        lo, hi = calibrate(method)
+        assert hi < hi_minmax, method
+        assert lo < 0 < hi, method
+
+
+def test_histogram_constant_one_sided_activation_keeps_observed_window():
+    """A near-constant one-sided input can put all its mass in the last
+    histogram bin, letting the sweep pick an amax a fraction of a bin below
+    max|x|. The intersection must not invert into an empty window."""
+    for method in ("mse", "entropy"):
+        q = QuantConv2d.from_float(nn.Conv2d(3, 8, 3, padding=1))
+        q._q_obs_method = method
+        q._q_observing = True
+        with torch.no_grad():
+            q(torch.full((1, 3, 16, 16), -3.0))
+        q._q_observing = False
+        q.finalize_observation()
+        assert q.q_calibrated, method
+        lo, hi = float(q._q_act_lo), float(q._q_act_hi)
+        assert lo <= hi, method
+        assert lo == -3.0 and hi == -3.0, method
+        with torch.no_grad():
+            out = q(torch.full((1, 3, 16, 16), -3.0))
+        assert torch.isfinite(out).all()
+
+
+def test_histogram_calibration_all_zero_activations():
+    for method in ("mse", "entropy"):
+        q = QuantConv2d.from_float(nn.Conv2d(3, 8, 3, padding=1))
+        q._q_obs_method = method
+        q._q_observing = True
+        with torch.no_grad():
+            q(torch.zeros(1, 3, 16, 16))
+        q._q_observing = False
+        q.finalize_observation()
+        assert q.q_calibrated, method
+        assert float(q._q_act_lo) == 0.0 and float(q._q_act_hi) == 0.0
+        with torch.no_grad():
+            out = q(torch.randn(1, 3, 16, 16))
+        assert torch.isfinite(out).all()
+
+
+def test_histogram_single_batch_calibration():
+    torch.manual_seed(0)
+    x = torch.randn(1, 3, 32, 32)
+    for method in ("mse", "entropy"):
+        q = QuantConv2d.from_float(nn.Conv2d(3, 8, 3, padding=1))
+        q._q_obs_method = method
+        q._q_observing = True
+        with torch.no_grad():
+            q(x)
+        q._q_observing = False
+        q.finalize_observation()
+        assert q.q_calibrated, method
+        assert float(q._q_act_lo) < 0 < float(q._q_act_hi)
+        assert float(q._q_act_lo) >= float(x.min())
+        assert float(q._q_act_hi) <= float(x.max())
+
+
+def test_histogram_negative_skew_symmetric_quant():
+    # All-negative activations under the symmetric fp8 activation format:
+    # the chosen window must stay one-sided, not get mirrored around zero.
+    torch.manual_seed(0)
+    data = -torch.randn(4, 3, 32, 32).abs() - 0.01
+    for method in ("mse", "entropy"):
+        q = QuantConv2d.from_float(nn.Conv2d(3, 8, 3, padding=1))
+        q._q_wformat = q._q_aformat = "fp8"
+        q._q_obs_method = method
+        q._q_observing = True
+        with torch.no_grad():
+            q(data)
+        q._q_observing = False
+        q.finalize_observation()
+        assert q.q_calibrated, method
+        assert float(q._q_act_lo) < 0.0
+        assert float(q._q_act_hi) < 0.0
+        with torch.no_grad():
+            out = q(data)
+        assert torch.isfinite(out).all()
 
 
 def test_multi_batch_observation_widens_ranges():
@@ -594,6 +775,61 @@ def test_save_load_roundtrip(tmp_path, yolo9t):
     assert set(src.keys()) == set(dst.keys())
     for key in src:
         assert torch.equal(src[key].cpu(), dst[key].cpu()), key
+
+
+class _StubCalibLoader:
+    """Two synthetic calibration batches, no dataset download."""
+
+    def __init__(self, **kwargs):
+        pass
+
+    def __iter__(self):
+        import numpy as np
+
+        rng = np.random.default_rng(0)
+        for _ in range(2):
+            yield rng.random((1, 3, 640, 640), dtype=np.float32)
+
+
+@pytest.mark.parametrize("algorithm", ["mse", "entropy"])
+def test_quantize_e2e_histogram_algorithms(monkeypatch, yolo9t, algorithm):
+    monkeypatch.setattr(
+        "libreyolo.export.calibration.CalibrationDataLoader", _StubCalibLoader
+    )
+    yolo9t.quantize(
+        recipe="int8", calib="x", samples=2, batch=1,
+        algorithm=algorithm, verbose=False,
+    )
+    info = yolo9t.quant_info()
+    assert info["calib_algorithm"] == algorithm
+    assert info["calibrated"]
+    quant = [m for m in yolo9t.model.modules() if isinstance(m, QuantConv2d)]
+    assert quant and all(m.q_calibrated for m in quant)
+    assert all(not hasattr(m, "_q_obs_hist") for m in quant)
+    assert all(float(m._q_act_hi) > float(m._q_act_lo) for m in quant)
+    yolo9t.model.eval()
+    with torch.no_grad():
+        out = yolo9t.model(torch.randn(1, 3, 640, 640))
+    assert torch.isfinite(_leaf(out)).all()
+
+
+def test_quantized_onnx_export_with_histogram_scales(tmp_path, monkeypatch, yolo9t):
+    onnx = pytest.importorskip("onnx")
+    monkeypatch.setattr(
+        "libreyolo.export.calibration.CalibrationDataLoader", _StubCalibLoader
+    )
+    yolo9t.quantize(
+        recipe="int8", calib="x", samples=2, batch=1,
+        algorithm="mse", verbose=False,
+    )
+    ckpt = tmp_path / "LibreYOLO9t-int8-mse.pt"
+    yolo9t.save(str(ckpt))
+    reloaded = LibreYOLO9(str(ckpt), size="t", device="cpu")
+    assert reloaded.quant_info()["calib_algorithm"] == "mse"
+    path = reloaded.export(format="onnx", simplify=False)
+    graph = onnx.load(path).graph
+    n_q = sum(1 for n in graph.node if n.op_type == "QuantizeLinear")
+    assert n_q > 100, f"expected QDQ pairs with mse-calibrated scales, got {n_q}"
 
 
 def test_export_rejected_for_fp16_and_wrong_formats(yolo9t):

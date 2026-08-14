@@ -54,7 +54,12 @@ LINEAR_RECIPES = ("w4a16", "w4a8", "nvfp4", "mxfp4", "int2")
 CALIBRATED_RECIPES = ("int8", "fp8", "w4a8", "int2")
 RESEARCH_RECIPES = ("int2",)
 SUPPORTED_FAMILIES = ("yolo9", "rfdetr", "birefnet", "feynobg")
-CALIB_ALGORITHMS = ("auto", "percentile", "minmax")
+# Activation-range algorithms. minmax/percentile track running extremes;
+# mse/entropy accumulate an absolute-value histogram during the calibration
+# pass and sweep clipping thresholds afterwards (see calibrate.py). All of
+# them set the per-tensor activation range only; weight scales are always
+# per-channel absolute-max regardless of the algorithm.
+CALIB_ALGORITHMS = ("auto", "percentile", "minmax", "mse", "entropy")
 
 GROUP_SIZE = 128  # grouped-int recipes: scale group along in_features
 INT2_GROUP_SIZE = 64

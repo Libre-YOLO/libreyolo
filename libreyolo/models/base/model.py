@@ -1707,8 +1707,11 @@ class BaseModel(ABC):
             algorithm: Activation range estimation: "minmax" (absolute
                 extremes across batches; the measured best default),
                 "percentile" (mean of per-batch 0.1/99.9 percentiles; measured
-                to degrade transformer families), or "auto"
-                (minmax).
+                to degrade transformer families), "mse" (histogram sweep
+                minimizing quantization reconstruction error), "entropy"
+                (histogram sweep minimizing KL divergence between the float
+                and quantized distributions), or "auto" (minmax). Weight
+                scales stay per-channel absolute-max in every case.
             keep_high_precision: Substring patterns of module names kept in
                 float. Defaults to the family policy (first layer + heads).
             allow_download_scripts: Allow embedded Python in dataset YAML

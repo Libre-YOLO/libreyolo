@@ -94,6 +94,23 @@ batches (hence the coco128 default: with it, YOLO9-t lands within about one
 mAP point of fp32). The chosen algorithm is recorded in the checkpoint
 manifest.
 
+Two histogram-based algorithms complement those. `mse` sweeps candidate
+clipping thresholds over a 2048-bin histogram of absolute activation values
+and picks the threshold minimizing the quantization reconstruction error, so
+it only clips as far as squared error actually improves; on clean
+distributions it lands next to minmax. `entropy` picks the threshold
+minimizing the KL divergence between the original and quantized activation
+distributions, which clips more aggressively because it optimizes
+information preservation rather than squared error. Both help on layers
+whose activations carry rare large outliers that would otherwise stretch the
+int8 range and crush resolution for the bulk of values. Their cost is
+histogram collection during the calibration pass plus a threshold sweep per
+layer at the end; calibration takes somewhat longer, inference is unchanged.
+Both set the per-tensor activation range only; weight scales stay
+per-channel absolute-max under every algorithm. The same caution as
+percentile applies to transformer families, where clipping activation
+outliers can cost accuracy: validate with `val()` before deploying.
+
 ## Execution tiers
 
 v1 executes quantized arithmetic in **simulation** (fake-quantization with
