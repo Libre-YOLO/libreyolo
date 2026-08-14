@@ -426,11 +426,15 @@ pip index versions libreyolo
 # POSIX (on Windows use a scratchpad venv + Scripts/python.exe):
 python -m venv /tmp/pypismoke && /tmp/pypismoke/bin/pip install libreyolo==X.Y.Z
 /tmp/pypismoke/bin/python -c "import libreyolo; assert libreyolo.__version__ == 'X.Y.Z'"
-# GPU e2e against the tagged SHA (mandatory dispatch; do not skip)
-gh workflow run e2e-nightly-release.yml -R LibreYOLO/libreyolo
-# Confirm the run resolved the tag, not an earlier commit:
-#   gh run list -R LibreYOLO/libreyolo --workflow e2e-nightly-release.yml --limit 1
-#   the run's headSha must equal `git rev-parse vX.Y.Z`
+# GPU e2e against the tagged SHA (mandatory dispatch; do not skip).
+# Pass the tag: the workflow otherwise resolves refs/heads/release, which
+# can move after the tag is cut. github.run.headSha is the default branch
+# at dispatch time and is not the evidence.
+gh workflow run e2e-nightly-release.yml -R LibreYOLO/libreyolo \
+  -f ref=vX.Y.Z -f force=true
+# Confirm the guard resolved that tag. The step summary line is
+# "Target: `tag vX.Y.Z@<sha>`" and <sha> must equal `git rev-parse vX.Y.Z`.
+# github.run.headSha is the default branch at dispatch time; ignore it.
 ```
 
 Append results to the scoreboard. Dispatching the release nightly is
@@ -473,7 +477,8 @@ the user to post by hand.
   `modal-nightly-result.json`.
 - Crediting Gate B on a SHA that is not the tag. An ancestor nightly does
   not measure the bump commit. Dispatch `e2e-nightly-release.yml` after
-  publish and check that the run's `headSha` equals `git rev-parse vX.Y.Z`.
+  publish with `-f ref=vX.Y.Z` and check that the guard resolved that tag
+  SHA, not `refs/heads/release`.
 - Squash-merging the release PR.
 - Bumping the version on dev instead of on the release-PR branch.
 - Skipping Phase 4 because "publish.yml was green" (green publish and a
