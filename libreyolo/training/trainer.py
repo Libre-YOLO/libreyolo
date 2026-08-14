@@ -977,6 +977,7 @@ class BaseTrainer(ABC):
             shuffle=True,
             pin_memory=self.device.type == "cuda",
             sampler=sampler,
+            min_samples=int(getattr(self.config, "min_samples", 0) or 0),
         )
 
         if is_main_process():
