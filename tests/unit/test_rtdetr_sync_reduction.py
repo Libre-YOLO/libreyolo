@@ -10,6 +10,12 @@ step below:
     rtdetr v1:  7 x ``.cpu()`` (matcher) + 1 x ``.item()`` (normalizer)
     rtdetrv2:   8 x ``.cpu()``           + 2 x ``.item()``
 
+Parity scope: bitwise on CPU (asserted below). On CUDA the tensor
+``_normalizer`` division selects a different kernel than the old
+divide-by-Python-float and differs by up to ~3e-5 in ``total_loss``; this is
+the same acknowledged deviation the shipped rfdetr/yolo9 tensor normalizers
+carry (PR #765). The matcher pipeline itself is bitwise on CUDA.
+
 The restructure splits the matcher into ``compute_cost_matrix`` (device work)
 and ``solve`` (host LSAP) and pipelines the levels at depth 2, so each
 transfer has the next level's cost enqueued behind it, and the normalizer

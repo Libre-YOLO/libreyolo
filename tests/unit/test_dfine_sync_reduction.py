@@ -10,6 +10,13 @@ and domedetr (the last three route through the dfine/deim files):
 - ``DFINECriterion``/``DEIMCriterion``: tensor ``_normalizer`` (no ``.item()``),
   batched ``_get_go_indices`` (one ``unique`` + one ``tolist`` per step
   instead of one of each per image), and depth-2 pipelined matcher drains.
+
+Parity scope: bitwise on CPU (asserted below). On CUDA the tensor
+``_normalizer`` divides by a 0-dim tensor instead of a Python float, which
+selects a different division kernel; measured difference up to 4.8e-7 (fp16
+step) and 3.1e-5 (fp32 total_loss), the same acknowledged deviation the
+shipped rfdetr/yolo9 tensor normalizers carry (PR #765). Every other change
+in this branch is bitwise on CUDA as well.
   Full-criterion loss parity against the old control flow bound to a second
   criterion instance, tolerance zero (``torch.equal``).
 - ``HungarianMatcher.compute_cost_matrix``/``solve``: the split used by the
