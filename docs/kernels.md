@@ -56,14 +56,20 @@ audited commit revision in its provider module — a moved branch on the Hub
 can never change the binary that runs in-process. Bumping a pin requires a
 GPU parity run of the provider's `*_matches_portable_on_cuda` test.
 
-Current hub-backed slot:
+Current `ms_deform_attn` providers, newest-first:
 
-- `ms_deform_attn` <- [`kernels-community/deformable-detr`](https://huggingface.co/kernels-community/deformable-detr)
+- `hub` <- [`kernels-community/deformable-detr`](https://huggingface.co/kernels-community/deformable-detr)
   (Apache-2.0): the compiled CUDA multi-scale deformable attention
-  forward/backward from Deformable DETR. Eligible inputs are CUDA fp32 in
-  eager mode. Training is accelerated too (the compiled backward registers
+  forward/backward from Deformable DETR. Eligible inputs are CUDA
+  fp32/fp16/bf16 in eager mode (half inputs are upcast at the call
+  boundary). Training is accelerated too (the compiled backward registers
   through an autograd bridge). Active whenever the `kernels` package is
   installed, unless `LIBREYOLO_HUB_KERNELS=0`.
+- `triton` (in-tree): same equation, no extra package. CUDA fp32/fp16/bf16
+  inference; inputs that require grad fall through so training keeps a
+  backward. On by default when Triton imports and CUDA is visible;
+  `LIBREYOLO_TRITON_MSDA=0` disables it. Hub stays preferred when both
+  are eligible.
 
   Wired into every Deformable-DETR-lineage family: RF-DETR,
   LibreDeformableDETR, LibreDINO-DETR, LW-DETR, Grounding DINO, RT-DETR,
