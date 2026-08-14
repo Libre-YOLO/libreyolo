@@ -224,12 +224,13 @@ def resolve_hub_checkpoint(ref: HubRef, *, token: str | None = None) -> str:
         EntryNotFoundError,
         GatedRepoError,
         HfHubHTTPError,
+        LocalEntryNotFoundError,
         RepositoryNotFoundError,
         RevisionNotFoundError,
     )
 
+    filename = ref.filename
     try:
-        filename = ref.filename
         if filename is None:
             api = hub.HfApi(token=token)
             repo_files = api.list_repo_files(ref.repo_id, revision=ref.revision)
@@ -256,9 +257,19 @@ def resolve_hub_checkpoint(ref: HubRef, *, token: str | None = None) -> str:
             f"Revision '{ref.revision}' does not exist in Hugging Face repo "
             f"'{ref.repo_id}'."
         ) from exc
+    except LocalEntryNotFoundError as exc:
+        # Subclass of EntryNotFoundError, so it must be caught first. It means
+        # "could not reach the Hub and it is not cached", which has nothing to
+        # do with the file being absent from the repo.
+        raise ConnectionError(
+            f"Could not download '{filename or ref.repo_id}' from the Hugging "
+            f"Face Hub and it is not in the local cache. Check your network "
+            f"connection, or unset HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE if you "
+            f"are in offline mode."
+        ) from exc
     except EntryNotFoundError as exc:
         raise FileNotFoundError(
-            f"File '{ref.filename}' does not exist in Hugging Face repo "
+            f"File '{filename}' does not exist in Hugging Face repo "
             f"'{ref.repo_id}'."
         ) from exc
     except HfHubHTTPError as exc:
@@ -297,6 +308,42 @@ def _format_metric(value: Any) -> str:
     return str(value)
 
 
+def _card_names(names: Any) -> list[str]:
+    """Return class names in class-index order.
+
+    The checkpoint schema accepts ``names`` as a list or as a dict whose keys
+    may be ints or their string forms, so normalize all three here. Sorting
+    raw dict keys would order string keys lexicographically ("10" before
+    "2") and indexing a list with them would raise.
+    """
+    if isinstance(names, (list, tuple)):
+        return [str(value) for value in names]
+    if not isinstance(names, dict):
+        return []
+    try:
+        ordered = sorted(names.items(), key=lambda item: int(item[0]))
+    except (TypeError, ValueError):
+        ordered = list(names.items())
+    return [str(value) for _, value in ordered]
+
+
+def _yaml_scalar(value: Any) -> str:
+    """Render a checkpoint-derived value as a safe single-line YAML scalar.
+
+    Checkpoint metadata is attacker-controlled for any file you did not write
+    yourself, and it is rendered into the card's front matter. Without this, a
+    ``model_family`` carrying a newline could inject its own keys (forging,
+    say, a permissive ``license:`` on non-permissive weights).
+    """
+    text = str(value)
+    if _REPO_SEGMENT_RE.match(text):
+        # Plain token (the normal case): emit it bare so cards stay readable.
+        return text
+    for char in ("\r", "\n", "\t"):
+        text = text.replace(char, " ")
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"').strip() + '"'
+
+
 def build_model_card(
     metadata: dict[str, Any],
     repo_id: str,
@@ -318,10 +365,10 @@ def build_model_card(
     if pipeline_tag:
         front.append(f"pipeline_tag: {pipeline_tag}")
     if license_id:
-        front.append(f"license: {license_id}")
+        front.append(f"license: {_yaml_scalar(license_id)}")
     front.append("tags:")
     for tag in ("libreyolo", family, task):
-        front.append(f"- {tag}")
+        front.append(f"- {_yaml_scalar(tag)}")
     front.append("---")
 
     body: list[str] = [
@@ -351,9 +398,10 @@ def build_model_card(
     if metadata.get("quant"):
         body.append("| Quantized | yes |")
 
-    if names:
-        shown = [str(names[k]) for k in sorted(names)[:50]]
-        suffix = ", ..." if len(names) > 50 else ""
+    ordered_names = _card_names(names)
+    if ordered_names:
+        shown = ordered_names[:50]
+        suffix = ", ..." if len(ordered_names) > 50 else ""
         body += [
             "",
             "## Classes",
@@ -383,6 +431,57 @@ def _validate_push_repo_id(repo_id: str) -> None:
             f"Invalid Hugging Face repository id {repo_id!r}. Expected "
             "'owner/name', e.g. 'someuser/my-yolo9-finetune'."
         )
+
+
+def assert_can_push(repo_id: str, *, private: bool = True, token: str | None = None):
+    """Verify now that a later push to ``repo_id`` can succeed.
+
+    Checking that *a* token exists proves nothing: a token scoped to another
+    namespace passes that test and then fails after the run it was supposed to
+    protect. So this resolves the identity behind the token, refuses a
+    namespace the user cannot write to, and finally creates the repo, which is
+    the only real proof of write access. The repo is therefore created up
+    front rather than at the end of training.
+    """
+    hub = _require_hub()
+    from huggingface_hub.errors import HfHubHTTPError
+
+    _validate_push_repo_id(repo_id)
+    api = hub.HfApi(token=token)
+    try:
+        identity = api.whoami()
+    except Exception as exc:
+        raise PermissionError(
+            f"Could not verify Hugging Face credentials for '{repo_id}'.\n"
+            + _auth_help(repo_id, write=True)
+        ) from exc
+
+    owner = repo_id.split("/")[0]
+    namespaces = {identity.get("name")}
+    namespaces.update(
+        org.get("name") for org in identity.get("orgs", []) or [] if org
+    )
+    namespaces.discard(None)
+    if owner not in namespaces:
+        raise PermissionError(
+            f"You cannot push to '{repo_id}': you are signed in as "
+            f"'{identity.get('name')}' and '{owner}' is not your username or "
+            f"one of your organizations ({sorted(namespaces)}).\n"
+            f"{_auth_help(repo_id, write=True)}"
+        )
+
+    try:
+        api.create_repo(repo_id, private=private, exist_ok=True, repo_type="model")
+    except HfHubHTTPError as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status in (401, 403):
+            raise PermissionError(
+                f"Your token cannot write to '{repo_id}' (HTTP {status}). A "
+                f"fine-grained token must grant write access to this "
+                f"repository.\n{_auth_help(repo_id, write=True)}"
+            ) from exc
+        raise
+    return api
 
 
 def push_checkpoint_to_hub(

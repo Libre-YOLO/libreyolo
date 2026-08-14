@@ -194,6 +194,54 @@ def test_resolve_repo_not_found_teaches_auth(monkeypatch):
     assert "HF_TOKEN" in message
 
 
+def test_resolve_reports_offline_instead_of_missing_file(monkeypatch):
+    """No network is not the same failure as the file being absent."""
+    hub = pytest.importorskip("huggingface_hub")
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    def offline(**kwargs):
+        raise LocalEntryNotFoundError("no internet and no cache")
+
+    monkeypatch.setattr(hub, "hf_hub_download", offline)
+    with pytest.raises(ConnectionError, match="network connection"):
+        hf_hub.resolve_hub_checkpoint(HubRef("u/r", "model.pt"))
+
+
+def test_resolve_missing_entry_names_the_resolved_file(monkeypatch):
+    """The message must name the auto-selected file, not 'None'."""
+    hub = pytest.importorskip("huggingface_hub")
+    from huggingface_hub.errors import EntryNotFoundError
+
+    class FakeApi:
+        def __init__(self, token=None):
+            pass
+
+        def list_repo_files(self, repo_id, revision=None):
+            return ["README.md", "model.pt"]
+
+    def missing(**kwargs):
+        raise EntryNotFoundError("gone")
+
+    monkeypatch.setattr(hub, "HfApi", FakeApi)
+    monkeypatch.setattr(hub, "hf_hub_download", missing)
+    with pytest.raises(FileNotFoundError, match="'model.pt'"):
+        hf_hub.resolve_hub_checkpoint(HubRef("u/r"))
+
+
+def test_factory_refuses_metadata_less_hub_checkpoint(tmp_path, monkeypatch):
+    """Guessing a family from raw keys misroutes arbitrary Hub files."""
+    import torch as _torch
+
+    foreign = tmp_path / "model.pt"
+    _torch.save({"transformer.h.0.attn.weight": _torch.zeros(4, 4)}, foreign)
+    monkeypatch.setattr(
+        hf_hub, "maybe_resolve_hub_reference", lambda p, **kw: str(foreign)
+    )
+
+    with pytest.raises(ValueError, match="does not contain a LibreYOLO checkpoint"):
+        LibreYOLO("someuser/not-a-libreyolo-model", device="cpu")
+
+
 def test_factory_loads_bare_repo_reference(tmp_path, monkeypatch):
     ckpt = _make_yolo9_checkpoint(
         tmp_path / "model.pt", names={i: f"c{i}" for i in range(80)}
@@ -246,6 +294,29 @@ def test_model_card_unknown_task_omits_pipeline_tag():
     card = build_model_card(_metadata(task="gaze"), "u/r")
     assert "pipeline_tag" not in card
     assert "license:" not in card
+
+
+def test_model_card_accepts_names_as_list():
+    """A list is valid per the checkpoint schema and must not crash the card."""
+    card = build_model_card(_metadata(names=["red", "white"]), "u/r")
+    assert "red, white" in card
+
+
+def test_model_card_orders_string_keyed_names_numerically():
+    names = {str(i): f"c{i}" for i in range(12)}
+    card = build_model_card(_metadata(nc=12, names=names), "u/r")
+    assert "c0, c1, c2, c3" in card
+    assert "c1, c10, c11, c2" not in card
+
+
+def test_model_card_front_matter_resists_metadata_injection():
+    """Checkpoint metadata is untrusted: it must not forge front-matter keys."""
+    card = build_model_card(
+        _metadata(model_family="x\nlicense: proprietary"), "u/r"
+    )
+    front = card.split("---")[1]
+    assert "\nlicense: proprietary" not in front
+    assert '- "x license: proprietary"' in front
 
 
 def test_model_card_truncates_many_names():
@@ -355,17 +426,61 @@ def _train_end_event(save_dir):
     )
 
 
-def _patch_ambient_token(monkeypatch, token="hf_dummy"):
-    hub = pytest.importorskip("huggingface_hub")
-    monkeypatch.setattr(hub, "get_token", lambda: token)
+def _patch_ambient_token(monkeypatch, allowed=True):
+    """Stub the write preflight the logger runs at construction time."""
+    pytest.importorskip("huggingface_hub")
+    seen: list[tuple[str, bool]] = []
+
+    def fake_preflight(repo_id, *, private=True, token=None):
+        seen.append((repo_id, private))
+        if not allowed:
+            raise PermissionError("cannot write; run `hf auth login`")
+        return None
+
+    monkeypatch.setattr(hf_hub, "assert_can_push", fake_preflight)
+    return seen
 
 
-def test_hf_logger_requires_credentials(monkeypatch):
+def test_hf_logger_fails_fast_without_write_access(monkeypatch):
+    """A credential problem must surface before training, not after it."""
     from libreyolo.training.loggers import HuggingFaceHubLogger
 
-    _patch_ambient_token(monkeypatch, token=None)
-    with pytest.raises(ValueError, match="hf auth login"):
+    _patch_ambient_token(monkeypatch, allowed=False)
+    with pytest.raises(PermissionError, match="hf auth login"):
         HuggingFaceHubLogger("someuser/finetune")
+
+
+def test_hf_logger_preflights_target_repo(monkeypatch):
+    from libreyolo.training.loggers import HuggingFaceHubLogger
+
+    seen = _patch_ambient_token(monkeypatch)
+    HuggingFaceHubLogger("someuser/finetune")
+    assert seen == [("someuser/finetune", True)]
+
+
+def test_assert_can_push_rejects_foreign_namespace(monkeypatch):
+    """A token that exists proves nothing about where it may write."""
+    hub = pytest.importorskip("huggingface_hub")
+
+    class FakeApi:
+        def __init__(self, token=None):
+            pass
+
+        def whoami(self):
+            return {"name": "someuser", "orgs": [{"name": "someorg"}]}
+
+        def create_repo(self, *args, **kwargs):
+            raise AssertionError("must be rejected before touching the Hub")
+
+    monkeypatch.setattr(hub, "HfApi", FakeApi)
+    with pytest.raises(PermissionError, match="not your username"):
+        hf_hub.assert_can_push("google/not-mine")
+
+    # Own namespace and orgs are allowed through to repo creation.
+    created = []
+    FakeApi.create_repo = lambda self, repo_id, **kw: created.append(repo_id)
+    hf_hub.assert_can_push("someorg/model")
+    assert created == ["someorg/model"]
 
 
 def test_hf_logger_pushes_best_checkpoint(tmp_path, monkeypatch):

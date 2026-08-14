@@ -345,8 +345,10 @@ def LibreYOLO(
     # the exact same safe-load + metadata-validation path as a local file.
     from ..utils.hf_hub import maybe_resolve_hub_reference
 
+    hub_source = None
     hub_checkpoint = maybe_resolve_hub_reference(model_path)
     if hub_checkpoint is not None:
+        hub_source = model_path
         model_path = hub_checkpoint
 
     model_path = _resolve_weights_path(model_path)
@@ -593,6 +595,22 @@ def LibreYOLO(
                 model_path,
                 "; ".join(metadata_errors),
                 _METADATA_CONVERSION_HELP,
+            )
+        elif hub_source is not None:
+            # Guessing a family from raw tensor keys is a coin flip for a file
+            # pulled off the open Hub: an unrelated model can satisfy some
+            # family's can_load() and then fail with a nonsense error about
+            # that family. Metadata is the contract for Hub loads, so refuse
+            # here and name the repo instead.
+            raise ValueError(
+                f"'{hub_source}' does not contain a LibreYOLO checkpoint.\n"
+                f"Hugging Face models are loaded by their LibreYOLO metadata "
+                f"(schema v1.0), and this file has none, so its architecture "
+                f"cannot be identified.\n"
+                f"If it is an upstream checkpoint LibreYOLO can convert, "
+                f"download it and load it from a local path, which enables "
+                f"the legacy architecture-detection path.\n"
+                f"{_METADATA_CONVERSION_HELP}"
             )
         else:
             logger.warning(

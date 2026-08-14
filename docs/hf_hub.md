@@ -35,10 +35,19 @@ Resolution rules:
   in the repo is used. Repos with several checkpoints raise an error listing
   them; select one with `hf://owner/repo/<filename>`.
 
+- A revision passed as `@revision` must not contain `/`; use a commit SHA or a
+  slash-free branch name.
+
 Downloads go to the shared `huggingface_hub` cache and are loaded through the
 same safe path as local files: `torch.load(weights_only=True)` plus metadata
-validation. Checkpoints without LibreYOLO metadata fall back to the usual
-legacy or auto-conversion flows with a warning.
+validation.
+
+Hub checkpoints are identified by their LibreYOLO metadata. Recognized
+upstream checkpoints are still auto-converted, but a file with no metadata
+that cannot be converted is rejected rather than guessed at, because raw
+tensor keys from an arbitrary Hub repo can match an unrelated family and fail
+much later with a confusing error. To load such a file anyway, download it and
+pass a local path, which re-enables legacy architecture detection.
 
 Private and gated repos work once you are authenticated (see below).
 
@@ -76,10 +85,11 @@ model.train(
 )
 ```
 
-The logger checks for credentials at construction time, so a missing login
-fails before training starts instead of after hours of training. On train
-end it pushes `weights/best.pt` (falling back to `last.pt`) with the final
-metrics rendered into the model card.
+The logger verifies write access at construction time, which also creates the
+target repository up front, so a credential or repository-name problem fails
+before training starts instead of discarding hours of work at the end. On
+train end it pushes `weights/best.pt` (falling back to `last.pt`) with the
+final metrics rendered into the model card.
 
 Note the differing defaults: `push_to_hub` creates a public repo (you are
 explicitly publishing), while the logger creates a private one, because it

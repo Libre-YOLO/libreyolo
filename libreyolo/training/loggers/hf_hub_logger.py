@@ -20,12 +20,13 @@ class HuggingFaceHubLogger(BaseLogger):
         model.train(data="data.yaml", loggers="hf:someuser/my-finetune")
 
     Authentication is resolved the standard huggingface_hub way (``hf auth
-    login`` or ``HF_TOKEN``); a missing login fails at construction time so a
-    long run never trains for hours and then silently fails to upload.
+    login`` or ``HF_TOKEN``). Write access is verified at construction time,
+    which also creates the target repository, so a credential problem surfaces
+    before the run instead of discarding hours of training at the end.
 
     Args:
-        repo_id: Target repository as ``"owner/name"``. Created on first push
-            if it does not exist.
+        repo_id: Target repository as ``"owner/name"``. Created immediately
+            when the logger is constructed.
         private: Create the repo as private. Defaults to True, unlike the
             explicit :meth:`~libreyolo.models.base.BaseModel.push_to_hub`:
             this upload happens unattended at the end of a run, so a model
@@ -45,19 +46,11 @@ class HuggingFaceHubLogger(BaseLogger):
         license: str | None = None,
     ):
         super().__init__()
-        from libreyolo.utils.hf_hub import (
-            _auth_help,
-            _require_hub,
-            _validate_push_repo_id,
-        )
+        from libreyolo.utils.hf_hub import assert_can_push
 
-        hub = _require_hub()
-        _validate_push_repo_id(repo_id)
-        if token is None and hub.get_token() is None:
-            raise ValueError(
-                "HuggingFaceHubLogger needs Hub credentials before training "
-                "starts.\n" + _auth_help(repo_id, write=True)
-            )
+        # Proves write access now rather than after the run, which also
+        # creates the target repo up front.
+        assert_can_push(repo_id, private=private, token=token)
         self.repo_id = repo_id
         self.private = private
         self.token = token
