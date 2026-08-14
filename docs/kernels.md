@@ -26,9 +26,11 @@ dependency is never an error, only a fallback.
 
 ## Selection
 
-Implementations are tried newest-first; the first one whose predicate passes
-wins, falling back to the reference. `libreyolo.kernels.active()` reports the
-current selection.
+Implementations are tried newest-first; `resolve()` returns the first whose
+predicate passes. Slots that may return None for a given input
+(`ms_deform_attn`) then walk the remaining eligible providers so a Hub
+reject does not hide Triton. `libreyolo.kernels.active()` reports the
+first eligible name.
 
 - `LIBREYOLO_KERNELS=off|reference` forces the reference implementations;
   any other value selects only implementations registered under that name.

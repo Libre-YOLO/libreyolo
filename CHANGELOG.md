@@ -7,6 +7,15 @@ before 1.4.0 are documented in the
 
 ## [Unreleased]
 
+### Fixed
+
+- **MSDA slot follow-ups from #784.** `maybe_ms_deform_attn` walks eligible
+  providers when the preferred Hub kernel returns None, so Triton still
+  runs after a Hub reject or disable. Triton skips the `spatial_shapes`
+  `.item()` checks while CUDA-graph capturing, launches on `value.device`,
+  and disables itself after the first compile/launch failure instead of
+  retrying every call.
+
 ### Added
 
 - **EC pose on the `ms_deform_attn` slot.** The pose decoder's pre-split

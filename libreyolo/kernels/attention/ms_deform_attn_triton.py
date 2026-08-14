@@ -20,15 +20,19 @@ registers on top.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 from typing import Optional
 
 import torch
 
-from .. import register
+from .. import clear_cache, register
+
+logger = logging.getLogger(__name__)
 
 
 _SLOT_DTYPES = (torch.float32, torch.float16, torch.bfloat16)
+_triton_failed = False
 
 
 def _env_enabled() -> bool:
@@ -43,9 +47,20 @@ def _env_enabled() -> bool:
 def _eligible() -> bool:
     return (
         _env_enabled()
+        and not _triton_failed
         and importlib.util.find_spec("triton") is not None
         and torch.cuda.is_available()
     )
+
+
+def _disable(exc: BaseException) -> None:
+    """One-shot disable after a compile/launch failure. Matches the Hub path."""
+    global _triton_failed
+    if _triton_failed:
+        return
+    _triton_failed = True
+    clear_cache()
+    logger.warning("Triton ms_deform_attn failed, falling back: %s", exc)
 
 
 def _supported_inputs(
@@ -58,11 +73,12 @@ def _supported_inputs(
         return False
     if value.requires_grad or sampling_locations.requires_grad or attention_weights.requires_grad:
         return False
+    device = value.device
     if not (
         value.is_cuda
-        and sampling_locations.is_cuda
-        and attention_weights.is_cuda
-        and spatial_shapes.is_cuda
+        and sampling_locations.device == device
+        and attention_weights.device == device
+        and spatial_shapes.device == device
     ):
         return False
     if not (
@@ -97,13 +113,15 @@ def _supported_inputs(
     if not (0 < channels <= 128):
         return False
     # Area must match Len_in or the kernel indexes off the value buffer.
-    # spatial_shapes is a few (H, W) pairs; the readback is cheaper than an
-    # illegal CUDA access on a mismatched caller.
-    areas = spatial_shapes[:, 0] * spatial_shapes[:, 1]
-    if int(areas.sum().item()) != int(len_in):
-        return False
-    if bool((spatial_shapes <= 0).any().item()):
-        return False
+    # Skip the host readback while CUDA-graph capturing: warmup already
+    # validated this shape, and .item() would abort capture.
+    capturing = torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()
+    if not capturing:
+        areas = spatial_shapes[:, 0] * spatial_shapes[:, 1]
+        if int(areas.sum().item()) != int(len_in):
+            return False
+        if bool((spatial_shapes <= 0).any().item()):
+            return False
     return True
 
 
@@ -273,6 +291,8 @@ def triton_ms_deform_attn(
     attention_weights: torch.Tensor,
 ) -> Optional[torch.Tensor]:
     """Run MSDA on the in-tree Triton kernel, or return None to fall back."""
+    if _triton_failed:
+        return None
     if not _supported_inputs(
         value, spatial_shapes, sampling_locations, attention_weights
     ):
@@ -296,38 +316,40 @@ def triton_ms_deform_attn(
     block_c = _next_power_of_2(int(n_channels))
     grid = (batch * n_queries * n_heads,)
     try:
-        _kernel()[grid](
-            value,
-            sampling_locations,
-            attention_weights,
-            shapes,
-            starts,
-            output,
-            batch,
-            n_queries,
-            n_heads,
-            n_channels,
-            n_levels,
-            n_points,
-            value.stride(0),
-            value.stride(1),
-            value.stride(2),
-            value.stride(3),
-            sampling_locations.stride(0),
-            sampling_locations.stride(1),
-            sampling_locations.stride(2),
-            sampling_locations.stride(3),
-            sampling_locations.stride(4),
-            attention_weights.stride(0),
-            attention_weights.stride(1),
-            attention_weights.stride(2),
-            attention_weights.stride(3),
-            attention_weights.stride(4),
-            output.stride(0),
-            output.stride(1),
-            BLOCK_C=block_c,
-        )
-    except Exception:
+        with torch.cuda.device(value.device):
+            _kernel()[grid](
+                value,
+                sampling_locations,
+                attention_weights,
+                shapes,
+                starts,
+                output,
+                batch,
+                n_queries,
+                n_heads,
+                n_channels,
+                n_levels,
+                n_points,
+                value.stride(0),
+                value.stride(1),
+                value.stride(2),
+                value.stride(3),
+                sampling_locations.stride(0),
+                sampling_locations.stride(1),
+                sampling_locations.stride(2),
+                sampling_locations.stride(3),
+                sampling_locations.stride(4),
+                attention_weights.stride(0),
+                attention_weights.stride(1),
+                attention_weights.stride(2),
+                attention_weights.stride(3),
+                attention_weights.stride(4),
+                output.stride(0),
+                output.stride(1),
+                BLOCK_C=block_c,
+            )
+    except Exception as exc:
+        _disable(exc)
         return None
     if value.dtype != torch.float32:
         return output.to(dtype=value.dtype)

@@ -559,3 +559,89 @@ def test_triton_rfdetr_shapes_on_cuda():
         weights.flatten(-2),
     )
     torch.testing.assert_close(out, ref, rtol=1e-4, atol=1e-5)
+
+
+def test_maybe_walks_next_provider_when_first_returns_none(monkeypatch):
+    """Hub (or any newer impl) returning None must not hide the next provider."""
+    recorded = []
+
+    def first_impl(value, spatial_shapes, sampling_locations, attention_weights):
+        recorded.append("first")
+        return None
+
+    def second_impl(value, spatial_shapes, sampling_locations, attention_weights):
+        recorded.append("second")
+        return torch.full(
+            (value.shape[0], sampling_locations.shape[1], value.shape[2] * value.shape[3]),
+            7.0,
+        )
+
+    kernels.register("ms_deform_attn", second_impl, name="second")
+    kernels.register("ms_deform_attn", first_impl, name="first")
+    kernels.clear_cache()
+    try:
+        value, shapes, locations, weights = _classic_inputs()
+        out = maybe_ms_deform_attn(value, shapes, locations, weights)
+        assert recorded == ["first", "second"]
+        assert torch.equal(out, torch.full((BATCH, LEN_Q, HEADS * CHANNELS), 7.0))
+    finally:
+        kernels.unregister("ms_deform_attn", "first")
+        kernels.unregister("ms_deform_attn", "second")
+        kernels.clear_cache()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_triton_supported_inputs_skips_item_during_capture(monkeypatch):
+    from libreyolo.kernels.attention.ms_deform_attn_triton import _supported_inputs
+
+    value, shapes, locations, weights = _classic_inputs()
+    value = value.cuda()
+    shapes = shapes.cuda()
+    locations = locations.cuda()
+    weights = weights.cuda()
+    monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: True)
+    assert _supported_inputs(value, shapes, locations, weights)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_triton_rejects_mixed_devices():
+    from libreyolo.kernels.attention.ms_deform_attn_triton import (
+        _supported_inputs,
+        triton_ms_deform_attn,
+    )
+
+    value, shapes, locations, weights = _classic_inputs()
+    value = value.cuda()
+    locations = locations.cuda()
+    weights = weights.cuda()
+    # shapes left on CPU: must not launch.
+    assert not _supported_inputs(value, shapes, locations, weights)
+    assert triton_ms_deform_attn(value, shapes, locations, weights) is None
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or importlib.util.find_spec("triton") is None,
+    reason="needs CUDA and Triton",
+)
+def test_triton_disables_after_launch_failure(monkeypatch):
+    from libreyolo.kernels.attention import ms_deform_attn_triton as module
+
+    value, shapes, locations, weights = _classic_inputs()
+    value = value.cuda()
+    shapes = shapes.cuda()
+    locations = locations.cuda()
+    weights = weights.cuda()
+
+    monkeypatch.setattr(module, "_triton_failed", False)
+    calls = []
+
+    class _Boom:
+        def __getitem__(self, _grid):
+            calls.append(1)
+            raise RuntimeError("compile failed")
+
+    monkeypatch.setattr(module, "_kernel", lambda: _Boom())
+    assert module.triton_ms_deform_attn(value, shapes, locations, weights) is None
+    assert module._triton_failed
+    assert module.triton_ms_deform_attn(value, shapes, locations, weights) is None
+    assert calls == [1]
