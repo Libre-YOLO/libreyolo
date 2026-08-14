@@ -72,7 +72,7 @@ from libreyolo.training import HuggingFaceHubLogger
 
 model.train(
     data="data.yaml",
-    loggers=HuggingFaceHubLogger("someuser/my-finetune", private=True),
+    loggers=HuggingFaceHubLogger("someuser/my-finetune", private=False),
 )
 ```
 
@@ -80,6 +80,12 @@ The logger checks for credentials at construction time, so a missing login
 fails before training starts instead of after hours of training. On train
 end it pushes `weights/best.pt` (falling back to `last.pt`) with the final
 metrics rendered into the model card.
+
+Note the differing defaults: `push_to_hub` creates a public repo (you are
+explicitly publishing), while the logger creates a private one, because it
+uploads unattended and a model trained on proprietary data must not become
+public by surprise. Pass `private=False` to publish from training. Repos that
+already exist keep their current visibility either way.
 
 ## Authentication
 

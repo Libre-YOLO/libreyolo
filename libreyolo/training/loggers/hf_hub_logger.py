@@ -26,7 +26,12 @@ class HuggingFaceHubLogger(BaseLogger):
     Args:
         repo_id: Target repository as ``"owner/name"``. Created on first push
             if it does not exist.
-        private: Create the repo as private.
+        private: Create the repo as private. Defaults to True, unlike the
+            explicit :meth:`~libreyolo.models.base.BaseModel.push_to_hub`:
+            this upload happens unattended at the end of a run, so a model
+            trained on proprietary data must never become public by surprise.
+            Pass ``private=False`` to publish. Existing repos keep whatever
+            visibility they already have.
         token: Hub token overriding the ambient login (must have write scope).
         license: License identifier for the generated model card.
     """
@@ -35,7 +40,7 @@ class HuggingFaceHubLogger(BaseLogger):
         self,
         repo_id: str,
         *,
-        private: bool = False,
+        private: bool = True,
         token: str | None = None,
         license: str | None = None,
     ):

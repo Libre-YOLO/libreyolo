@@ -395,6 +395,28 @@ def test_hf_logger_pushes_best_checkpoint(tmp_path, monkeypatch):
     assert pushed["metrics"] == {"best_mAP50": 0.5, "final_loss": 1.0}
 
 
+def test_hf_logger_defaults_to_private(tmp_path, monkeypatch):
+    """Unattended uploads must not publish by surprise (push_to_hub differs)."""
+    from libreyolo.training.loggers import HuggingFaceHubLogger
+
+    _patch_ambient_token(monkeypatch)
+    weights_dir = tmp_path / "weights"
+    weights_dir.mkdir()
+    _make_yolo9_checkpoint(weights_dir / "best.pt")
+
+    seen = {}
+    monkeypatch.setattr(
+        hf_hub,
+        "push_checkpoint_to_hub",
+        lambda path, repo_id, **kwargs: seen.update(kwargs) or "url",
+    )
+
+    HuggingFaceHubLogger("someuser/finetune").on_train_end(
+        _train_end_event(tmp_path)
+    )
+    assert seen["private"] is True
+
+
 def test_hf_logger_no_checkpoint_is_a_noop(tmp_path, monkeypatch, caplog):
     from libreyolo.training.loggers import HuggingFaceHubLogger
 
