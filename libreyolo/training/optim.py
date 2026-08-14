@@ -10,6 +10,17 @@ import torch
 
 ParamsLike = Iterable[Union[torch.Tensor, Dict[str, Any]]]
 
+#: Optimizers that must never take the fused path. torch's fused SGD (2.11
+#: verified) sets ``_step_supports_amp_scaling`` on the instance, so
+#: GradScaler.step delegates overflow handling to the kernel instead of
+#: skipping the step itself; the fused SGD kernel then advances the momentum
+#: buffer on the very overflow steps the scaler meant to skip entirely. The
+#: routine fp16 overflow on the first training steps writes inf into
+#: momentum, and the weights explode one step later (yolo9 AMP fine-tuning
+#: reached nan loss by step 2). Fused Adam and AdamW honor found_inf and
+#: leave their state untouched on skipped steps, so they keep the fused path.
+_FUSED_UNSAFE = (torch.optim.SGD,)
+
 
 def _materialized_groups(params: ParamsLike) -> List[Union[torch.Tensor, Dict[str, Any]]]:
     """Materialize params (and each group's params) so they can be inspected
@@ -63,7 +74,7 @@ def build_optimizer(
     builds where the kwarg or the fused path itself is missing.
     """
     groups = _materialized_groups(params)
-    if _all_params_cuda(groups):
+    if _all_params_cuda(groups) and not issubclass(optim_cls, _FUSED_UNSAFE):
         try:
             return optim_cls(groups, **kwargs, fused=True)
         except (RuntimeError, ValueError, TypeError):
