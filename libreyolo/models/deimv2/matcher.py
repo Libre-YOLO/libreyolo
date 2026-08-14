@@ -52,13 +52,15 @@ class HungarianMatcher(nn.Module):
         )
 
     @torch.no_grad()
-    def forward(
-        self,
-        outputs: Dict[str, torch.Tensor],
-        targets,
-        return_topk=False,
-        epoch=0,
-    ):
+    def compute_cost_matrix(self, outputs: Dict[str, torch.Tensor], targets, epoch=0):
+        """Build the pairwise matching cost on the predictions' device.
+
+        Split out from :meth:`forward` so a caller matching several output
+        levels (main + aux + enc) can enqueue the next level's cost on the
+        device before draining the current one's ``.cpu()`` transfer, paying
+        one overlapped drain per level instead of a full pipeline stall (see
+        ``DEIMv2Criterion.forward``).
+        """
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
         if self.use_focal_loss:
@@ -106,10 +108,17 @@ class HungarianMatcher(nn.Module):
                 + self.cost_giou * cost_giou
             )
 
-        C = C.view(bs, num_queries, -1).cpu()
+        return C.view(bs, num_queries, -1)
 
+    @torch.no_grad()
+    def solve(self, cost_matrix, targets, return_topk=False):
+        """Run the Hungarian assignment on a CPU cost matrix.
+
+        ``cost_matrix`` is the [bs, num_queries, total_targets] output of
+        :meth:`compute_cost_matrix` after ``.cpu()``.
+        """
         sizes = [len(v["boxes"]) for v in targets]
-        C = torch.nan_to_num(C, nan=1.0)
+        C = torch.nan_to_num(cost_matrix, nan=1.0)
         indices_pre = [
             linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))
         ]
@@ -129,6 +138,17 @@ class HungarianMatcher(nn.Module):
             }
 
         return {"indices": indices}
+
+    @torch.no_grad()
+    def forward(
+        self,
+        outputs: Dict[str, torch.Tensor],
+        targets,
+        return_topk=False,
+        epoch=0,
+    ):
+        cost_matrix = self.compute_cost_matrix(outputs, targets, epoch=epoch)
+        return self.solve(cost_matrix.cpu(), targets, return_topk=return_topk)
 
     def get_top_k_matches(self, C, sizes, k=1, initial_indices=None):
         indices_list = []
