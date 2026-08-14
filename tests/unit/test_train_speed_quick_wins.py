@@ -194,7 +194,7 @@ def test_build_optimizer_bare_tensor_groups_fuse_on_cuda():
 def test_build_optimizer_falls_back_when_fused_unsupported(monkeypatch):
     calls = []
 
-    class _NoFusedSGD(torch.optim.SGD):
+    class _NoFusedAdamW(torch.optim.AdamW):
         def __init__(self, params, **kwargs):
             calls.append(sorted(kwargs))
             if "fused" in kwargs:
@@ -202,9 +202,59 @@ def test_build_optimizer_falls_back_when_fused_unsupported(monkeypatch):
             super().__init__(params, **kwargs)
 
     monkeypatch.setattr(optim_mod, "_all_params_cuda", lambda groups: True)
-    opt = build_optimizer(_NoFusedSGD, _cpu_params(), lr=0.1)
-    assert isinstance(opt, _NoFusedSGD)
+    opt = build_optimizer(_NoFusedAdamW, _cpu_params(), lr=1e-3)
+    assert isinstance(opt, _NoFusedAdamW)
     assert calls == [["fused", "lr"], ["lr"]]
+
+
+def test_build_optimizer_never_requests_fused_sgd(monkeypatch):
+    """Fused SGD corrupts momentum on GradScaler-skipped overflow steps
+    (torch 2.11), so SGD must never be constructed with fused=True even when
+    every parameter is on CUDA."""
+    calls = []
+
+    class _SpySGD(torch.optim.SGD):
+        def __init__(self, params, **kwargs):
+            calls.append(sorted(kwargs))
+            super().__init__(params, **kwargs)
+
+    monkeypatch.setattr(optim_mod, "_all_params_cuda", lambda groups: True)
+    opt = build_optimizer(_SpySGD, _cpu_params(), lr=0.1, momentum=0.9)
+    assert isinstance(opt, _SpySGD)
+    assert calls == [["lr", "momentum"]]
+    assert not any(group.get("fused") for group in opt.param_groups)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_build_optimizer_sgd_stays_stock_on_cuda():
+    params = [torch.nn.Parameter(torch.randn(3, 3, device="cuda"))]
+    opt = build_optimizer(torch.optim.SGD, params, lr=0.1, momentum=0.9)
+    assert not any(group.get("fused") for group in opt.param_groups)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_scaler_overflow_step_leaves_sgd_state_untouched():
+    """Regression for the 2026-08-14 nightly nan: an AMP overflow step must
+    leave the built SGD's momentum state untouched and the weights unchanged,
+    and the next finite step must land exactly where stock SGD lands."""
+    p = torch.nn.Parameter(torch.ones(4, device="cuda"))
+    opt = build_optimizer(torch.optim.SGD, [p], lr=0.1, momentum=0.9)
+    scaler = torch.amp.GradScaler("cuda")
+
+    overflow = (p * 1e30).sum() * 1e30
+    scaler.scale(overflow).backward()
+    scaler.step(opt)
+    scaler.update()
+    opt.zero_grad(set_to_none=True)
+    assert "momentum_buffer" not in opt.state.get(p, {})
+    assert torch.equal(p.detach(), torch.ones(4, device="cuda"))
+
+    finite = p.sum()
+    scaler.scale(finite).backward()
+    scaler.step(opt)
+    scaler.update()
+    assert torch.isfinite(p).all()
+    assert torch.allclose(p.detach(), torch.full((4,), 0.9, device="cuda"))
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
