@@ -865,11 +865,13 @@ def test_shipping_rows_never_claim_a_future_since_version():
     """A validated/available row cannot postdate the library's own version.
 
     During 1.5.0 development 176 rows were stamped ``since="1.6"`` or
-    ``since="1.7"`` for capabilities that shipped in 1.5.0. Nothing rendered
-    ``since`` at the time, but the field becomes a lie the day the docs or
-    CLI surface it. The floor is the source tree's declared major.minor
-    (``1.6.0.dev0`` means 1.6 is in progress, so ``since="1.6"`` is fine);
-    installed dist metadata can lag a source checkout, so prefer pyproject.
+    ``since="1.7"`` for capabilities that ship in the 1.5 line. Nothing
+    rendered ``since`` at the time, but the field becomes a lie the day the
+    docs or CLI surface it. ``since`` names the major.minor release LINE a
+    capability first ships in (see ``SupportEntry``), so rows added between
+    the ``v1.5.0`` tag and the next point release legitimately carry "1.5".
+    The floor is the source tree's declared major.minor from pyproject;
+    installed dist metadata can lag a source checkout, so pyproject wins.
     """
     import re
 

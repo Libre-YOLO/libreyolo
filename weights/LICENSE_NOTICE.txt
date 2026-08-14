@@ -435,8 +435,8 @@ project the weights were derived from. Per-family summary:
              GitHub), code and weights explicitly Apache-2.0 (YAML license
              tag) -> rehosted under the LibreYOLO org
              (LibreYOLO/LibreFeyNobgl-matte), including
-             post-training-quantized fp8/nvfp4 variants
-             (LibreFeyNobgl-matte-{fp8,nvfp4}). Upstream training data is
+             post-training-quantized fp16/fp8 variants
+             (LibreFeyNobgl-matte-{fp16,fp8}). Upstream training data is
              not disclosed; only the released weights are redistributed.
              Convert with weights/convert_feynobg_weights.py.
 
@@ -473,7 +473,7 @@ project the weights were derived from. Per-family summary:
 
     LingBot-Vision (LibreLingBotVision{s,b,l}-sem)     Apache-2.0
              upstream: robbyant/lingbot-vision (code and released backbone
-             weights Apache-2.0, Copyright (c) 2026 Robbyant; backbone
+             weights Apache-2.0, Copyright 2026 LingBot-Vision Contributors; backbone
              checkpoints published in the robbyant lingbot-vision Hugging
              Face collection). Each hosted checkpoint combines the unchanged
              Apache-2.0 backbone tensors with an ADE20K dense head trained

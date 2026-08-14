@@ -593,7 +593,7 @@ LingBot-Vision (Robbyant / Ant Group)
 Source: https://github.com/robbyant/lingbot-vision
 Commit: 151e46321bae4399f8568829f190c7bdec216b49
 License: Apache License 2.0
-Copyright (c) 2026 Robbyant.
+Copyright 2026 LingBot-Vision Contributors.
 Used for: the LibreLingBotVision semantic family
           (libreyolo/models/lingbotvision/). The ViT backbone in nn.py is a
           native port of the upstream DINOv3-style Vision Transformer (axial
@@ -1302,7 +1302,7 @@ Used for: the FeyNobg background-removal model family
           from 18 to 24 blocks; the family reuses the LibreYOLO BiRefNet
           port's nn module with a family-local dimension table and
           converts the released Apache-2.0 weights (state-dict
-          metadata-wrap plus post-training-quantized fp8/nvfp4
+          metadata-wrap plus post-training-quantized fp16/fp8
           variants). No code was copied from the nobg library. Upstream
           training data is not disclosed; LibreYOLO redistributes only
           the released weights.

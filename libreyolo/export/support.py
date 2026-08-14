@@ -31,6 +31,9 @@ class SupportEntry:
 
     tier: Tier
     reason: str = ""
+    #: The major.minor release LINE in which the capability first ships, not
+    #: an exact tag: "1.5" covers 1.5.0 and its point releases, so rows that
+    #: land between the .0 tag and the next point release stay truthful.
     since: str | None = None
     constraint: str | None = None
 
