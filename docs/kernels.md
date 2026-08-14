@@ -79,7 +79,9 @@ Current `ms_deform_attn` providers, newest-first:
   through to the portable path instead. Two cases do that today: a
   `num_points_list` with a different point count per level, and the
   `method='discrete'` integer-index sampling, which is a different equation.
-  The EC pose variant keeps its own contract and is not wired.
+  The EC pose core (`MSDeformAttnPose`) adapts its pre-split
+  `(bs*heads, c, hw)` levels onto the slot layout and falls through when
+  that reshape is impossible.
 
 Out-of-tree compiled kernels can also ship as a `libreyolo_kernels` package,
 which self-registers on import (e.g. a future CUTLASS NVFP4 GEMM for the
