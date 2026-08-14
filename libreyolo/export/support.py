@@ -3708,6 +3708,8 @@ _FAMILY_BLOCKS = {
     "smolvlm2": "Generative VLM export is out of scope for v1.",
     "locateanything": "Generative VLM export is out of scope for v1.",
     "northmicrovision": "Generative VLM export is out of scope for v1.",
+    "gemma4": "Generative VLM export is out of scope for v1.",
+    "moondream": "Generative VLM export is out of scope for v1.",
 }
 
 _NCNN_BLOCKS = {

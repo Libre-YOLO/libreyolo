@@ -269,11 +269,40 @@ class TestToXyxy:
 
         assert to_xyxy([0.5, 0.5, 0.25, 0.5], "cxcywh") == [0.375, 0.25, 0.625, 0.75]
 
+    def test_yxyx(self):
+        from libreyolo.models.vlm.parsing import to_xyxy
+
+        assert to_xyxy([243, 252, 956, 415], "yxyx") == [252, 243, 415, 956]
+
+    def test_gemma4_box_2d_y_first_on_0_1000_scale(self):
+        items = [{"label": "person", "box_2d": [243, 252, 956, 415]}]
+        det = build_detection_dict(
+            items,
+            {"person": 0},
+            (1000, 1000),
+            bbox_key="box_2d",
+            coord_divisor=1000.0,
+            box_format="yxyx",
+        )
+        assert det["num_detections"] == 1
+        assert det["boxes"][0] == [252.0, 243.0, 415.0, 956.0]
+        assert det["classes"][0] == 0
+
     def test_unknown_format_and_bad_shape(self):
         from libreyolo.models.vlm.parsing import to_xyxy
 
         assert to_xyxy([0.1, 0.2, 0.3, 0.4], "weird") is None
         assert to_xyxy([0.1, 0.2, 0.3], "xyxy") is None
+
+    def test_gemma4_fenced_box_2d_is_detected(self):
+        from libreyolo.models.vlm.parsing import extract_detections
+
+        items = extract_detections(
+            "```json\n"
+            '[{"box_2d": [243, 252, 956, 415], "label": "person"}]\n'
+            "```"
+        )
+        assert items == [{"box_2d": [243, 252, 956, 415], "label": "person"}]
 
     def test_qwen_style_bbox_2d_on_0_1000_scale(self):
         # Qwen emits a "bbox_2d" key on a 0-1000 scale; divide by 1000 then scale.

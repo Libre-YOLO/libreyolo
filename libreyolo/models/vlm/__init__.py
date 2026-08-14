@@ -21,10 +21,12 @@ from typing import Dict, Tuple, Type
 
 from .base import LibreVLMModel
 from .florence2 import LibreFlorence2
+from .gemma4 import LibreGemma4
 from .internvl3 import LibreInternVL3
 from .kosmos2 import LibreKosmos2
 from .lfm2 import LibreLFM2VL
 from .locateanything import LibreLocateAnything
+from .moondream import LibreMoondream
 from .northmicro import LibreNorthMicroVision
 from .qwen3vl import LibreQwen3VL
 from .smolvlm import LibreSmolVLM2
@@ -59,6 +61,17 @@ _ALIASES: Dict[str, Tuple[Type[LibreVLMModel], str]] = {
     "locateanything": (LibreLocateAnything, "3b"),
     "locate-anything-3b": (LibreLocateAnything, "3b"),
     "locateanything-3b": (LibreLocateAnything, "3b"),
+    "gemma-4": (LibreGemma4, "e4b"),
+    "gemma4": (LibreGemma4, "e4b"),
+    "gemma-4-e4b": (LibreGemma4, "e4b"),
+    "gemma4-e4b": (LibreGemma4, "e4b"),
+    "gemma-4-e2b": (LibreGemma4, "e2b"),
+    "gemma4-e2b": (LibreGemma4, "e2b"),
+    "moondream": (LibreMoondream, "2"),
+    "moondream-2": (LibreMoondream, "2"),
+    "moondream2": (LibreMoondream, "2"),
+    "moondream-3": (LibreMoondream, "3"),
+    "moondream3": (LibreMoondream, "3"),
 }
 
 # SenseNova-Vision lives in ``models/sensenova`` (it vendors its own
@@ -158,6 +171,8 @@ __all__ = [
     "LibreFlorence2",
     "LibreKosmos2",
     "LibreLocateAnything",
+    "LibreGemma4",
+    "LibreMoondream",
     "LibreNorthMicroVision",
     "LibreSenseNovaVision",
     "LibreMODUS",

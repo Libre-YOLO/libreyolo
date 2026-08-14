@@ -47,6 +47,7 @@ in preflight.
 | feynobg | matte | available | ✓ |  |  |  |  |  |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ |
+| gemma4 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | hrnet | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
@@ -63,6 +64,8 @@ in preflight.
 | mobilenetv4 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |  |  |  |  |
 | moge2 | normal | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | available |  |  |  |
+| moondream | detect |  |  |  |  |  |  |  |  |  |  |  |  |
+| moondream | point |  |  |  |  |  |  |  |  |  |  |  |  |
 | nafnet | restore | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ |
 | northmicrovision | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |  |  |  |  |
@@ -860,6 +863,18 @@ These converter paths are callable with the recorded validation context.
 - `fomo` / `point` / `rknn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `fomo` / `point` / `tflite`: LiteRT 2.1.2 cannot invoke the onnx2tf 2.6.7 graph because a DEPTHWISE_CONV_2D reports 16 filter channels versus zero input channels.
 - `fomo` / `point` / `coreml`: The CoreML wrapper does not implement the raw point-heatmap contract.
+- `gemma4` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `paddle`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
+- `gemma4` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `grounding_dino` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `executorch`: Open-vocabulary runtime export is out of scope for v1.
@@ -1010,6 +1025,30 @@ These converter paths are callable with the recorded validation context.
 - `moge2` / `normal` / `tflite`: onnx2tf 2.6.7 flatbuffer-direct lowering cannot lower the encoder's cubic Resize because its input C/H/W signature remains dynamic.
 - `moge2` / `normal` / `coreml`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
 - `moge2` / `normal` / `coreai`: This family is not wired to the fixed-canvas dense unit-normal export and backend renormalization contract.
+- `moondream` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `paddle`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
+- `moondream` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `onnx`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `torchscript`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `executorch`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `openvino`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `paddle`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `mnn`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `rknn`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `ncnn`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `tflite`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `coreml`: Generative VLM export is out of scope for v1.
+- `moondream` / `point` / `coreai`: Generative VLM export is out of scope for v1.
 - `nafnet` / `restore` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
 - `nafnet` / `restore` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `nafnet` / `restore` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.

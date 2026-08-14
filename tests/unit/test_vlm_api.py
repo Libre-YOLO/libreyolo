@@ -100,6 +100,14 @@ class TestFactoryResolution:
         assert _ALIASES["florence-2"] == (LibreFlorence2, "base")
         assert _ALIASES["kosmos-2"] == (LibreKosmos2, "224")
 
+        from libreyolo.models.vlm.gemma4 import LibreGemma4
+        from libreyolo.models.vlm.moondream import LibreMoondream
+
+        assert _ALIASES["gemma-4"] == (LibreGemma4, "e4b")
+        assert _ALIASES["gemma-4-e2b"] == (LibreGemma4, "e2b")
+        assert _ALIASES["moondream"] == (LibreMoondream, "2")
+        assert _ALIASES["moondream-3"] == (LibreMoondream, "3")
+
     def test_unknown_alias_raises_before_loading(self):
         from libreyolo.models.vlm import LibreVLM
 

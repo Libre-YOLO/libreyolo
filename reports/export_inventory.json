@@ -738,6 +738,26 @@
     "available": true,
     "group": "g2"
   },
+  "gemma4": {
+    "class": "libreyolo.models.vlm.gemma4.LibreGemma4",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "e2b": 896,
+      "e4b": 896
+    },
+    "default_imgsz": {
+      "e2b": 896,
+      "e4b": 896
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true,
+    "group": "s"
+  },
   "grounding_dino": {
     "class": "libreyolo.models.openvocab.grounding_dino.LibreGroundingDINO",
     "tasks": [
@@ -1054,6 +1074,27 @@
     "optional_extra": null,
     "available": true,
     "group": "g3"
+  },
+  "moondream": {
+    "class": "libreyolo.models.vlm.moondream.LibreMoondream",
+    "tasks": [
+      "detect",
+      "point"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "2": 384,
+      "3": 512
+    },
+    "default_imgsz": {
+      "2": 384,
+      "3": 512
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true,
+    "group": "s"
   },
   "nafnet": {
     "class": "libreyolo.models.nafnet.model.LibreNAFNet",
