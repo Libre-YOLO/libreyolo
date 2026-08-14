@@ -552,6 +552,15 @@ project the weights were derived from. Per-family summary:
              No code is ported from either project; both graphs are
              consumed opaquely at runtime.
 
+    SenseNova-Vision (LibreYOLO/SenseNovaVision7b)     CC BY-NC 4.0
+             upstream: OpenSenseNova/SenseNova-Vision (Apache-2.0 code,
+             commit 12ccd96e32b32967a11cacb6c5bd5fe3a555fc0c). Weights are
+             CC BY-NC 4.0, mirrored byte-identically with attribution at
+             LibreYOLO/SenseNovaVision7b. The loader prints the
+             non-commercial notice before every automatic download. NOT
+             covered by LibreYOLO's permissive license. No CC BY-NC 4.0
+             source is ported; see libreyolo/models/sensenova/NOTICE.
+
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting
 third-party checkpoints locally are responsible for complying with the

@@ -33,7 +33,7 @@ DINOv3 (Meta DINOv3 License Agreement)
     rest of LibreYOLO remains under the MIT License.
 
 SenseNova-Vision / Bagel (Apache License 2.0 code; CC BY-NC 4.0 weights,
-not redistributed)
+mirrored under that license)
     Path:    libreyolo/models/sensenova/
     License: libreyolo/models/sensenova/NOTICE  (Apache-2.0 code sources)
     Source:  https://github.com/OpenSenseNova/SenseNova-Vision
