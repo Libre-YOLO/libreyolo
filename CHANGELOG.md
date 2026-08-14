@@ -9,6 +9,11 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **EC pose on the `ms_deform_attn` slot.** The pose decoder's pre-split
+  `(bs*heads, c, hw)` value tuple now adapts onto the classic slot layout
+  used by detect EC and the other DETR-lineage families. Export and any
+  shape that cannot reshape keep the portable `grid_sample` path.
+
 - **In-tree Triton multi-scale deformable attention.** The `ms_deform_attn`
   slot now has a `triton` provider that needs no `kernels` extra: CUDA
   fp32/fp16/bf16 inference, same bilinear equation as the portable

@@ -26,6 +26,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 
+from ...kernels.attention.ms_deform_attn import (
+    maybe_ms_deform_attn,
+    ms_deform_attn_available,
+    spatial_shapes_tensor,
+)
 from ..dfine.decoder import EVAL_CONSTANT_CACHE_LIMIT
 from ..dfine.denoising import get_contrastive_denoising_training_group
 from .utils import (
@@ -1299,6 +1304,30 @@ class SegmentationHead(nn.Module):
 # ===========================================================================
 
 
+def _pose_value_to_slot(value, sampling_locations):
+    """Pose ``(bs*heads, c, hw)`` levels -> slot ``(bs, Len_in, heads, c)``.
+
+    Returns None when the tuple cannot express the slot layout, so the
+    caller keeps the portable ``grid_sample`` path unchanged.
+    """
+    if not isinstance(value, (tuple, list)) or not value:
+        return None
+    if sampling_locations.dim() != 6:
+        return None
+    batch, _, n_heads, n_levels, _, xy = sampling_locations.shape
+    if xy != 2 or n_levels != len(value):
+        return None
+    head_dim = value[0].shape[1]
+    expected_rows = batch * n_heads
+    parts = []
+    for feat in value:
+        if feat.dim() != 3 or feat.shape[0] != expected_rows or feat.shape[1] != head_dim:
+            return None
+        hw = feat.shape[2]
+        parts.append(feat.reshape(batch, n_heads, head_dim, hw).permute(0, 3, 1, 2))
+    return torch.cat(parts, dim=1)
+
+
 def _ms_deform_attn_core_pytorch_pose(
     value, value_spatial_shapes, sampling_locations, attention_weights
 ):
@@ -1306,8 +1335,22 @@ def _ms_deform_attn_core_pytorch_pose(
 
     Mirrors super-gradients/DETRPose's ``ms_deform_attn_core_pytorch``: ``value``
     is a tuple of pre-split per-level tensors of shape
-    ``(bs * n_heads, head_dim, h * w)``.
+    ``(bs * n_heads, head_dim, h * w)``. The accelerated ``ms_deform_attn``
+    slot is consulted when that tuple reshapes onto the classic layout;
+    export and any shape that cannot adapt keep the ``grid_sample`` path.
     """
+    if ms_deform_attn_available():
+        flat = _pose_value_to_slot(value, sampling_locations)
+        if flat is not None:
+            accelerated = maybe_ms_deform_attn(
+                flat,
+                spatial_shapes_tensor(value_spatial_shapes, flat.device),
+                sampling_locations,
+                attention_weights,
+            )
+            if accelerated is not None:
+                return accelerated
+
     _, head_dim, _ = value[0].shape
     bs, num_query, num_heads, num_levels, num_points, _ = sampling_locations.shape
 
