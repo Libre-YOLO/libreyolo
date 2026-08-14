@@ -79,19 +79,44 @@ _MODUS_ALIASES: Dict[str, str] = {
 _DEFAULT_MODEL = "qwen3-vl-4b"
 
 
+def _load_checkpoint(path, **kwargs) -> LibreVLMModel:
+    """Load a fine-tune checkpoint directory produced by ``train()``."""
+    from .training.checkpoint import read_contract
+
+    contract = read_contract(path)
+    family_classes = {cls.FAMILY: cls for cls, _size in _ALIASES.values()}
+    family_cls = family_classes.get(contract["family"])
+    if family_cls is None:
+        raise ValueError(
+            f"VLM checkpoint {path} was trained on unknown family "
+            f"{contract['family']!r}; this libreyolo build knows "
+            f"{sorted(family_classes)}."
+        )
+    kwargs.setdefault("names", list(contract["names"]))
+    return family_cls(size=contract["size"], checkpoint_dir=str(path), **kwargs)
+
+
 def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
-    """Load a vision-language detector by name.
+    """Load a vision-language detector by name or fine-tune checkpoint path.
 
     Args:
-        model: Model alias (e.g. ``"qwen3-vl-4b"``, ``"lfm2-vl-450m"``).
-            Defaults to Qwen3-VL-4B (Apache-2.0).
+        model: Model alias (e.g. ``"qwen3-vl-4b"``, ``"lfm2-vl-450m"``), or a
+            path to a fine-tune checkpoint directory produced by ``train()``
+            (it carries ``libreyolo_vlm.json``). Defaults to Qwen3-VL-4B
+            (Apache-2.0).
         **kwargs: Forwarded to the family constructor: ``device``, ``names``
             (initial class vocabulary, same as calling ``set_classes`` after
             load), ``prompt`` (override the detection prompt), ``max_new_tokens``.
+            When loading a checkpoint, ``names`` defaults to the vocabulary the
+            fine-tune was trained on.
 
     Returns:
         A ``LibreVLMModel`` instance with the standard predict/track surface.
     """
+    from .training.checkpoint import is_vlm_checkpoint
+
+    if is_vlm_checkpoint(model):
+        return _load_checkpoint(model, **kwargs)
     key = str(model).strip().lower()
     if key in _LAZY_ALIASES:
         from ..sensenova import LibreSenseNovaVision
