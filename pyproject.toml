@@ -95,6 +95,11 @@ fast-eval = [
     # platform without one must not be able to break a plain `pip install`.
     "faster-coco-eval>=1.7.0",
 ]
+llm = [
+    # LibreLLM talks to OpenAI-compatible Responses / Chat Completions
+    # endpoints through the official Apache-2.0 OpenAI Python SDK.
+    "openai>=1.66.0",
+]
 vlm = [
     # VLM-as-detector families load through transformers.
     # huggingface_hub (used for snapshot download) ships with transformers.
@@ -295,6 +300,7 @@ all = [
     "libreyolo[siglip2]",
     "libreyolo[coreml]",
     "libreyolo[vlm]",
+    "libreyolo[llm]",
     "libreyolo[sam]",
     "libreyolo[label]",
     "libreyolo[openvocab]",
@@ -507,6 +513,7 @@ markers = [
     "alexnet: tests covering the LibreAlexNet image-classification family",
     "vgg: tests covering the LibreVGG classification family",
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",
+    "llm: tests covering the LibreLLM OpenAI-compatible client",
     "sam: tests covering the LibreSAM (promptable-segmentation) tier",
     "openvocab: tests covering the LibreOpenVocab detector tier",
     "sensenova: tests covering the LibreSenseNovaVision unified multimodal family",

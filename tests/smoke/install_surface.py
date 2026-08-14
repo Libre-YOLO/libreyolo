@@ -122,6 +122,14 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
     if LibreModus is not LibreMODUS:
         raise AssertionError("LibreModus compatibility alias did not resolve correctly")
 
+    # LibreLLM is a lazy extra: importing the class must not require openai.
+    from libreyolo import LibreLLM
+
+    if not isinstance(LibreLLM, type):
+        raise AssertionError(
+            f"LibreLLM import did not resolve to a class: {LibreLLM!r}"
+        )
+
     # The open-vocabulary detector tier follows the same lazy-import rule.
     from libreyolo import (
         LibreGroundingDINO,

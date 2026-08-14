@@ -172,6 +172,11 @@ These models are discriminative text-conditioned detectors with calibrated
 scores; they are not VLMs. Upstream brand casing is intentionally preserved.
 See [`openvocab_design.md`](openvocab_design.md).
 
+`LibreLLM` is a fourth sibling: an OpenAI-compatible chat client with no
+weights, no `FILENAME_PREFIX`, and no `Results`. It is not registered in the
+detector factory. See [`librellm.md`](librellm.md) and
+[`adr/0019-librellm-contract.md`](adr/0019-librellm-contract.md).
+
 ## Size codes
 
 Sizes are family-specific. The table below records what each family currently
