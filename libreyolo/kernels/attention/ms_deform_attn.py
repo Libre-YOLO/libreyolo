@@ -13,9 +13,13 @@ Like the GEMM slots, no reference implementation is registered: every model
 family keeps its own upstream-parity ``grid_sample`` port as the default and
 only consults this slot through :func:`maybe_ms_deform_attn`.
 
-The in-tree provider loads the compiled CUDA kernel published at
+Two accelerated providers share the slot. The in-tree Triton kernel
+(``ms_deform_attn_triton``) needs no extra package and covers CUDA
+fp32/fp16/bf16 inference; it registers first. The Hub provider loads the
+compiled CUDA kernel published at
 ``kernels-community/deformable-detr`` on the Hugging Face Hub (Apache-2.0)
-via the optional ``kernels`` package. Nothing is vendored: the artifact is
+via the optional ``kernels`` package and registers on top, so it wins
+when the extra is installed. Nothing is vendored: the artifact is
 fetched at runtime, pinned to the audited revision in ``_HUB_REVISION`` so
 a moved branch can never swap the binary that runs in-process. When the
 installed ``kernels`` release cannot resolve the pin (its resolver rejects
@@ -417,6 +421,13 @@ def maybe_ms_deform_attn_v2(
         attention_weights.unflatten(3, (levels, points)),
     )
 
+
+# Triton registers first (older); Hub stays preferred when its extra is
+# installed. A missing Triton install must not hide the Hub provider.
+try:
+    from .ms_deform_attn_triton import triton_ms_deform_attn  # noqa: F401
+except Exception as exc:
+    logger.debug("Triton ms_deform_attn unavailable: %s", exc)
 
 register("ms_deform_attn", hub_ms_deform_attn, name="hub", predicate=_eligible)
 

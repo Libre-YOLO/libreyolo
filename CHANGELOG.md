@@ -9,6 +9,16 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **In-tree Triton multi-scale deformable attention.** The `ms_deform_attn`
+  slot now has a `triton` provider that needs no `kernels` extra: CUDA
+  fp32/fp16/bf16 inference, same bilinear equation as the portable
+  `grid_sample` path. Inputs that require grad fall through, so training
+  keeps a backward. Hub stays preferred when `libreyolo[hub-kernels]` is
+  installed. Opt out with `LIBREYOLO_TRITON_MSDA=0`. On an RTX 5070 Ti
+  the kernel is ~4x the portable core on RF-DETR-s shapes and ~12x on
+  Deformable-DETR / RT-DETR multi-level shapes; RF-DETR-n end-to-end
+  moves about 7% because the windowed DINOv2 backbone dominates.
+
 - **`min_samples` epoch-length floor for tiny datasets.** New opt-in training
   knob (`model.train(..., min_samples=640)` /
   `libreyolo train --min-samples 640`, issue #768): when the training dataset

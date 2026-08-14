@@ -35,9 +35,10 @@ LEN_IN = sum(h * w for h, w in SHAPES)
 def _clean_registry_env(monkeypatch):
     monkeypatch.delenv("LIBREYOLO_KERNELS", raising=False)
     monkeypatch.delenv("LIBREYOLO_QUANT_KERNELS", raising=False)
-    # Hub kernels are on by default when the `kernels` package is installed;
-    # pin them off so these tests behave the same on any machine.
+    # Accelerated providers are on by default when their extras/runtime
+    # exist; pin them off so these tests behave the same on any machine.
     monkeypatch.setenv("LIBREYOLO_HUB_KERNELS", "0")
+    monkeypatch.setenv("LIBREYOLO_TRITON_MSDA", "0")
     kernels.clear_cache()
     yield
     kernels.unregister("ms_deform_attn", "mock")
@@ -420,3 +421,141 @@ def test_load_hub_kernel_disables_when_both_paths_fail(monkeypatch):
     monkeypatch.setattr(module, "_load_pinned_snapshot", no_snapshot)
     assert module._load_hub_kernel() is None
     assert module._hub_failed is True
+
+
+# =============================================================================
+# In-tree Triton provider
+# =============================================================================
+
+
+def test_triton_selected_when_hub_disabled(monkeypatch):
+    """No hub extra: resolve should land on Triton when CUDA+Triton exist."""
+    if not torch.cuda.is_available() or importlib.util.find_spec("triton") is None:
+        pytest.skip("needs CUDA and Triton")
+    monkeypatch.delenv("LIBREYOLO_TRITON_MSDA", raising=False)
+    monkeypatch.setenv("LIBREYOLO_HUB_KERNELS", "0")
+    kernels.clear_cache()
+    # Force the lazy providers to load against the new env.
+    importlib.import_module("libreyolo.kernels.attention.ms_deform_attn_triton")
+    assert kernels.active().get("ms_deform_attn") == "triton"
+
+
+def test_triton_default_on_and_env_opt_out(monkeypatch):
+    from libreyolo.kernels.attention import ms_deform_attn_triton as module
+
+    monkeypatch.delenv("LIBREYOLO_TRITON_MSDA", raising=False)
+    assert module._env_enabled()
+    for value in ("0", "false", "off", "no"):
+        monkeypatch.setenv("LIBREYOLO_TRITON_MSDA", value)
+        assert not module._env_enabled()
+
+
+def test_triton_impl_rejects_cpu_inputs():
+    from libreyolo.kernels.attention.ms_deform_attn_triton import triton_ms_deform_attn
+
+    value, shapes, locations, weights = _classic_inputs()
+    assert triton_ms_deform_attn(value, shapes, locations, weights) is None
+
+
+def test_triton_impl_rejects_mismatched_metadata():
+    from libreyolo.kernels.attention.ms_deform_attn_triton import triton_ms_deform_attn
+
+    if not torch.cuda.is_available():
+        pytest.skip("needs CUDA")
+    value, shapes, locations, weights = _classic_inputs()
+    value = value.cuda()
+    shapes = shapes.cuda()
+    locations = locations.cuda()
+    weights = weights.cuda()
+    # Len_in does not match the spatial areas: must not launch.
+    bad_value = value[:, :-1]
+    assert triton_ms_deform_attn(bad_value, shapes, locations, weights) is None
+    # Level count disagrees across tensors.
+    assert triton_ms_deform_attn(value, shapes[:1], locations, weights) is None
+
+
+def test_triton_impl_rejects_grad_inputs():
+    from libreyolo.kernels.attention.ms_deform_attn_triton import triton_ms_deform_attn
+
+    value, shapes, locations, weights = _classic_inputs()
+    if not torch.cuda.is_available():
+        pytest.skip("needs CUDA")
+    value = value.cuda().requires_grad_(True)
+    shapes = shapes.cuda()
+    locations = locations.cuda()
+    weights = weights.cuda()
+    assert triton_ms_deform_attn(value, shapes, locations, weights) is None
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or importlib.util.find_spec("triton") is None,
+    reason="needs CUDA and Triton",
+)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+def test_triton_matches_portable_on_cuda(dtype):
+    """Forward parity of the in-tree Triton kernel vs the portable core."""
+    from libreyolo.kernels.attention.ms_deform_attn_triton import triton_ms_deform_attn
+
+    value, shapes, locations, weights = _classic_inputs()
+    value = value.cuda().to(dtype)
+    shapes = shapes.cuda()
+    locations = locations.cuda().to(
+        dtype if dtype == torch.float32 else torch.float32
+    )
+    weights = weights.cuda().to(dtype if dtype == torch.float32 else torch.float32)
+    if dtype != torch.float32:
+        value = value.to(dtype)
+
+    out = triton_ms_deform_attn(value, shapes, locations, weights)
+    assert out is not None
+    assert out.dtype == value.dtype
+
+    ref = rfdetr_core(
+        value.float().permute(0, 2, 3, 1).contiguous(),
+        shapes,
+        locations.float(),
+        weights.float().flatten(-2),
+    )
+    rtol, atol = (1e-4, 1e-5) if dtype == torch.float32 else (2e-3, 2e-3)
+    torch.testing.assert_close(out.float(), ref, rtol=rtol, atol=atol)
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or importlib.util.find_spec("triton") is None,
+    reason="needs CUDA and Triton",
+)
+def test_triton_rfdetr_shapes_on_cuda():
+    """RF-DETR detect is 1 level, 2 points, 16-wide heads, 300 queries."""
+    from libreyolo.kernels.attention.ms_deform_attn_triton import triton_ms_deform_attn
+
+    generator = torch.Generator(device="cuda").manual_seed(2)
+    batch, queries, heads, channels, levels, points = 1, 300, 16, 16, 1, 2
+    height = width = 24
+    value = torch.randn(
+        batch, height * width, heads, channels, generator=generator, device="cuda"
+    )
+    shapes = torch.tensor([(height, width)], dtype=torch.int64, device="cuda")
+    locations = torch.rand(
+        batch,
+        queries,
+        heads,
+        levels,
+        points,
+        2,
+        generator=generator,
+        device="cuda",
+    )
+    weights = torch.rand(
+        batch, queries, heads, levels, points, generator=generator, device="cuda"
+    )
+    weights = weights / weights.sum(dim=(-2, -1), keepdim=True)
+
+    out = triton_ms_deform_attn(value, shapes, locations, weights)
+    assert out is not None
+    ref = rfdetr_core(
+        value.permute(0, 2, 3, 1).contiguous(),
+        shapes,
+        locations,
+        weights.flatten(-2),
+    )
+    torch.testing.assert_close(out, ref, rtol=1e-4, atol=1e-5)

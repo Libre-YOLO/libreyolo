@@ -67,9 +67,10 @@ MOCK_OUTPUT = torch.full((BATCH, LEN_Q, HEADS * CHANNELS), 7.0)
 def _clean_registry_env(monkeypatch):
     monkeypatch.delenv("LIBREYOLO_KERNELS", raising=False)
     monkeypatch.delenv("LIBREYOLO_QUANT_KERNELS", raising=False)
-    # Hub kernels are on by default when the `kernels` package is installed;
-    # pin them off so these tests behave the same on any machine.
+    # Accelerated providers are on by default when their extras/runtime
+    # exist; pin them off so these tests behave the same on any machine.
     monkeypatch.setenv("LIBREYOLO_HUB_KERNELS", "0")
+    monkeypatch.setenv("LIBREYOLO_TRITON_MSDA", "0")
     kernels.clear_cache()
     yield
     kernels.unregister("ms_deform_attn", "mock")
