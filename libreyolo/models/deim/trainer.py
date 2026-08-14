@@ -48,7 +48,7 @@ from ...data.dataset import COCODataset, YOLODataset
 from ...training.config import DEIMConfig, TrainConfig
 from ...training.scheduler import FlatCosineScheduler
 from ...training.optim import build_optimizer
-from ...training.trainer import BaseTrainer
+from ...training.trainer import BaseTrainer, ensure_mutation_reaches_workers
 from .loss import DEIMCriterion
 from .matcher import HungarianMatcher
 from .transforms import (
@@ -541,9 +541,11 @@ class DEIMTrainer(DETREncoderCudaGraphMixin, BaseTrainer):
             sampler.set_epoch(epoch)
         ds = self.train_loader.dataset
         if hasattr(ds, "set_epoch"):
+            ensure_mutation_reaches_workers(self.train_loader, ds, "set_epoch")
             ds.set_epoch(epoch)
         cf = getattr(self.train_loader, "collate_fn", None)
         if cf is not None and hasattr(cf, "set_epoch"):
+            ensure_mutation_reaches_workers(self.train_loader, cf, "set_epoch")
             cf.set_epoch(epoch)
 
         clip_max_norm = float(getattr(self.config, "clip_max_norm", 0.0))
@@ -677,9 +679,11 @@ class DEIMTrainer(DETREncoderCudaGraphMixin, BaseTrainer):
             sampler.set_epoch(epoch)
         ds = self.train_loader.dataset
         if hasattr(ds, "set_epoch"):
+            ensure_mutation_reaches_workers(self.train_loader, ds, "set_epoch")
             ds.set_epoch(epoch)
         cf = getattr(self.train_loader, "collate_fn", None)
         if cf is not None and hasattr(cf, "set_epoch"):
+            ensure_mutation_reaches_workers(self.train_loader, cf, "set_epoch")
             cf.set_epoch(epoch)
 
         clip_max_norm = float(getattr(self.config, "clip_max_norm", 0.0))
