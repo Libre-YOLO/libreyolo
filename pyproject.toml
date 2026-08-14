@@ -241,6 +241,14 @@ siglip2-convert = [
 coreml = [
     "coremltools>=8.0",
 ]
+fiftyone = [
+    # Dataset curation and prediction analysis (Apache-2.0). Deliberately kept
+    # out of `all`: fiftyone depends on opencv-python-headless while LibreYOLO
+    # depends on opencv-python, and both ship the same `cv2` module, so
+    # installing them together leaves whichever landed last in place. See
+    # docs/fiftyone.md.
+    "fiftyone>=1.0.0",
+]
 tensorboard = [
     "tensorboard>=2.13.0",
 ]
@@ -458,6 +466,7 @@ markers = [
     "tflite: tests requiring TensorFlow Lite export",
     "paddle: tests requiring PaddlePaddle export/runtime",
     "coreml: tests requiring CoreML (macOS only)",
+    "fiftyone: tests requiring the optional FiftyOne integration (fiftyone starts a local MongoDB)",
     "yolox: tests covering the YOLOX model family",
     "yolo7: tests covering the YOLOv7 model family",
     "yolo9: tests covering the YOLO9 model family",
