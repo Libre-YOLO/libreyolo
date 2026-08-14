@@ -617,8 +617,11 @@ established by the selected official source. Users training on either dataset
 are responsible for accepting its terms themselves.
 
     Gemma 4 (LibreGemma4e2b, LibreGemma4e4b)           Apache-2.0
-             mirrored snapshots of google/gemma-4-E2B-it and
-             google/gemma-4-E4B-it. Learned parameters unchanged.
+             mirrored snapshots of google/gemma-4-E2B-it @
+             3e22461f65e89153144f8adb70e3b8c2cc9845a7 and
+             google/gemma-4-E4B-it @
+             ee0ef6023621cff504d758262d4e04895a5af4a2.
+             Learned parameters unchanged.
 
     Moondream 2 (LibreMoondream2)                      Apache-2.0
              mirrored snapshot of vikhyatk/moondream2 @ 9a7d402
