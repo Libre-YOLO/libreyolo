@@ -38,6 +38,6 @@ def test_no_em_or_en_dashes_in_cli_string_literals():
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
             if token.type == tokenize.COMMENT:
                 continue
-            if "\u2014" in token.string or "\u2013" in token.string:
+            if any(ord(ch) > 127 for ch in token.string):
                 offenders.append(f"{path.name}:{token.start[0]}")
-    assert not offenders, f"em/en dashes in CLI strings: {offenders}"
+    assert not offenders, f"non-ASCII in CLI strings: {offenders}"
