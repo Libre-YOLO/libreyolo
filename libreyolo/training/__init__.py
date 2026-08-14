@@ -23,6 +23,7 @@ from .loggers import (
     ClearMLLogger as ClearMLLogger,
     CometLogger as CometLogger,
     DVCLiveLogger as DVCLiveLogger,
+    HuggingFaceHubLogger as HuggingFaceHubLogger,
     MLflowLogger as MLflowLogger,
     NeptuneLogger as NeptuneLogger,
     TensorBoardLogger as TensorBoardLogger,

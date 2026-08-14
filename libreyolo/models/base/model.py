@@ -1809,6 +1809,54 @@ class BaseModel(ABC):
         logger.info("Saved checkpoint to %s", out)
         return str(out)
 
+    def push_to_hub(
+        self,
+        repo_id: str,
+        *,
+        private: bool = False,
+        token: Optional[str] = None,
+        commit_message: Optional[str] = None,
+        license: Optional[str] = None,
+        metrics: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Upload this model to a Hugging Face Hub repository.
+
+        Saves the model as a schema v1.0 checkpoint (``model.pt``) and pushes
+        it together with an auto-generated model card. The repo is created if
+        it does not exist. Anyone can then load it back with
+        ``LibreYOLO("owner/repo")``.
+
+        Requires the optional huggingface_hub package
+        (``pip install libreyolo[hf]``) and Hub authentication with write
+        scope (``hf auth login`` or the ``HF_TOKEN`` environment variable, or
+        pass ``token=``).
+
+        Args:
+            repo_id: Target repository as ``"owner/name"``.
+            private: Create the repo as private (existing repos keep their
+                visibility).
+            token: Hub token overriding the ambient login.
+            commit_message: Custom commit message for the checkpoint upload.
+            license: License identifier for the model card front matter
+                (e.g. ``"mit"``). Omitted from the card when None.
+            metrics: Optional metric name -> value mapping rendered into the
+                model card.
+
+        Returns:
+            The repository URL.
+        """
+        from libreyolo.utils.hf_hub import push_model_to_hub
+
+        return push_model_to_hub(
+            self,
+            repo_id,
+            private=private,
+            token=token,
+            commit_message=commit_message,
+            license_id=license,
+            metrics=metrics,
+        )
+
     def export(self, format: str = "onnx", **kwargs) -> str:
         """Export model to deployment format.
 
