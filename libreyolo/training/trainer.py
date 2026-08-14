@@ -106,6 +106,40 @@ RECTANGULAR_TRAINING_TASKS = {
 _DEFAULT_RECTANGULAR_TRAINING_TASKS = frozenset({"detect"})
 
 
+def ensure_mutation_reaches_workers(loader, target, hook: str) -> None:
+    """Fail loudly when a main-process mutation of ``target`` cannot reach workers.
+
+    ``close_mosaic`` / ``set_epoch`` style hooks mutate the dataset (or
+    collate) object owned by the main process. Dataloader workers hold their
+    own copies: non-persistent workers are respawned every epoch and inherit
+    the mutated state, but persistent workers live for the whole run and
+    never re-copy it, so the mutation silently never applies and epoch-gated
+    augmentation scheduling (no-aug tail, stop_epoch gating) becomes a no-op.
+
+    ``target`` is the object about to be mutated (usually
+    ``loader.dataset``, or ``loader.collate_fn`` for collate-side epoch
+    gating). No-op when the loader has no workers, when workers are not
+    persistent, or when ``target`` does not implement ``hook``.
+    """
+    if loader is None or target is None:
+        return
+    if not callable(getattr(target, hook, None)):
+        return
+    num_workers = int(getattr(loader, "num_workers", 0) or 0)
+    if num_workers <= 0:
+        return
+    if not getattr(loader, "persistent_workers", False):
+        return
+    raise RuntimeError(
+        f"{type(target).__name__}.{hook}() would have no effect: the train "
+        f"dataloader runs num_workers={num_workers} with "
+        "persistent_workers=True, and persistent workers never observe "
+        "main-process dataset mutations, so augmentation scheduling would "
+        "silently stop working. Rebuild the dataloader after the mutation "
+        "or train with persistent_workers=False."
+    )
+
+
 class BaseTrainer(ABC):
     """Base trainer for all LibreYOLO model families.
 
@@ -346,6 +380,7 @@ class BaseTrainer(ABC):
         """Called when mosaic is disabled for final no-aug epochs."""
         dataset = getattr(self.train_loader, "dataset", None)
         if hasattr(dataset, "close_mosaic"):
+            ensure_mutation_reaches_workers(self.train_loader, dataset, "close_mosaic")
             dataset.close_mosaic()
 
     def on_forward(
