@@ -1339,7 +1339,7 @@ def _ms_deform_attn_core_pytorch_pose(
     slot is consulted when that tuple reshapes onto the classic layout;
     export and any shape that cannot adapt keep the ``grid_sample`` path.
     """
-    if ms_deform_attn_available():
+    if ms_deform_attn_available(value[0]):
         flat = _pose_value_to_slot(value, sampling_locations)
         if flat is not None:
             accelerated = maybe_ms_deform_attn(

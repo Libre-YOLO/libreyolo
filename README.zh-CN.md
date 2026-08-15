@@ -41,7 +41,7 @@ result = model(SAMPLE_IMAGE, save=True)
 
 基础安装已覆盖 YOLOv9 与其他核心检测器、训练和推理。当你需要更重的模型系列
 或某个导出后端时，再安装对应的扩展依赖即可。多个扩展用逗号组合，例如
-`pip install "libreyolo[rfdetr,onnx]"`。
+`pip install "libreyolo[rfdetr,hub-kernels]"`。
 
 | 分组 | 扩展依赖 |
 | --- | --- |

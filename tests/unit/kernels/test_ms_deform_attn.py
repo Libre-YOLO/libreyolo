@@ -31,14 +31,21 @@ LEVELS, POINTS = len(SHAPES), 2
 LEN_IN = sum(h * w for h, w in SHAPES)
 
 
+class _CudaValue:
+    is_cuda = True
+
+
 @pytest.fixture(autouse=True)
 def _clean_registry_env(monkeypatch):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
     monkeypatch.delenv("LIBREYOLO_KERNELS", raising=False)
     monkeypatch.delenv("LIBREYOLO_QUANT_KERNELS", raising=False)
     # Accelerated providers are on by default when their extras/runtime
     # exist; pin them off so these tests behave the same on any machine.
     monkeypatch.setenv("LIBREYOLO_HUB_KERNELS", "0")
     monkeypatch.setenv("LIBREYOLO_TRITON_MSDA", "0")
+    monkeypatch.setattr(module, "_missing_hub_hint_emitted", False)
     kernels.clear_cache()
     yield
     kernels.unregister("ms_deform_attn", "mock")
@@ -75,6 +82,132 @@ def test_hub_default_on_and_env_opt_out(monkeypatch):
     for value in ("0", "false", "off", "no"):
         monkeypatch.setenv("LIBREYOLO_HUB_KERNELS", value)
         assert not module._hub_enabled()
+
+
+def test_missing_provider_cuda_hint_warns_once(monkeypatch, caplog):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.delenv("LIBREYOLO_HUB_KERNELS", raising=False)
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda _name: None)
+    kernels.clear_cache()
+
+    with caplog.at_level("WARNING", logger=module.__name__):
+        assert not module.ms_deform_attn_available(_CudaValue())
+        assert not module.ms_deform_attn_available(_CudaValue())
+
+    hints = [
+        record.getMessage()
+        for record in caplog.records
+        if "libreyolo[hub-kernels]" in record.getMessage()
+    ]
+    assert len(hints) == 1
+    assert "LIBREYOLO_HUB_KERNELS=0" in hints[0]
+
+
+def test_missing_provider_cuda_hint_after_provider_rejects(monkeypatch, caplog):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.delenv("LIBREYOLO_HUB_KERNELS", raising=False)
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda _name: None)
+    kernels.register("ms_deform_attn", lambda *_args: None, name="mock")
+    kernels.clear_cache()
+
+    with caplog.at_level("WARNING", logger=module.__name__):
+        assert maybe_ms_deform_attn(_CudaValue(), None, None, None) is None
+        assert maybe_ms_deform_attn(_CudaValue(), None, None, None) is None
+
+    hints = [
+        record.getMessage()
+        for record in caplog.records
+        if "libreyolo[hub-kernels]" in record.getMessage()
+    ]
+    assert len(hints) == 1
+
+
+def test_missing_provider_hint_respects_opt_out(monkeypatch, caplog):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda _name: None)
+    kernels.clear_cache()
+
+    with caplog.at_level("WARNING", logger=module.__name__):
+        assert not module.ms_deform_attn_available(_CudaValue())
+
+    assert not any(
+        "libreyolo[hub-kernels]" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_missing_provider_hint_when_hub_is_forced(monkeypatch, caplog):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.delenv("LIBREYOLO_HUB_KERNELS", raising=False)
+    monkeypatch.setenv("LIBREYOLO_KERNELS", "hub")
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda _name: None)
+    kernels.clear_cache()
+
+    with caplog.at_level("WARNING", logger=module.__name__):
+        assert not module.ms_deform_attn_available(_CudaValue())
+
+    assert any(
+        "libreyolo[hub-kernels]" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.parametrize("forced", ["off", "reference"])
+def test_missing_provider_hint_respects_global_portable_override(
+    monkeypatch, caplog, forced
+):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.delenv("LIBREYOLO_HUB_KERNELS", raising=False)
+    monkeypatch.setenv("LIBREYOLO_KERNELS", forced)
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda _name: None)
+    kernels.clear_cache()
+
+    with caplog.at_level("WARNING", logger=module.__name__):
+        assert not module.ms_deform_attn_available(_CudaValue())
+
+    assert not any(
+        "libreyolo[hub-kernels]" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_missing_provider_hint_ignores_installed_hub_client(monkeypatch, caplog):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.delenv("LIBREYOLO_HUB_KERNELS", raising=False)
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(module, "_hub_failed", True)
+    kernels.clear_cache()
+
+    with caplog.at_level("WARNING", logger=module.__name__):
+        assert not module.ms_deform_attn_available(_CudaValue())
+
+    assert not any(
+        "libreyolo[hub-kernels]" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_missing_provider_hint_ignores_cpu_calls(monkeypatch, caplog):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    monkeypatch.delenv("LIBREYOLO_HUB_KERNELS", raising=False)
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda _name: None)
+    kernels.clear_cache()
+
+    value, *_ = _classic_inputs()
+    with caplog.at_level("WARNING", logger=module.__name__):
+        assert not module.ms_deform_attn_available(value)
+
+    assert not any(
+        "libreyolo[hub-kernels]" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_hub_impl_rejects_cpu_inputs():

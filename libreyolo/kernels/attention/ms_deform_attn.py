@@ -62,21 +62,49 @@ _SLOT_DTYPES = (torch.float32, torch.float16, torch.bfloat16)
 
 _hub_kernel = None
 _hub_failed = False
+_missing_hub_hint_emitted = False
 
 
 def _hub_enabled() -> bool:
     """Hub kernels are on by default; installing the extra is the opt-in.
 
     The runtime fetch only ever happens when the optional ``kernels``
-    package is installed (see :func:`_eligible`), so users who never
-    installed ``libreyolo[hub-kernels]`` are unaffected.
-    ``LIBREYOLO_HUB_KERNELS=0`` is the opt-out.
+    package is installed (see :func:`_eligible`). Without it, an eager CUDA
+    call that falls back emits one install hint.
+    ``LIBREYOLO_HUB_KERNELS=0`` disables the provider and the hint.
     """
     return os.environ.get("LIBREYOLO_HUB_KERNELS", "").strip().lower() not in (
         "0",
         "false",
         "off",
         "no",
+    )
+
+
+def _kernel_selection_disables_acceleration() -> bool:
+    """Whether the global selector explicitly requests the portable path."""
+    forced = os.environ.get("LIBREYOLO_KERNELS", "").strip().lower()
+    if not forced:
+        forced = os.environ.get("LIBREYOLO_QUANT_KERNELS", "").strip().lower()
+    return forced in ("off", "reference")
+
+
+def _warn_missing_hub_kernels_once(value: Optional[torch.Tensor]) -> None:
+    """Hint once when a real CUDA call has no Hub client to accelerate it."""
+    global _missing_hub_hint_emitted
+    if (
+        _missing_hub_hint_emitted
+        or not getattr(value, "is_cuda", False)
+        or not _hub_enabled()
+        or _kernel_selection_disables_acceleration()
+        or importlib.util.find_spec("kernels") is not None
+    ):
+        return
+    _missing_hub_hint_emitted = True
+    logger.warning(
+        "No accelerated MSDA provider accepted this CUDA call; using the portable "
+        "path. Install `libreyolo[hub-kernels]` for the compiled kernel, or set "
+        "LIBREYOLO_HUB_KERNELS=0 to silence this hint."
     )
 
 
@@ -326,7 +354,7 @@ def _not_exporting() -> bool:
     return False
 
 
-def ms_deform_attn_available() -> bool:
+def ms_deform_attn_available(value: Optional[torch.Tensor] = None) -> bool:
     """Whether the slot could run here, checked before adapting layouts.
 
     Families whose native layout differs from the slot's ask this first so
@@ -335,6 +363,9 @@ def ms_deform_attn_available() -> bool:
     report unavailable: exported graphs must not capture a runtime-fetched
     kernel. ``is_exporting`` covers non-strict ``torch.export``, which traces
     with FakeTensors without setting ``is_compiling``.
+
+    Pass the original value tensor so an actual CUDA fallback can emit the
+    one-time Hub-kernel install hint without warning for CPU model calls.
     """
     if (
         torch.jit.is_tracing()
@@ -343,7 +374,10 @@ def ms_deform_attn_available() -> bool:
         or torch.onnx.is_in_onnx_export()
     ):
         return False
-    return resolve("ms_deform_attn") is not None
+    available = resolve("ms_deform_attn") is not None
+    if not available:
+        _warn_missing_hub_kernels_once(value)
+    return available
 
 
 @functools.lru_cache(maxsize=32)
@@ -384,7 +418,7 @@ def maybe_ms_deform_attn(
     ``torch.export``, which traces with FakeTensors without setting
     ``is_compiling``.
     """
-    if not ms_deform_attn_available():
+    if not ms_deform_attn_available(value):
         return None
     # Walk eligible providers. Hub is preferred but may return None for an
     # input or disable itself after a launch failure; Triton must still run.
@@ -394,6 +428,7 @@ def maybe_ms_deform_attn(
         )
         if output is not None:
             return output
+    _warn_missing_hub_kernels_once(value)
     return None
 
 
@@ -413,7 +448,7 @@ def maybe_ms_deform_attn_v2(
     portable path. ``value`` must already be in the slot's
     ``(bs, Len_in, n_heads, c)`` layout.
     """
-    if not ms_deform_attn_available():
+    if not ms_deform_attn_available(value):
         return None
     levels = len(num_points_list)
     if levels == 0 or len(spatial_shapes) != levels:

@@ -9,6 +9,9 @@ before 1.4.0 are documented in the
 
 ### Fixed
 
+- **CUDA MSDA discovery (#781).** Eager DETR-family CUDA calls that no
+  accelerated provider accepts log one hint for `libreyolo[hub-kernels]`;
+  `LIBREYOLO_HUB_KERNELS=0` keeps the portable path and silences the hint.
 - **MSDA slot follow-ups from #784.** `maybe_ms_deform_attn` walks eligible
   providers when the preferred Hub kernel returns None, so Triton still
   runs after a Hub reject or disable. Triton skips the `spatial_shapes`
