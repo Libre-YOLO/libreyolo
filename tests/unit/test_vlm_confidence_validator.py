@@ -3,6 +3,7 @@
 import hashlib
 import json
 import math
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,22 @@ from libreyolo.validation.vlm_confidence import compare_repeats  # noqa: E402
 from libreyolo.validation.vlm_confidence_validator import (  # noqa: E402
     VLMConfidenceValidator,
 )
+
+
+@pytest.fixture(autouse=True)
+def _identify_stub_peft_runtime(monkeypatch):
+    """Keep fake live-PEFT tests independent of the optional VLM extra."""
+
+    real_version = importlib_metadata.version
+
+    def version(package):
+        if package == "peft":
+            return "offline-stub"
+        return real_version(package)
+
+    monkeypatch.setattr(
+        "libreyolo.validation.vlm_confidence_validator.metadata.version", version
+    )
 
 
 def _view(boxes, scores, classes=None):
