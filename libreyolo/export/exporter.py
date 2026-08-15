@@ -392,6 +392,12 @@ class BaseExporter(ABC):
         pre_trace_hook = kwargs.pop("_pre_trace_hook", None)
 
         task = getattr(self.model, "task", "detect")
+        model_name = self.model._get_model_name()
+        if model_name == "ben2" and batch != 1:
+            raise ValueError(
+                "BEN2 export uses a fixed-resolution, batch-1 runtime "
+                f"contract; got batch={batch}."
+            )
         if task == "mesh":
             # Gated off for the first version, as semantic and point were: the
             # runtime metadata contract for a mesh graph (which body model,
@@ -475,10 +481,11 @@ class BaseExporter(ABC):
             # in the tuple export wrapper). Other families default to 13.
             opset = 17 if _requires_onnx_opset17(self.model._get_model_name()) else 13
 
-        # BiRefNet's decoder uses torchvision deform_conv2d, which maps to the
-        # standard ONNX ``DeformConv`` op (opset 19+). Force a compatible opset
-        # and register the symbolic before tracing.
-        if getattr(self.model, "task", "detect") == "matte":
+        # The BiRefNet-derived decoders use torchvision deform_conv2d, which
+        # maps to the standard ONNX ``DeformConv`` op (opset 19+). BEN2 is also
+        # a matte family but has no deformable convolution, so it keeps the
+        # normal exporter opset and needs no custom symbolic.
+        if self.model._get_model_name() in {"birefnet", "feynobg"}:
             from ..models.birefnet.export import (
                 MIN_OPSET as _MATTE_MIN_OPSET,
             )
@@ -693,6 +700,17 @@ class BaseExporter(ABC):
             imgsz = (int(imgsz), int(imgsz))
         if imgsz[0] <= 0 or imgsz[1] <= 0:
             raise ValueError(f"imgsz values must be positive, got {imgsz}.")
+        if model_name == "ben2":
+            native_shape = (
+                (int(native_imgsz[0]), int(native_imgsz[1]))
+                if isinstance(native_imgsz, (tuple, list))
+                else (int(native_imgsz), int(native_imgsz))
+            )
+            if imgsz != native_shape:
+                raise ValueError(
+                    "BEN2 export imgsz must match its fixed native resolution "
+                    f"{native_shape[0]}x{native_shape[1]}, got {imgsz}."
+                )
         if model_name in ("deit", "vgg") and imgsz != (native_imgsz, native_imgsz):
             raise ValueError(
                 f"{model_name} export imgsz must match its fixed native resolution "

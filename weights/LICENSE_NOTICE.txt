@@ -454,6 +454,15 @@ project the weights were derived from. Per-family summary:
              not disclosed; only the released weights are redistributed.
              Convert with weights/convert_feynobg_weights.py.
 
+    BEN2    (LibreBEN2b-matte)                         MIT
+             upstream: PramaLLC/BEN2 on Hugging Face and GitHub.
+             The public BEN2 Base model card declares the released weights
+             MIT. LibreYOLO preserves the learned parameters unchanged and
+             wraps them with checkpoint metadata. Upstream states the model
+             was trained on DIS5K and Prama LLC's proprietary 22K segmentation
+             dataset; LibreYOLO redistributes no training data. Convert with
+             weights/convert_ben2_weights.py.
+
     SegFormer (LibreSegformer{b0,b1,b2,b3,b4,b5}-sem)  NON-COMMERCIAL weights
              upstream code: huggingface/transformers modeling_segformer.py
              (Apache-2.0); weights: NVIDIA's ADE20K checkpoints

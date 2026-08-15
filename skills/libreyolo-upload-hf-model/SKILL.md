@@ -84,6 +84,7 @@ file = name + ".pt"
 | PE | `LibrePE` | `LibrePEb16-cls.pt` (Perception Encoder Core; zero-shot classify + image/text/video embed) |
 | V-JEPA 2 | `LibreVJEPA2` | `LibreVJEPA2l256-embed.pt` (video clip embedding), `LibreVJEPA2l256-cls-ssv2.pt` (attentive-probe video classify) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
+| BEN2 | `LibreBEN2` | `LibreBEN2b-matte.pt` (matte / background-removal; MIT code + weights; inference-only) |
 | BiRefNet | `LibreBiRefNet` | `LibreBiRefNetl-matte.pt` (matte / background-removal; `l` is MIT, `t`/lite has no explicit weights-license tag) |
 | FeyNobg | `LibreFeyNobg` | `LibreFeyNobgl-matte.pt` (matte / background-removal; Apache-2.0 code+weights; also ships `-fp8`/`-nvfp4` pre-quantized repos, see below) |
 | RealESRGAN | `LibreRealESRGAN` | `LibreRealESRGANx4-restore.pt` (super-resolution; sizes `x4`/`x2`/`x4t`) |
@@ -273,6 +274,8 @@ LibreSwinIRs-restore.pt, LibreSwinIRm-restore.pt,
 LibreSwinIRl-restore.pt,
 
 LibrePPOCRt-ocr.pt, LibrePPOCRl-ocr.pt,
+
+LibreBEN2b-matte.pt,
 
 LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
 

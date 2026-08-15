@@ -119,7 +119,7 @@ libreyolo predict --model yolo9-t --source screen            # screen capture
 | **Video embeddings** | V-JEPA 2 (clip-level embedding, plus video classification with a trainable attentive probe) |
 | **Body mesh** | SAM 3D Body |
 | **Restoration** | NAFNet, Real-ESRGAN, SwinIR |
-| **Background removal** | BiRefNet, FeyNobg |
+| **Background removal** | BiRefNet, FeyNobg, BEN2 |
 | **OCR** | PP-OCR |
 | **Point detection** | FOMO, LocateAnything |
 | **Gaze** | L2CS |

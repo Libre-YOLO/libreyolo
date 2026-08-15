@@ -10,6 +10,7 @@ in preflight.
 | Family | Task | onnx | torchscript | executorch | tensorrt | openvino | paddle | mnn | rknn | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | alexnet | classify | ✓ | ✓ | available | ✓ | ✓ |  |  |  | available |  |  |  |
+| ben2 | matte | ✓ | ✓ | available | available | available |  |  |  | available |  |  |  |
 | birefnet | matte | available | ✓ |  |  |  |  |  |  |  |  |  |  |
 | centernet | detect | ✓ | ✓ | available | available | available |  |  |  |  |  |  |  |
 | clip | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  | ✓ |
@@ -142,6 +143,8 @@ A check mark applies only under any constraint listed here.
 - `alexnet` / `classify` / `torchscript`: FP32 at the native 224x224 input resolution
 - `alexnet` / `classify` / `tensorrt`: TensorRT 10.16 FP32 at the fixed native 224x224 resolution
 - `alexnet` / `classify` / `openvino`: OpenVINO 2026.2 CPU FP32 at the fixed native 224x224 resolution
+- `ben2` / `matte` / `onnx`: FP32, batch 1, fixed 1024x1024 input
+- `ben2` / `matte` / `torchscript`: FP32, batch 1, fixed 1024x1024 input
 - `birefnet` / `matte` / `torchscript`: fixed 1024x1024 input
 - `centernet` / `detect` / `onnx`: FP32, fixed square input; ONNX Runtime CPU or TorchScript
 - `centernet` / `detect` / `torchscript`: FP32, fixed square input; ONNX Runtime CPU or TorchScript
@@ -471,6 +474,10 @@ These converter paths are callable with the recorded validation context.
 
 - `alexnet` / `classify` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
 - `alexnet` / `classify` / `ncnn`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `ben2` / `matte` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
+- `ben2` / `matte` / `tensorrt`: The converter path is available, but the project has not yet recorded TensorRT runtime parity for this family and task.
+- `ben2` / `matte` / `openvino`: The converter path is available, but the project has not yet recorded OpenVINO runtime parity for this family and task.
+- `ben2` / `matte` / `ncnn`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
 - `birefnet` / `matte` / `onnx`: The opset-19 DeformConv graph exports, but ONNX Runtime's CPU provider has no DeformConv implementation for runtime parity.
 - `centernet` / `detect` / `executorch`: Conversion is implemented; numeric runtime parity has not been recorded for this combination.
 - `centernet` / `detect` / `tensorrt`: The converter path is available, but the project has not yet recorded TensorRT runtime parity for this family and task.
@@ -588,6 +595,12 @@ These converter paths are callable with the recorded validation context.
 - `alexnet` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `alexnet` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `alexnet` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
+- `ben2` / `matte` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
+- `ben2` / `matte` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
+- `ben2` / `matte` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
+- `ben2` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `ben2` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `ben2` / `matte` / `coreai`: This family and task have not been validated for Core AI export.
 - `birefnet` / `matte` / `executorch`: Strict capture succeeds at the fixed 1024x1024 canvas, but ExecuTorch 1.2 lowering has no out variant for torchvision::deform_conv2d.
 - `birefnet` / `matte` / `tensorrt`: TensorRT 10.16 reaches the shared ONNX DeformConv node but cannot parse it because ModulatedDeformConv2d is absent from the plugin registry.
 - `birefnet` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
