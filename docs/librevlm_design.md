@@ -140,6 +140,10 @@ the configured source. We do not pretend any token-derived score is calibrated:
   remain visible through separate response, parsed-object, and prediction
   coverage plus fallback-retention diagnostics. Plot-enabled gate runs write
   `vlm_confidence_reliability.svg`; the JSON bin counts remain authoritative.
+- Gate reports use the strict `libreyolo.vlm-confidence-report.v2` schema. The
+  internal persisted-report comparator reconstructs both runs and ignores only
+  validated timing and plot-artifact differences. Report hashes detect stale or
+  inconsistent fields; they are not signatures and do not authenticate a file.
 - `_score_detections()` remains the scalar fallback for custom generation paths.
 
 This is the honest boundary of the tier: it gives you boxes and labels, not a

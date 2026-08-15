@@ -30,6 +30,7 @@ import torch
 from tqdm import tqdm
 
 from libreyolo import __version__ as libreyolo_version
+from libreyolo.utils.coco_geometry import clipped_coco_bbox_xyxy
 
 from .coco_evaluator import COCOEvaluator
 from .detection_validator import DetectionValidator
@@ -762,7 +763,6 @@ class VLMConfidenceValidator(DetectionValidator):
                     if self._coco_label_to_category_id is not None
                     else None
                 ),
-                "save_plots": bool(self.config.save_plots),
                 # Replaced with the evaluator's actual backend after compute().
                 "backend": "pending",
             },
@@ -942,24 +942,6 @@ class VLMConfidenceValidator(DetectionValidator):
             for key, score in zip(constant_keys, candidate_scores)
         ]
 
-    def _record_ground_truth(
-        self,
-        targets: torch.Tensor,
-        image_index: int,
-        img_info,
-        image_id: str,
-    ) -> None:
-        orig_h, orig_w = (int(img_info[image_index][0]), int(img_info[image_index][1]))
-        boxes, classes = self._parse_gt_boxes(targets[image_index], orig_h, orig_w)
-        for box, class_id in zip(boxes, classes):
-            self._ground_truth.append(
-                VLMDetection(
-                    image_id=image_id,
-                    class_id=int(class_id),
-                    xyxy=tuple(float(value) for value in box),
-                )
-            )
-
     def _record_response(self, variants) -> None:
         parsed = int(variants.parsed_items)
         if parsed < 0:
@@ -992,20 +974,21 @@ class VLMConfidenceValidator(DetectionValidator):
                 "sha256": generation_hash.lower(),
                 "parsed_items": int(variants.parsed_items),
                 "fallback_reason": (
-                    str(variants.fallback_reason)
-                    if variants.fallback_reason is not None
-                    else None
+                    None
+                    if variants.score_available
+                    else str(variants.fallback_reason or "unknown")
                 ),
             }
         )
 
     def _run_validation(self) -> None:
         self._validate_gate_contract()
+        if not self.class_names:
+            raise RuntimeError("Dataset vocabulary was not initialized.")
         evaluator_ground_truth = self._evaluator_ground_truth_manifest()
         self._require_plain_ordering_ground_truth(evaluator_ground_truth)
         self._ordering_ground_truth_manifest = evaluator_ground_truth
-        if not self.class_names:
-            raise RuntimeError("Dataset vocabulary was not initialized.")
+        self._ground_truth = self._ordering_ground_truth(evaluator_ground_truth)
         self.model.set_classes(list(self.class_names))
         self.benchmark_config = self._build_benchmark_config()
         dataset = self.dataloader.dataset
@@ -1022,9 +1005,9 @@ class VLMConfidenceValidator(DetectionValidator):
         with self._seeded_rng(), self._generation_eval_mode(), torch.no_grad():
             for batch in progress:
                 if len(batch) == 5:
-                    _, targets, img_info, img_ids, _ = batch
+                    _, _, _, img_ids, _ = batch
                 else:
-                    _, targets, img_info, img_ids = batch
+                    _, _, _, img_ids = batch
                 for image_index, raw_image_id in enumerate(img_ids):
                     evaluator_image_id = self._scalar_image_id(raw_image_id)
                     record_image_id = str(evaluator_image_id)
@@ -1062,9 +1045,6 @@ class VLMConfidenceValidator(DetectionValidator):
                         variants.constant, evaluator_image_id
                     )
                     self._predictions.extend(records)
-                    self._record_ground_truth(
-                        targets, image_index, img_info, record_image_id
-                    )
                     self._record_response(variants)
                     self._record_generation(variants, record_image_id)
                     if self._file_sha256(path) != image_hash:
@@ -1186,6 +1166,76 @@ class VLMConfidenceValidator(DetectionValidator):
                 f"{preview}. Use a benchmark split without crowd/ignore labels."
             )
 
+    def _ordering_ground_truth(self, manifest: Mapping[str, Any]) -> list[VLMDetection]:
+        """Derive ordering labels from canonical COCO data without resize drift."""
+
+        images = manifest.get("images")
+        categories = manifest.get("categories")
+        annotations = manifest.get("annotations")
+        if not all(
+            isinstance(value, list) for value in (images, categories, annotations)
+        ):
+            raise TypeError("Evaluator ground-truth manifest has invalid arrays.")
+        image_sizes = {
+            int(image["id"]): (int(image["width"]), int(image["height"]))
+            for image in images
+        }
+        category_ids = {int(category["id"]) for category in categories}
+        if self._coco_label_to_category_id is None:
+            category_to_label = {
+                category_id: category_id for category_id in category_ids
+            }
+        else:
+            category_to_label = {
+                int(category_id): int(label)
+                for label, category_id in self._coco_label_to_category_id.items()
+            }
+        if set(category_to_label) != category_ids:
+            raise RuntimeError(
+                "COCO category mapping does not cover the evaluator categories."
+            )
+        class_count = len(self.class_names or ())
+        if any(
+            label < 0 or label >= class_count for label in category_to_label.values()
+        ):
+            raise RuntimeError(
+                "COCO category mapping references a class outside the dataset vocabulary."
+            )
+
+        result = []
+        for annotation in annotations:
+            try:
+                area = float(annotation["area"])
+                bbox = tuple(float(value) for value in annotation["bbox"])
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(
+                    "Evaluator annotation has invalid numeric fields."
+                ) from exc
+            if (
+                not math.isfinite(area)
+                or len(bbox) != 4
+                or not all(math.isfinite(value) for value in bbox)
+            ):
+                raise ValueError("Evaluator annotation has invalid numeric fields.")
+            if area <= 0.0:
+                continue
+            image_id = int(annotation["image_id"])
+            category_id = int(annotation["category_id"])
+            if image_id not in image_sizes or category_id not in category_to_label:
+                raise ValueError("Evaluator annotation references an unknown id.")
+            width, height = image_sizes[image_id]
+            clean_bbox = clipped_coco_bbox_xyxy(bbox, width, height)
+            if clean_bbox is None:
+                continue
+            result.append(
+                VLMDetection(
+                    image_id=str(image_id),
+                    class_id=category_to_label[category_id],
+                    xyxy=clean_bbox,
+                )
+            )
+        return result
+
     def _write_report(
         self,
         metrics: Mapping[str, float],
@@ -1212,7 +1262,7 @@ class VLMConfidenceValidator(DetectionValidator):
                 }
             )
         report = {
-            "schema": "libreyolo.vlm-confidence-report.v1",
+            "schema": "libreyolo.vlm-confidence-report.v2",
             "prompt": self.model._detection_prompt(),
             "benchmark_config": self.benchmark_config,
             "dataset_manifest": self.dataset_manifest,

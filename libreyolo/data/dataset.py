@@ -30,6 +30,7 @@ from .obb import (
     xywhr_to_proxy_xyxy,
 )
 from libreyolo.training.distributed import is_main_process
+from libreyolo.utils.coco_geometry import clipped_coco_bbox_xyxy
 from libreyolo.utils.image_size import imgsz_to_hw
 
 logger = logging.getLogger(__name__)
@@ -806,12 +807,9 @@ class COCODataset(ImageCacheMixin, Dataset):
                 proxy = xywhr_to_proxy_xyxy(xywhr)
                 objs.append((obj, proxy, float(xywhr[4])))
                 continue
-            x1 = max(0, obj["bbox"][0])
-            y1 = max(0, obj["bbox"][1])
-            x2 = min(width, x1 + max(0, obj["bbox"][2]))
-            y2 = min(height, y1 + max(0, obj["bbox"][3]))
-            if x2 > x1 and y2 > y1:
-                obj["clean_bbox"] = [x1, y1, x2, y2]
+            clean_bbox = clipped_coco_bbox_xyxy(obj["bbox"], width, height)
+            if clean_bbox is not None:
+                obj["clean_bbox"] = list(clean_bbox)
                 objs.append(obj)
                 if self.load_segments:
                     segments.append(

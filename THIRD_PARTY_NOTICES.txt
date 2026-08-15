@@ -168,6 +168,7 @@ learned parameters unchanged). See libreyolo/models/pe/NOTICE.md.
 YOLOX (Megvii-BaseDetection)
 --------------------------------------------------------------------
 Source: https://github.com/Megvii-BaseDetection/YOLOX
+Commit: 6d30efe8f9f277e8788fb2d9b17d08238a5ea292
 License: Apache License 2.0
 Copyright (c) 2021-2022 Megvii Inc. All rights reserved.
 Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
@@ -176,7 +177,11 @@ Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
           adapted for the YOLOv7 family (libreyolo/models/yolo7/loss.py:
           imports bboxes_iou/IoULoss from the yolox modules and adapts the
           get_assignments/get_geometry_constraint/simota_matching/get_losses
-          assignment logic to the v7 anchor head).
+          assignment logic to the v7 anchor head). The shared COCO bounding-box
+          clipping helper (libreyolo/utils/coco_geometry.py) is used by the COCO
+          dataset loader (libreyolo/data/dataset.py) and VLM confidence gate
+          writer/report reconstruction (libreyolo/validation/
+          vlm_confidence_validator.py and vlm_confidence_report.py).
 
 --------------------------------------------------------------------
 YOLO (MultimediaTechLab/YOLO)

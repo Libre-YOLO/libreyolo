@@ -154,6 +154,10 @@ Consequences:
   outputs of the internal gate, not a calibration claim. Missing scores never
   inherit the constant fallback in those statistics; fallback safety and score
   coverage are reported separately.
+- Persisted gate reports use schema v2 and can be compared across processes only
+  after strict reconstruction validates their hashes and duplicated metrics.
+  Timing and plot artifacts do not define reproducibility. The hashes provide
+  consistency checks, not report authentication.
 
 `_score_detections(items)` remains the scalar fallback for custom generation
 paths. Scored greedy generations use the additive per-item scoring path.

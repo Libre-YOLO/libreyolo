@@ -276,7 +276,30 @@ class TestManifestAndRepeats:
             ({"base_revision": "main"}, "40-character"),
             ({"processor": "local/path"}, "processor must be a mapping"),
             ({"generation_kwargs": {}}, "generation_kwargs is missing"),
+            (
+                {
+                    "generation_kwargs": {
+                        "do_sample": False,
+                        "max_new_tokens": 10**400,
+                        "num_beams": 1,
+                        "repetition_penalty": 1.1,
+                    }
+                },
+                "largest exact JSON integer",
+            ),
             ({"confidence_evaluation": {}}, "confidence_evaluation is missing"),
+            (
+                {
+                    "evaluation": {
+                        "max_det": 100,
+                        "faster_coco_eval": False,
+                        "imgsz": 1024,
+                        "backend": "pycocotools",
+                        "save_plots": False,
+                    }
+                },
+                "save_plots is output-only",
+            ),
             ({"hardware": {}}, "hardware must be a non-empty mapping"),
             ({"software": {"torch": "test"}}, "software is missing"),
         ],
@@ -414,6 +437,31 @@ class TestManifestAndRepeats:
         assert comparison.max_abs_evaluator_metric_delta == pytest.approx(0.01)
         assert not comparison.evaluator_metrics_within_tolerance
         assert not comparison.reproducible
+
+    def test_map_tolerance_is_independent_from_calibration_tolerance(self):
+        first = {
+            "candidate_mAP50-95": 0.4,
+            "constant_mAP50-95": 0.3,
+            "candidate_mAP50": 0.6,
+            "constant_mAP50": 0.5,
+        }
+        second = {**first, "candidate_mAP50-95": 0.401}
+
+        comparison = compare_repeats(
+            self._run(evaluator_metrics=first),
+            self._run(evaluator_metrics=second),
+            metric_atol=1.0,
+            map_atol=0.0,
+        )
+
+        assert comparison.calibration_bins_within_tolerance
+        assert not comparison.evaluator_metrics_within_tolerance
+        assert not comparison.reproducible
+
+    @pytest.mark.parametrize("name", ["score_atol", "metric_atol", "map_atol"])
+    def test_repeat_comparison_rejects_overflowing_tolerance(self, name):
+        with pytest.raises(TypeError, match="finite non-negative"):
+            compare_repeats(self._run(), self._run(), **{name: 10**400})
 
     def test_repeat_comparison_rejects_rank_reversal_inside_score_tolerance(self):
         def run(scores):

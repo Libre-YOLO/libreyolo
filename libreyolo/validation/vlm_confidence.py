@@ -64,6 +64,7 @@ _EVALUATOR_METRIC_NAMES = (
     "candidate_mAP50",
     "constant_mAP50",
 )
+_MAX_SAFE_INTEGER = (1 << 53) - 1
 
 
 @dataclass(frozen=True)
@@ -91,7 +92,7 @@ class VLMDetection:
 
         try:
             coords = tuple(float(value) for value in self.xyxy)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError("xyxy must contain four finite numbers.") from exc
         if len(coords) != 4 or not all(math.isfinite(value) for value in coords):
             raise ValueError("xyxy must contain four finite numbers.")
@@ -213,7 +214,7 @@ def _probability(value: Any, name: str) -> float:
         raise TypeError(f"{name} must be a real number in [0, 1].")
     try:
         result = float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise TypeError(f"{name} must be a real number in [0, 1].") from exc
     if not math.isfinite(result) or not 0.0 <= result <= 1.0:
         raise ValueError(f"{name} must be finite and lie in [0, 1].")
@@ -725,6 +726,11 @@ def _validated_benchmark_config(benchmark_config: Any) -> dict[str, Any]:
         or max_new_tokens <= 0
     ):
         raise ValueError("generation_kwargs.max_new_tokens must be a positive integer.")
+    if max_new_tokens > _MAX_SAFE_INTEGER:
+        raise ValueError(
+            "generation_kwargs.max_new_tokens must not exceed the largest "
+            "exact JSON integer."
+        )
     if generation_kwargs["do_sample"] is not False:
         raise ValueError("generation_kwargs.do_sample must be false for this gate.")
     num_beams = generation_kwargs["num_beams"]
@@ -735,7 +741,7 @@ def _validated_benchmark_config(benchmark_config: Any) -> dict[str, Any]:
         raise TypeError("generation_kwargs.repetition_penalty must be numeric.")
     try:
         repetition_penalty = float(repetition_penalty)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise TypeError(
             "generation_kwargs.repetition_penalty must be numeric."
         ) from exc
@@ -813,8 +819,11 @@ def _validated_benchmark_config(benchmark_config: Any) -> dict[str, Any]:
         raise ValueError("benchmark_config.evaluation.max_det must be positive.")
     if not isinstance(evaluation["faster_coco_eval"], bool):
         raise TypeError("benchmark_config.evaluation.faster_coco_eval must be boolean.")
-    if "save_plots" in evaluation and not isinstance(evaluation["save_plots"], bool):
-        raise TypeError("benchmark_config.evaluation.save_plots must be boolean.")
+    if "save_plots" in evaluation:
+        raise ValueError(
+            "benchmark_config.evaluation.save_plots is output-only and must not "
+            "be part of benchmark identity."
+        )
     evaluation_backend = evaluation["backend"]
     if not isinstance(evaluation_backend, str) or not evaluation_backend.strip():
         raise ValueError(
@@ -1015,8 +1024,14 @@ def compare_repeats(
     *,
     score_atol: float = 0.0,
     metric_atol: float = 0.0,
+    map_atol: Optional[float] = None,
 ) -> RepeatComparison:
-    """Compare two runs and state whether their observable result reproduced."""
+    """Compare two runs and state whether their observable result reproduced.
+
+    ``map_atol=None`` preserves the original behavior by using
+    ``metric_atol`` for evaluator mAP. Persisted reports should pass an
+    explicit mAP tolerance so calibration and detector drift remain separate.
+    """
 
     if not isinstance(first, ConfidenceRun) or not isinstance(second, ConfidenceRun):
         raise TypeError("first and second must be ConfidenceRun values.")
@@ -1026,7 +1041,7 @@ def compare_repeats(
             raise TypeError(f"{name} must be a finite non-negative number.")
         try:
             result = float(value)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise TypeError(f"{name} must be a finite non-negative number.") from exc
         if not math.isfinite(result) or result < 0.0:
             raise ValueError(f"{name} must be finite and non-negative.")
@@ -1034,6 +1049,9 @@ def compare_repeats(
 
     score_tolerance = tolerance(score_atol, "score_atol")
     metric_tolerance = tolerance(metric_atol, "metric_atol")
+    map_tolerance = (
+        metric_tolerance if map_atol is None else tolerance(map_atol, "map_atol")
+    )
 
     same_configuration = (
         first.configuration_hash == second.configuration_hash
@@ -1137,7 +1155,7 @@ def compare_repeats(
                 )
                 evaluator_deltas.append(abs(first_delta - second_delta))
         max_evaluator_delta: Optional[float] = max(evaluator_deltas, default=0.0)
-        evaluator_metrics_within_tolerance = max_evaluator_delta <= metric_tolerance
+        evaluator_metrics_within_tolerance = max_evaluator_delta <= map_tolerance
     else:
         max_evaluator_delta = None
         evaluator_metrics_within_tolerance = False

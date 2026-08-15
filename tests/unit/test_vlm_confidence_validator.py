@@ -9,6 +9,8 @@ from types import SimpleNamespace
 from xml.etree import ElementTree
 
 import pytest
+import yaml
+from PIL import Image
 
 pytestmark = [pytest.mark.unit, pytest.mark.vlm]
 
@@ -16,7 +18,11 @@ torch = pytest.importorskip("torch")
 
 from libreyolo.validation.config import ValidationConfig  # noqa: E402
 from libreyolo.validation.detection_validator import DetectionValidator  # noqa: E402
+from libreyolo.validation.preprocessors import StandardValPreprocessor  # noqa: E402
 from libreyolo.validation.vlm_confidence import compare_repeats  # noqa: E402
+from libreyolo.validation.vlm_confidence_report import (  # noqa: E402
+    compare_confidence_reports,
+)
 from libreyolo.validation.vlm_confidence_validator import (  # noqa: E402
     VLMConfidenceValidator,
 )
@@ -356,7 +362,6 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
         "imgsz": [100, 100],
         "backend": "offline-stub",
         "label_to_category_id": None,
-        "save_plots": False,
     }
     assert validator.benchmark_config["confidence_evaluation"] == {
         "iou_threshold": 0.5,
@@ -372,6 +377,7 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
 
     report_path = tmp_path / "results" / "vlm_confidence_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert compare_confidence_reports(report_path, report_path).reproducible
     assert report["hashes"]["manifest"] == validator.confidence_run.manifest_hash
     assert report["hashes"]["generation"] == validator.confidence_run.generation_hash
     assert report["benchmark_config"] == validator.benchmark_config
@@ -466,13 +472,41 @@ def test_save_plots_writes_candidate_reliability_svg(tmp_path):
     assert metrics["metrics/vlm_confidence/scored_prediction_brier"] == pytest.approx(
         0.04
     )
-    assert validator.benchmark_config["evaluation"]["save_plots"] is True
+    assert "save_plots" not in validator.benchmark_config["evaluation"]
     report = json.loads(
         (tmp_path / "results" / "vlm_confidence_report.json").read_text(
             encoding="utf-8"
         )
     )
+    assert report["schema"] == "libreyolo.vlm-confidence-report.v2"
     assert report["artifacts"]["reliability_plot"] == plot.name
+
+
+def test_plot_emission_does_not_change_benchmark_identity(tmp_path):
+    path = tmp_path / "one.jpg"
+    path.write_bytes(b"offline")
+    targets = torch.zeros((1, 1, 5), dtype=torch.float32)
+    variants = [_variants([], [], generation_payload="same response")]
+    first = _Harness(
+        _stub_model(tmp_path, [path], variants),
+        _config(tmp_path, save_dir=tmp_path / "without-plot"),
+        [path],
+        targets,
+    )
+    second = _Harness(
+        _stub_model(tmp_path, [path], variants),
+        _config(tmp_path, save_dir=tmp_path / "with-plot", save_plots=True),
+        [path],
+        targets,
+    )
+
+    first.run()
+    second.run()
+
+    assert first.confidence_run.configuration_hash == (
+        second.confidence_run.configuration_hash
+    )
+    assert first.confidence_run.manifest_hash == second.confidence_run.manifest_hash
 
 
 def test_missing_original_path_fails_before_generation(tmp_path):
@@ -650,6 +684,157 @@ def test_actual_evaluator_backend_changes_configuration_identity(tmp_path):
     )
     assert first.benchmark_config["evaluation"]["backend"] == "pycocotools 2.0.11"
     assert second.benchmark_config["evaluation"]["backend"] == "faster-coco-eval 1.7.2"
+
+
+def test_real_yolo_loader_writer_and_report_reader_round_trip(tmp_path):
+    pytest.importorskip("pycocotools")
+    images = tmp_path / "images" / "val"
+    labels = tmp_path / "labels" / "val"
+    images.mkdir(parents=True)
+    labels.mkdir(parents=True)
+    image_path = images / "one.jpg"
+    Image.new("RGB", (100, 100), "white").save(image_path)
+    (labels / "one.txt").write_text("0 0.2 0.2 0.2 0.2\n", encoding="utf-8")
+    data_yaml = tmp_path / "data.yaml"
+    data_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/val",
+                "nc": 1,
+                "names": ["cat"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    model = _stub_model(
+        tmp_path,
+        [image_path],
+        [_variants([[10, 10, 30, 30]], [0.8])],
+    )
+    model._get_val_preprocessor = lambda img_size=None: StandardValPreprocessor(
+        img_size=(img_size, img_size)
+    )
+    original_preprocess = model._preprocess
+
+    def preprocess(path, color_format="auto", input_size=None):
+        size = (input_size, input_size) if isinstance(input_size, int) else input_size
+        return original_preprocess(
+            path, color_format=color_format, input_size=tuple(size)
+        )
+
+    model._preprocess = preprocess
+    config = ValidationConfig(
+        data=str(data_yaml),
+        batch_size=1,
+        imgsz=100,
+        num_workers=0,
+        verbose=False,
+        save_dir=str(tmp_path / "real-results"),
+        faster_coco_eval=False,
+    )
+
+    metrics = VLMConfidenceValidator(model, config).run()
+    report_path = tmp_path / "real-results" / "vlm_confidence_report.json"
+
+    assert metrics["metrics/vlm_confidence/candidate_mAP50-95"] == pytest.approx(1.0)
+    assert compare_confidence_reports(report_path, report_path).reproducible
+
+
+@pytest.mark.parametrize(
+    ("image_size", "raw_bbox", "clean_box", "names"),
+    [
+        ((100, 100), (-5, 10, 20, 20), (0, 10, 20, 30), ("cat", "dog")),
+        ((1000, 333), (100, 100, 233, 200), (100, 100, 333, 300), ("cat",)),
+    ],
+)
+def test_native_coco_writer_reader_uses_canonical_ordering_ground_truth(
+    tmp_path, image_size, raw_bbox, clean_box, names
+):
+    pytest.importorskip("pycocotools")
+    width, height = image_size
+    image_dir = tmp_path / "images" / "custom_val"
+    annotation_dir = tmp_path / "annotations"
+    image_dir.mkdir(parents=True)
+    annotation_dir.mkdir()
+    image_path = image_dir / "one.jpg"
+    Image.new("RGB", image_size, "white").save(image_path)
+    (annotation_dir / "valid.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "id": 1,
+                        "file_name": image_path.name,
+                        "width": width,
+                        "height": height,
+                    }
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 5,
+                        "bbox": list(raw_bbox),
+                        "area": raw_bbox[2] * raw_bbox[3],
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 5, "name": "cat"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    data_yaml = tmp_path / "data.yaml"
+    data_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/custom_val",
+                "annotations": {"val": "annotations/valid.json"},
+                "nc": len(names),
+                "names": list(names),
+            }
+        ),
+        encoding="utf-8",
+    )
+    model = _stub_model(
+        tmp_path,
+        [image_path],
+        [_variants([list(clean_box)], [0.8])],
+    )
+    model._get_val_preprocessor = lambda img_size=None: StandardValPreprocessor(
+        img_size=(img_size, img_size)
+    )
+    model._preprocess = lambda path, color_format="auto", input_size=None: (
+        {"input_ids": torch.tensor([[0]])},
+        None,
+        image_size,
+        1.0,
+    )
+    model._postprocess_score_variants = lambda output, original_size: model.variants[
+        output
+    ]
+    save_dir = tmp_path / "native-results"
+    config = ValidationConfig(
+        data=str(data_yaml),
+        batch_size=1,
+        imgsz=100,
+        num_workers=0,
+        verbose=False,
+        save_dir=str(save_dir),
+        faster_coco_eval=False,
+    )
+
+    VLMConfidenceValidator(model, config).run()
+    report_path = save_dir / "vlm_confidence_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert report["dataset_manifest"]["ground_truth"] == [
+        {"image_id": "1", "class_id": 0, "xyxy": list(clean_box)}
+    ]
+    assert report["benchmark_config"]["evaluation"]["label_to_category_id"] == {"0": 5}
+    assert compare_confidence_reports(report_path, report_path).reproducible
 
 
 def test_unfingerprintable_live_model_is_refused_before_generation(tmp_path):
