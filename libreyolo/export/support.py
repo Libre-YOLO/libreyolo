@@ -1648,6 +1648,30 @@ _add(
     constraint="fixed-resolution export canvas",
 )
 _add(
+    "validated",
+    ("quicksrnet",),
+    ("restore",),
+    ("onnx",),
+    reason=(
+        "A deterministic input-sensitive fixture covers dynamic-shape export, "
+        "runtime reload, scale metadata, and native-versus-runtime pixel parity."
+    ),
+    since="1.5",
+    constraint="FP32, dynamic spatial input",
+)
+_add(
+    "validated",
+    ("quicksrnet",),
+    ("restore",),
+    ("torchscript",),
+    reason=(
+        "A deterministic input-sensitive fixture covers fixed-canvas export, "
+        "runtime reload, scale metadata, and native-versus-runtime pixel parity."
+    ),
+    since="1.5",
+    constraint="FP32, fixed-resolution export canvas",
+)
+_add(
     "blocked",
     ("depth_anything",),
     ("depth",),

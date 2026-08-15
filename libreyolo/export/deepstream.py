@@ -127,7 +127,7 @@ _DEPTH_FAMILIES = {"depth_anything", "zipdepth"}
 # them from the tensor metadata. Multi-output graphs are fine, every output
 # layer reaches the metadata.
 _POSE_FAMILIES = {"yolo9", "yolonas", "rfdetr", "ec"}
-_RESTORE_FAMILIES = {"nafnet", "realesrgan", "swinir"}
+_RESTORE_FAMILIES = {"nafnet", "quicksrnet", "realesrgan", "swinir"}
 _MATTE_FAMILIES = {"birefnet"}
 _GAZE_FAMILIES = {"l2cs"}
 
@@ -649,6 +649,7 @@ _PREPROCESS_PROFILES: dict[str, dict] = {
     # stretch-resize RGB unless overridden below.
     "nafnet": {},
     "realesrgan": {},
+    "quicksrnet": {},
     "swinir": {},
     "birefnet": {},
     "l2cs": {},

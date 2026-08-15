@@ -181,6 +181,7 @@ _RECTANGULAR_EXPORT_FAMILIES = {
     # a square export would not be the model the checkpoint was trained as.
     "ppliteseg",
     "realesrgan",
+    "quicksrnet",
 }
 _RECTANGULAR_EXPORT_FORMATS = {
     "coreai",
@@ -448,11 +449,11 @@ class BaseExporter(ABC):
         if (
             getattr(self.model, "task", "detect") == "restore"
             and dynamic
-            and self.model._get_model_name() != "realesrgan"
+            and self.model._get_model_name() not in {"realesrgan", "quicksrnet"}
         ):
-            # Real-ESRGAN generators are fully convolutional (conv + nearest
-            # interpolate + pixel shuffle/unshuffle) and export with dynamic H/W;
-            # other restore families (NAFNet) keep the fixed-resolution v1 contract.
+            # Real-ESRGAN and QuickSRNet are fully convolutional and export with
+            # dynamic H/W; other restore families keep the fixed-resolution v1
+            # contract.
             warnings.warn(
                 "Restore export uses a fixed-resolution runtime contract in "
                 "v1; forcing dynamic=False.",
@@ -786,7 +787,8 @@ class BaseExporter(ABC):
         ):
             raise NotImplementedError(
                 "Rectangular imgsz export is currently supported for "
-                "YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports only."
+                "YOLO9-family, HRNet, NAFNet, QuickSRNet, and Real-ESRGAN "
+                "exports only."
             )
         if (
             _is_rectangular_imgsz(imgsz)

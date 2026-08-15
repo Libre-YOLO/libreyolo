@@ -41,6 +41,11 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **QuickSRNet Medium 2x super-resolution.** `LibreQuickSRNetm2-restore.pt`
+  adds compact native-resolution RGB upscaling, paired PSNR/SSIM validation,
+  dynamic-spatial ONNX and fixed-canvas TorchScript export, exact parity with
+  the pinned BSD-3-Clause upstream, and an auto-downloaded hosted checkpoint.
+
 - **Hosted Dome-DETR checkpoints.** The six official AI-TOD-V2 and VisDrone
   checkpoints now auto-download from LibreYOLO under the upstream card's
   academic-research-only restriction. Every download warns that the weights
