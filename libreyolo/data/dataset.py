@@ -1053,6 +1053,7 @@ def create_dataloader(
     pin_memory: bool = True,
     sampler=None,
     min_samples: int = 0,
+    class_balanced: bool = False,
 ):
     """
     Create a DataLoader for YOLOX training.
@@ -1076,8 +1077,38 @@ def create_dataloader(
             other custom sampler is respected as-is), and ``num_workers`` is
             clamped to ``len(dataset)``. 0 (the default) leaves the loader
             exactly as before the knob existed.
+        class_balanced: Opt-in LVIS-style repeat-factor sampling. Off by
+            default. When on, replaces the shuffle / DistributedSampler with
+            a weighted draw; ``min_samples`` still floors the draw length.
+            Cannot be combined with a custom non-distributed sampler.
     """
-    if min_samples > 0 and 0 < len(dataset) < min_samples:
+    if class_balanced:
+        from torch.utils.data.distributed import DistributedSampler
+
+        from .class_balanced import build_class_balanced_sampler
+
+        if sampler is not None and not isinstance(sampler, DistributedSampler):
+            raise ValueError(
+                "class_balanced=True cannot be combined with a custom "
+                f"sampler ({type(sampler).__name__}). Pass sampler=None or "
+                "a DistributedSampler."
+            )
+        draw = len(dataset)
+        if min_samples > 0 and 0 < len(dataset) < min_samples:
+            draw = min_samples
+            num_workers = min(num_workers, len(dataset))
+        sampler = build_class_balanced_sampler(
+            dataset, num_samples=draw, distributed_sampler=sampler
+        )
+        if is_main_process():
+            logger.info(
+                "class_balanced sampling active: %d images, drawing %d "
+                "samples per epoch%s",
+                len(dataset),
+                len(sampler),
+                " (DDP shard)" if hasattr(sampler, "num_replicas") else "",
+            )
+    elif min_samples > 0 and 0 < len(dataset) < min_samples:
         num_workers = min(num_workers, len(dataset))
         if sampler is None:
             # Draws from the global torch RNG, the same source the default

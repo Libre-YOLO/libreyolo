@@ -234,6 +234,105 @@ def test_train_dry_run_rejects_ambiguous_freeze_true():
     assert "freeze=True is ambiguous" in data["message"]
 
 
+@pytest.mark.parametrize("model_name", ["LibreDFINEs.pt"])
+def test_train_dry_run_rejects_class_balanced_on_custom_loaders(model_name):
+    app = _make_app()
+    result = runner.invoke(
+        app,
+        [
+            "data=coco8.yaml",
+            f"model={model_name}",
+            "class_balanced=true",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 2, result.stdout
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert "class_balanced" in data["message"]
+
+
+def test_train_dry_run_accepts_class_balanced_for_rfdetr_detection(monkeypatch):
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.train._create_explicit_task_train_model",
+        lambda **_kwargs: None,
+    )
+    app = _make_app()
+    result = runner.invoke(
+        app,
+        [
+            "data=coco8.yaml",
+            "model=rfdetr-n",
+            "task=detect",
+            "class_balanced=true",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    config = json.loads(result.stdout)["resolved_config"]
+    assert config["class_balanced"] is True
+
+
+def test_train_dry_run_optin_helpers_both_grammars():
+    """New #768 knobs parse in both CLI grammars and stay off by default."""
+    app = _make_app()
+
+    default = runner.invoke(
+        app,
+        ["data=coco8.yaml", "model=LibreYOLO9t.pt", "--dry-run", "--json"],
+    )
+    assert default.exit_code == 0, default.stdout
+    default_cfg = json.loads(default.stdout)["resolved_config"]
+    assert default_cfg["class_balanced"] is False
+    assert default_cfg["average_best"] == 0
+    assert default_cfg["export_check"] is False
+    assert default_cfg["precise_bn"] == 0
+
+    kv = runner.invoke(
+        app,
+        [
+            "data=coco8.yaml",
+            "model=LibreYOLO9t.pt",
+            "class_balanced=true",
+            "average_best=5",
+            "export_check=true",
+            "precise_bn=128",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    assert kv.exit_code == 0, kv.stdout
+    kv_cfg = json.loads(kv.stdout)["resolved_config"]
+    assert kv_cfg["class_balanced"] is True
+    assert kv_cfg["average_best"] == 5
+    assert kv_cfg["export_check"] is True
+    assert kv_cfg["precise_bn"] == 128
+
+    dashed = runner.invoke(
+        app,
+        [
+            "data=coco8.yaml",
+            "model=LibreYOLO9t.pt",
+            "--class-balanced",
+            "--average-best",
+            "5",
+            "--export-check",
+            "--precise-bn",
+            "128",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    assert dashed.exit_code == 0, dashed.stdout
+    dashed_cfg = json.loads(dashed.stdout)["resolved_config"]
+    assert dashed_cfg["class_balanced"] is True
+    assert dashed_cfg["average_best"] == 5
+    assert dashed_cfg["export_check"] is True
+    assert dashed_cfg["precise_bn"] == 128
+
+
 def test_train_dry_run_distill_model_is_visible():
     """A distillation teacher resolves into the config without error."""
     app = _make_app()
@@ -706,7 +805,3 @@ def test_train_rfdetr_detect_checkpoint_switches_to_obb_architecture(
     data = json.loads(result.stdout)
     assert data["model_family"] == "rfdetr"
     assert data["epochs_completed"] == 1
-
-
-
-
