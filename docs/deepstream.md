@@ -124,7 +124,7 @@ regular ONNX export. No labels file is written.
 |---|---|
 | Depth | depth_anything, zipdepth |
 | Pose | yolo9, yolonas, rfdetr, ec |
-| Restoration | nafnet, realesrgan, swinir |
+| Restoration | nafnet, quicksrnet, realesrgan, swinir |
 | Matting | birefnet |
 | Gaze | l2cs |
 

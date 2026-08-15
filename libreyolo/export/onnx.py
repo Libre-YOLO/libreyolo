@@ -420,9 +420,9 @@ def export_onnx(
         )
     elif is_restore:
         output_names = ["restored"]
-        # Real-ESRGAN generators support dynamic spatial dims; NAFNet keeps the
-        # fixed-resolution v1 contract (only batch is dynamic when enabled).
-        if dynamic and model_family == "realesrgan":
+        # Fully convolutional super-resolution families support dynamic spatial
+        # dims; other restoration families keep the fixed-resolution contract.
+        if dynamic and model_family in {"realesrgan", "quicksrnet"}:
             dynamic_axes = {
                 "images": {0: "batch", 2: "height", 3: "width"},
                 "restored": {0: "batch", 2: "out_height", 3: "out_width"},

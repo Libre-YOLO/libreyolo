@@ -150,7 +150,7 @@ convention. Exporters write `imgsz_h` and `imgsz_w` next to the legacy scalar
 silently treat the scalar as a square runtime contract.
 
 Backend support for rectangular runtime metadata is family- and format-scoped.
-YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports may use non-square
+YOLO9-family, HRNet, NAFNet, QuickSRNet, and Real-ESRGAN exports may use non-square
 `imgsz_h/imgsz_w` in supported runtime formats; families or formats without
 explicit rectangular support must reject the metadata instead of preprocessing
 those artifacts as square inputs. HRNet exports are fixed, batch-one, FP32
@@ -165,12 +165,13 @@ then crops the restored RGB result back to the original image shape. Dynamic
 spatial restore export and tiled exported-runtime inference are deferred for
 NAFNet.
 
-Real-ESRGAN restore exports support dynamic spatial dims: the generators are
-fully convolutional, so ONNX exports may set dynamic `height`/`width` axes on
-both `images` and `restored`. Backend prediction runs at the native image
-resolution (reflect-padded only to the network divisibility factor) and crops
-the restored output to `scale` times the original image shape. The backend
-derives `scale` from the model family and size (`x4`/`x4t` = 4, `x2` = 2).
+Real-ESRGAN and QuickSRNet restore exports support dynamic spatial dims: the
+generators are fully convolutional, so ONNX exports may set dynamic
+`height`/`width` axes on both `images` and `restored`. Backend prediction runs
+at the native image resolution (reflect-padded only when a network requires a
+divisibility factor) and crops the restored output to `scale` times the
+original image shape. The backend derives `scale` from the model family and
+size (Real-ESRGAN `x4`/`x4t` = 4 and `x2` = 2; QuickSRNet `m2` = 2).
 
 SwinIR restore exports use a fixed-resolution v1 contract. ONNX exports emit
 one dense `restored` tensor and force `dynamic=false` because shifted-window
