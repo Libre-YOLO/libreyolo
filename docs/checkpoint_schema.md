@@ -48,6 +48,15 @@ Required field meanings:
   inference sizing follows the family's documented predict and validation
   rules.
 
+Optional family-specific geometry (not required by schema v1.0):
+
+- `letterbox_pad`: `"topleft"` or `"center"`. YOLOv9 only. Official
+  MultimediaTechLab conversions stamp `"center"`. Checkpoints written before
+  this field existed, and every user fine-tune from LibreYOLO ≤1.5, are
+  treated as `"topleft"`. Loaders must not assume a family-wide default other
+  than that unmarked-means-topleft rule. YOLO-NAS is not this field: its
+  official pipeline already pads bottom-right in `preprocess/yolonas.py`.
+
 Pose checkpoints additionally include:
 
 - `nc` / `names`: pose is usually single-class (`nc: 1`, `person`), but the

@@ -496,6 +496,11 @@ def _wrap_claim(
     if names is None:
         names = cls.default_checkpoint_names(nc)
     extra_metadata: dict[str, Any] = {}
+    if cls.FAMILY == "yolo9":
+        # Official MTL YOLOv9 weights were trained center-padded. Stamp
+        # the converted checkpoint so 1.6 infer/val match that geometry
+        # without flipping unmarked LibreYOLO <=1.5 user checkpoints.
+        extra_metadata["letterbox_pad"] = "center"
     if task == "restore":
         # Restore checkpoints use a single schema placeholder, not a semantic
         # class label. Foreign restoration releases normally carry no names.

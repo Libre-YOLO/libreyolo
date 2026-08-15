@@ -41,9 +41,11 @@ from .segments import (
 logger = logging.getLogger(__name__)
 
 
-def preproc(img, input_size, swap=(2, 0, 1)):
+def preproc(img, input_size, swap=(2, 0, 1), letterbox_pad=None):
     """Letterbox to RGB float32/0-1 (matches YOLO9ValPreprocessor and weights)."""
-    return letterbox_preproc(img, input_size, swap, to_rgb=True, scale=True)
+    return letterbox_preproc(
+        img, input_size, swap, to_rgb=True, scale=True, letterbox_pad=letterbox_pad
+    )
 
 
 class YOLO9TrainTransform:
@@ -56,7 +58,7 @@ class YOLO9TrainTransform:
 
     def __init__(
         self,
-        max_labels=100,
+        max_labels=300,
         flip_prob=0.5,
         vertical_flip_prob=0.0,
         hsv_prob=1.0,
@@ -64,6 +66,7 @@ class YOLO9TrainTransform:
         output_label_dim=None,
         flipud=None,
         rot90_prob=0.0,
+        letterbox_pad=None,
     ):
         """
         Args:
@@ -88,6 +91,7 @@ class YOLO9TrainTransform:
         self.mask_downsample_ratio = mask_downsample_ratio
         self.output_label_dim = output_label_dim
         self.rot90_prob = rot90_prob
+        self.letterbox_pad = letterbox_pad
 
     def __call__(self, image, targets, input_dim, segments=None):
         """
@@ -135,7 +139,9 @@ class YOLO9TrainTransform:
                 image = image[:, ::-1]
             if random.random() < self.vertical_flip_prob:
                 image = image[::-1, :]
-            image, _ = preproc(image, input_dim)
+            image, _ = preproc(
+                image, input_dim, letterbox_pad=self.letterbox_pad
+            )
             if return_masks:
                 # No instances -> zero mask rows (masks are variable-length
                 # per image and padded to the batch max at collate, #527).
@@ -205,12 +211,27 @@ class YOLO9TrainTransform:
             segments_t = _flip_segments_ud(segments_t, height)
 
         # Resize with letterbox
-        image_t, r = preproc(image_t, input_dim)
+        src_h, src_w = image_t.shape[:2]
+        image_t, r = preproc(
+            image_t, input_dim, letterbox_pad=self.letterbox_pad
+        )
 
-        # Scale boxes by resize ratio
+        # Scale boxes by resize ratio, then shift by pad (0 for topleft).
+        from libreyolo.preprocess.letterbox import letterbox_geometry
+
+        _ratio, _nh, _nw, pad_left, pad_top = letterbox_geometry(
+            src_h, src_w, input_dim[0], input_dim[1], self.letterbox_pad
+        )
         boxes = boxes * r
+        boxes[:, [0, 2]] = boxes[:, [0, 2]] + pad_left
+        boxes[:, [1, 3]] = boxes[:, [1, 3]] + pad_top
         segments_t = _transform_segments(
-            segments_t, scale=r, width=input_dim[1], height=input_dim[0]
+            segments_t,
+            scale=r,
+            padw=pad_left,
+            padh=pad_top,
+            width=input_dim[1],
+            height=input_dim[0],
         )
 
         # Filter out tiny boxes (after resize)
@@ -224,12 +245,25 @@ class YOLO9TrainTransform:
 
         # Fallback to original if all boxes filtered
         if len(boxes_t) == 0:
-            image_t, r = preproc(image_o, input_dim)
+            src_h, src_w = image_o.shape[:2]
+            image_t, r = preproc(
+                image_o, input_dim, letterbox_pad=self.letterbox_pad
+            )
+            _ratio, _nh, _nw, pad_left, pad_top = letterbox_geometry(
+                src_h, src_w, input_dim[0], input_dim[1], self.letterbox_pad
+            )
             boxes_t = boxes_o * r
+            boxes_t[:, [0, 2]] = boxes_t[:, [0, 2]] + pad_left
+            boxes_t[:, [1, 3]] = boxes_t[:, [1, 3]] + pad_top
             labels_t = labels_o
             angles_t = angles_o
             segments_t = _transform_segments(
-                segments_o, scale=r, width=input_dim[1], height=input_dim[0]
+                segments_o,
+                scale=r,
+                padw=pad_left,
+                padh=pad_top,
+                width=input_dim[1],
+                height=input_dim[0],
             )
 
         # Normalize coordinates to [0, 1]
@@ -289,7 +323,9 @@ class YOLO9ValTransform:
             img: Preprocessed image
             dummy: Dummy labels array
         """
-        img, _ = preproc(img, input_size, self.swap)
+        img, _ = preproc(
+            img, input_size, self.swap, letterbox_pad=getattr(self, "letterbox_pad", None)
+        )
         return img, np.zeros((1, 5))
 
 
@@ -661,7 +697,7 @@ class YOLO9MosaicMixupDataset:
         r = np.random.beta(32.0, 32.0)
         img = (img * r + img2 * (1 - r)).astype(img.dtype)
 
-        max_labels = getattr(self.preproc, "max_labels", 100)
+        max_labels = getattr(self.preproc, "max_labels", 300)
         label_dim = labels.shape[1]
 
         # Drop padding (class == -1) from both, then merge the real objects.

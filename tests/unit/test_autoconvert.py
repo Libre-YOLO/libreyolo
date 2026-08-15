@@ -90,18 +90,22 @@ class TestYolo9Inference:
 
         assert infer_nb_classes(sd) == 3
 
-    def test_convert_state_dict_drops_aux_and_anc2vec(self):
+    def test_convert_state_dict_keeps_aux_and_drops_anc2vec(self):
         sd = {
             "0.conv.weight": torch.zeros(16, 3, 3, 3),
             "22.heads.0.class_conv.2.weight": torch.zeros(5, 16, 1, 1),
             "22.heads.0.anc2vec.anc2vec.weight": torch.zeros(1, 16, 1, 1, 1),
-            "23.heads.0.class_conv.2.weight": torch.zeros(5, 16, 1, 1),
+            "23.conv1.weight": torch.zeros(16, 16, 1, 1),
+            "30.heads.0.class_conv.2.weight": torch.zeros(5, 16, 1, 1),
+            "30.heads.0.anc2vec.anc2vec.weight": torch.zeros(1, 16, 1, 1, 1),
         }
         converted, stats = convert_state_dict(sd, "t")
         assert "backbone.conv0.conv.weight" in converted
         assert "head.cv3.0.2.weight" in converted
-        assert stats["skipped"] == 1  # the aux head (layer 23)
-        assert stats["failed"] == 1  # anc2vec
+        assert "aux.spp.cv1.weight" in converted
+        assert "aux.head.cv3.0.2.weight" in converted
+        assert stats["failed"] == 1  # layer-22 anc2vec
+        assert stats["skipped"] == 1  # layer-30 anc2vec
 
 
 def _synthetic_upstream_yolo9(nc: int) -> dict:

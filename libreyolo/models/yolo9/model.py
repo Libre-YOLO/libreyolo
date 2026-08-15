@@ -160,6 +160,11 @@ class LibreYOLO9(BaseModel):
         **kwargs,
     ):
         self.reg_max = reg_max
+        # Unmarked checkpoints (LibreYOLO <=1.5) used top-left letterbox.
+        # Official MTL conversions stamp ``center``. Never flip unmarked files.
+        from ...preprocess.letterbox import DEFAULT_LETTERBOX_PAD
+
+        self.letterbox_pad = DEFAULT_LETTERBOX_PAD
         super().__init__(
             model_path=model_path,
             size=size,
@@ -208,7 +213,32 @@ class LibreYOLO9(BaseModel):
         state_dict: dict,
         checkpoint: dict | None = None,
     ) -> None:
-        return
+        if isinstance(checkpoint, dict) and "letterbox_pad" in checkpoint:
+            from ...preprocess.letterbox import normalize_letterbox_pad
+
+            self.letterbox_pad = normalize_letterbox_pad(checkpoint.get("letterbox_pad"))
+
+    def _filter_incoming_state_dict(
+        self,
+        state_dict: dict,
+        *,
+        loaded: dict | None = None,
+        checkpoint_task: str | None = None,
+    ) -> dict:
+        """Drop training-only ``aux.*`` keys when the live model is single-head.
+
+        Official conversions keep PGI weights so fine-tunes can load them.
+        Inference and old unmarked checkpoints stay on the main head only.
+        """
+        has_aux = getattr(self.model, "aux", None) is not None
+        if has_aux:
+            return state_dict
+        return {k: v for k, v in state_dict.items() if not k.startswith("aux.")}
+
+    def _save_extra_metadata(self) -> dict:
+        from ...preprocess.letterbox import normalize_letterbox_pad
+
+        return {"letterbox_pad": normalize_letterbox_pad(self.letterbox_pad)}
 
     def _prepare_state_dict(
         self,
@@ -333,6 +363,10 @@ class LibreYOLO9(BaseModel):
                         "Transfer checkpoint metadata is incomplete: "
                         + "; ".join(metadata_errors)
                     )
+            if "letterbox_pad" in loaded:
+                from ...preprocess.letterbox import normalize_letterbox_pad
+
+                self.letterbox_pad = normalize_letterbox_pad(loaded.get("letterbox_pad"))
 
             ckpt_family = loaded.get("model_family", "")
             allowed_families = {
@@ -411,7 +445,10 @@ class LibreYOLO9(BaseModel):
             input_size if input_size is not None else self._get_input_size()
         )
         tensor, img, size = preprocess_image(
-            image, input_size=effective_size, color_format=color_format
+            image,
+            input_size=effective_size,
+            color_format=color_format,
+            letterbox_pad=self.letterbox_pad,
         )
         return tensor, img, size, 1.0
 
@@ -437,6 +474,15 @@ class LibreYOLO9(BaseModel):
             original_size=original_size,
             max_det=max_det,
             letterbox=kwargs.get("letterbox", True),
+            letterbox_pad=self.letterbox_pad,
+        )
+
+    def _get_val_preprocessor(self, img_size: int | None = None):
+        if img_size is None:
+            img_size = self._get_input_size()
+        return self.val_preprocessor_class(
+            img_size=(img_size, img_size),
+            letterbox_pad=self.letterbox_pad,
         )
 
     # =========================================================================
@@ -576,6 +622,17 @@ class LibreYOLO9(BaseModel):
 
         if resume and pretrained:
             raise ValueError("pretrained transfer cannot be combined with resume=True.")
+
+        # PGI aux is training-only. New fine-tunes attach it; resume of a
+        # single-head 1.5 checkpoint stays single-head (trainer.resume).
+        aux_weight = kwargs.get("aux_weight", _TRAIN_DEFAULTS.aux_weight)
+        if (
+            not resume
+            and float(aux_weight or 0) > 0
+            and hasattr(self.model, "enable_aux")
+            and type(self.model).__name__ == "LibreYOLO9Model"
+        ):
+            self.model.enable_aux(weight=float(aux_weight))
 
         if pretrained:
             transfer_weights: str | Path

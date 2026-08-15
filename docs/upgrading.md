@@ -7,6 +7,41 @@ The full list of changes for any release is in
 [CHANGELOG.md](../CHANGELOG.md); this page carries only the parts that require
 you to edit code or re-check numbers.
 
+## v1.5.x to v1.6.0
+
+Existing YOLOv9 checkpoints keep the same predict/val boxes after the
+upgrade. Do not re-export or re-evaluate old weights expecting a silent
+letterbox flip: there is none.
+
+### What does not break
+
+- Unmarked YOLOv9 `.pt` files (every LibreYOLO ≤1.5 fine-tune, and the
+  already-published `LibreYOLO9{t,s,m,c}.pt` mirrors) keep **top-left**
+  letterbox. Inference of those files is bit-identical to 1.5.
+- The PGI auxiliary head is training-only. Old checkpoints load and infer
+  as single-head models. Export graphs stay on the main head.
+- Validation NMS defaults (`0.001` / `0.6` / `300`) are unchanged. Val
+  numbers from 1.5 remain comparable.
+
+### What does change (new training / new converts only)
+
+- Newly converted official MultimediaTechLab weights stamp
+  `letterbox_pad: center` and keep the auxiliary PGI tensors. Fine-tunes
+  that start from those files train with center-pad and PGI.
+- New YOLOv9 training defaults: `max_labels=300`, SGD momentum warmup
+  `0.8 → 0.937` over the existing 3-epoch LR warmup, and `aux_weight=0.25`
+  on stock detect (not P2/E2E). Resume of a 1.5 checkpoint without `aux.*`
+  keys stays single-head.
+- To force center-pad on an unmarked checkpoint: `model.train(...,
+  letterbox_pad="center")`. To disable PGI: `aux_weight=0`.
+
+### What you should re-check
+
+- If you compare val mAP of a **new** official convert (center-stamped)
+  against a 1.5 number that used the same weights under top-left pad, the
+  scores will move. That is the intended geometry match with upstream, not
+  a silent default flip of your old files.
+
 ## v1.4.0 to v1.5.0
 
 Nothing was removed from the public API surface: every class and function that
