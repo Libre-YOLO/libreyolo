@@ -587,7 +587,7 @@ class YOLO9ValPreprocessor(BaseValPreprocessor):
         from libreyolo.preprocess.letterbox import apply_letterbox_hwc
 
         target_h, target_w = input_size
-        padded_img, _ratio, _pad_left, _pad_top = apply_letterbox_hwc(
+        padded_img, _ratio, pad_left, pad_top = apply_letterbox_hwc(
             img, target_h, target_w, pad=self.letterbox_pad, fill=self.pad_value
         )
 
@@ -595,11 +595,17 @@ class YOLO9ValPreprocessor(BaseValPreprocessor):
         padded_img = padded_img.transpose(2, 0, 1)  # HWC → CHW
         padded_img = np.ascontiguousarray(padded_img, dtype=np.float32) / 255.0
 
-        # Targets are already in letterbox coords
+        # Dataset already scaled boxes by the letterbox ratio onto the
+        # unpadded resized frame. Only the pad offset is missing. Top-left
+        # pad is 0 so this is a no-op for unmarked ≤1.5 checkpoints.
         padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
         if len(targets) > 0:
             targets = np.array(targets).copy()
             n = min(len(targets), self.max_labels)
+            targets[:n, 0] = targets[:n, 0] + pad_left
+            targets[:n, 1] = targets[:n, 1] + pad_top
+            targets[:n, 2] = targets[:n, 2] + pad_left
+            targets[:n, 3] = targets[:n, 3] + pad_top
             padded_targets[:n] = targets[:n]
 
         return padded_img, padded_targets

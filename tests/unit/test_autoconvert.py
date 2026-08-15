@@ -56,8 +56,14 @@ class TestYolo9ConvertKey:
         out, ok = convert_key("22.heads.0.anc2vec.anc2vec.weight", "t")
         assert ok is False
 
-    def test_auxiliary_head_not_converted(self):
-        out, ok = convert_key("23.heads.0.class_conv.2.weight", "t")
+    def test_auxiliary_spp_and_head_convert(self):
+        out, ok = convert_key("23.conv1.weight", "t")
+        assert ok and out == "aux.spp.cv1.weight"
+        out, ok = convert_key("30.heads.0.class_conv.2.weight", "t")
+        assert ok and out == "aux_head.cv3.0.2.weight"
+
+    def test_unknown_aux_leftover_not_converted(self):
+        out, ok = convert_key("24.heads.0.class_conv.2.weight", "t")
         assert ok is False
 
 

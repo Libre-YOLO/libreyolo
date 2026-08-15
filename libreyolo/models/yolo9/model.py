@@ -262,23 +262,25 @@ class LibreYOLO9(BaseModel):
             remapped[new_key] = value
         return remapped
 
-    def _rebuild_for_new_classes(self, new_nc: int):
-        """Replace only the final classification layers for different number of classes."""
-        self.nb_classes = new_nc
-        self.model.nc = new_nc
-
-        detect = self.model.head
+    def _rebuild_detect_class_layers(self, detect, new_nc: int) -> None:
         detect.nc = new_nc
         detect.no = new_nc + detect.reg_max * 4
-
         for seq in detect.cv3:
             old_final = seq[-1]
             in_channels = old_final.weight.shape[1]
             seq[-1] = nn.Conv2d(in_channels, new_nc, 1)
-
         detect._init_bias()
         detect._loss_fn = None
         detect.to(next(self.model.parameters()).device)
+
+    def _rebuild_for_new_classes(self, new_nc: int):
+        """Replace only the final classification layers for a new class count."""
+        self.nb_classes = new_nc
+        self.model.nc = new_nc
+        self._rebuild_detect_class_layers(self.model.head, new_nc)
+        aux_head = getattr(self.model, "aux_head", None)
+        if aux_head is not None:
+            self._rebuild_detect_class_layers(aux_head, new_nc)
 
     def _rebuild_for_checkpoint_classes(self, new_nc: int, state_dict: dict):
         """Match YOLO9 checkpoints with either COCO-width or scratch class towers."""

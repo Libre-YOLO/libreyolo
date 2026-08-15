@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 import torch
 
+pytestmark = pytest.mark.unit
+
 from libreyolo.preprocess.letterbox import (
     DEFAULT_LETTERBOX_PAD,
     LETTERBOX_CENTER,
@@ -104,6 +106,44 @@ def test_val_preprocessor_center_moves_content():
     assert off_x == 0.0
     assert off_y == 16.0
     assert r == pytest.approx(0.8)
+
+
+def test_center_val_targets_get_pad_so_gt_undo_recovers_original():
+    """Dataset hands a ratio-scaled, unpadded frame. Center pad must be
+    added to GT or the validator subtracts an offset that was never applied
+    (62.5px on a 500x375 → 640 letterbox)."""
+    orig_w, orig_h, imgsz = 500, 375, 640
+    r, off_x, off_y = YOLO9ValPreprocessor(
+        (imgsz, imgsz), letterbox_pad="center"
+    ).letterbox_scale(orig_h, orig_w, imgsz)
+    assert r == pytest.approx(min(imgsz / orig_h, imgsz / orig_w))
+    assert off_x == 0.0
+    assert off_y == 80.0
+
+    # Dataset contract: image already resized, boxes already * r.
+    resized_box = np.array([[100.0 * r, 50.0 * r, 200.0 * r, 150.0 * r, 0.0]], dtype=np.float32)
+    resized_h = int(orig_h * r)
+    resized_w = int(orig_w * r)
+    frame = np.zeros((resized_h, resized_w, 3), dtype=np.uint8)
+    _img, targets = YOLO9ValPreprocessor(
+        (imgsz, imgsz), max_labels=4, letterbox_pad="center"
+    )(frame, resized_box, (imgsz, imgsz))
+    # Validator undo: subtract pad, divide by r.
+    recovered = targets[0, :4].copy()
+    recovered[[0, 2]] = (recovered[[0, 2]] - off_x) / r
+    recovered[[1, 3]] = (recovered[[1, 3]] - off_y) / r
+    np.testing.assert_allclose(recovered, [100.0, 50.0, 200.0, 150.0], atol=1e-4)
+
+
+def test_topleft_val_targets_stay_unshifted():
+    orig_w, orig_h, imgsz = 500, 375, 640
+    r = min(imgsz / orig_h, imgsz / orig_w)
+    resized_box = np.array([[100.0 * r, 50.0 * r, 200.0 * r, 150.0 * r, 0.0]], dtype=np.float32)
+    frame = np.zeros((int(orig_h * r), int(orig_w * r), 3), dtype=np.uint8)
+    _img, targets = YOLO9ValPreprocessor(
+        (imgsz, imgsz), max_labels=4, letterbox_pad="topleft"
+    )(frame, resized_box, (imgsz, imgsz))
+    np.testing.assert_allclose(targets[0, :4], resized_box[0, :4], atol=1e-5)
 
 
 def test_postprocess_topleft_undo_matches_historical_divide_by_ratio():
@@ -342,3 +382,74 @@ def test_linear_scheduler_momentum_warmup():
 
     plain = LinearLRScheduler(lr=0.01, iters_per_epoch=10, total_epochs=10)
     assert plain.update_momentum(1) is None
+
+
+def test_rebuild_for_new_classes_updates_aux_head():
+    from libreyolo.models.yolo9.model import LibreYOLO9
+
+    wrapper = LibreYOLO9(None, size="t", nb_classes=80, device="cpu")
+    wrapper.model.enable_aux(0.25)
+    assert wrapper.model.aux_head.nc == 80
+    wrapper._rebuild_for_new_classes(5)
+    assert wrapper.model.head.nc == 5
+    assert wrapper.model.aux_head.nc == 5
+    assert wrapper.model.aux_head.cv3[0][-1].out_channels == 5
+
+
+def test_ddp_bootstrap_merges_aux_and_keeps_flat_dict(tmp_path):
+    from libreyolo.models.yolo9.nn import LibreYOLO9Model
+    from libreyolo.training.ddp_spawn import (
+        _bootstrap_state_dict,
+        _build_init_kw,
+    )
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    raw = LibreYOLO9Model(config="t", nb_classes=2)
+    raw.enable_aux(0.25)
+    marker = raw.aux.spp.cv1.conv.weight.detach().clone()
+    ckpt = wrap_libreyolo_checkpoint(
+        raw.state_dict(),
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=2,
+        names={0: "a", 1: "b"},
+        imgsz=640,
+        letterbox_pad="center",
+    )
+    path = tmp_path / "official.pt"
+    torch.save(ckpt, path)
+
+    infer = LibreYOLO9Model(config="t", nb_classes=2)
+    class _Wrap:
+        pass
+
+    parent = _Wrap()
+    parent.model = infer
+    parent.model_path = str(path)
+    parent.letterbox_pad = "center"
+    parent.size = "t"
+    parent.nb_classes = 2
+    parent.task = "detect"
+    parent.reg_max = 16
+
+    state = _bootstrap_state_dict(parent)
+    assert all(torch.is_tensor(v) for v in state.values())
+    assert "model" not in state
+    assert "aux.spp.cv1.conv.weight" in state
+    torch.testing.assert_close(state["aux.spp.cv1.conv.weight"], marker.cpu())
+
+    parent.__class__ = type("LibreYOLO9", (), {"__init__": lambda self, *a, **k: None})
+    # _build_init_kw inspects the real class; use a tiny stand-in with **kwargs.
+    class _Fake:
+        def __init__(self, model_path, size="t", **kwargs):
+            pass
+
+    fake = _Fake(None)
+    fake.size = "t"
+    fake.nb_classes = 2
+    fake.task = "detect"
+    fake.reg_max = 16
+    fake.letterbox_pad = "center"
+    init_kw = _build_init_kw(fake)
+    assert init_kw["letterbox_pad"] == "center"
