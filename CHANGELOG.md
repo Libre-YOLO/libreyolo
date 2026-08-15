@@ -7,6 +7,23 @@ before 1.4.0 are documented in the
 
 ## [Unreleased]
 
+### Changed
+
+- **YOLOv9 letterbox is now stamped on the checkpoint, not flipped
+  globally.** Unmarked ≤1.5 weights keep top-left pad (same predict/val
+  boxes as today). Newly converted official MultimediaTechLab checkpoints
+  stamp `letterbox_pad: center`. A 1.6 upgrade does not silently move
+  boxes on existing user fine-tunes. YOLO-NAS is unchanged (its official
+  pipeline already pads bottom-right).
+- **YOLOv9 training recipe closer to MultimediaTechLab/YOLO.**
+  `max_labels` default is 300 (was 100). LinearLR SGD momentum warms
+  `0.8 → 0.937` over the existing 3-epoch warmup. New stock-detect
+  fine-tunes attach the PGI auxiliary head (`aux_weight=0.25`); resume of
+  a single-head 1.5 checkpoint stays single-head. Inference and export
+  remain single-head either way. Val NMS defaults are **not** changed
+  (`0.001` / `0.6` / `300`); reported mAP stays comparable across 1.5
+  and 1.6 for the same unmarked weights.
+
 ### Fixed
 
 - **QAT training-state guards (#768).** Training a quantized model now
@@ -24,6 +41,11 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **QuickSRNet Medium 2x super-resolution.** `LibreQuickSRNetm2-restore.pt`
+  adds compact native-resolution RGB upscaling, paired PSNR/SSIM validation,
+  dynamic-spatial ONNX and fixed-canvas TorchScript export, exact parity with
+  the pinned BSD-3-Clause upstream, and an auto-downloaded hosted checkpoint.
+
 - **Hosted Dome-DETR checkpoints.** The six official AI-TOD-V2 and VisDrone
   checkpoints now auto-download from LibreYOLO under the upstream card's
   academic-research-only restriction. Every download warns that the weights
@@ -31,6 +53,11 @@ before 1.4.0 are documented in the
   and records the complete upstream ambiguity: the card also claims
   Apache-2.0 but has neither license metadata nor a weight-repository LICENSE
   file. The learned tensors are unchanged; conversion adds metadata only.
+
+- **BEN2 background removal.** `LibreBEN2b-matte.pt` adds the MIT-licensed
+  BEN2 Base model at fixed 1024 resolution with batched prediction, matte
+  validation, transparent cutout saving, strict safetensors conversion, and
+  fixed-resolution ONNX/TorchScript export.
 
 - **Opt-in training helpers (#768).** `class_balanced=True` enables
   repeat-factor sampling for long-tailed detection datasets;

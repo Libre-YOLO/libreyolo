@@ -163,11 +163,13 @@ _RECTANGULAR_BACKEND_FAMILIES = {
     # its exported artifacts always carry a rectangular imgsz_h/imgsz_w pair.
     "ppliteseg",
     "realesrgan",
+    "quicksrnet",
 }
 
 # Real-ESRGAN integer upscale factor per size, used by scale-aware restore decode.
 _REALESRGAN_BACKEND_SCALE = {"x4": 4, "x2": 2, "x4t": 4}
 _SWINIR_BACKEND_SCALE = {"s": 4, "m": 4, "l": 4}
+_QUICKSRNET_BACKEND_SCALE = {"m2": 2}
 _REALESRGAN_BACKEND_PAD_MULTIPLE = {"x4": 1, "x2": 2, "x4t": 1}
 
 # Families removed from LibreYOLO. An exported artifact whose metadata still names
@@ -238,7 +240,8 @@ def _read_metadata_imgsz(
         ):
             raise NotImplementedError(
                 "Rectangular exported-backend inference is currently supported "
-                "for YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports only. "
+                "for YOLO9-family, HRNet, NAFNet, QuickSRNet, and "
+                "Real-ESRGAN exports only. "
                 f"{artifact} declares model_family={model_family or 'unknown'!r}."
             )
         return imgsz
@@ -538,7 +541,7 @@ class BaseBackend(ABC):
             Tuple of (input_tensor, original_img, original_size, ratio).
         """
         if self.task == "restore" or self.model_family == "nafnet":
-            if self.model_family == "realesrgan" and not getattr(
+            if self.model_family in {"realesrgan", "quicksrnet"} and not getattr(
                 self, "fixed_input_shape", False
             ):
                 return self._preprocess_restore_native(image, color_format)
@@ -858,10 +861,12 @@ class BaseBackend(ABC):
             ratio,
         )
 
-    @staticmethod
-    def _preprocess_matte(image, input_size, color_format):
-        """BiRefNet fixed-canvas ImageNet-normalized matte preprocessing."""
-        from ..models.birefnet.utils import preprocess_numpy
+    def _preprocess_matte(self, image, input_size, color_format):
+        """Family-specific fixed-canvas ImageNet-normalized matte preprocessing."""
+        if self.model_family == "ben2":
+            from ..models.ben2.utils import preprocess_numpy
+        else:
+            from ..models.birefnet.utils import preprocess_numpy
 
         input_h, input_w = _imgsz_hw(input_size)
         if input_h != input_w:
@@ -1001,13 +1006,15 @@ class BaseBackend(ABC):
             return _REALESRGAN_BACKEND_SCALE.get(str(self.model_size), 1)
         if self.model_family == "swinir":
             return _SWINIR_BACKEND_SCALE.get(str(self.model_size), 1)
+        if self.model_family == "quicksrnet":
+            return _QUICKSRNET_BACKEND_SCALE.get(str(self.model_size), 1)
         return 1
 
     def _preprocess_restore_native(self, image, color_format):
-        """Native-resolution restore preprocessing for dynamic Real-ESRGAN graphs.
+        """Native-resolution preprocessing for dynamic super-resolution graphs.
 
         Loads RGB [0, 1], reflect-pads bottom/right to the network divisibility
-        factor (2 for the x2 pixel-unshuffle variant, 1 otherwise). The dynamic
+        factor (2 for Real-ESRGAN x2, 1 otherwise). The dynamic
         ONNX graph accepts any spatial size, so no fixed canvas is imposed.
         """
 
@@ -4224,7 +4231,8 @@ class BaseBackend(ABC):
         ):
             raise NotImplementedError(
                 "Rectangular imgsz backend inference is currently supported "
-                "for YOLO9-family, HRNet, NAFNet, and Real-ESRGAN exports only."
+                "for YOLO9-family, HRNet, NAFNet, QuickSRNet, and "
+                "Real-ESRGAN exports only."
             )
         return effective
 

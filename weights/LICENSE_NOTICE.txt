@@ -432,6 +432,19 @@ project the weights were derived from. Per-family summary:
              Official SwinIR-S x4 lightweight and SwinIR-M/L x4 real-world
              checkpoints. Convert with weights/convert_swinir_weights.py.
 
+    QuickSRNet (LibreQuickSRNetm2-restore)              BSD-3-Clause
+             upstream architecture/checkpoint: quic/aimet-model-zoo at
+               1bd2bf5b17cdda9251437c444009b29e1a25054b
+             maintained integration: qualcomm/ai-hub-models at
+               16dbeb5e2805d4ada7218026de72e36878717d46
+             Official source file:
+               quicksrnet_medium_2x_checkpoint_float32.pth.tar
+               SHA-256 a0d176b40a649e45a176c3b53f45e0237015f4f2c17b157ef5c81e38c4442a0d
+             The model was trained on DIV2K. Conversion preserves all 14
+             learned tensors, drops optimizer/history objects, and adds only
+             LibreYOLO checkpoint metadata. The separate Hugging Face mirror
+             includes the verbatim upstream BSD-3-Clause license and NOTICE.
+
     BiRefNet (LibreBiRefNet{t,l}-matte)                see per-size note
              upstream: ZhengPeng7/BiRefNet (code MIT)
              l (general): Hugging Face weights tagged MIT -> rehosted under
@@ -453,6 +466,15 @@ project the weights were derived from. Per-family summary:
              (LibreFeyNobgl-matte-{fp16,fp8}). Upstream training data is
              not disclosed; only the released weights are redistributed.
              Convert with weights/convert_feynobg_weights.py.
+
+    BEN2    (LibreBEN2b-matte)                         MIT
+             upstream: PramaLLC/BEN2 on Hugging Face and GitHub.
+             The public BEN2 Base model card declares the released weights
+             MIT. LibreYOLO preserves the learned parameters unchanged and
+             wraps them with checkpoint metadata. Upstream states the model
+             was trained on DIS5K and Prama LLC's proprietary 22K segmentation
+             dataset; LibreYOLO redistributes no training data. Convert with
+             weights/convert_ben2_weights.py.
 
     SegFormer (LibreSegformer{b0,b1,b2,b3,b4,b5}-sem)  NON-COMMERCIAL weights
              upstream code: huggingface/transformers modeling_segformer.py

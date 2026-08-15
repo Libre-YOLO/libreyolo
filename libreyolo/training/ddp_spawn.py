@@ -87,6 +87,50 @@ def _libreyolo_ddp_worker(
 # ---------------------------------------------------------------------------
 
 
+def _is_training_only_tensor_key(key: str) -> bool:
+    """Keys the inference model drops but workers need for a faithful fine-tune."""
+    return str(key).startswith("aux.") or str(key).startswith("aux_head.")
+
+
+def _training_only_tensors_from_source(path: str | Path) -> dict[str, torch.Tensor]:
+    """Pull PGI aux tensors from the parent's original checkpoint file."""
+    from libreyolo.utils.serialization import load_untrusted_torch_file
+
+    loaded = load_untrusted_torch_file(
+        str(path), map_location="cpu", context="ddp spawn aux merge"
+    )
+    if not isinstance(loaded, dict):
+        return {}
+    if isinstance(loaded.get("model"), dict):
+        state = loaded["model"]
+    elif isinstance(loaded.get("state_dict"), dict):
+        state = loaded["state_dict"]
+    else:
+        state = loaded
+    out: dict[str, torch.Tensor] = {}
+    for key, value in state.items():
+        if _is_training_only_tensor_key(key) and torch.is_tensor(value):
+            out[key] = value.cpu()
+    return out
+
+
+def _bootstrap_state_dict(model_instance: Any) -> dict[str, torch.Tensor]:
+    """Flat tensor dict for DDP workers, plus training-only tensors the live model stripped.
+
+    Must stay a plain ``{name: tensor}`` map (no ``model`` wrapper). RF-DETR
+    and others load this file by passing the dict to ``load_state_dict``.
+    """
+    state = {k: v.cpu() for k, v in model_instance.model.state_dict().items()}
+    source = getattr(model_instance, "model_path", None)
+    if source and Path(str(source)).is_file():
+        try:
+            for key, value in _training_only_tensors_from_source(source).items():
+                state.setdefault(key, value)
+        except Exception:
+            logger.debug("DDP spawn: could not merge training-only tensors from %s", source)
+    return state
+
+
 def _build_init_kw(model_instance: Any) -> dict:
     """Collect __init__ kwargs needed to reconstruct *model_instance* in a worker.
 
@@ -120,6 +164,7 @@ def _build_init_kw(model_instance: Any) -> dict:
         "proto_channels",
         "num_keypoints",
         "weight_variant",
+        "letterbox_pad",
     ):
         if (attr in supported or supports_kwargs) and hasattr(model_instance, attr):
             kw[attr] = getattr(model_instance, attr)
@@ -200,7 +245,7 @@ def spawn_for_model(
         fd, tmp_weights = tempfile.mkstemp(suffix=".pt")
         os.close(fd)
         torch.save(
-            {k: v.cpu() for k, v in model_instance.model.state_dict().items()},
+            _bootstrap_state_dict(model_instance),
             tmp_weights,
         )
         tmp_weights_to_delete = tmp_weights

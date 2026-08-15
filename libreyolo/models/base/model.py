@@ -1788,6 +1788,10 @@ class BaseModel(ABC):
             rectangular_metadata = {"imgsz_h": imgsz_h, "imgsz_w": imgsz_w}
         else:
             checkpoint_imgsz = int(native_imgsz)
+        extra_metadata = {}
+        save_extra = getattr(self, "_save_extra_metadata", None)
+        if callable(save_extra):
+            extra_metadata = dict(save_extra() or {})
         checkpoint = wrap_libreyolo_checkpoint(
             state_dict,
             model_family=self._get_model_name(),
@@ -1797,6 +1801,7 @@ class BaseModel(ABC):
             names=self.names,
             imgsz=checkpoint_imgsz,
             **rectangular_metadata,
+            **extra_metadata,
         )
         quant_manifest = getattr(self, "_quant_manifest", None)
         if quant_manifest:

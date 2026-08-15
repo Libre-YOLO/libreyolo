@@ -17,6 +17,24 @@
     "available": true,
     "group": "g3"
   },
+  "ben2": {
+    "class": "libreyolo.models.ben2.model.LibreBEN2",
+    "tasks": [
+      "matte"
+    ],
+    "default_task": "matte",
+    "sizes": {
+      "b": 1024
+    },
+    "default_imgsz": {
+      "b": 1024
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "birefnet": {
     "class": "libreyolo.models.birefnet.model.LibreBiRefNet",
     "tasks": [
@@ -1374,6 +1392,24 @@
     "optional_extra": null,
     "available": true,
     "group": "g2"
+  },
+  "quicksrnet": {
+    "class": "libreyolo.models.quicksrnet.model.LibreQuickSRNet",
+    "tasks": [
+      "restore"
+    ],
+    "default_task": "restore",
+    "sizes": {
+      "m2": 64
+    },
+    "default_imgsz": {
+      "m2": 64
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
   },
   "qwen3vl": {
     "class": "libreyolo.models.vlm.qwen3vl.LibreQwen3VL",

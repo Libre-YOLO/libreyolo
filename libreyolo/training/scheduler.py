@@ -78,6 +78,11 @@ class LinearLRScheduler(BaseScheduler):
     LR schedule:
     - Warmup: linear increase from warmup_lr_start to lr over warmup_iters
     - Main: linear decrease from lr to lr * min_lr_ratio over remaining iterations
+
+    Optional SGD momentum warmup (YOLO9 / MTL ``LinearL``): when
+    ``warmup_momentum`` and ``momentum`` are set, ``update_momentum`` lerps
+    between them over the same warmup window. Other callers leave both
+    unset and see no change.
     """
 
     def __init__(
@@ -88,11 +93,26 @@ class LinearLRScheduler(BaseScheduler):
         warmup_epochs: int = 3,
         warmup_lr_start: float = 0.0001,
         min_lr_ratio: float = 0.01,
+        warmup_momentum: float | None = None,
+        momentum: float | None = None,
     ):
         super().__init__(lr, iters_per_epoch, total_epochs)
         self.warmup_iters = iters_per_epoch * warmup_epochs
         self.warmup_lr_start = _clamp_warmup_lr_start(lr, warmup_lr_start)
         self.min_lr = lr * min_lr_ratio
+        self.warmup_momentum = warmup_momentum
+        self.momentum = momentum
+
+    def update_momentum(self, iters: int) -> float | None:
+        """Lerp SGD momentum over warmup. ``None`` when not configured."""
+        if self.warmup_momentum is None or self.momentum is None:
+            return None
+        if self.warmup_iters <= 0 or iters >= self.warmup_iters:
+            return float(self.momentum)
+        t = float(iters) / float(self.warmup_iters)
+        return float(self.warmup_momentum) + (
+            float(self.momentum) - float(self.warmup_momentum)
+        ) * t
 
     def update_lr(self, iters: int) -> float:
         if iters <= self.warmup_iters:

@@ -1400,6 +1400,18 @@ _add(
     constraint="fixed 1024x1024 input",
 )
 _add(
+    "validated",
+    ("ben2",),
+    ("matte",),
+    ("onnx", "torchscript"),
+    reason=(
+        "The trained MIT checkpoint is covered by fixed-shape export, CPU "
+        "runtime reload, raw-logit parity, and public matte preprocessing."
+    ),
+    since="1.5",
+    constraint="FP32, batch 1, fixed 1024x1024 input",
+)
+_add(
     "blocked",
     ("rfdetr",),
     ("pose",),
@@ -1634,6 +1646,30 @@ _add(
     ("tflite",),
     since="1.4",
     constraint="fixed-resolution export canvas",
+)
+_add(
+    "validated",
+    ("quicksrnet",),
+    ("restore",),
+    ("onnx",),
+    reason=(
+        "A deterministic input-sensitive fixture covers dynamic-shape export, "
+        "runtime reload, scale metadata, and native-versus-runtime pixel parity."
+    ),
+    since="1.5",
+    constraint="FP32, dynamic spatial input",
+)
+_add(
+    "validated",
+    ("quicksrnet",),
+    ("restore",),
+    ("torchscript",),
+    reason=(
+        "A deterministic input-sensitive fixture covers fixed-canvas export, "
+        "runtime reload, scale metadata, and native-versus-runtime pixel parity."
+    ),
+    since="1.5",
+    constraint="FP32, fixed-resolution export canvas",
 )
 _add(
     "blocked",

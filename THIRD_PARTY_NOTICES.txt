@@ -1285,6 +1285,33 @@ real-world checkpoints are published with the Apache-2.0 project release.
 LibreYOLO does not bundle checkpoint files in the source distribution.
 
 --------------------------------------------------------------------
+QuickSRNet (Qualcomm AI Research)
+--------------------------------------------------------------------
+Architecture and checkpoint source: https://github.com/quic/aimet-model-zoo
+Commit: 1bd2bf5b17cdda9251437c444009b29e1a25054b
+Maintained integration source: https://github.com/qualcomm/ai-hub-models
+Commit: 16dbeb5e2805d4ada7218026de72e36878717d46
+License: BSD-3-Clause
+Copyright (c) 2022 Qualcomm Innovation Center, Inc.
+Copyright (c) 2025 Qualcomm Technologies, Inc. and/or its subsidiaries.
+Citation: Choi, J. et al. "QuickSRNet: Plain Single-Image Super-Resolution
+          Architecture for Faster Inference on Mobile Platforms." CVPRW 2023.
+Used for: the QuickSRNet Medium 2x generator in
+          libreyolo/models/quicksrnet/nn.py. Module names preserve exact
+          compatibility with the official state dict. LibreYOLO adds the
+          restore-task wrapper, native-resolution RGB preprocessing,
+          scale-aware postprocessing, PSNR/SSIM validation, dynamic spatial
+          ONNX export, checkpoint conversion, and tests.
+
+NOTE - code vs. weights/data: the architecture code and the official Medium
+2x checkpoint are distributed by the BSD-3-Clause AIMET Model Zoo project.
+The checkpoint was trained on DIV2K. LibreYOLO's source distribution does not
+bundle the checkpoint. The separate Hugging Face mirror copies the 14 learned
+tensors unchanged, discards optimizer/history objects, adds LibreYOLO metadata,
+and ships the verbatim upstream BSD-3-Clause license. DIV2K is training-data
+provenance, not part of LibreYOLO or the mirrored checkpoint repository.
+
+--------------------------------------------------------------------
 BiRefNet (Peng Zheng et al.)
 --------------------------------------------------------------------
 Source: https://github.com/ZhengPeng7/BiRefNet (commit d83f355)
@@ -1329,6 +1356,35 @@ Used for: the FeyNobg background-removal model family
           variants). No code was copied from the nobg library. Upstream
           training data is not disclosed; LibreYOLO redistributes only
           the released weights.
+
+--------------------------------------------------------------------
+BEN2 (Prama LLC)
+--------------------------------------------------------------------
+Source: https://github.com/PramaLLC/BEN2
+Commit: 2c99a5da477b5523585bfa5c893888a6e818a8f6
+License: MIT
+Copyright (c) 2025 Prama LLC
+Used for: the BEN2 Base background-removal model family
+          (libreyolo/models/ben2/, matte task). The port covers the
+          public Base mask network, keeps the released parameter names,
+          replaces einops-only reshapes with native PyTorch, removes
+          global random-state mutations, and returns logits for the shared
+          matte-task postprocessing contract. Exact fp32 parity is recorded
+          by weights/parity_ben2.py for batch 1 and batch 2 at 1024.
+
+BEN2's multi-field cross-attention and refinement modules follow MVANet:
+Source: https://github.com/qianyu-dlut/MVANet
+Commit: edecec5db30c1c40d5204c630ec3779a428795ee
+License: MIT
+Copyright (c) 2024 qianyu-dlut
+
+The optional upstream foreground-colour refinement helper is excluded because
+its separately attributed source has no declared license. Upstream video and
+media helpers are also outside the port. Released BEN2 Base weights are
+declared MIT by the upstream Hugging Face model card and are documented in
+weights/LICENSE_NOTICE.txt. Upstream states that BEN2 was trained on DIS5K and
+Prama LLC's proprietary 22K segmentation dataset; LibreYOLO redistributes no
+training data.
 
 --------------------------------------------------------------------
 PaddleOCR (PaddlePaddle)

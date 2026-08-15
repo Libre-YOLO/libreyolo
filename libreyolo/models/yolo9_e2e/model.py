@@ -161,6 +161,7 @@ class LibreYOLO9E2E(LibreYOLO9):
             original_size=original_size,
             max_det=max_det,
             letterbox=kwargs.get("letterbox", True),
+            letterbox_pad=getattr(self, "letterbox_pad", None),
         )
 
     # =====================================================================
