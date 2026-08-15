@@ -39,7 +39,7 @@ YOLO9_AUX_LAYER_MAP = {
     23: "aux.spp",  # SPPELAN on B5 → A5
     26: "aux.elan_a4",  # RepNCSPELAN after upsample+concat B4
     29: "aux.elan_a3",  # RepNCSPELAN after upsample+concat B3
-    30: "aux.head",  # MultiheadDetection on [A3, A4, A5]
+    30: "aux_head",  # MultiheadDetection on [A3, A4, A5]
 }
 
 # yolo9-t and yolo9-s: ELAN first block, AConv downsampling

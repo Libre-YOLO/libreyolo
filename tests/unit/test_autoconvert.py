@@ -103,7 +103,7 @@ class TestYolo9Inference:
         assert "backbone.conv0.conv.weight" in converted
         assert "head.cv3.0.2.weight" in converted
         assert "aux.spp.cv1.weight" in converted
-        assert "aux.head.cv3.0.2.weight" in converted
+        assert "aux_head.cv3.0.2.weight" in converted
         assert stats["failed"] == 1  # layer-22 anc2vec
         assert stats["skipped"] == 1  # layer-30 anc2vec
 

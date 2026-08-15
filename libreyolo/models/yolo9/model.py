@@ -30,6 +30,11 @@ _TRAIN_DEFAULTS = YOLO9Config()
 logger = logging.getLogger(__name__)
 
 
+def _is_yolo9_aux_key(key: str) -> bool:
+    """True for PGI tensors (``aux.*`` neck or ``aux_head.*``)."""
+    return str(key).startswith("aux.") or str(key).startswith("aux_head.")
+
+
 class LibreYOLO9(BaseModel):
     """YOLOv9 model for object detection.
 
@@ -233,7 +238,11 @@ class LibreYOLO9(BaseModel):
         has_aux = getattr(self.model, "aux", None) is not None
         if has_aux:
             return state_dict
-        return {k: v for k, v in state_dict.items() if not k.startswith("aux.")}
+        return {
+            k: v
+            for k, v in state_dict.items()
+            if not _is_yolo9_aux_key(k)
+        }
 
     def _save_extra_metadata(self) -> dict:
         from ...preprocess.letterbox import normalize_letterbox_pad
@@ -424,6 +433,67 @@ class LibreYOLO9(BaseModel):
         from .trainer import YOLO9Trainer
 
         return YOLO9Trainer
+
+    def _extract_checkpoint_state(self, source: str | Path | dict | None) -> dict:
+        """Return the weight dict from a path or already-loaded checkpoint."""
+        if source is None:
+            return {}
+        if isinstance(source, dict):
+            loaded = source
+        else:
+            path = Path(source)
+            if not path.exists():
+                return {}
+            loaded = load_untrusted_torch_file(
+                str(path),
+                map_location="cpu",
+                context="yolo9 aux probe",
+            )
+        if not isinstance(loaded, dict):
+            return {}
+        if "model" in loaded and isinstance(loaded["model"], dict):
+            state = loaded["model"]
+        elif "state_dict" in loaded and isinstance(loaded["state_dict"], dict):
+            state = loaded["state_dict"]
+        else:
+            state = loaded
+        return self._prepare_state_dict(self._strip_ddp_prefix(state))
+
+    def _maybe_enable_aux_from_path(
+        self, source: str | Path | dict | None, aux_weight: float = 0.25
+    ) -> int:
+        """Attach PGI if *source* carries aux tensors. Returns loaded aux count."""
+        if type(self.model).__name__ != "LibreYOLO9Model":
+            return 0
+        state = self._extract_checkpoint_state(source)
+        if not any(_is_yolo9_aux_key(key) for key in state):
+            return 0
+        self.model.enable_aux(weight=float(aux_weight or 0.25))
+        return self._load_aux_tensors(state)
+
+    def _reload_aux_from_path(self, source: str | Path | dict | None) -> int:
+        """Load aux tensors into an already-attached PGI branch."""
+        if getattr(self.model, "aux", None) is None:
+            return 0
+        return self._load_aux_tensors(self._extract_checkpoint_state(source))
+
+    def _load_aux_tensors(self, state_dict: dict) -> int:
+        if not state_dict:
+            return 0
+        current = self.model.state_dict()
+        matched = {
+            key: value
+            for key, value in state_dict.items()
+            if _is_yolo9_aux_key(key)
+            and key in current
+            and current[key].shape == value.shape
+        }
+        if not matched:
+            return 0
+        current.update(matched)
+        self.model.load_state_dict(current, strict=True)
+        self.model.to(self.device)
+        return len(matched)
 
     # =========================================================================
     # Inference pipeline
@@ -623,16 +693,18 @@ class LibreYOLO9(BaseModel):
         if resume and pretrained:
             raise ValueError("pretrained transfer cannot be combined with resume=True.")
 
-        # PGI aux is training-only. New fine-tunes attach it; resume of a
-        # single-head 1.5 checkpoint stays single-head (trainer.resume).
+        # PGI aux is training-only. Attach before trainer.setup() so the
+        # optimizer / EMA / DDP see the extra parameters. Resume of a
+        # single-head 1.5 checkpoint stays single-head.
         aux_weight = kwargs.get("aux_weight", _TRAIN_DEFAULTS.aux_weight)
-        if (
-            not resume
-            and float(aux_weight or 0) > 0
-            and hasattr(self.model, "enable_aux")
-            and type(self.model).__name__ == "LibreYOLO9Model"
-        ):
-            self.model.enable_aux(weight=float(aux_weight))
+        if type(self.model).__name__ == "LibreYOLO9Model":
+            if resume:
+                self._maybe_enable_aux_from_path(self.model_path, aux_weight)
+            elif float(aux_weight or 0) > 0:
+                self.model.enable_aux(weight=float(aux_weight))
+                # Inference load stripped aux.* from official converts; put
+                # those PGI tensors back now that the branch exists.
+                self._reload_aux_from_path(self.model_path)
 
         if pretrained:
             transfer_weights: str | Path

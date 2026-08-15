@@ -138,31 +138,34 @@ class YOLO9Trainer(BaseTrainer):
         extra["letterbox_pad"] = normalize_letterbox_pad(pad)
         return extra
 
+    def setup(self):
+        # Attach PGI before optimizer / EMA / DDP when the resume file has it.
+        # ``train(resume=True)`` already did this; this covers setup-first
+        # callers that only pass the path to ``resume()`` later.
+        path = getattr(getattr(self, "wrapper_model", None), "model_path", None)
+        if path and self.wrapper_model is not None:
+            self.wrapper_model._maybe_enable_aux_from_path(
+                path, getattr(self.config, "aux_weight", 0.25)
+            )
+        return super().setup()
+
     def resume(self, checkpoint_path: str):
-        from libreyolo.utils.serialization import load_trusted_torch_file
-        from .nn import LibreYOLO9Model
+        if self.wrapper_model is not None:
+            self.wrapper_model._maybe_enable_aux_from_path(
+                checkpoint_path, getattr(self.config, "aux_weight", 0.25)
+            )
+            from libreyolo.utils.serialization import load_trusted_torch_file
+            from libreyolo.preprocess.letterbox import normalize_letterbox_pad
 
-        checkpoint = load_trusted_torch_file(
-            checkpoint_path,
-            map_location="cpu",
-            context="yolo9 resume aux probe",
-        )
-        state = {}
-        if isinstance(checkpoint, dict):
-            state = checkpoint.get("model") or checkpoint.get("state_dict") or {}
-            if "letterbox_pad" in checkpoint and self.wrapper_model is not None:
-                from libreyolo.preprocess.letterbox import normalize_letterbox_pad
-
+            checkpoint = load_trusted_torch_file(
+                checkpoint_path,
+                map_location="cpu",
+                context="yolo9 resume letterbox probe",
+            )
+            if isinstance(checkpoint, dict) and "letterbox_pad" in checkpoint:
                 self.wrapper_model.letterbox_pad = normalize_letterbox_pad(
                     checkpoint.get("letterbox_pad")
                 )
-        if (
-            type(self.model) is LibreYOLO9Model
-            and any(str(key).startswith("aux.") for key in state)
-        ):
-            self.model.enable_aux(
-                weight=float(getattr(self.config, "aux_weight", 0.25))
-            )
         return super().resume(checkpoint_path)
 
     def create_scheduler(self, iters_per_epoch: int):

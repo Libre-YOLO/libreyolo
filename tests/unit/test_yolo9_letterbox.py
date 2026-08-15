@@ -233,6 +233,56 @@ def test_aux_keys_are_ignored_at_inference(tmp_path):
     assert all(not k.startswith("aux.") for k in loaded.model.state_dict())
 
 
+def test_aux_head_convert_prefix_loads_into_enabled_branch():
+    from libreyolo.models.yolo9.convert import convert_state_dict
+    from libreyolo.models.yolo9.nn import LibreYOLO9Model
+
+    sd = {
+        "0.conv.weight": torch.zeros(16, 3, 3, 3),
+        "30.heads.0.class_conv.2.weight": torch.zeros(5, 16, 1, 1),
+    }
+    converted, _stats = convert_state_dict(sd, "t")
+    assert "aux_head.cv3.0.2.weight" in converted
+    model = LibreYOLO9Model(config="t", nb_classes=5)
+    model.enable_aux(0.25)
+    assert "aux_head.cv3.0.2.weight" in model.state_dict()
+
+
+def test_fine_tune_reloads_aux_after_inference_strip(tmp_path):
+    from libreyolo.models.yolo9.model import LibreYOLO9
+    from libreyolo.models.yolo9.nn import LibreYOLO9Model
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    raw = LibreYOLO9Model(config="t", nb_classes=2)
+    raw.enable_aux(0.25)
+    marker = torch.arange(raw.aux_head.cv3[0][2].weight.numel(), dtype=torch.float32)
+    raw.aux_head.cv3[0][2].weight.data.copy_(
+        marker.reshape_as(raw.aux_head.cv3[0][2].weight)
+    )
+    ckpt = wrap_libreyolo_checkpoint(
+        raw.state_dict(),
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=2,
+        names={0: "a", 1: "b"},
+        imgsz=640,
+        letterbox_pad="center",
+    )
+    path = tmp_path / "official_aux.pt"
+    torch.save(ckpt, path)
+
+    loaded = LibreYOLO9(str(path), size="t", nb_classes=2, device="cpu")
+    assert loaded.model.aux is None
+    loaded.model.enable_aux(0.25)
+    n = loaded._reload_aux_from_path(str(path))
+    assert n > 0
+    torch.testing.assert_close(
+        loaded.model.aux_head.cv3[0][2].weight.detach().cpu().flatten(),
+        marker,
+    )
+
+
 def test_enable_aux_is_training_only_and_idempotent():
     from libreyolo.models.yolo9.nn import LibreYOLO9Model
 
