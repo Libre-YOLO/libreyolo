@@ -44,10 +44,13 @@ first eligible name.
 
 Compiled kernels published on the Hugging Face Hub load at runtime through
 the optional `kernels` package. Installing the extra is the opt-in:
-`pip install libreyolo[hub-kernels]` enables them, and without the package
-nothing changes (no network access, portable paths everywhere). Set
-`LIBREYOLO_HUB_KERNELS=0` to disable them without uninstalling. Nothing is
-vendored; artifacts are fetched and cached by the `kernels` package, and a
+`pip install libreyolo[hub-kernels]` enables them. Without the package, an
+eager CUDA DETR call that no in-tree provider accepts uses the portable path
+and logs one install hint. Set `LIBREYOLO_HUB_KERNELS=0` to disable them
+without uninstalling and silence the hint. Nothing is vendored; artifacts are
+fetched and cached by the `kernels` package. The global
+`LIBREYOLO_KERNELS=off|reference` portable-path override also suppresses the
+hint. A
 kernel that fails to load or run disables itself for the process and falls
 back to the portable path with one warning. When the installed `kernels`
 release cannot resolve the pinned commit (newer releases reject SHA

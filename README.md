@@ -40,7 +40,7 @@ result = model(SAMPLE_IMAGE, save=True)
 
 The base install covers YOLOv9 and the other core detectors, training, and
 inference. Add an extra when you need a heavier family or an export backend.
-Comma-separate to combine, for example `pip install "libreyolo[rfdetr,onnx]"`.
+Comma-separate to combine, for example `pip install "libreyolo[rfdetr,hub-kernels]"`.
 
 | Group | Extras |
 | --- | --- |
