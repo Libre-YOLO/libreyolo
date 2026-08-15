@@ -187,6 +187,16 @@ class MultiFieldCrossAttention(nn.Module):
         self.positional_encoding = PositionEmbeddingSine(
             num_pos_feats=d_model // 2, normalize=True
         )
+        # BEN2 export is intentionally fixed at 1024px. Precomputing the four
+        # bottleneck position maps on CPU preserves upstream's exact fp32
+        # arithmetic, while registered buffers follow the model for fp16 CUDA
+        # tracing and artifact reload. They are derived constants, not weights.
+        for size in (16, 4, 2):
+            self.register_buffer(
+                f"_export_pos_{size}",
+                self.positional_encoding(1, size, size),
+                persistent=False,
+            )
 
     def forward(self, local: torch.Tensor, global_: torch.Tensor) -> torch.Tensor:
         _, _, h, w = local.shape
@@ -194,7 +204,12 @@ class MultiFieldCrossAttention(nn.Module):
 
         pools = []
         pool_positions = []
-        for ratio in self.pool_ratios:
+        export_positions = (
+            self._export_pos_16,
+            self._export_pos_4,
+            self._export_pos_2,
+        )
+        for index, ratio in enumerate(self.pool_ratios):
             if torch.onnx.is_in_onnx_export():
                 # concatenated_local is 2H x 2W, so this is exactly the
                 # adaptive H/ratio x W/ratio partition with static kernels.
@@ -207,15 +222,25 @@ class MultiFieldCrossAttention(nn.Module):
                     concatenated_local, (h // ratio, w // ratio)
                 )
             pools.append(_to_sequence(pool))
-            pos = self.positional_encoding(pool.shape[0], *pool.shape[-2:])
+            if torch.jit.is_tracing() or torch.onnx.is_in_onnx_export():
+                pos = export_positions[index].expand(pool.shape[0], -1, -1, -1)
+            else:
+                pos = self.positional_encoding(pool.shape[0], *pool.shape[-2:])
             pool_positions.append(_to_sequence(pos))
         pooled = torch.cat(pools, dim=0)
-        pooled_pos = torch.cat(pool_positions, dim=0).to(pooled.device)
-
-        global_pos = self.positional_encoding(
-            global_.shape[0], global_.shape[2], global_.shape[3]
+        pooled_pos = torch.cat(pool_positions, dim=0).to(
+            device=pooled.device, dtype=pooled.dtype
         )
-        global_pos = _to_sequence(global_pos).to(pooled.device)
+
+        if torch.jit.is_tracing() or torch.onnx.is_in_onnx_export():
+            global_pos = self._export_pos_16.expand(global_.shape[0], -1, -1, -1)
+        else:
+            global_pos = self.positional_encoding(
+                global_.shape[0], global_.shape[2], global_.shape[3]
+            )
+        global_pos = _to_sequence(global_pos).to(
+            device=global_.device, dtype=global_.dtype
+        )
         global_seq = _to_sequence(global_)
         global_seq = global_seq + self.dropout1(
             self.attention[0](

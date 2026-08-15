@@ -59,6 +59,42 @@ def test_ben2_trained_export_raw_parity(tmp_path, format):
         np.testing.assert_allclose(actual, expected, rtol=3e-3, atol=4e-3)
 
 
+@pytest.mark.external_data
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not os.environ.get("BEN2_LIBRE_CHECKPOINT"),
+    reason="set BEN2_LIBRE_CHECKPOINT to a converted LibreBEN2b-matte.pt",
+)
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for FP16")
+@pytest.mark.parametrize("format", ["onnx", "torchscript"])
+def test_ben2_trained_fp16_export_smoke(tmp_path, format):
+    if format == "onnx":
+        onnx = pytest.importorskip("onnx")
+
+    from libreyolo import LibreYOLO
+
+    model = LibreYOLO(os.environ["BEN2_LIBRE_CHECKPOINT"], device="cuda")
+    artifact = model.export(
+        format=format,
+        imgsz=1024,
+        dynamic=False,
+        simplify=False,
+        half=True,
+        device="cuda",
+        output_path=str(tmp_path / f"ben2-matte-fp16.{format}"),
+    )
+    assert Path(artifact).is_file()
+    if format == "onnx":
+        graph = onnx.load(artifact, load_external_data=False).graph
+        assert graph.output[0].type.tensor_type.elem_type == onnx.TensorProto.FLOAT16
+    else:
+        scripted = torch.jit.load(artifact, map_location="cuda").eval()
+        tensor = torch.zeros(1, 3, 1024, 1024, device="cuda", dtype=torch.float16)
+        with torch.inference_mode():
+            output = scripted(tensor)
+        assert output.dtype == torch.float16
+
+
 def _synthetic_ben2_state_dict() -> dict:
     return {
         "backbone.patch_embed.proj.weight": torch.zeros(128, 3, 4, 4),
