@@ -27,6 +27,7 @@ pytest.importorskip("peft")
 
 from PIL import Image  # noqa: E402
 
+from libreyolo.models.vlm.base import _ScoredGeneration  # noqa: E402
 from libreyolo.models.vlm import LibreVLM  # noqa: E402
 from libreyolo.models.vlm.qwen3vl import LibreQwen3VL  # noqa: E402
 
@@ -114,8 +115,12 @@ def test_train_checkpoint_reload_predict(tiny_model):
     assert contract["names"] == ["ripe strawberry", "leaf"]
     assert contract["bbox_key"] == "bbox_2d"
     assert (best / "adapter_config.json").exists()
-    assert not (best / "config.json").exists(), "adapter checkpoint must not embed base weights"
-    adapter_config = json.loads((best / "adapter_config.json").read_text(encoding="utf-8"))
+    assert not (best / "config.json").exists(), (
+        "adapter checkpoint must not embed base weights"
+    )
+    adapter_config = json.loads(
+        (best / "adapter_config.json").read_text(encoding="utf-8")
+    )
     assert adapter_config["r"] == 16
 
     # The wrapper stays usable after training: adapters merged, vocab sticky.
@@ -135,6 +140,18 @@ def test_train_checkpoint_reload_predict(tiny_model):
     result = reloaded.predict(str(image), max_det=10)
     assert result is not None
     assert hasattr(result, "boxes")
+
+    # The validation-only confidence hook runs through the real Qwen generate
+    # stack without enabling scored output for ordinary predict(). Random
+    # weights need not emit valid boxes; token/log-probability alignment is the
+    # contract exercised here.
+    inputs, _, original_size, _ = reloaded._preprocess(str(image))
+    scored = reloaded._forward_for_confidence_gate(inputs)
+    assert isinstance(scored, _ScoredGeneration)
+    assert scored.token_ids.shape == scored.token_logprobs.shape
+    variants = reloaded._postprocess_score_variants(scored, original_size)
+    assert variants.candidate["num_detections"] == variants.constant["num_detections"]
+    assert LibreQwen3VL.TOKEN_LOGPROB_CONFIDENCE is False
 
 
 def test_lora_stays_out_of_vision_tower(tiny_model):

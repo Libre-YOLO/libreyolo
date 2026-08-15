@@ -82,10 +82,16 @@ class TestSerializeDetections:
         cxcywh = FamilyFormat("f", "bbox", 1.0, "cxcywh", "p")
         box = [[0.2, 0.2, 0.6, 0.8]]
         assert json.loads(serialize_detections(box, ["x"], xywh))[0]["bbox"] == [
-            0.2, 0.2, 0.4, 0.6,
+            0.2,
+            0.2,
+            0.4,
+            0.6,
         ]
         assert json.loads(serialize_detections(box, ["x"], cxcywh))[0]["bbox"] == [
-            0.4, 0.5, 0.4, 0.6,
+            0.4,
+            0.5,
+            0.4,
+            0.6,
         ]
 
     def test_length_mismatch_raises(self):
@@ -112,8 +118,7 @@ class TestSerializeDetections:
             for c, b in zip(result["classes"], result["boxes"])
         )
         expected = sorted(
-            (i, [round(v * 1000) for v in box])
-            for i, box in zip([0, 1], boxes)
+            (i, [round(v * 1000) for v in box]) for i, box in zip([0, 1], boxes)
         )
         assert recovered == expected
 
@@ -211,7 +216,7 @@ class _StubProcessor:
             ids.append(3)  # assistant header stub
         elif len(conversation) > 1:
             # Full conversation: header sits between prompt and answer.
-            answer = ids[-sum(len(p["text"]) for p in conversation[-1]["content"]):]
+            answer = ids[-sum(len(p["text"]) for p in conversation[-1]["content"]) :]
             prompt = ids[: len(ids) - len(answer)]
             first = [7] if self.break_prefix else []
             ids = first + prompt + [3] + answer + [4]  # 4 = eos stub
@@ -248,7 +253,11 @@ def _samples():
     image = Image.new("RGB", (8, 8))
     return [
         {"image": image, "prompt": "find cats", "target": "[]"},
-        {"image": image, "prompt": "find cats", "target": '[{"bbox_2d": [1, 2, 3, 4]}]'},
+        {
+            "image": image,
+            "prompt": "find cats",
+            "target": '[{"bbox_2d": [1, 2, 3, 4]}]',
+        },
     ]
 
 
@@ -307,7 +316,13 @@ class _StubWrapper:
     processor = _StubSaveable()
 
     def _detection_prompt(self):
-        return "Detect all instances of: cat, dog."
+        return (
+            "Detect all instances of: cat, dog. "
+            "Output the result as a JSON array, one object per instance: "
+            '[{"bbox_2d": [x1, y1, x2, y2], "label": "..."}]. '
+            "Only include objects that are actually visible; if there are none, "
+            "respond with an empty array []."
+        )
 
 
 class TestCheckpointContract:
@@ -326,7 +341,11 @@ class TestCheckpointContract:
         assert contract["size"] == "2b"
         assert contract["base_repo"] == "org/base-repo"
         assert contract["names"] == ["cat", "dog"]
+        assert contract["bbox_key"] == "bbox_2d"
         assert contract["coord_divisor"] == 1000.0
+        assert contract["box_format"] == "xyxy"
+        assert contract["prompt"] == _StubWrapper()._detection_prompt()
+        assert contract["task"] == "detect"
         assert contract["metrics"]["train/loss"] == 0.5
 
     def test_is_vlm_checkpoint_negative_cases(self, tmp_path):
@@ -349,6 +368,199 @@ class TestCheckpointContract:
         with pytest.raises(ValueError, match="size"):
             read_contract(tmp_path)
 
+    @pytest.mark.parametrize(
+        ("field", "value", "match"),
+        [
+            ("bbox_key", "", "bbox_key"),
+            ("base_repo", "", "base_repo"),
+            ("base_revision", "main", "base_revision"),
+            ("base_revision", 123, "base_revision"),
+            ("coord_divisor", 0, "coord_divisor"),
+            ("coord_divisor", "1000", "coord_divisor"),
+            ("box_format", "corners", "box_format"),
+            ("box_format", ["xyxy"], "box_format"),
+            ("prompt", None, "prompt"),
+            ("names", [], "names"),
+            ("names", ["cat", " CAT "], "unique case-insensitively"),
+            ("task", "segment", "task"),
+            ("task", None, "task"),
+        ],
+    )
+    def test_invalid_contract_fields_are_rejected(self, tmp_path, field, value, match):
+        contract = {
+            "schema": 1,
+            "family": "qwen3vl",
+            "size": "2b",
+            "base_repo": "Qwen/Qwen3-VL-2B-Instruct",
+            "base_revision": None,
+            "names": ["cat"],
+            "bbox_key": "bbox_2d",
+            "coord_divisor": 1000.0,
+            "box_format": "xyxy",
+            "prompt": "Detect cats.",
+            "task": "detect",
+        }
+        contract[field] = value
+        (tmp_path / CONTRACT_FILENAME).write_text(
+            json.dumps(contract), encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match=match):
+            read_contract(tmp_path)
+
+    def test_non_object_contract_is_rejected(self, tmp_path):
+        (tmp_path / CONTRACT_FILENAME).write_text("[]", encoding="utf-8")
+        with pytest.raises(ValueError, match="JSON object"):
+            read_contract(tmp_path)
+
+    def test_schema_one_prompt_and_coordinate_convention_are_restored(
+        self, tmp_path, monkeypatch
+    ):
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        target = tmp_path / "legacy"
+        save_vlm_checkpoint(
+            target,
+            peft_model=_StubSaveable(),
+            processor=_StubSaveable(),
+            wrapper=_StubWrapper(),
+        )
+        contract_path = target / CONTRACT_FILENAME
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract.update(
+            bbox_key="legacy_box",
+            coord_divisor=512,
+            box_format="xywh",
+            prompt="Use the saved schema-one detection prompt.",
+        )
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+
+        class _Model:
+            def eval(self):
+                return self
+
+        def _offline_base_init(instance, *, size, nb_classes, **kwargs):
+            del kwargs
+            instance.size = size
+            instance.nb_classes = nb_classes
+            instance.names = {i: str(i) for i in range(nb_classes)}
+            instance.model = _Model()
+
+        monkeypatch.setattr(BaseModel, "__init__", _offline_base_init)
+        with pytest.raises(ValueError, match="prompt must be a non-empty string"):
+            LibreQwen3VL(size="2b", prompt="", device="cpu")
+        model = LibreQwen3VL(
+            size="2b",
+            checkpoint_dir=str(target),
+            names=["cat", "dog"],
+            device="cpu",
+        )
+        assert model.BBOX_KEY == "legacy_box"
+        assert model.COORD_DIVISOR == 512.0
+        assert model.BOX_FORMAT == "xywh"
+        assert model.HF_REPOS["2b"] == "org/base-repo"
+        assert "2b" not in model.HF_REVISIONS
+        assert model._detection_prompt() == "Use the saved schema-one detection prompt."
+        with pytest.raises(ValueError, match="saved prompt and box convention"):
+            model.set_classes(["fox"])
+        assert model.names == {0: "cat", 1: "dog"}
+        assert model._detection_prompt() == "Use the saved schema-one detection prompt."
+
+        overridden = LibreQwen3VL(
+            size="2b",
+            checkpoint_dir=str(target),
+            names=["cat", "dog"],
+            prompt="Caller override.",
+            device="cpu",
+        )
+        assert overridden._detection_prompt() == "Caller override."
+        assert overridden.BBOX_KEY == "legacy_box"
+        assert overridden.COORD_DIVISOR == 512.0
+        assert overridden.BOX_FORMAT == "xywh"
+        overridden.set_classes(["fox"])
+        assert overridden.names == {0: "fox"}
+        assert overridden._detection_prompt() == "Caller override."
+
+        current_target = tmp_path / "current"
+        save_vlm_checkpoint(
+            current_target,
+            peft_model=_StubSaveable(),
+            processor=_StubSaveable(),
+            wrapper=_StubWrapper(),
+        )
+        current = LibreQwen3VL(
+            size="2b",
+            checkpoint_dir=str(current_target),
+            names=["cat", "dog"],
+            device="cpu",
+        )
+        current.set_classes(["fox"])
+        assert "fox" in current._detection_prompt()
+
+        custom_target = tmp_path / "custom-prompt"
+        save_vlm_checkpoint(
+            custom_target,
+            peft_model=_StubSaveable(),
+            processor=_StubSaveable(),
+            wrapper=_StubWrapper(),
+        )
+        custom_contract_path = custom_target / CONTRACT_FILENAME
+        custom_contract = json.loads(custom_contract_path.read_text(encoding="utf-8"))
+        custom_contract["prompt"] = "A learned custom detection prompt."
+        custom_contract_path.write_text(json.dumps(custom_contract), encoding="utf-8")
+        with pytest.raises(ValueError, match="requested class vocabulary"):
+            LibreQwen3VL(
+                size="2b",
+                checkpoint_dir=str(custom_target),
+                names=["fox"],
+                device="cpu",
+            )
+        custom = LibreQwen3VL(
+            size="2b",
+            checkpoint_dir=str(custom_target),
+            names=["cat", "dog"],
+            device="cpu",
+        )
+        assert custom._detection_prompt() == "A learned custom detection prompt."
+        with pytest.raises(ValueError, match="saved prompt and box convention"):
+            custom.set_classes(["fox"])
+
+        custom_override = LibreQwen3VL(
+            size="2b",
+            checkpoint_dir=str(custom_target),
+            names=["cat", "dog"],
+            prompt="Caller rebuilt prompt for fox.",
+            device="cpu",
+        )
+        custom_override.set_classes(["fox"])
+        assert custom_override._detection_prompt() == "Caller rebuilt prompt for fox."
+
+    @pytest.mark.parametrize(
+        ("field", "value", "match"),
+        [("family", "lfm2vl", "belongs to family"), ("size", "4b", "trained at size")],
+    )
+    def test_checkpoint_identity_must_match_adapter(
+        self, tmp_path, monkeypatch, field, value, match
+    ):
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        target = tmp_path / field
+        save_vlm_checkpoint(
+            target,
+            peft_model=_StubSaveable(),
+            processor=_StubSaveable(),
+            wrapper=_StubWrapper(),
+        )
+        contract_path = target / CONTRACT_FILENAME
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract[field] = value
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        monkeypatch.setattr(BaseModel, "__init__", lambda *args, **kwargs: None)
+
+        with pytest.raises(ValueError, match=match):
+            LibreQwen3VL(size="2b", checkpoint_dir=str(target), device="cpu")
+
 
 # ---------------------------------------------------------------------------
 # Gating and recipes
@@ -356,15 +568,25 @@ class TestCheckpointContract:
 
 
 class TestTrainGating:
-    def _bare(self, cls):
-        return object.__new__(cls)
+    def _bare(self, cls, size=None):
+        model = object.__new__(cls)
+        if size is not None:
+            model.size = size
+        return model
 
     def test_qwen3vl_is_trainable_and_requires_data(self):
         from libreyolo.models.vlm import LibreQwen3VL
 
         assert LibreQwen3VL.TRAINABLE is True
+        assert LibreQwen3VL.TRAINABLE_SIZES == ("2b", "4b")
         with pytest.raises(ValueError, match="data="):
-            LibreQwen3VL.train(self._bare(LibreQwen3VL))
+            LibreQwen3VL.train(self._bare(LibreQwen3VL, "2b"))
+
+    def test_qwen3vl_unverified_size_is_rejected_before_trainer_setup(self):
+        from libreyolo.models.vlm import LibreQwen3VL
+
+        with pytest.raises(NotImplementedError, match="size '8b'.*2b, 4b"):
+            LibreQwen3VL.train(self._bare(LibreQwen3VL, "8b"), data="unused.yaml")
 
     @pytest.mark.parametrize(
         "module_name, class_name, match",
@@ -388,6 +610,8 @@ class TestTrainGating:
 
         for cls, _size in set(_ALIASES.values()):
             if cls.TRAINABLE:
+                assert cls.TRAINABLE_SIZES
+                assert set(cls.TRAINABLE_SIZES) <= set(cls.HF_REPOS)
                 recipe = get_recipe(cls.FAMILY)
                 assert recipe.target_modules
 

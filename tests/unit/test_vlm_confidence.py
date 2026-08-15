@@ -8,6 +8,7 @@ import torch
 
 from libreyolo.models.vlm.base import (
     LibreVLMModel,
+    _DetectionScoreVariants,
     _GreedyTokenLogprobRecorder,
     _ScoredGeneration,
 )
@@ -88,9 +89,7 @@ class TestScoreDetectionItems:
         text = '[{"bbox_2d":[1,2,3,4],"label":"cat"}]'
         items = extract_detections(text)
         values = {
-            index: math.log(0.64)
-            for index, char in enumerate(text)
-            if char.isdigit()
+            index: math.log(0.64) for index, char in enumerate(text) if char.isdigit()
         }
         start = text.index("cat")
         values.update({index: math.log(0.64) for index in range(start, start + 3)})
@@ -136,14 +135,11 @@ class TestScoreDetectionItems:
     def test_duplicate_scoring_keys_fail_closed(self, text):
         items = extract_detections(text)
         spans = _char_spans(text, {index: math.log(0.8) for index in range(len(text))})
-        assert score_detection_items(text, items, spans, bbox_key="bbox_2d") == [
-            None
-        ]
+        assert score_detection_items(text, items, spans, bbox_key="bbox_2d") == [None]
 
     def test_key_like_text_inside_string_is_not_a_member(self):
         text = (
-            '[{"note":"fake \'bbox_2d\': [1,2,3,4]",'
-            '"bbox_2d":[5,6,7,8],"label":"cat"}]'
+            '[{"note":"fake \'bbox_2d\': [1,2,3,4]","bbox_2d":[5,6,7,8],"label":"cat"}]'
         )
         items = extract_detections(text)
         values = {}
@@ -162,9 +158,7 @@ class TestScoreDetectionItems:
         text = '[{"bbox_2d":[1,2,3,4]}]'
         items = extract_detections(text)
         spans = _char_spans(text, {index: math.log(0.8) for index in range(len(text))})
-        assert score_detection_items(text, items, spans, bbox_key="bbox_2d") == [
-            None
-        ]
+        assert score_detection_items(text, items, spans, bbox_key="bbox_2d") == [None]
 
     def test_non_finite_component_token_fails_closed(self):
         text = '[{"bbox_2d":[1,2,3,4],"label":"cat"}]'
@@ -172,9 +166,7 @@ class TestScoreDetectionItems:
         spans = _char_spans(text, {index: math.log(0.8) for index in range(len(text))})
         label_start = text.index("cat")
         spans[label_start] = TokenSpan(label_start, label_start + 1, float("nan"))
-        assert score_detection_items(text, items, spans, bbox_key="bbox_2d") == [
-            None
-        ]
+        assert score_detection_items(text, items, spans, bbox_key="bbox_2d") == [None]
 
 
 class TestGreedyRecorder:
@@ -253,10 +245,43 @@ class TestBaseConfidenceIntegration:
         assert model.model.kwargs["num_beams"] == 1
         assert "output_scores" not in model.model.kwargs
 
+    def test_validation_hook_scores_without_enabling_public_forward(self):
+        model = self._model()
+        model.TOKEN_LOGPROB_CONFIDENCE = False
+
+        public = model._forward({"input_ids": torch.tensor([[8, 9]])})
+        gated = model._forward_for_confidence_gate(
+            {"input_ids": torch.tensor([[8, 9]])}
+        )
+
+        assert isinstance(public, torch.Tensor)
+        assert isinstance(gated, _ScoredGeneration)
+        assert LibreQwen3VL.TOKEN_LOGPROB_CONFIDENCE is False
+
+    def test_validation_hook_can_score_the_live_training_model(self):
+        model = self._model()
+        live_model = _StubGenerateModel(
+            [[0.7, 0.2, 0.1], [0.1, 0.8, 0.1], [0.1, 0.2, 0.7]]
+        )
+
+        output = model._forward_for_confidence_gate(
+            {"input_ids": torch.tensor([[8, 9]])}, model=live_model
+        )
+
+        assert isinstance(output, _ScoredGeneration)
+        assert live_model.kwargs["num_beams"] == 1
+
     def test_confidence_method_exposes_score_provenance(self):
         assert LibreVLMModel.CONFIDENCE_METHOD == "constant"
         assert LibreQwen3VL.CONFIDENCE_METHOD == "constant"
         assert LibreQwen3VL.TOKEN_LOGPROB_CONFIDENCE is False
+
+    def test_qwen_upstream_snapshots_are_immutable(self):
+        assert set(LibreQwen3VL.HF_REVISIONS) == set(LibreQwen3VL.HF_REPOS)
+        assert all(
+            re.fullmatch(r"[0-9a-f]{40}", revision)
+            for revision in LibreQwen3VL.HF_REVISIONS.values()
+        )
 
     def test_postprocess_emits_per_box_token_score(self):
         model = self._model()
@@ -269,6 +294,87 @@ class TestBaseConfidenceIntegration:
         )
         assert result["num_detections"] == 1
         assert 0.0 < result["scores"][0] < 1.0
+
+    def test_score_variants_decode_one_response_into_two_score_views(self):
+        model = self._model()
+        output = model._forward_for_confidence_gate(
+            {"input_ids": torch.tensor([[8, 9]])}
+        )
+
+        variants = model._postprocess_score_variants(output, (1000, 1000))
+
+        assert isinstance(variants, _DetectionScoreVariants)
+        assert variants.score_available
+        assert variants.fallback_reason is None
+        assert variants.parsed_items == 1
+        assert len(variants.generation_hash) == 64
+        assert variants.candidate["boxes"] == variants.constant["boxes"]
+        assert variants.candidate["classes"] == variants.constant["classes"]
+        assert 0.0 < variants.candidate["scores"][0] < 1.0
+        assert variants.constant["scores"] == [1.0]
+
+    def test_score_variants_freeze_geometry_before_rounded_duplicate_scoring(self):
+        model = self._model()
+        text = (
+            '[{"bbox_2d":[100.1,100.1,300.1,300.1],"label":"cat"},'
+            '{"bbox_2d":[100.4,100.4,300.4,300.4],"label":"cat"}]'
+        )
+        model._decode_detection_output = lambda _output: (
+            text,
+            [TokenSpan(0, 1, math.log(0.5))],
+        )
+        model._scores_for_detections = lambda *_args: [0.1, 0.9]
+        output = _ScoredGeneration(torch.tensor([[0]]), torch.tensor([[-0.1]]))
+
+        variants = model._postprocess_score_variants(output, (1000, 1000))
+
+        assert variants.candidate["boxes"] == variants.constant["boxes"]
+        assert variants.candidate["classes"] == variants.constant["classes"]
+        assert variants.candidate["boxes"] == [
+            pytest.approx([100.1, 100.1, 300.1, 300.1])
+        ]
+        assert variants.candidate["scores"] == [0.1]
+        assert variants.constant["scores"] == [1.0]
+
+    def test_score_variants_fail_whole_response_back_to_constant(self):
+        model = self._model()
+        model._name_to_id = {"cat": 0, "dog {x}": 1}
+        text = (
+            '[{"bbox_2d":[10,20,30,40],"label":"cat"},'
+            '{"bbox_2d":[50,60,70,80],"label":"dog {x}"}]'
+        )
+        spans = _char_spans(text, {index: math.log(0.8) for index in range(len(text))})
+        model._decode_detection_output = lambda _output: (text, spans)
+        output = _ScoredGeneration(torch.tensor([[0]]), torch.tensor([[-0.1]]))
+
+        variants = model._postprocess_score_variants(output, (1000, 1000))
+
+        assert not variants.score_available
+        assert variants.fallback_reason == "detection_alignment"
+        assert variants.item_scores is None
+        assert variants.candidate == variants.constant
+
+    def test_nonfinite_candidate_score_fails_whole_response_to_constant(
+        self, monkeypatch
+    ):
+        import libreyolo.models.vlm.base as base_module
+
+        model = self._model()
+        text = '[{"bbox_2d":[10,20,30,40],"label":"cat"}]'
+        output = _ScoredGeneration(torch.tensor([[0]]), torch.tensor([[-0.1]]))
+        monkeypatch.setattr(
+            base_module, "score_detection_items", lambda *_args, **_kwargs: [math.nan]
+        )
+        model._decode_detection_output = lambda _output: (
+            text,
+            [TokenSpan(0, len(text), math.log(0.5))],
+        )
+
+        variants = model._postprocess_score_variants(output, (1000, 1000))
+
+        assert not variants.score_available
+        assert variants.fallback_reason == "detection_alignment"
+        assert variants.candidate == variants.constant
 
     def test_unscored_output_keeps_constant_fallback(self):
         model = self._model()
@@ -294,9 +400,7 @@ class TestBaseConfidenceIntegration:
         token_spans = _char_spans(
             text, {index: math.log(0.8) for index in range(len(text))}
         )
-        item_scores = model._scores_for_detections(
-            output, text, items, token_spans
-        )
+        item_scores = model._scores_for_detections(output, text, items, token_spans)
         assert item_scores is None
         result = build_detection_dict(
             items,

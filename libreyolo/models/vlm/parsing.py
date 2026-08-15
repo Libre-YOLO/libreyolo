@@ -288,6 +288,7 @@ def build_detection_dict(
     box_format: str = "xyxy",
     iou_thres: Optional[float] = None,
     item_scores: Optional[List[Optional[float]]] = None,
+    sort_by_score: bool = True,
 ) -> dict:
     """Turn parsed items into the ``InferenceRunner`` detection dict.
 
@@ -303,8 +304,10 @@ def build_detection_dict(
     with ``items``. A missing, non-finite, or out-of-range entry fails the whole
     list back to ``default_score`` and source order. Valid scored detections are
     processed from highest to lowest so duplicate/IoU suppression and
-    ``max_det`` retain the strongest candidate. Rows below ``conf_thres`` are
-    dropped so ``conf=`` still filters.
+    ``max_det`` retain the strongest candidate. Internal score-comparison gates
+    may set ``sort_by_score=False`` to freeze source-order geometry before
+    attaching alternative scores. Rows below ``conf_thres`` are dropped so
+    ``conf=`` still filters.
     """
     if item_scores is not None and len(item_scores) != len(items):
         raise ValueError("item_scores must have one entry per detection item.")
@@ -347,7 +350,7 @@ def build_detection_dict(
             resolved_scores = candidates
 
     indexed = list(enumerate(items))
-    if resolved_scores is not None:
+    if resolved_scores is not None and sort_by_score:
         indexed.sort(key=lambda pair: resolved_scores[pair[0]], reverse=True)
 
     for item_index, item in indexed:

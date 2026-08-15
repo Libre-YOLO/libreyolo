@@ -201,12 +201,11 @@ output but grounds single-class queries extremely well, so its family runs one
 "Locate every <label> ..." generation per vocabulary entry and assigns the
 labels itself (which also means `predict()` cost scales with the vocabulary
 size, and a query for an absent but plausible label can hallucinate a box).
-The tier ships eight distinct families (Qwen3-VL, LFM2-VL, SmolVLM2, InternVL3,
-Florence-2, Kosmos-2, LocateAnything, North Micro Vision) spanning all these
-integration styles, confirming it is
-genuinely model-agnostic. Detection *quality* varies a lot by model and size
-(Qwen3-VL, LFM2-VL, and Florence-2 are the strong ones); the framework is what is
-general, not every model's accuracy.
+The tier exposes twelve families: Qwen3-VL, LFM2-VL, SmolVLM2, InternVL3,
+Florence-2, Kosmos-2, LocateAnything, North Micro Vision, Gemma 4, Moondream,
+SenseNova-Vision, and LibreMODUS. They span chat, task-token, native-skill,
+remote-code, and vendored-runtime integrations. Detection *quality* varies a
+lot by model and size; the framework is general, not every model's accuracy.
 
 ## Decision 5: default model and licensing
 

@@ -1,9 +1,9 @@
 # VLM detection fine-tuning
 
 Fine-tune a LibreVLM detector on a standard detect dataset. First trainable
-family: Qwen3-VL. Everything below is the shipped contract; the wider design
-rationale lives in `docs/adr/0002-librevlm-contract.md` (tier contract) and the
-training ADR draft.
+cohort: Qwen3-VL 2B and 4B. Everything below is the shipped contract; the wider
+design rationale lives in `docs/adr/0002-librevlm-contract.md` (tier contract)
+and the training ADR draft.
 
 ## Use
 
@@ -63,9 +63,17 @@ runs/vlm/train/weights/best/
 `libreyolo_vlm.json` records family, size, the exact base repo and revision
 the adapter was trained on, the ordered vocabulary, the coordinate convention,
 and the run metrics. `LibreVLM(path)` recognizes the contract, downloads the
-recorded base (never a drifted newer snapshot), merges the adapter for
-inference speed, and pre-applies the saved vocabulary. Base weights are never
-copied into checkpoints, so LibreYOLO never redistributes upstream weights.
+recorded base and immutable revision, merges the adapter for
+inference speed, and pre-applies the saved vocabulary, prompt, and coordinate
+convention. An explicit `prompt=` may override the saved prompt, while parsing
+continues to use the checkpoint's saved box key, coordinate divisor, and box
+layout. Base weights are never copied into checkpoints, so LibreYOLO never
+redistributes upstream weights.
+
+Current Qwen checkpoints record an immutable upstream revision. Older schema-1
+checkpoints may contain a null `base_revision`; they remain loadable, but cannot
+prove bit-for-bit base-model reproducibility and resolve the recorded repository
+without inventing a newer pin.
 
 Full fine-tunes (`lora=False`) save a self-contained model directory instead;
 the same `LibreVLM(path)` call loads either kind.
@@ -80,7 +88,8 @@ tier's `val()` support (blocked on real per-box confidence; see the ADR).
 
 | Family | train() | Why |
 |---|---|---|
-| qwen3-vl | yes | grounding-pretrained, Apache-2.0, official upstream recipe mirrored |
+| qwen3-vl 2B/4B | yes | grounding-pretrained, Apache-2.0; first verified training cohort |
+| qwen3-vl 8B | not yet | outside the first verified training cohort |
 | lfm2-vl, florence-2, north-micro-vision, internvl3, gemma-4, moondream | not yet | planned; see the training ADR draft |
 | smolvlm2 | no | not grounding-pretrained; cannot reliably learn box emission |
 | kosmos-2 | no | no established recipe; 224px 32x32 grid caps localization |

@@ -19,8 +19,10 @@ design decisions and the "add a new model" checklist, and
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import math
 import re
 from collections.abc import MutableMapping
 from dataclasses import dataclass
@@ -51,6 +53,24 @@ class _ScoredGeneration:
 
     token_ids: torch.Tensor
     token_logprobs: torch.Tensor
+
+
+@dataclass(frozen=True)
+class _DetectionScoreVariants:
+    """One decoded response evaluated with candidate and constant scores.
+
+    This is an internal experiment record. It does not change the public
+    prediction path or claim that candidate scores are calibrated.
+    """
+
+    text: str
+    generation_hash: str
+    candidate: Dict[str, Any]
+    constant: Dict[str, Any]
+    item_scores: Optional[tuple[float, ...]]
+    parsed_items: int
+    score_available: bool
+    fallback_reason: Optional[str]
 
 
 class _GreedyTokenLogprobRecorder:
@@ -125,9 +145,11 @@ class LibreVLMModel(BaseModel):
     _LICENSE_NOTICE_SHOWN: ClassVar[bool] = False
 
     # Detection fine-tuning support. A family becomes trainable by setting this
-    # True AND adding a recipe in ``training/recipes.py``; everything else
-    # raises from ``train()`` with the family's documented reason.
+    # True, listing each verified size, AND adding a recipe in
+    # ``training/recipes.py``; everything else raises from ``train()`` with the
+    # family's documented reason.
     TRAINABLE: ClassVar[bool] = False
+    TRAINABLE_SIZES: ClassVar[tuple[str, ...]] = ()
     TRAIN_UNSUPPORTED_REASON: ClassVar[str] = ""
 
     # Off by default: all shipped families load through native transformers
@@ -170,7 +192,12 @@ class LibreVLMModel(BaseModel):
                 f"Invalid size {size!r} for {type(self).__name__}. "
                 f"Must be one of: {', '.join(self.HF_REPOS)}"
             )
+        if prompt is not None and (not isinstance(prompt, str) or not prompt.strip()):
+            raise ValueError("prompt must be a non-empty string when supplied.")
         self._custom_prompt = prompt
+        self._checkpoint_prompt: Optional[str] = None
+        self._checkpoint_prompt_names: tuple[str, ...] = ()
+        self._checkpoint_prompt_reconstructible = True
         # Set before super().__init__ because _init_model runs inside it.
         self._checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         if self._checkpoint_dir is not None:
@@ -180,12 +207,64 @@ class LibreVLMModel(BaseModel):
             from .training.checkpoint import read_contract
 
             contract = read_contract(self._checkpoint_dir)
+            if contract["family"] != self.FAMILY:
+                raise ValueError(
+                    f"VLM checkpoint {self._checkpoint_dir} belongs to family "
+                    f"{contract['family']!r}, not {self.FAMILY!r}."
+                )
+            if contract["size"] != size:
+                raise ValueError(
+                    f"VLM checkpoint {self._checkpoint_dir} was trained at size "
+                    f"{contract['size']!r}, not {size!r}."
+                )
+
+            # Fine-tune checkpoints are self-describing: keep their learned
+            # prompt/output convention even if family defaults evolve later.
+            # A caller may still explicitly override only the prompt.
+            convention_matches_family = (
+                contract["bbox_key"] == self.BBOX_KEY
+                and float(contract["coord_divisor"]) == float(self.COORD_DIVISOR)
+                and contract["box_format"] == self.BOX_FORMAT
+            )
+            self.BBOX_KEY = contract["bbox_key"]
+            self.COORD_DIVISOR = float(contract["coord_divisor"])
+            self.BOX_FORMAT = contract["box_format"]
+            if prompt is None:
+                self._checkpoint_prompt = contract["prompt"]
+                self._checkpoint_prompt_names = tuple(contract["names"])
+                default_checkpoint_prompt = self._format_detection_prompt(
+                    ", ".join(contract["names"])
+                )
+                self._checkpoint_prompt_reconstructible = (
+                    convention_matches_family
+                    and contract["prompt"] == default_checkpoint_prompt
+                )
+                if (
+                    isinstance(names, (list, tuple))
+                    and tuple(str(name) for name in names)
+                    != self._checkpoint_prompt_names
+                    and not self._checkpoint_prompt_reconstructible
+                ):
+                    raise ValueError(
+                        "The requested class vocabulary cannot safely rebuild this "
+                        "checkpoint's saved prompt and box convention. Supply an "
+                        "explicit prompt= that preserves the learned output format."
+                    )
+
             base_repo = contract.get("base_repo")
             if base_repo:
                 self.HF_REPOS = {**self.HF_REPOS, size: base_repo}
             base_revision = contract.get("base_revision")
+            checkpoint_revisions = dict(self.HF_REVISIONS)
             if base_revision:
-                self.HF_REVISIONS = {**self.HF_REVISIONS, size: base_revision}
+                checkpoint_revisions[size] = base_revision
+            else:
+                # A legacy null revision means "unrecorded", not "use the
+                # adapter class's newer pin". Applying a current family pin to
+                # an older or custom base repo can select the wrong weights or
+                # even a commit that does not exist in that repository.
+                checkpoint_revisions.pop(size, None)
+            self.HF_REVISIONS = checkpoint_revisions
         if max_new_tokens is not None:
             self.MAX_NEW_TOKENS = max_new_tokens
 
@@ -234,6 +313,23 @@ class LibreVLMModel(BaseModel):
         keys = [name.strip().lower() for name in names]
         if len(keys) != len(set(keys)):
             raise ValueError("set_classes() labels must be unique case-insensitively.")
+        checkpoint_prompt = getattr(self, "_checkpoint_prompt", None)
+        checkpoint_names = getattr(self, "_checkpoint_prompt_names", ())
+        prompt_reconstructible = getattr(
+            self, "_checkpoint_prompt_reconstructible", True
+        )
+        if (
+            checkpoint_prompt
+            and tuple(names) != checkpoint_names
+            and not prompt_reconstructible
+            and not self._custom_prompt
+        ):
+            raise ValueError(
+                "set_classes() cannot safely rebuild the detection prompt for "
+                "this checkpoint's saved prompt and box convention. Reload it "
+                "with an explicit prompt= that preserves the learned output "
+                "format before changing the vocabulary."
+            )
         self.names = {i: name for i, name in enumerate(names)}
         self.nb_classes = len(self.names)
         self._name_to_id = {v.strip().lower(): k for k, v in self.names.items()}
@@ -345,7 +441,10 @@ class LibreVLMModel(BaseModel):
                 return False
             if repo is not None and marker.get("repo") != repo:
                 return False
-            if revision is not None and marker.get("revision") != revision:
+            # When a repository identity is requested, ``revision=None`` means
+            # an explicitly unpinned snapshot. It must not reuse a directory
+            # previously populated by a pinned family load.
+            if marker.get("revision") != revision:
                 return False
         if not (local_dir / "config.json").exists():
             return False
@@ -557,6 +656,11 @@ class LibreVLMModel(BaseModel):
         """
         if self._custom_prompt:
             return self._custom_prompt
+        checkpoint_prompt = getattr(self, "_checkpoint_prompt", None)
+        checkpoint_names = getattr(self, "_checkpoint_prompt_names", ())
+        current_names = tuple(self.names[i] for i in range(len(self.names)))
+        if checkpoint_prompt and current_names == checkpoint_names:
+            return checkpoint_prompt
         labels = ", ".join(self.names[i] for i in range(len(self.names)))
         return self._format_detection_prompt(labels)
 
@@ -609,7 +713,20 @@ class LibreVLMModel(BaseModel):
         # normalized to the image, so no letterbox/unpad bookkeeping is needed.
         return inputs, img, img.size, 1.0
 
-    def _forward(self, inputs: Any) -> Any:
+    def _generate_detection(
+        self,
+        inputs: Any,
+        *,
+        record_token_logprobs: bool = False,
+        model: Optional[nn.Module] = None,
+    ) -> Any:
+        """Generate one detection response, optionally retaining scalar scores.
+
+        ``model`` exists for validation of an in-flight PEFT model. Ordinary
+        inference always uses ``self.model`` and keeps the family-level score
+        gate unchanged.
+        """
+
         inputs = self._prepare_generation_inputs(inputs)
         input_len = inputs["input_ids"].shape[1]
         generate_kwargs = {
@@ -618,11 +735,12 @@ class LibreVLMModel(BaseModel):
             "repetition_penalty": self.REPETITION_PENALTY,
         }
         recorder = None
-        if self.TOKEN_LOGPROB_CONFIDENCE:
+        if record_token_logprobs:
             recorder = _GreedyTokenLogprobRecorder()
             # The recorder relies on the selected token being argmax(scores).
             generate_kwargs.update(num_beams=1, logits_processor=[recorder])
-        generated = self.model.generate(**inputs, **generate_kwargs)
+        generation_model = model if model is not None else self.model
+        generated = generation_model.generate(**inputs, **generate_kwargs)
         sequences = getattr(generated, "sequences", generated)
         # Strip the prompt tokens; keep only what the model generated.
         new_tokens = sequences[:, input_len:]
@@ -639,6 +757,23 @@ class LibreVLMModel(BaseModel):
             )
             return new_tokens
         return _ScoredGeneration(new_tokens, token_logprobs)
+
+    def _forward(self, inputs: Any) -> Any:
+        return self._generate_detection(
+            inputs,
+            record_token_logprobs=self.TOKEN_LOGPROB_CONFIDENCE,
+        )
+
+    def _forward_for_confidence_gate(
+        self, inputs: Any, *, model: Optional[nn.Module] = None
+    ) -> Any:
+        """Validation-only generation hook for the candidate confidence gate."""
+
+        return self._generate_detection(
+            inputs,
+            record_token_logprobs=True,
+            model=model,
+        )
 
     def _score_detections(self, items: list) -> float:
         """Per-call confidence for parsed detections (placeholder in v1)."""
@@ -677,7 +812,102 @@ class LibreVLMModel(BaseModel):
         # behavior for the whole response.
         if any(score is None for score in raw_scores):
             return None
-        return [float(score) for score in raw_scores if score is not None]
+        scores = [float(score) for score in raw_scores if score is not None]
+        if any(not math.isfinite(score) or not 0.0 <= score <= 1.0 for score in scores):
+            return None
+        return scores
+
+    def _decode_detection_output(self, output: Any) -> tuple[str, list[TokenSpan]]:
+        """Decode one generation and retain aligned token spans when present."""
+
+        if isinstance(output, _ScoredGeneration):
+            return decode_token_spans(
+                output.token_ids,
+                output.token_logprobs,
+                self._decode_token_ids,
+            )
+        # Preserve established family decoding when scoring is disabled;
+        # whitespace-stable decoding is needed only for token spans.
+        return self.processor.batch_decode(output, skip_special_tokens=True)[0], []
+
+    def _postprocess_score_variants(
+        self,
+        output: Any,
+        original_size: Tuple[int, int],
+    ) -> _DetectionScoreVariants:
+        """Build candidate and constant-score views of one generated response.
+
+        The response is decoded and parsed exactly once. Confidence filtering,
+        IoU suppression, and public ``max_det`` truncation are intentionally
+        absent: an evaluator can apply its own score ordering to the same raw
+        generated detections. When any score cannot be aligned, the candidate
+        view fails closed to the constant view for the whole response.
+        """
+
+        text, token_spans = self._decode_detection_output(output)
+        items = extract_detections(text)
+        item_scores = self._scores_for_detections(output, text, items, token_spans)
+        if not isinstance(output, _ScoredGeneration):
+            fallback_reason = "unscored_generation"
+        elif not token_spans:
+            fallback_reason = "token_alignment"
+        elif item_scores is None:
+            fallback_reason = "detection_alignment"
+        else:
+            fallback_reason = None
+
+        # Avoid making score ordering itself select a different pre-evaluation
+        # subset. The generation token budget already bounds ``len(items)``.
+        raw_max_det = max(1, len(items))
+        common = {
+            "conf_thres": 0.0,
+            "max_det": raw_max_det,
+            "default_score": self._score_detections(items),
+            "bbox_key": self.BBOX_KEY,
+            "coord_divisor": self.COORD_DIVISOR,
+            "box_format": self.BOX_FORMAT,
+            "iou_thres": None,
+        }
+        candidate = build_detection_dict(
+            items,
+            self._name_to_id,
+            original_size,
+            item_scores=item_scores,
+            sort_by_score=False,
+            **common,
+        )
+        # Geometry is selected once, in response order, so candidate scores
+        # cannot change which rounded duplicate survives. The constant view is
+        # the exact same prediction set with only its score vector replaced.
+        constant_score = float(common["default_score"])
+        if not math.isfinite(constant_score):
+            constant_score = 1.0
+        constant_score = min(1.0, max(0.0, constant_score))
+        constant = {
+            "boxes": [list(box) for box in candidate["boxes"]],
+            "scores": [constant_score] * candidate["num_detections"],
+            "classes": list(candidate["classes"]),
+            "num_detections": candidate["num_detections"],
+        }
+        generated_ids = None
+        if isinstance(output, _ScoredGeneration):
+            generated_ids = output.token_ids.detach().cpu().reshape(-1).tolist()
+        generation_payload = json.dumps(
+            {"token_ids": generated_ids, "text": text},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return _DetectionScoreVariants(
+            text=text,
+            generation_hash=hashlib.sha256(generation_payload).hexdigest(),
+            candidate=candidate,
+            constant=constant,
+            item_scores=(tuple(item_scores) if item_scores is not None else None),
+            parsed_items=len(items),
+            score_available=item_scores is not None,
+            fallback_reason=fallback_reason,
+        )
 
     def _postprocess(
         self,
@@ -689,17 +919,7 @@ class LibreVLMModel(BaseModel):
         ratio: float = 1.0,
         **kwargs,
     ) -> Dict:
-        token_spans: list[TokenSpan] = []
-        if isinstance(output, _ScoredGeneration):
-            text, token_spans = decode_token_spans(
-                output.token_ids,
-                output.token_logprobs,
-                self._decode_token_ids,
-            )
-        else:
-            # Preserve the established family decode behavior when scoring is
-            # disabled; whitespace-stable decoding is needed only for spans.
-            text = self.processor.batch_decode(output, skip_special_tokens=True)[0]
+        text, token_spans = self._decode_detection_output(output)
         items = extract_detections(text)
         item_scores = self._scores_for_detections(output, text, items, token_spans)
         return build_detection_dict(
@@ -745,6 +965,12 @@ class LibreVLMModel(BaseModel):
                 "LibreYOLO yet. Trainable VLM families: qwen3-vl."
             )
             raise NotImplementedError(reason)
+        if self.size not in self.TRAINABLE_SIZES:
+            supported = ", ".join(self.TRAINABLE_SIZES) or "none"
+            raise NotImplementedError(
+                f"Training is not verified for {type(self).__name__} size "
+                f"{self.size!r}. Verified trainable sizes: {supported}."
+            )
         if not data:
             raise ValueError(
                 'train() requires data=<dataset yaml>, e.g. train(data="data.yaml").'

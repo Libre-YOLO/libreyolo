@@ -2,8 +2,9 @@
 
 Fixed per family, not user-facing knobs (the docs/lora.md philosophy): rank,
 alpha, targets, what freezes, and the optimizer defaults live here. A family
-becomes trainable by adding a recipe AND setting ``TRAINABLE = True`` on its
-adapter class; the trainer refuses families without both.
+becomes trainable by adding a recipe, setting ``TRAINABLE = True``, and listing
+each verified size in ``TRAINABLE_SIZES`` on its adapter class; the trainer
+refuses families or sizes without all three.
 
 Qwen3-VL: LoRA on the language model's attention and MLP projections, vision
 tower and merger frozen. Matches the official qwen-vl-finetune defaults

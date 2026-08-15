@@ -4,6 +4,8 @@
 a bare instance without downloading or loading any model.
 """
 
+from pathlib import Path
+
 import pytest
 
 from libreyolo.models.vlm.base import LibreVLMModel
@@ -225,6 +227,26 @@ class TestSnapshotComplete:
             is False
         )
 
+    def test_unpinned_request_does_not_reuse_pinned_snapshot(self, tmp_path):
+        (tmp_path / "config.json").write_text("{}")
+        (tmp_path / "model.safetensors").write_text("x")
+        self._mark_complete(tmp_path, {"repo": "example/model", "revision": "abc123"})
+
+        assert (
+            self._base()._snapshot_complete(
+                tmp_path, repo="example/model", revision=None
+            )
+            is False
+        )
+
+        self._mark_complete(tmp_path, {"repo": "example/model", "revision": None})
+        assert (
+            self._base()._snapshot_complete(
+                tmp_path, repo="example/model", revision=None
+            )
+            is True
+        )
+
     def test_pinned_repo_marker_must_match_and_be_present(self, tmp_path):
         (tmp_path / "config.json").write_text("{}")
         (tmp_path / "model.safetensors").write_text("x")
@@ -261,6 +283,40 @@ class TestSnapshotComplete:
 
         with pytest.raises(ValueError, match="40-char commit SHA"):
             m._ensure_weights()
+
+    def test_qwen_download_uses_the_audited_immutable_revision(
+        self, tmp_path, monkeypatch
+    ):
+        import huggingface_hub
+
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        observed = {}
+
+        def fake_snapshot_download(repo, *, local_dir, ignore_patterns, revision):
+            observed.update(
+                repo=repo,
+                local_dir=local_dir,
+                ignore_patterns=ignore_patterns,
+                revision=revision,
+            )
+            target = Path(local_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "config.json").write_text("{}")
+            (target / "model.safetensors").write_text("weights")
+
+        monkeypatch.setattr(
+            huggingface_hub, "snapshot_download", fake_snapshot_download
+        )
+        monkeypatch.chdir(tmp_path)
+        model = object.__new__(LibreQwen3VL)
+        model.size = "2b"
+
+        resolved = Path(model._ensure_weights())
+
+        assert observed["repo"] == LibreQwen3VL.HF_REPOS["2b"]
+        assert observed["revision"] == LibreQwen3VL.HF_REVISIONS["2b"]
+        assert resolved == Path("weights/LibreQwen3VL2b")
 
     def test_license_notice_is_logged_for_cached_snapshot(
         self, tmp_path, monkeypatch, caplog
