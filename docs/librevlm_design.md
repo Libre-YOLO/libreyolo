@@ -135,6 +135,11 @@ the configured source. We do not pretend any token-derived score is calibrated:
 - On constant-score families, `conf=` filtering is mechanical.
 - `val()` (mAP) remains unsupported until a real Qwen benchmark demonstrates
   useful ordering, safe threshold behavior, and reproducibility.
+- The internal quality gate reports candidate-only Brier error, fixed-bin ECE,
+  and a reliability diagram. Unscored boxes are excluded from calibration and
+  remain visible through separate response, parsed-object, and prediction
+  coverage plus fallback-retention diagnostics. Plot-enabled gate runs write
+  `vlm_confidence_reliability.svg`; the JSON bin counts remain authoritative.
 - `_score_detections()` remains the scalar fallback for custom generation paths.
 
 This is the honest boundary of the tier: it gives you boxes and labels, not a

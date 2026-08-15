@@ -6,6 +6,7 @@ import math
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from types import SimpleNamespace
+from xml.etree import ElementTree
 
 import pytest
 
@@ -323,6 +324,11 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
     assert metrics["metrics/vlm_confidence/delta_mAP50"] == pytest.approx(0.3)
     assert metrics["metrics/vlm_confidence/auroc"] == 1.0
     assert metrics["metrics/vlm_confidence/ranking_ap"] == 1.0
+    assert metrics["metrics/vlm_confidence/scored_prediction_brier"] == pytest.approx(
+        0.01
+    )
+    assert metrics["metrics/vlm_confidence/scored_prediction_ece"] == pytest.approx(0.1)
+    assert metrics["metrics/vlm_confidence/scored_prediction_mce"] == pytest.approx(0.1)
     assert metrics["metrics/vlm_confidence/default_conf_tp_retention"] == 1.0
     assert metrics["metrics/vlm_confidence/default_conf_fp_retention"] == 0.0
     assert metrics[
@@ -350,6 +356,16 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
         "imgsz": [100, 100],
         "backend": "offline-stub",
         "label_to_category_id": None,
+        "save_plots": False,
+    }
+    assert validator.benchmark_config["confidence_evaluation"] == {
+        "iou_threshold": 0.5,
+        "default_conf": 0.25,
+        "fallback_score": 1.0,
+        "calibration_bins": 10,
+        "binning": "uniform_left_closed_v1",
+        "population": "scored_postprocessed_predictions",
+        "matching": "class_aware_max_cardinality_iou_v1",
     }
     assert len(validator.benchmark_config["checkpoint"]["sha256"]) == 64
     assert len(validator.benchmark_config["processor"]["sha256"]) == 64
@@ -366,6 +382,30 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
     ]
     assert report["predictions"][2]["candidate_score"] is None
     assert report["predictions"][2]["effective_score"] == 1.0
+    assert report["calibration"]["population"] == "scored_postprocessed_predictions"
+    assert report["calibration"]["total_predictions"] == 3
+    assert report["calibration"]["scored_predictions"] == 2
+    assert report["calibration"]["unscored_predictions"] == 1
+    assert report["calibration"]["score_coverage"] == pytest.approx(2 / 3)
+    assert report["calibration"]["bins"][1]["count"] == 1
+    assert report["calibration"]["bins"][9]["correct"] == 1
+    assert report["evaluator_metrics"] == {
+        "candidate_mAP50": 0.8,
+        "candidate_mAP50-95": 0.6,
+        "constant_mAP50": 0.5,
+        "constant_mAP50-95": 0.4,
+    }
+    for key in (
+        "speed/preprocess_ms",
+        "speed/inference_ms",
+        "speed/postprocess_ms",
+        "speed/total_ms",
+        "speed/total_s",
+        "speed/images_seen",
+    ):
+        assert report["metrics"][key] == metrics[key]
+        assert report["metrics"][key] >= 0
+    assert report["artifacts"]["reliability_plot"] is None
 
     assert [image_id for _, image_id in validator.candidate_evaluator.updates] == [1, 2]
     assert [image_id for _, image_id in validator.constant_evaluator.updates] == [1, 2]
@@ -385,7 +425,7 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
 
 @pytest.mark.parametrize(
     "option",
-    ["augment", "save_plots", "cuda_graph"],
+    ["augment", "cuda_graph"],
 )
 def test_unsupported_modes_fail_loudly(tmp_path, option):
     path = tmp_path / "one.jpg"
@@ -399,6 +439,40 @@ def test_unsupported_modes_fail_loudly(tmp_path, option):
             [path],
             torch.zeros((1, 1, 5)),
         )
+
+
+def test_save_plots_writes_candidate_reliability_svg(tmp_path):
+    path = tmp_path / "one.jpg"
+    path.write_bytes(b"offline")
+    targets = torch.zeros((1, 1, 5), dtype=torch.float32)
+    targets[0, 0] = torch.tensor([10, 10, 30, 30, 0])
+    model = _stub_model(tmp_path, [path], [_variants([[10, 10, 30, 30]], [0.8])])
+    validator = _Harness(
+        model,
+        _config(tmp_path, save_plots=True),
+        [path],
+        targets,
+    )
+
+    metrics = validator.run()
+
+    plot = tmp_path / "results" / "vlm_confidence_reliability.svg"
+    ElementTree.parse(plot)
+    text = plot.read_text(encoding="utf-8")
+    assert "Candidate token probability reliability (diagnostic)" in text
+    assert "N=1/1 scored (100.0%)" in text
+    assert "n=1; confidence=0.8000; accuracy=1.0000" in text
+    assert not (tmp_path / "results" / "plots").exists()
+    assert metrics["metrics/vlm_confidence/scored_prediction_brier"] == pytest.approx(
+        0.04
+    )
+    assert validator.benchmark_config["evaluation"]["save_plots"] is True
+    report = json.loads(
+        (tmp_path / "results" / "vlm_confidence_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert report["artifacts"]["reliability_plot"] == plot.name
 
 
 def test_missing_original_path_fails_before_generation(tmp_path):

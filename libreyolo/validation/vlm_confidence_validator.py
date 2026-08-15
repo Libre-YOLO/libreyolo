@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 _CONFIDENCE_METHOD = "qwen_generation_policy_label_bbox_geomean_v1"
+_CALIBRATION_BINS = 10
 _MODEL_WEIGHT_SUFFIXES = {
     ".bin",
     ".h5",
@@ -130,11 +131,6 @@ class VLMConfidenceValidator(DetectionValidator):
             raise NotImplementedError(
                 "VLM confidence validation supports original-image generation only; "
                 "augment=True is not supported."
-            )
-        if self.config.save_plots:
-            raise NotImplementedError(
-                "VLM confidence validation does not yet define trustworthy plots; "
-                "save_plots=True is not supported."
             )
         if getattr(self.config, "cuda_graph", False):
             raise NotImplementedError(
@@ -719,6 +715,9 @@ class VLMConfidenceValidator(DetectionValidator):
         base_repo = str(repos[size])
         base_revision = str(revisions[size])
         backend = f"{type(target).__module__}.{type(target).__qualname__}"
+        fallback_score = _probability(
+            getattr(self.model, "DEFAULT_SCORE", 1.0), "model.DEFAULT_SCORE"
+        )
         actual_imgsz = self._actual_imgsz
         if isinstance(actual_imgsz, tuple):
             actual_imgsz = list(actual_imgsz)
@@ -738,6 +737,15 @@ class VLMConfidenceValidator(DetectionValidator):
                 "num_beams": 1,
                 "repetition_penalty": float(getattr(self.model, "REPETITION_PENALTY")),
             },
+            "confidence_evaluation": {
+                "iou_threshold": self.confidence_iou,
+                "default_conf": self.default_conf,
+                "fallback_score": fallback_score,
+                "calibration_bins": _CALIBRATION_BINS,
+                "binning": "uniform_left_closed_v1",
+                "population": "scored_postprocessed_predictions",
+                "matching": "class_aware_max_cardinality_iou_v1",
+            },
             "evaluation": {
                 "max_det": int(self._coco_max_det()),
                 "faster_coco_eval": bool(
@@ -754,6 +762,7 @@ class VLMConfidenceValidator(DetectionValidator):
                     if self._coco_label_to_category_id is not None
                     else None
                 ),
+                "save_plots": bool(self.config.save_plots),
                 # Replaced with the evaluator's actual backend after compute().
                 "backend": "pending",
             },
@@ -1187,6 +1196,7 @@ class VLMConfidenceValidator(DetectionValidator):
         if self.benchmark_config is None or self.dataset_manifest is None:
             raise RuntimeError("Benchmark identity was not initialized.")
         diagnostics = self.confidence_run.diagnostics
+        calibration = self.confidence_run.calibration
         predictions = []
         for prediction, matched in zip(self._predictions, self.confidence_run.matches):
             predictions.append(
@@ -1219,9 +1229,28 @@ class VLMConfidenceValidator(DetectionValidator):
                 "fallback_score": self.confidence_run.fallback_score,
             },
             "diagnostics": diagnostics.__dict__,
+            "calibration": {
+                "method": "equal_width",
+                "population": "scored_postprocessed_predictions",
+                "bin_count": calibration.bin_count,
+                "total_predictions": calibration.total_predictions,
+                "scored_predictions": calibration.scored_predictions,
+                "unscored_predictions": calibration.unscored_predictions,
+                "score_coverage": calibration.score_coverage,
+                "brier_score": calibration.brier_score,
+                "expected_calibration_error": (calibration.expected_calibration_error),
+                "maximum_calibration_error": (calibration.maximum_calibration_error),
+                "bins": [item.__dict__ for item in calibration.bins],
+            },
+            "evaluator_metrics": dict(self.confidence_run.evaluator_metrics),
             "fallback_reasons": dict(sorted(self.fallback_reasons.items())),
             "predictions": predictions,
             "metrics": dict(metrics),
+            "artifacts": {
+                "reliability_plot": (
+                    "vlm_confidence_reliability.svg" if self.config.save_plots else None
+                )
+            },
         }
         destination = self.save_dir / "vlm_confidence_report.json"
         destination.write_text(
@@ -1235,6 +1264,167 @@ class VLMConfidenceValidator(DetectionValidator):
             + "\n",
             encoding="utf-8",
         )
+
+    def _write_calibration_plot(self) -> None:
+        """Write a dependency-free SVG reliability diagram for the candidate score."""
+
+        if self.confidence_run is None:
+            raise RuntimeError("Confidence metrics were not initialized.")
+        calibration = self.confidence_run.calibration
+        width = 640
+        height = 600
+        left = 80.0
+        top = 62.0
+        plot_size = 440.0
+        bottom = top + plot_size
+
+        def x(value: float) -> float:
+            return left + plot_size * value
+
+        def y(value: float) -> float:
+            return top + plot_size * (1.0 - value)
+
+        elements = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            (
+                f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+                f'height="{height}" viewBox="0 0 {width} {height}">'
+            ),
+            '<rect width="100%" height="100%" fill="#ffffff"/>',
+            (
+                '<text x="320" y="28" text-anchor="middle" '
+                'font-family="sans-serif" font-size="18" font-weight="600">'
+                "Candidate token probability reliability (diagnostic)</text>"
+            ),
+        ]
+        for tick in range(11):
+            value = tick / 10
+            x_pos = x(value)
+            y_pos = y(value)
+            elements.extend(
+                (
+                    (
+                        f'<line x1="{x_pos:.2f}" y1="{top:.2f}" '
+                        f'x2="{x_pos:.2f}" y2="{bottom:.2f}" '
+                        'stroke="#e6e6e6" stroke-width="1"/>'
+                    ),
+                    (
+                        f'<line x1="{left:.2f}" y1="{y_pos:.2f}" '
+                        f'x2="{left + plot_size:.2f}" y2="{y_pos:.2f}" '
+                        'stroke="#e6e6e6" stroke-width="1"/>'
+                    ),
+                )
+            )
+            if tick % 2 == 0:
+                elements.extend(
+                    (
+                        (
+                            f'<text x="{x_pos:.2f}" y="{bottom + 22:.2f}" '
+                            'text-anchor="middle" font-family="sans-serif" '
+                            f'font-size="11">{value:.1f}</text>'
+                        ),
+                        (
+                            f'<text x="{left - 12:.2f}" y="{y_pos + 4:.2f}" '
+                            'text-anchor="end" font-family="sans-serif" '
+                            f'font-size="11">{value:.1f}</text>'
+                        ),
+                    )
+                )
+        elements.extend(
+            (
+                (
+                    f'<line x1="{left:.2f}" y1="{bottom:.2f}" '
+                    f'x2="{left + plot_size:.2f}" y2="{top:.2f}" '
+                    'stroke="#666666" stroke-width="1.5" '
+                    'stroke-dasharray="6 5"/>'
+                ),
+                (
+                    f'<rect x="{left:.2f}" y="{top:.2f}" '
+                    f'width="{plot_size:.2f}" height="{plot_size:.2f}" '
+                    'fill="none" stroke="#222222" stroke-width="1.5"/>'
+                ),
+            )
+        )
+        for item in calibration.bins:
+            if item.count == 0 or item.empirical_accuracy is None:
+                continue
+            bar_left = x(item.lower) + 3.0
+            bar_right = x(item.upper) - 3.0
+            bar_top = y(item.empirical_accuracy)
+            elements.extend(
+                (
+                    (
+                        f'<rect x="{bar_left:.2f}" y="{bar_top:.2f}" '
+                        f'width="{max(1.0, bar_right - bar_left):.2f}" '
+                        f'height="{bottom - bar_top:.2f}" fill="#4c78a8" '
+                        'fill-opacity="0.35" stroke="#315f86" stroke-width="1"/>'
+                    ),
+                    (
+                        f'<circle cx="{x(item.mean_confidence):.2f}" '
+                        f'cy="{bar_top:.2f}" r="4" fill="#d1495b">'
+                        f"<title>n={item.count}; confidence="
+                        f"{item.mean_confidence:.4f}; accuracy="
+                        f"{item.empirical_accuracy:.4f}</title></circle>"
+                    ),
+                    (
+                        f'<text x="{(bar_left + bar_right) / 2:.2f}" '
+                        f'y="{max(top + 13.0, bar_top - 6.0):.2f}" '
+                        'text-anchor="middle" font-family="sans-serif" '
+                        f'font-size="10">n={item.count}</text>'
+                    ),
+                )
+            )
+        elements.extend(
+            (
+                (
+                    f'<text x="{left + plot_size / 2:.2f}" y="{bottom + 52:.2f}" '
+                    'text-anchor="middle" font-family="sans-serif" '
+                    'font-size="13">Mean candidate confidence</text>'
+                ),
+                (
+                    f'<text x="22" y="{top + plot_size / 2:.2f}" '
+                    'text-anchor="middle" font-family="sans-serif" font-size="13" '
+                    f'transform="rotate(-90 22 {top + plot_size / 2:.2f})">'
+                    "Empirical precision at score-independent IoU matching</text>"
+                ),
+            )
+        )
+        if calibration.scored_predictions:
+            brier = f"{calibration.brier_score:.4f}"
+            ece = f"{calibration.expected_calibration_error:.4f}"
+            summary = (
+                f"N={calibration.scored_predictions}/{calibration.total_predictions} "
+                f"scored ({calibration.score_coverage:.1%}); "
+                f"Brier={brier}; ECE={ece}; bins={calibration.bin_count}; "
+                f"IoU={self.confidence_run.iou_threshold:.2f}"
+            )
+        else:
+            summary = "No score-bearing predictions; calibration is undefined."
+        elements.extend(
+            (
+                (
+                    '<text x="320" y="580" text-anchor="middle" '
+                    f'font-family="sans-serif" font-size="11">{summary}</text>'
+                ),
+                "</svg>",
+            )
+        )
+        (self.save_dir / "vlm_confidence_reliability.svg").write_text(
+            "\n".join(elements) + "\n", encoding="utf-8"
+        )
+
+    def _save_plots(self, metrics: Dict[str, float]) -> None:
+        """Suppress inherited detector plots; the reliability SVG is authoritative."""
+
+        del metrics
+
+    def _finalize(self) -> Dict[str, float]:
+        """Persist the report after shared finalization adds timing metrics."""
+
+        metrics = super()._finalize()
+        fallback_score = float(getattr(self.model, "DEFAULT_SCORE", 1.0))
+        self._write_report(metrics, fallback_score)
+        return metrics
 
     def _compute_metrics(self) -> Dict[str, float]:
         evaluator_ground_truth = self._evaluator_ground_truth_manifest()
@@ -1288,6 +1478,10 @@ class VLMConfidenceValidator(DetectionValidator):
             raise RuntimeError(
                 "Generation manifest is incomplete; refusing an unauditable gate result."
             )
+        candidate_map = float(candidate["mAP"])
+        constant_map = float(constant["mAP"])
+        candidate_map50 = float(candidate["mAP50"])
+        constant_map50 = float(constant["mAP50"])
         fallback_score = float(getattr(self.model, "DEFAULT_SCORE", 1.0))
         self.confidence_run = build_confidence_run(
             self._predictions,
@@ -1296,6 +1490,12 @@ class VLMConfidenceValidator(DetectionValidator):
             dataset_manifest=self.dataset_manifest,
             benchmark_config=self.benchmark_config,
             generation_manifest=self.generation_manifest,
+            evaluator_metrics={
+                "candidate_mAP50-95": candidate_map,
+                "constant_mAP50-95": constant_map,
+                "candidate_mAP50": candidate_map50,
+                "constant_mAP50": constant_map50,
+            },
             iou_threshold=self.confidence_iou,
             default_conf=self.default_conf,
             fallback_score=fallback_score,
@@ -1310,10 +1510,6 @@ class VLMConfidenceValidator(DetectionValidator):
             else 0.0
         )
 
-        candidate_map = float(candidate["mAP"])
-        constant_map = float(constant["mAP"])
-        candidate_map50 = float(candidate["mAP50"])
-        constant_map50 = float(constant["mAP50"])
         metrics = {
             "metrics/vlm_confidence/candidate_mAP50-95": candidate_map,
             "metrics/vlm_confidence/constant_mAP50-95": constant_map,
@@ -1326,6 +1522,19 @@ class VLMConfidenceValidator(DetectionValidator):
             ),
             "metrics/vlm_confidence/ranking_ap": self._optional_metric(
                 self.confidence_run.ranking_ap
+            ),
+            "metrics/vlm_confidence/scored_prediction_brier": self._optional_metric(
+                self.confidence_run.calibration.brier_score
+            ),
+            "metrics/vlm_confidence/scored_prediction_ece": (
+                self._optional_metric(
+                    self.confidence_run.calibration.expected_calibration_error
+                )
+            ),
+            "metrics/vlm_confidence/scored_prediction_mce": (
+                self._optional_metric(
+                    self.confidence_run.calibration.maximum_calibration_error
+                )
             ),
             "metrics/vlm_confidence/default_conf_tp_retention": self._optional_metric(
                 diagnostics.correct_retention
@@ -1361,5 +1570,6 @@ class VLMConfidenceValidator(DetectionValidator):
                 diagnostics.retained_incorrect_predictions
             ),
         }
-        self._write_report(metrics, fallback_score)
+        if self.config.save_plots:
+            self._write_calibration_plot()
         return metrics

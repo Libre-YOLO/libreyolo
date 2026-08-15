@@ -183,6 +183,52 @@ def _stub_fiftyone():
     )
 
 
+class TestVLMResultsContract:
+    def test_qwen_result_becomes_fiftyone_detections_offline(self, monkeypatch):
+        from libreyolo.integrations import fiftyone as fiftyone_integration
+        from libreyolo.models.base.inference import InferenceRunner
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        class StubProcessor:
+            def batch_decode(self, *_args, **_kwargs):
+                return [
+                    """[
+                    {"bbox_2d": [100, 200, 600, 700], "label": "pink car"},
+                    {"bbox_2d": [0, 0, 200, 1000], "label": "Wheel"},
+                    {"bbox_2d": [0, 0, 1000, 1000], "label": "not requested"}
+                    ]"""
+                ]
+
+        # Bypass model loading while keeping the real Qwen parser, coordinate
+        # convention, shared Results wrapper, and FiftyOne label conversion.
+        model = object.__new__(LibreQwen3VL)
+        model.processor = StubProcessor()
+        model.task = "detect"
+        model.set_classes(["Pink Car", "Wheel"])
+        detections = model._postprocess(
+            torch.tensor([[1]]),
+            conf_thres=0.25,
+            iou_thres=0.45,
+            original_size=(200, 100),
+        )
+        result = InferenceRunner(model)._wrap_results(
+            detections,
+            original_size=(200, 100),
+            image_path="vlm-frame.jpg",
+            classes=None,
+        )
+
+        monkeypatch.setattr(fiftyone_integration, "_import_fiftyone", _stub_fiftyone)
+        labels = fiftyone_integration._to_fiftyone_labels(result)
+
+        assert isinstance(result, Results)
+        assert result.orig_shape == (100, 200)
+        assert [item.label for item in labels.detections] == ["Pink Car", "Wheel"]
+        assert labels.detections[0].bounding_box == pytest.approx([0.1, 0.2, 0.5, 0.5])
+        assert labels.detections[1].bounding_box == pytest.approx([0.0, 0.0, 0.2, 1.0])
+        assert [item.confidence for item in labels.detections] == [1.0, 1.0]
+
+
 class TestDatasetBridge:
     def test_yolo_rows_skips_blank_lines(self, tmp_path):
         label_file = tmp_path / "a.txt"

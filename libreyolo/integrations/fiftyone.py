@@ -475,7 +475,10 @@ def apply_model(
         classes: Optional class-id filter.
         max_det: Maximum detections per image.
         mask_format: ``"mask"`` or ``"polyline"`` for instance segmentation.
-        batch_size: Images per forward pass. None runs one image at a time.
+        batch_size: Requested image chunk size. Models that support batched
+            prediction use one stacked forward per chunk; serial generative
+            VLM adapters still process each image individually. None requests
+            one image at a time.
         skip_failures: Keep going when a single sample fails.
         progress: Whether to render a progress bar (FiftyOne's default when
             None).

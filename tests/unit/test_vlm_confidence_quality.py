@@ -11,6 +11,7 @@ from libreyolo.validation.vlm_confidence import (
     benchmark_manifest_hash,
     binary_ranking_ap,
     build_confidence_run,
+    calibration_diagnostics,
     compare_repeats,
     confidence_diagnostics,
     match_detections,
@@ -46,6 +47,15 @@ def benchmark_config(**overrides):
             "repetition_penalty": 1.1,
         },
         "confidence_method": "qwen_generation_policy_label_bbox_geomean_v1",
+        "confidence_evaluation": {
+            "iou_threshold": 0.5,
+            "default_conf": 0.25,
+            "fallback_score": 1.0,
+            "calibration_bins": 10,
+            "binning": "uniform_left_closed_v1",
+            "population": "scored_postprocessed_predictions",
+            "matching": "class_aware_max_cardinality_iou_v1",
+        },
         "evaluation": {
             "max_det": 100,
             "faster_coco_eval": False,
@@ -143,6 +153,53 @@ class TestRankingMetrics:
             binary_ranking_ap([math.nan], [True])
 
 
+class TestCalibrationDiagnostics:
+    def test_brier_ece_and_bins_use_score_bearing_predictions(self):
+        result = calibration_diagnostics(
+            [0.0, 0.25, 0.5, 0.75, 1.0],
+            [False, False, True, True, True],
+            n_bins=4,
+        )
+
+        assert result.scored_predictions == 5
+        assert result.total_predictions == 5
+        assert result.unscored_predictions == 0
+        assert result.score_coverage == 1.0
+        assert result.brier_score == pytest.approx(0.075)
+        assert result.expected_calibration_error == pytest.approx(0.2)
+        assert result.maximum_calibration_error == pytest.approx(0.5)
+        assert [item.count for item in result.bins] == [1, 1, 1, 2]
+        assert [item.correct for item in result.bins] == [0, 0, 1, 2]
+        assert result.bins[-1].mean_confidence == pytest.approx(0.875)
+        assert result.bins[-1].empirical_accuracy == 1.0
+
+    def test_empty_calibration_is_explicitly_undefined(self):
+        result = calibration_diagnostics([], [], n_bins=3)
+
+        assert result.scored_predictions == 0
+        assert result.brier_score is None
+        assert result.expected_calibration_error is None
+        assert result.maximum_calibration_error is None
+        assert all(item.count == 0 for item in result.bins)
+
+    def test_missing_scores_reduce_coverage_but_are_not_imputed(self):
+        result = calibration_diagnostics(
+            [0.8, None, 0.1], [True, True, False], n_bins=10
+        )
+
+        assert result.total_predictions == 3
+        assert result.scored_predictions == 2
+        assert result.unscored_predictions == 1
+        assert result.score_coverage == pytest.approx(2 / 3)
+        assert result.brier_score == pytest.approx(0.025)
+        assert result.expected_calibration_error == pytest.approx(0.15)
+
+    @pytest.mark.parametrize("n_bins", [True, 0, 1001])
+    def test_bin_count_is_bounded_and_strict(self, n_bins):
+        with pytest.raises((TypeError, ValueError), match="n_bins"):
+            calibration_diagnostics([], [], n_bins=n_bins)
+
+
 class TestCoverageAndRetention:
     def test_missing_scores_count_against_coverage_and_use_fallback(self):
         result = confidence_diagnostics(
@@ -194,6 +251,16 @@ class TestManifestAndRepeats:
             {"classes": ["boat"], "samples": [{"image": "a.jpg", "label": "a.txt"}]},
             benchmark_config(base_revision="b" * 40),
         )
+        changed_confidence = benchmark_config()
+        changed_confidence["confidence_evaluation"] = {
+            **changed_confidence["confidence_evaluation"],
+            "default_conf": 0.3,
+        }
+        assert first != benchmark_manifest_hash(
+            "detect boats",
+            {"classes": ["boat"], "samples": [{"image": "a.jpg", "label": "a.txt"}]},
+            changed_confidence,
+        )
 
     def test_manifest_rejects_ambiguous_or_nonfinite_values(self):
         with pytest.raises(TypeError, match="keys must be strings"):
@@ -209,6 +276,7 @@ class TestManifestAndRepeats:
             ({"base_revision": "main"}, "40-character"),
             ({"processor": "local/path"}, "processor must be a mapping"),
             ({"generation_kwargs": {}}, "generation_kwargs is missing"),
+            ({"confidence_evaluation": {}}, "confidence_evaluation is missing"),
             ({"hardware": {}}, "hardware must be a non-empty mapping"),
             ({"software": {"torch": "test"}}, "software is missing"),
         ],
@@ -224,6 +292,7 @@ class TestManifestAndRepeats:
         prompt="prompt",
         box=(0, 0, 10, 10),
         generation_hash="a" * 64,
+        evaluator_metrics=None,
     ):
         return build_confidence_run(
             [det(box, score=score), det((20, 20, 30, 30), score=0.1)],
@@ -232,6 +301,7 @@ class TestManifestAndRepeats:
             dataset_manifest={"images": ["image-a.jpg"], "sha256": "abc"},
             benchmark_config=benchmark_config(),
             generation_manifest=[{"image_id": "image-a", "sha256": generation_hash}],
+            evaluator_metrics=evaluator_metrics,
         )
 
     def test_build_run_combines_matching_metrics_and_retention(self):
@@ -240,20 +310,110 @@ class TestManifestAndRepeats:
         assert run.matches == (True, False)
         assert run.auroc == 1.0
         assert run.ranking_ap == 1.0
+        assert run.calibration.brier_score == pytest.approx(0.025)
+        assert run.calibration.expected_calibration_error == pytest.approx(0.15)
         assert run.diagnostics.score_coverage == 1.0
         assert run.diagnostics.default_conf_retention == 0.5
         assert len(run.manifest_hash) == 64
         assert len(run.prediction_structure_hash) == 64
 
+    def test_build_run_refuses_confidence_contract_drift(self):
+        with pytest.raises(ValueError, match="does not match benchmark_config"):
+            build_confidence_run(
+                [det(score=0.8)],
+                [det()],
+                prompt="prompt",
+                dataset_manifest={"sha256": "abc"},
+                benchmark_config=benchmark_config(),
+                generation_manifest=[],
+                default_conf=0.3,
+            )
+
     def test_repeat_comparison_accepts_bounded_score_drift(self):
         comparison = compare_repeats(
-            self._run(0.8), self._run(0.8000001), score_atol=1e-6
+            self._run(0.8),
+            self._run(0.8000001),
+            score_atol=1e-6,
+            metric_atol=1e-6,
         )
 
         assert comparison.reproducible
         assert comparison.max_abs_score_delta == pytest.approx(1e-7)
         assert comparison.auroc_delta == 0.0
         assert comparison.ranking_ap_delta == 0.0
+        assert comparison.expected_calibration_error_delta == pytest.approx(5e-8)
+        assert comparison.same_calibration_bin_assignments
+        assert comparison.calibration_bins_within_tolerance
+
+    def test_repeat_comparison_rejects_calibration_bin_edge_drift(self):
+        comparison = compare_repeats(
+            self._run(0.4999999),
+            self._run(0.5000001),
+            score_atol=1e-3,
+            metric_atol=1.0,
+        )
+
+        assert comparison.scores_within_tolerance
+        assert not comparison.same_calibration_bin_assignments
+        assert not comparison.calibration_bins_within_tolerance
+        assert not comparison.reproducible
+
+    def test_repeat_comparison_includes_evaluator_map(self):
+        baseline = {
+            "candidate_mAP50-95": 0.4,
+            "constant_mAP50-95": 0.3,
+            "candidate_mAP50": 0.6,
+            "constant_mAP50": 0.5,
+        }
+        changed = {**baseline, "candidate_mAP50-95": 0.41}
+
+        comparison = compare_repeats(
+            self._run(evaluator_metrics=baseline),
+            self._run(evaluator_metrics=changed),
+        )
+
+        assert comparison.same_evaluator_metric_keys
+        assert not comparison.evaluator_metrics_within_tolerance
+        assert comparison.max_abs_evaluator_metric_delta == pytest.approx(0.01)
+        assert not comparison.metrics_within_tolerance
+        assert not comparison.reproducible
+
+    def test_evaluator_metric_contract_rejects_partial_or_invalid_values(self):
+        with pytest.raises(ValueError, match="missing"):
+            self._run(evaluator_metrics={"candidate_mAP50-95": 0.4})
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            self._run(
+                evaluator_metrics={
+                    "candidate_mAP50-95": 1.1,
+                    "constant_mAP50-95": 0.3,
+                    "candidate_mAP50": 0.6,
+                    "constant_mAP50": 0.5,
+                }
+            )
+
+    def test_repeat_comparison_includes_evaluator_map_deltas(self):
+        first = {
+            "candidate_mAP50-95": 0.4,
+            "constant_mAP50-95": 0.3,
+            "candidate_mAP50": 0.6,
+            "constant_mAP50": 0.5,
+        }
+        second = {
+            "candidate_mAP50-95": 0.405,
+            "constant_mAP50-95": 0.295,
+            "candidate_mAP50": 0.6,
+            "constant_mAP50": 0.5,
+        }
+
+        comparison = compare_repeats(
+            self._run(evaluator_metrics=first),
+            self._run(evaluator_metrics=second),
+            metric_atol=0.006,
+        )
+
+        assert comparison.max_abs_evaluator_metric_delta == pytest.approx(0.01)
+        assert not comparison.evaluator_metrics_within_tolerance
+        assert not comparison.reproducible
 
     def test_repeat_comparison_rejects_rank_reversal_inside_score_tolerance(self):
         def run(scores):

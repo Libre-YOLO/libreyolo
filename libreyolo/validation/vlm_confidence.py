@@ -34,6 +34,7 @@ _REQUIRED_CONFIGURATION_FIELDS = (
     "class_names",
     "generation_kwargs",
     "confidence_method",
+    "confidence_evaluation",
     "evaluation",
     "seed",
     "backend",
@@ -56,6 +57,12 @@ _REQUIRED_SOFTWARE_FIELDS = (
     "torch",
     "transformers",
     "pycocotools",
+)
+_EVALUATOR_METRIC_NAMES = (
+    "candidate_mAP50-95",
+    "constant_mAP50-95",
+    "candidate_mAP50",
+    "constant_mAP50",
 )
 
 
@@ -120,6 +127,40 @@ class ConfidenceDiagnostics:
 
 
 @dataclass(frozen=True)
+class ReliabilityBin:
+    """One equal-width confidence bin over score-bearing predictions only."""
+
+    index: int
+    lower: float
+    upper: float
+    count: int
+    correct: int
+    mean_confidence: Optional[float]
+    empirical_accuracy: Optional[float]
+    absolute_gap: Optional[float]
+
+
+@dataclass(frozen=True)
+class CalibrationDiagnostics:
+    """Descriptive calibration errors for the candidate token score.
+
+    These values do not establish that a score is calibrated. Missing scores
+    are excluded rather than replacing them with the synthetic fallback;
+    coverage remains visible through :class:`ConfidenceDiagnostics`.
+    """
+
+    bin_count: int
+    total_predictions: int
+    scored_predictions: int
+    unscored_predictions: int
+    score_coverage: float
+    brier_score: Optional[float]
+    expected_calibration_error: Optional[float]
+    maximum_calibration_error: Optional[float]
+    bins: tuple[ReliabilityBin, ...]
+
+
+@dataclass(frozen=True)
 class ConfidenceRun:
     """Immutable output of one confidence-quality experiment."""
 
@@ -135,6 +176,8 @@ class ConfidenceRun:
     auroc: Optional[float]
     ranking_ap: Optional[float]
     diagnostics: ConfidenceDiagnostics
+    calibration: CalibrationDiagnostics
+    evaluator_metrics: tuple[tuple[str, float], ...]
 
 
 @dataclass(frozen=True)
@@ -149,10 +192,19 @@ class RepeatComparison:
     same_score_availability: bool
     scores_within_tolerance: bool
     metrics_within_tolerance: bool
+    same_calibration_bin_assignments: bool
+    calibration_bins_within_tolerance: bool
+    same_evaluator_metric_keys: bool
+    evaluator_metrics_within_tolerance: bool
     same_diagnostics: bool
     max_abs_score_delta: Optional[float]
+    max_abs_calibration_bin_delta: Optional[float]
+    max_abs_evaluator_metric_delta: Optional[float]
     auroc_delta: Optional[float]
     ranking_ap_delta: Optional[float]
+    brier_score_delta: Optional[float]
+    expected_calibration_error_delta: Optional[float]
+    maximum_calibration_error_delta: Optional[float]
     reproducible: bool
 
 
@@ -408,6 +460,82 @@ def binary_ranking_ap(
     return average_precision
 
 
+def calibration_diagnostics(
+    scores: Sequence[Optional[float]],
+    labels: Sequence[bool],
+    *,
+    n_bins: int = 10,
+) -> CalibrationDiagnostics:
+    """Return Brier/ECE diagnostics and fixed equal-width reliability bins.
+
+    Missing candidate scores are counted for coverage but omitted from the
+    errors and bins. They are never replaced by the constant fallback, which
+    would describe fallback policy rather than candidate calibration.
+    """
+
+    if isinstance(n_bins, bool) or not isinstance(n_bins, int):
+        raise TypeError("n_bins must be an integer.")
+    if not 1 <= n_bins <= 1000:
+        raise ValueError("n_bins must lie in [1, 1000].")
+    if len(scores) != len(labels):
+        raise ValueError("scores and labels must have the same length.")
+    pairs = []
+    for index, (score, label) in enumerate(zip(scores, labels)):
+        if not isinstance(label, bool) and label not in (0, 1):
+            raise ValueError(f"labels[{index}] must be boolean or 0/1.")
+        if score is not None:
+            pairs.append((_probability(score, f"scores[{index}]"), bool(label)))
+    grouped: list[list[tuple[float, bool]]] = [[] for _ in range(n_bins)]
+    squared_error = 0.0
+    for score, label in pairs:
+        index = min(int(score * n_bins), n_bins - 1)
+        grouped[index].append((score, label))
+        squared_error += (score - float(label)) ** 2
+
+    total = len(pairs)
+    weighted_gap = 0.0
+    maximum_gap: Optional[float] = None
+    bins = []
+    for index, group in enumerate(grouped):
+        lower = index / n_bins
+        upper = (index + 1) / n_bins
+        if group:
+            mean_confidence = sum(score for score, _ in group) / len(group)
+            correct = sum(label for _, label in group)
+            empirical_accuracy = correct / len(group)
+            gap = abs(mean_confidence - empirical_accuracy)
+            weighted_gap += len(group) * gap
+            maximum_gap = gap if maximum_gap is None else max(maximum_gap, gap)
+        else:
+            correct = 0
+            mean_confidence = None
+            empirical_accuracy = None
+            gap = None
+        bins.append(
+            ReliabilityBin(
+                index=index,
+                lower=lower,
+                upper=upper,
+                count=len(group),
+                correct=correct,
+                mean_confidence=mean_confidence,
+                empirical_accuracy=empirical_accuracy,
+                absolute_gap=gap,
+            )
+        )
+    return CalibrationDiagnostics(
+        bin_count=n_bins,
+        total_predictions=len(scores),
+        scored_predictions=total,
+        unscored_predictions=len(scores) - total,
+        score_coverage=total / len(scores) if scores else 0.0,
+        brier_score=squared_error / total if total else None,
+        expected_calibration_error=weighted_gap / total if total else None,
+        maximum_calibration_error=maximum_gap,
+        bins=tuple(bins),
+    )
+
+
 def confidence_diagnostics(
     scores: Sequence[Optional[float]],
     labels: Sequence[bool],
@@ -615,6 +743,59 @@ def _validated_benchmark_config(benchmark_config: Any) -> dict[str, Any]:
         raise ValueError(
             "generation_kwargs.repetition_penalty must be finite and positive."
         )
+    confidence_evaluation = benchmark_config["confidence_evaluation"]
+    if not isinstance(confidence_evaluation, Mapping):
+        raise TypeError("benchmark_config.confidence_evaluation must be a mapping.")
+    required_confidence_evaluation = (
+        "iou_threshold",
+        "default_conf",
+        "fallback_score",
+        "calibration_bins",
+        "binning",
+        "population",
+        "matching",
+    )
+    missing_confidence = [
+        field
+        for field in required_confidence_evaluation
+        if field not in confidence_evaluation
+    ]
+    if missing_confidence:
+        raise ValueError(
+            "benchmark_config.confidence_evaluation is missing: "
+            + ", ".join(missing_confidence)
+        )
+    confidence_iou = _probability(
+        confidence_evaluation["iou_threshold"],
+        "confidence_evaluation.iou_threshold",
+    )
+    if confidence_iou <= 0.0:
+        raise ValueError("confidence_evaluation.iou_threshold must be positive.")
+    _probability(
+        confidence_evaluation["default_conf"],
+        "confidence_evaluation.default_conf",
+    )
+    _probability(
+        confidence_evaluation["fallback_score"],
+        "confidence_evaluation.fallback_score",
+    )
+    calibration_bins = confidence_evaluation["calibration_bins"]
+    if (
+        isinstance(calibration_bins, bool)
+        or not isinstance(calibration_bins, int)
+        or not 1 <= calibration_bins <= 1000
+    ):
+        raise ValueError(
+            "confidence_evaluation.calibration_bins must be an integer in [1, 1000]."
+        )
+    expected_strings = {
+        "binning": "uniform_left_closed_v1",
+        "population": "scored_postprocessed_predictions",
+        "matching": "class_aware_max_cardinality_iou_v1",
+    }
+    for field, expected in expected_strings.items():
+        if confidence_evaluation[field] != expected:
+            raise ValueError(f"confidence_evaluation.{field} must equal {expected!r}.")
     evaluation = benchmark_config["evaluation"]
     if not isinstance(evaluation, Mapping):
         raise TypeError("benchmark_config.evaluation must be a mapping.")
@@ -632,6 +813,8 @@ def _validated_benchmark_config(benchmark_config: Any) -> dict[str, Any]:
         raise ValueError("benchmark_config.evaluation.max_det must be positive.")
     if not isinstance(evaluation["faster_coco_eval"], bool):
         raise TypeError("benchmark_config.evaluation.faster_coco_eval must be boolean.")
+    if "save_plots" in evaluation and not isinstance(evaluation["save_plots"], bool):
+        raise TypeError("benchmark_config.evaluation.save_plots must be boolean.")
     evaluation_backend = evaluation["backend"]
     if not isinstance(evaluation_backend, str) or not evaluation_backend.strip():
         raise ValueError(
@@ -712,6 +895,29 @@ def _prediction_structure_hash(predictions: Sequence[VLMDetection]) -> str:
     )
 
 
+def _normalize_evaluator_metrics(
+    metrics: Optional[Mapping[str, Any]],
+) -> tuple[tuple[str, float], ...]:
+    if metrics is None:
+        return ()
+    if not isinstance(metrics, Mapping):
+        raise TypeError("evaluator_metrics must be null or a mapping.")
+    missing = [name for name in _EVALUATOR_METRIC_NAMES if name not in metrics]
+    extras = [name for name in metrics if name not in _EVALUATOR_METRIC_NAMES]
+    if missing or extras:
+        detail = []
+        if missing:
+            detail.append("missing " + ", ".join(missing))
+        if extras:
+            detail.append("unsupported " + ", ".join(sorted(map(str, extras))))
+        raise ValueError("evaluator_metrics has " + "; ".join(detail) + ".")
+    normalized = []
+    for name in _EVALUATOR_METRIC_NAMES:
+        value = _probability(metrics[name], f"evaluator_metrics.{name}")
+        normalized.append((name, value))
+    return tuple(normalized)
+
+
 def build_confidence_run(
     predictions: Sequence[VLMDetection],
     ground_truth: Sequence[VLMDetection],
@@ -720,6 +926,7 @@ def build_confidence_run(
     dataset_manifest: Any,
     benchmark_config: Mapping[str, Any],
     generation_manifest: Any,
+    evaluator_metrics: Optional[Mapping[str, Any]] = None,
     iou_threshold: float = 0.5,
     default_conf: float = 0.25,
     fallback_score: float = 1.0,
@@ -728,10 +935,27 @@ def build_confidence_run(
 
     predictions = tuple(predictions)
     ground_truth = tuple(ground_truth)
+    validated_config = _validated_benchmark_config(benchmark_config)
+    confidence_evaluation = validated_config["confidence_evaluation"]
+    normalized_iou = _probability(iou_threshold, "iou_threshold")
+    normalized_default = _probability(default_conf, "default_conf")
+    normalized_fallback = _probability(fallback_score, "fallback_score")
+    configured_values = {
+        "iou_threshold": normalized_iou,
+        "default_conf": normalized_default,
+        "fallback_score": normalized_fallback,
+    }
+    for field, actual in configured_values.items():
+        configured = float(confidence_evaluation[field])
+        if configured != actual:
+            raise ValueError(
+                f"{field}={actual} does not match benchmark_config "
+                f"confidence_evaluation.{field}={configured}."
+            )
     matches = match_detections(
         predictions,
         ground_truth,
-        iou_threshold=iou_threshold,
+        iou_threshold=normalized_iou,
     )
     scored_pairs = [
         (prediction.score, matched)
@@ -744,8 +968,13 @@ def build_confidence_run(
     diagnostics = confidence_diagnostics(
         scores,
         matches,
-        default_conf=default_conf,
-        fallback_score=fallback_score,
+        default_conf=normalized_default,
+        fallback_score=normalized_fallback,
+    )
+    calibration = calibration_diagnostics(
+        scores,
+        matches,
+        n_bins=int(confidence_evaluation["calibration_bins"]),
     )
     return ConfidenceRun(
         manifest_hash=benchmark_manifest_hash(
@@ -759,7 +988,7 @@ def build_confidence_run(
             }
         ),
         prediction_structure_hash=_prediction_structure_hash(predictions),
-        iou_threshold=_probability(iou_threshold, "iou_threshold"),
+        iou_threshold=normalized_iou,
         default_conf=diagnostics.default_conf,
         fallback_score=diagnostics.fallback_score,
         scores=scores,
@@ -767,6 +996,8 @@ def build_confidence_run(
         auroc=tie_aware_auroc(scored_scores, scored_labels),
         ranking_ap=binary_ranking_ap(scored_scores, scored_labels),
         diagnostics=diagnostics,
+        calibration=calibration,
+        evaluator_metrics=_normalize_evaluator_metrics(evaluator_metrics),
     )
 
 
@@ -833,11 +1064,96 @@ def compare_repeats(
     same_diagnostics = first.diagnostics == second.diagnostics
     auroc_delta = _optional_delta(first.auroc, second.auroc)
     ranking_ap_delta = _optional_delta(first.ranking_ap, second.ranking_ap)
+    brier_delta = _optional_delta(
+        first.calibration.brier_score, second.calibration.brier_score
+    )
+    ece_delta = _optional_delta(
+        first.calibration.expected_calibration_error,
+        second.calibration.expected_calibration_error,
+    )
+    maximum_calibration_error_delta = _optional_delta(
+        first.calibration.maximum_calibration_error,
+        second.calibration.maximum_calibration_error,
+    )
+    first_bins = first.calibration.bins
+    second_bins = second.calibration.bins
+    same_bin_assignments = len(first_bins) == len(second_bins) and all(
+        (
+            left.index,
+            left.lower,
+            left.upper,
+            left.count,
+            left.correct,
+        )
+        == (
+            right.index,
+            right.lower,
+            right.upper,
+            right.count,
+            right.correct,
+        )
+        for left, right in zip(first_bins, second_bins)
+    )
+    if same_bin_assignments:
+        bin_deltas = []
+        bins_comparable = True
+        for left, right in zip(first_bins, second_bins):
+            for field in (
+                "mean_confidence",
+                "empirical_accuracy",
+                "absolute_gap",
+            ):
+                delta = _optional_delta(getattr(left, field), getattr(right, field))
+                if delta is None:
+                    bins_comparable = False
+                else:
+                    bin_deltas.append(delta)
+        max_bin_delta: Optional[float] = (
+            max(bin_deltas, default=0.0) if bins_comparable else None
+        )
+        calibration_bins_within_tolerance = (
+            max_bin_delta is not None and max_bin_delta <= metric_tolerance
+        )
+    else:
+        max_bin_delta = None
+        calibration_bins_within_tolerance = False
+    first_evaluator = dict(first.evaluator_metrics)
+    second_evaluator = dict(second.evaluator_metrics)
+    same_evaluator_keys = first_evaluator.keys() == second_evaluator.keys()
+    if same_evaluator_keys:
+        evaluator_deltas = [
+            abs(first_evaluator[name] - second_evaluator[name])
+            for name in first_evaluator
+        ]
+        if first_evaluator:
+            for suffix in ("mAP50-95", "mAP50"):
+                first_delta = (
+                    first_evaluator[f"candidate_{suffix}"]
+                    - first_evaluator[f"constant_{suffix}"]
+                )
+                second_delta = (
+                    second_evaluator[f"candidate_{suffix}"]
+                    - second_evaluator[f"constant_{suffix}"]
+                )
+                evaluator_deltas.append(abs(first_delta - second_delta))
+        max_evaluator_delta: Optional[float] = max(evaluator_deltas, default=0.0)
+        evaluator_metrics_within_tolerance = max_evaluator_delta <= metric_tolerance
+    else:
+        max_evaluator_delta = None
+        evaluator_metrics_within_tolerance = False
     metrics_within_tolerance = (
         auroc_delta is not None
         and ranking_ap_delta is not None
+        and brier_delta is not None
+        and ece_delta is not None
+        and maximum_calibration_error_delta is not None
         and auroc_delta <= metric_tolerance
         and ranking_ap_delta <= metric_tolerance
+        and brier_delta <= metric_tolerance
+        and ece_delta <= metric_tolerance
+        and maximum_calibration_error_delta <= metric_tolerance
+        and calibration_bins_within_tolerance
+        and evaluator_metrics_within_tolerance
     )
     reproducible = all(
         (
@@ -849,6 +1165,10 @@ def compare_repeats(
             same_availability,
             scores_within_tolerance,
             metrics_within_tolerance,
+            same_bin_assignments,
+            calibration_bins_within_tolerance,
+            same_evaluator_keys,
+            evaluator_metrics_within_tolerance,
             same_diagnostics,
         )
     )
@@ -861,9 +1181,18 @@ def compare_repeats(
         same_score_availability=same_availability,
         scores_within_tolerance=scores_within_tolerance,
         metrics_within_tolerance=metrics_within_tolerance,
+        same_calibration_bin_assignments=same_bin_assignments,
+        calibration_bins_within_tolerance=calibration_bins_within_tolerance,
+        same_evaluator_metric_keys=same_evaluator_keys,
+        evaluator_metrics_within_tolerance=evaluator_metrics_within_tolerance,
         same_diagnostics=same_diagnostics,
         max_abs_score_delta=max_score_delta,
+        max_abs_calibration_bin_delta=max_bin_delta,
+        max_abs_evaluator_metric_delta=max_evaluator_delta,
         auroc_delta=auroc_delta,
         ranking_ap_delta=ranking_ap_delta,
+        brier_score_delta=brier_delta,
+        expected_calibration_error_delta=ece_delta,
+        maximum_calibration_error_delta=maximum_calibration_error_delta,
         reproducible=reproducible,
     )

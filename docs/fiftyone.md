@@ -45,7 +45,16 @@ session = fo.launch_app(dataset)
 `iou`, `imgsz`, `device`, `classes`, and `max_det` to `model.predict`, and runs
 through FiftyOne's own `apply_model`, so the progress bar, `skip_failures`, and
 batching behave the way FiftyOne users expect. `batch_size` maps onto
-LibreYOLO's batched list inference: one stacked forward per chunk.
+LibreYOLO's batched list inference when the model supports it. Generative
+`LibreVLM` adapters currently opt out of batched prediction, so FiftyOne may
+still form chunks but the VLM generates one image at a time; increasing
+`batch_size` does not improve VLM throughput.
+
+`LibreVLM` detections use the same standard `Results` conversion shown below.
+Generic chat VLMs currently expose an uncalibrated constant confidence of
+`1.0`, so confidence ranking, mistakenness, and threshold-based curation are not
+meaningful for those families until their documented real-data score gate
+passes. Box geometry, labels, filtering, and visualization remain valid.
 
 To use the model with any other FiftyOne API that takes a model, wrap it
 directly:

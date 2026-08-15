@@ -150,6 +150,10 @@ Consequences:
   detections better than the constant baseline, behaves safely with the public
   confidence threshold, and is reproducible. Unit tests establish plumbing, not
   score quality.
+- Candidate-only Brier error, fixed-bin ECE, and reliability bins are diagnostic
+  outputs of the internal gate, not a calibration claim. Missing scores never
+  inherit the constant fallback in those statistics; fallback safety and score
+  coverage are reported separately.
 
 `_score_detections(items)` remains the scalar fallback for custom generation
 paths. Scored greedy generations use the additive per-item scoring path.
