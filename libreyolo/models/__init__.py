@@ -117,6 +117,7 @@ from .birefnet.model import LibreBiRefNet  # noqa: E402,F401  (matte-only; can_l
 from .feynobg.model import LibreFeyNobg  # noqa: E402,F401  (matte-only; BiRefNet keys + 24-block stage-3 marker, disjoint from birefnet)
 from .ben2.model import LibreBEN2  # noqa: E402,F401  (matte-only; BEN2 cross-attention/refinement fingerprint)
 from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
+from .quicksrnet.model import LibreQuickSRNet  # noqa: E402,F401  (restore/super-resolution; exact compact CNN fingerprint)
 from .swinir.model import LibreSwinIR  # noqa: E402,F401  (restore/super-resolution; RSTB keys are unique)
 from .fcn.model import LibreFCN  # noqa: E402,F401  (semantic-only; FCN head + embedded ResNet fingerprint)
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
@@ -883,6 +884,7 @@ __all__ = [
     "LibreFeyNobg",
     "LibreBEN2",
     "LibreRealESRGAN",
+    "LibreQuickSRNet",
     "LibreSwinIR",
     "LibreFCN",
     "LibreEoMT",
