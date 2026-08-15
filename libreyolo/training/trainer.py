@@ -243,6 +243,7 @@ class BaseTrainer(ABC):
         # Profiling (opt-in via config.profile). None = disabled, zero overhead.
         self._profiler = None
         self._stop_training = False
+        self._weight_averager = None
 
         # CUDA graph capture of the training network (opt-in via
         # config.cuda_graph). None = disabled, zero overhead. The family
@@ -979,6 +980,7 @@ class BaseTrainer(ABC):
             pin_memory=self.device.type == "cuda",
             sampler=sampler,
             min_samples=int(getattr(self.config, "min_samples", 0) or 0),
+            class_balanced=bool(getattr(self.config, "class_balanced", False)),
         )
 
         if is_main_process():
@@ -1496,7 +1498,10 @@ class BaseTrainer(ABC):
                     "QAT recipe '%s': disabled %s because these features can "
                     "interfere with fake-quant observer and scale state.",
                     quant_manifest.get("recipe", "unknown"),
-                    ", ".join(f"{option}=False" for option in qat_changes),
+                    ", ".join(
+                        f"{option}={getattr(self.config, option)!r}"
+                        for option in qat_changes
+                    ),
                 )
 
         if getattr(self.config, "lora", False) and not self.supports_lora:
@@ -1616,6 +1621,7 @@ class BaseTrainer(ABC):
                 )
 
         self._setup_data()
+        self._assert_class_balanced_honored()
 
         # DDP loader invariant: trainers that own their data pipeline must
         # shard like BaseTrainer._setup_data does (issue #484: three trainers
@@ -1694,6 +1700,22 @@ class BaseTrainer(ABC):
                     self.config.ema_decay,
                     ema_tau,
                 )
+
+        average_best = int(getattr(self.config, "average_best", 0) or 0)
+        if average_best > 0:
+            from .weight_averaging import MetricGatedAverager
+
+            self._weight_averager = MetricGatedAverager(average_best)
+            if is_main_process():
+                logger.info(
+                    "Averaging the %d best checkpoints by the watched metric "
+                    "(weights/average.pt at the end of training)",
+                    average_best,
+                )
+            deferred = getattr(self, "_resume_average_pool_path", None)
+            if deferred:
+                self._restore_average_pool(deferred)
+                self._resume_average_pool_path = None
 
         # Save-dir creation, config dump, and TB writer all live on rank 0.
         # The resolved name (which may include an auto-increment suffix when
@@ -1847,6 +1869,7 @@ class BaseTrainer(ABC):
         self._stop_training = False
         try:
             self.setup()
+            self._maybe_export_check()
 
             if is_main_process():
                 logger.info(f"Starting training for {self.config.epochs} epochs")
@@ -1897,6 +1920,33 @@ class BaseTrainer(ABC):
                     if profile_truncated
                     else self._update_best_state(epoch, val_metrics)
                 )
+                # Rank 0 owns validation metrics, so broadcast the patience
+                # decision before any rank can enter the next epoch alone.
+                epochs_since_best = (
+                    (epoch + 1) - self.best_epoch if self.best_epoch else 0
+                )
+                should_stop = (
+                    self.config.patience > 0
+                    and self.best_epoch > 0
+                    and epochs_since_best >= self.config.patience
+                )
+                should_stop = self._sync_main_bool(should_stop)
+                if should_stop and not profile_truncated:
+                    save_final_plots = bool(
+                        getattr(self.config, "save_plots", False)
+                    ) and not self._is_final_epoch(epoch)
+                    if self._maybe_precise_bn(epoch, force=True):
+                        refreshed = self._validate_epoch(
+                            epoch, save_plots=save_final_plots
+                        )
+                        if refreshed is not None:
+                            val_metrics = refreshed
+                            is_best = self._update_best_state(epoch, val_metrics)
+                    elif save_final_plots:
+                        self._validate_epoch(epoch, save_plots=True)
+                    should_stop = self._sync_main_bool(
+                        should_stop and not is_best
+                    )
                 # Write ``last.pt`` every epoch so a crash never costs more than
                 # a single epoch. ``best.pt`` (is_best) and periodic
                 # ``epoch_N.pt`` (save_period) stay gated inside
@@ -1906,6 +1956,7 @@ class BaseTrainer(ABC):
                 # partial epoch as complete would make a later resume skip the
                 # rest of it.
                 if not profile_truncated:
+                    self._maybe_offer_average(val_metrics)
                     self._save_checkpoint(
                         epoch, epoch_loss, val_metrics, is_best=is_best
                     )
@@ -1933,26 +1984,7 @@ class BaseTrainer(ABC):
                 # improvement. ``best_epoch`` is the 1-based epoch of the best
                 # result, so this stays meaningful even when validation only
                 # runs on an interval (unlike counting discrete val events).
-                epochs_since_best = (
-                    (epoch + 1) - self.best_epoch if self.best_epoch else 0
-                )
-                should_stop = (
-                    self.config.patience > 0
-                    and self.best_epoch > 0
-                    and epochs_since_best >= self.config.patience
-                )
-                if self.is_distributed:
-                    import torch.distributed as _dist
-
-                    flag = torch.tensor(int(should_stop), dtype=torch.int, device=self.device)
-                    _dist.broadcast(flag, src=0)
-                    should_stop = bool(flag.item())
                 if should_stop:
-                    if (
-                        bool(getattr(self.config, "save_plots", False))
-                        and not self._is_final_epoch(epoch)
-                    ):
-                        self._validate_epoch(epoch, save_plots=True)
                     if is_main_process():
                         logger.info(
                             f"Early stopping triggered after {epoch + 1} epochs "
@@ -1966,6 +1998,8 @@ class BaseTrainer(ABC):
             if getattr(self, "distiller", None) is not None:
                 self.distiller.cleanup()
 
+            self._refresh_best_precise_bn_checkpoint()
+            self._write_average_checkpoint()
             total_time = time.time() - start_time
             if is_main_process():
                 if getattr(self, "_stop_training", False):
@@ -2027,6 +2061,12 @@ class BaseTrainer(ABC):
             "last_checkpoint": (
                 str(last_checkpoint) if last_checkpoint.exists() else None
             ),
+            "average_checkpoint": (
+                str(weights_dir / "average.pt")
+                if (weights_dir / "average.pt").exists()
+                else None
+            ),
+            "average_metrics": getattr(self, "_average_validation_metrics", None),
         }
 
     def _event_context(self) -> Dict[str, Any]:
@@ -2236,6 +2276,15 @@ class BaseTrainer(ABC):
         else:
             self.patience_counter += 1
         return is_best
+
+    def _sync_main_bool(self, value: bool) -> bool:
+        if not self.is_distributed:
+            return value
+        import torch.distributed as _dist
+
+        flag = torch.tensor(int(value), dtype=torch.int, device=self.device)
+        _dist.broadcast(flag, src=0)
+        return bool(flag.item())
 
     def _get_clip_max_norm(self) -> float:
         value = getattr(self.config, "clip_max_norm", 0.0)
@@ -2460,6 +2509,8 @@ class BaseTrainer(ABC):
         if is_main_process():
             logger.info(f"Epoch {epoch + 1} - Average loss: {avg_loss:.4f}")
 
+        self._maybe_precise_bn(epoch)
+
         # Validation. A profile-only run (profile_then_stop) truncated the
         # epoch, so validating the barely-trained weights would waste time and
         # could poison the best-metric state.
@@ -2644,6 +2695,8 @@ class BaseTrainer(ABC):
         if is_main_process():
             logger.info(f"Epoch {epoch + 1} - Average loss: {avg_loss:.4f}")
 
+        self._maybe_precise_bn(epoch)
+
         # Validation. A profile-only run (profile_then_stop) truncated the
         # epoch, so validating the barely-trained weights would waste time and
         # could poison the best-metric state.
@@ -2668,7 +2721,11 @@ class BaseTrainer(ABC):
             bool(getattr(self.config, "save_plots", False))
             and self._is_final_epoch(epoch)
         )
-        return scheduled or final_plot
+        precise_bn_final = (
+            int(getattr(self.config, "precise_bn", 0) or 0) > 0
+            and self._is_final_epoch(epoch)
+        )
+        return scheduled or final_plot or precise_bn_final
 
     def _is_final_epoch(self, epoch: int) -> bool:
         return (epoch + 1) >= self.config.epochs
@@ -3084,6 +3141,481 @@ class BaseTrainer(ABC):
             logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
             return None
 
+    def _maybe_export_check(self) -> None:
+        if not bool(getattr(self.config, "export_check", False)):
+            return
+        error: Optional[BaseException] = None
+        if is_main_process():
+            try:
+                from .export_check import run_export_parity_check
+
+                wrapper = self.wrapper_model
+                if wrapper is None:
+                    raise RuntimeError("export_check=True requires a wrapper model")
+                logger.info("export_check: exporting ONNX before epoch 1")
+                run_export_parity_check(
+                    wrapper,
+                    out_dir=self.save_dir,
+                    imgsz=getattr(self.config, "imgsz", 640),
+                )
+            except BaseException as exc:
+                error = exc
+        barrier()
+        if self.is_distributed:
+            import torch.distributed as dist
+
+            payload = [None if error is None else f"{type(error).__name__}: {error}"]
+            dist.broadcast_object_list(payload, src=0)
+            if payload[0] is not None:
+                if error is not None:
+                    raise error
+                raise RuntimeError(f"export_check failed on rank 0: {payload[0]}")
+        elif error is not None:
+            raise error
+
+    def _assert_class_balanced_honored(self) -> None:
+        if not bool(getattr(self.config, "class_balanced", False)):
+            return
+        from torch.utils.data import WeightedRandomSampler
+
+        from ..data.class_balanced import DistributedClassBalancedSampler
+
+        sampler = getattr(getattr(self, "train_loader", None), "sampler", None)
+        if isinstance(
+            sampler, (WeightedRandomSampler, DistributedClassBalancedSampler)
+        ):
+            return
+        raise ValueError(
+            f"class_balanced=True is not supported for {self.get_model_family()}: "
+            "this family does not build the train loader through the shared "
+            "detection sampler. Omit class_balanced or use a family that does "
+            "(e.g. YOLO9 / YOLOX)."
+        )
+
+    def _maybe_precise_bn(self, epoch: int, *, force: bool = False) -> bool:
+        samples = int(getattr(self.config, "precise_bn", 0) or 0)
+        if samples <= 0:
+            return False
+        if not force and not self._is_final_epoch(epoch):
+            return False
+        if getattr(self, "_stop_training", False):
+            return False
+        if getattr(self, "_precise_bn_done", False):
+            return False
+        from .precise_bn import compute_precise_bn_stats
+
+        updated = 0
+        raw_model = unwrap_model(self.model)
+        frozen_ids = {id(module) for module in getattr(self, "_frozen_bn_modules", ())}
+        excluded_names = {
+            name
+            for name, module in raw_model.named_modules()
+            if id(module) in frozen_ids
+        }
+        targets = [raw_model]
+        ema = getattr(self, "ema_model", None)
+        if ema is not None and getattr(ema, "ema", None) is not None:
+            targets.append(ema.ema)
+        for net in targets:
+            updated = max(
+                updated,
+                compute_precise_bn_stats(
+                    net,
+                    self.train_loader,
+                    samples,
+                    device=self.device,
+                    excluded_names=excluded_names,
+                ),
+            )
+        self._precise_bn_done = True
+        return updated > 0
+
+    def _refresh_best_precise_bn_checkpoint(self) -> bool:
+        """Recompute BN statistics for a historical best checkpoint.
+
+        The final epoch path recalibrates the live model before validation and
+        checkpointing. If an earlier epoch remains best, rank 0 loads that
+        state and broadcasts it before recalibration so no shared filesystem is
+        required. Live last-epoch weights are restored afterward.
+        """
+        samples = int(getattr(self.config, "precise_bn", 0) or 0)
+        if samples <= 0 or getattr(self, "_stop_training", False):
+            return False
+
+        from .precise_bn import compute_precise_bn_stats
+
+        distributed = bool(getattr(self, "is_distributed", False))
+        refresh = int(getattr(self, "best_epoch", 0) or 0) != self.current_epoch + 1
+        refresh = self._sync_main_bool(refresh)
+        if not refresh:
+            return False
+        try:
+            best_path = self.save_dir / "weights" / "best.pt"
+            checkpoint = None
+            model_state = None
+            checkpoint_error = None
+            if not distributed or is_main_process():
+                if not best_path.is_file():
+                    checkpoint_error = f"best checkpoint not found: {best_path}"
+                else:
+                    try:
+                        checkpoint = load_trusted_torch_file(
+                            best_path,
+                            map_location="cpu",
+                            context="precise BN best checkpoint",
+                        )
+                    except Exception as exc:
+                        checkpoint_error = (
+                            f"could not read best checkpoint {best_path}: {exc}"
+                        )
+                    else:
+                        model_state = (
+                            checkpoint.get("model")
+                            if isinstance(checkpoint, Mapping)
+                            else None
+                        )
+                        if not isinstance(model_state, Mapping):
+                            checkpoint_error = (
+                                f"best checkpoint has no model state: {best_path}"
+                            )
+
+            if distributed:
+                import torch.distributed as _dist
+
+                status = [checkpoint_error]
+                _dist.broadcast_object_list(status, src=0)
+                checkpoint_error = status[0]
+            if checkpoint_error is not None:
+                if is_main_process():
+                    logger.warning("precise_bn: %s", checkpoint_error)
+                return False
+
+            raw_model = unwrap_model(self.model)
+            ema = getattr(self, "ema_model", None)
+            ema_model = getattr(ema, "ema", None) if ema is not None else None
+            raw_checkpoint_state = (
+                checkpoint.get("train_model", model_state)
+                if checkpoint is not None
+                else None
+            )
+            targets = [
+                (
+                    raw_model,
+                    raw_checkpoint_state,
+                    "train_model" if ema_model is not None else "model",
+                )
+            ]
+            if ema_model is not None:
+                targets.append(
+                    (
+                        ema_model,
+                        checkpoint.get("ema", model_state)
+                        if checkpoint is not None
+                        else None,
+                        "ema",
+                    )
+                )
+
+            frozen_ids = {
+                id(module) for module in getattr(self, "_frozen_bn_modules", ())
+            }
+            excluded_names = {
+                name
+                for name, module in raw_model.named_modules()
+                if id(module) in frozen_ids
+            }
+            live_states = [
+                {
+                    key: value.detach().to("cpu").clone()
+                    for key, value in target.state_dict().items()
+                }
+                for target, _state, _key in targets
+            ]
+            refreshed_states: dict[str, dict[str, torch.Tensor]] = {}
+            updated = 0
+            try:
+                load_error = None
+                if not distributed or is_main_process():
+                    try:
+                        for target, state, _key in targets:
+                            target.load_state_dict(state, strict=True)
+                    except Exception as exc:
+                        load_error = f"could not load historical best state: {exc}"
+                if distributed:
+                    status = [load_error]
+                    _dist.broadcast_object_list(status, src=0)
+                    load_error = status[0]
+                if load_error is not None:
+                    raise RuntimeError(f"precise_bn: {load_error}")
+
+                if distributed:
+                    for target, _state, _key in targets:
+                        for value in target.state_dict().values():
+                            _dist.broadcast(value, src=0)
+
+                for target, state, key in targets:
+                    count = compute_precise_bn_stats(
+                        target,
+                        self.train_loader,
+                        samples,
+                        device=self.device,
+                        excluded_names=excluded_names,
+                    )
+                    updated = max(updated, count)
+                    if is_main_process():
+                        refreshed_states[key] = {
+                            name: value.detach().to("cpu").clone()
+                            for name, value in target.state_dict().items()
+                        }
+            finally:
+                for (target, _state, _key), live_state in zip(
+                    targets, live_states, strict=True
+                ):
+                    target.load_state_dict(live_state, strict=True)
+
+            if updated <= 0:
+                return False
+            if is_main_process():
+                assert checkpoint is not None
+                raw_state = refreshed_states[targets[0][2]]
+                selected_state = (
+                    refreshed_states["ema"] if ema_model is not None else raw_state
+                )
+                checkpoint["model"] = selected_state
+                if ema_model is not None:
+                    checkpoint["train_model"] = raw_state
+                    checkpoint["ema"] = selected_state
+                validate_checkpoint_metadata(checkpoint, strict=True)
+                torch.save(checkpoint, best_path)
+                logger.info(
+                    "precise_bn: refreshed historical best checkpoint: %s",
+                    best_path,
+                )
+            return True
+        finally:
+            if distributed:
+                barrier()
+
+    def _maybe_offer_average(self, val_metrics: Optional[Dict[str, Any]]) -> None:
+        averager = getattr(self, "_weight_averager", None)
+        if averager is None or not val_metrics or not is_main_process():
+            return
+        metric = self._best_metric_value(val_metrics)
+        source = self.ema_model.ema if self.ema_model else unwrap_model(self.model)
+        if averager.consider(source, metric):
+            logger.info(
+                "average_best: admitted snapshot (metric=%.5f, pool=%d/%d)",
+                metric,
+                averager.size,
+                averager.n,
+            )
+            self._persist_average_pool()
+
+    def _write_average_checkpoint(self) -> Optional[Path]:
+        averager = getattr(self, "_weight_averager", None)
+        if averager is None:
+            return None
+        distributed = bool(getattr(self, "is_distributed", False))
+        if not is_main_process():
+            if distributed:
+                barrier()
+            return None
+        try:
+            averaged = averager.average_state_dict()
+            if averaged is None:
+                return None
+
+            logger.info("average_best: validating averaged weights")
+            average_metrics = self._validate_average_state(averaged)
+            self._average_validation_metrics = average_metrics
+            if average_metrics is None:
+                logger.warning(
+                    "average_best: averaged weights were written without validation "
+                    "metrics because final validation did not complete"
+                )
+
+            weights_dir = self.save_dir / "weights"
+            weights_dir.mkdir(exist_ok=True)
+            path = weights_dir / "average.pt"
+            names = (
+                self.wrapper_model.names
+                if self.wrapper_model is not None
+                and hasattr(self.wrapper_model, "names")
+                else build_class_names(
+                    int(getattr(self, "num_classes", self.config.num_classes))
+                )
+            )
+            checkpoint_imgsz = getattr(self.config, "imgsz", 640)
+            extra_checkpoint_meta = {}
+            if isinstance(checkpoint_imgsz, (list, tuple)):
+                cp_h, cp_w = int(checkpoint_imgsz[0]), int(checkpoint_imgsz[1])
+                checkpoint_imgsz = max(cp_h, cp_w)
+                if cp_h != cp_w:
+                    extra_checkpoint_meta["imgsz_h"] = cp_h
+                    extra_checkpoint_meta["imgsz_w"] = cp_w
+            extra_checkpoint_meta.update(self._checkpoint_extra_metadata())
+            average_metric_key = (
+                average_metrics.get("best_metric_key") if average_metrics else None
+            )
+            average_metric_value = (
+                self._best_metric_value(average_metrics) if average_metrics else None
+            )
+            checkpoint = wrap_libreyolo_checkpoint(
+                averaged,
+                model_family=self.get_model_family(),
+                size=self.config.size,
+                task=getattr(getattr(self, "wrapper_model", None), "task", "detect"),
+                nc=int(getattr(self, "num_classes", self.config.num_classes)),
+                names=names,
+                imgsz=int(checkpoint_imgsz),
+                epoch=self.current_epoch,
+                best_mAP50_95=self.best_mAP50_95,
+                best_mAP50=self.best_mAP50,
+                best_metric_key=getattr(self, "best_metric_key", "metrics/mAP50-95"),
+                best_metric_value=self.best_mAP50_95,
+                best_epoch=self.best_epoch,
+                is_ema_weights=self.ema_model is not None,
+                averaged_snapshot_count=averager.size,
+                average_metric_key=average_metric_key,
+                average_metric_value=average_metric_value,
+                **extra_checkpoint_meta,
+            )
+            torch.save(checkpoint, path)
+            logger.info(
+                "average_best: wrote %s from %d snapshots (source metrics=%s)",
+                path,
+                averager.size,
+                averager.metrics(),
+            )
+            return path
+        finally:
+            if distributed:
+                barrier()
+
+    def _validate_average_state(
+        self, averaged: Mapping[str, torch.Tensor]
+    ) -> Optional[Dict[str, Any]]:
+        """Validate averaged weights once without changing the live train state."""
+        source = self.ema_model.ema if self.ema_model else unwrap_model(self.model)
+        live_state = {
+            key: value.detach().to("cpu").clone()
+            for key, value in source.state_dict().items()
+        }
+        try:
+            source.load_state_dict(averaged, strict=True)
+            return self._run_validation(self.current_epoch, save_plots=False)
+        finally:
+            source.load_state_dict(live_state, strict=True)
+
+    def _average_pool_path(self, directory: Path | None = None) -> Path:
+        root = directory if directory is not None else (self.save_dir / "weights")
+        return Path(root) / "average_pool.pt"
+
+    def _persist_average_pool(self) -> None:
+        averager = getattr(self, "_weight_averager", None)
+        if averager is None or averager.size == 0 or not is_main_process():
+            return
+        save_dir = getattr(self, "save_dir", None)
+        if save_dir is None:
+            return
+        averager.save(self._average_pool_path())
+
+    def _restore_average_pool(self, checkpoint_path: str | Path) -> None:
+        averager = getattr(self, "_weight_averager", None)
+        if averager is None:
+            self._resume_average_pool_path = str(checkpoint_path)
+            return
+        checkpoint_path = Path(checkpoint_path)
+        sidecar = checkpoint_path.parent / "average_pool.pt"
+        if sidecar.is_file():
+            try:
+                loaded = averager.load(sidecar)
+            except Exception as exc:
+                logger.warning(
+                    "Could not restore average_best pool from %s: %s", sidecar, exc
+                )
+            else:
+                if loaded and is_main_process():
+                    logger.info(
+                        "average_best: restored %d snapshot(s) from %s",
+                        loaded,
+                        sidecar,
+                    )
+                return
+        # last.pt (or any non-best resume) is not the historical best. Tagging
+        # those live weights with best_mAP50_95 would let them block later
+        # snapshots while the real best stays out of average.pt.
+        seed = self._average_seed_snapshot(checkpoint_path)
+        if seed is None:
+            if is_main_process():
+                logger.info(
+                    "average_best: starting with an empty pool; no average_pool.pt "
+                    "next to %s and the resumed weights are not the recorded best",
+                    checkpoint_path,
+                )
+            return
+        seed_state, metric = seed
+        if averager.consider_state(seed_state, metric) and is_main_process():
+            logger.info(
+                "average_best: seeded pool from the recorded best weights "
+                "(metric=%.5f); no average_pool.pt next to %s",
+                metric,
+                checkpoint_path,
+            )
+
+    def _average_seed_snapshot(
+        self, checkpoint_path: Path
+    ) -> Optional[Tuple[Dict[str, torch.Tensor], float]]:
+        """State and metric that were recorded together, or None."""
+        resumed_metric = float(getattr(self, "best_mAP50_95", 0.0) or 0.0)
+        if checkpoint_path.name.lower() == "best.pt":
+            return self._live_average_source_state(), resumed_metric
+        sibling = checkpoint_path.parent / "best.pt"
+        if sibling.is_file():
+            snapshot = self._snapshot_from_checkpoint(sibling)
+            if snapshot is not None:
+                return snapshot
+        resumed_epoch = int(getattr(self, "start_epoch", 1))
+        if resumed_epoch == int(getattr(self, "best_epoch", -1)):
+            return self._live_average_source_state(), resumed_metric
+        return None
+
+    def _live_average_source_state(self) -> Dict[str, torch.Tensor]:
+        source = self.ema_model.ema if self.ema_model else unwrap_model(self.model)
+        return source.state_dict()
+
+    def _snapshot_from_checkpoint(
+        self, path: Path
+    ) -> Optional[Tuple[Dict[str, torch.Tensor], float]]:
+        try:
+            blob = load_trusted_torch_file(
+                path, map_location="cpu", context="average_best seed checkpoint"
+            )
+        except Exception as exc:
+            logger.warning("Could not read %s to seed average_best: %s", path, exc)
+            return None
+        state = blob.get("model") if isinstance(blob, Mapping) else None
+        if not isinstance(state, Mapping):
+            logger.warning(
+                "Checkpoint %s has no model state to seed average_best", path
+            )
+            return None
+        metric = None
+        for key in ("best_metric_value", "best_metric", "best_mAP50_95"):
+            try:
+                candidate = float(blob[key])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if math.isfinite(candidate):
+                metric = candidate
+                break
+        if metric is None:
+            logger.warning(
+                "Checkpoint %s has no finite best metric to seed average_best", path
+            )
+            return None
+        return state, metric
+
     # =========================================================================
     # Checkpointing
     # =========================================================================
@@ -3375,6 +3907,7 @@ class BaseTrainer(ABC):
                 logger.warning(f"Could not restore RNG state: {e}")
 
         self.patience_counter = 0
+        self._restore_average_pool(checkpoint_path)
         logger.info(
             f"Resumed from epoch {self.start_epoch} "
             f"(will train to epoch {self.config.epochs})"

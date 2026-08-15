@@ -35,26 +35,28 @@ class _ProbeTrainer(BaseTrainer):
         raise NotImplementedError
 
 
-def test_qat_guards_disable_ema_and_sync_bn():
-    config = SimpleNamespace(ema=True, sync_bn=True)
+def test_qat_guards_disable_ema_sync_bn_and_checkpoint_averaging():
+    config = SimpleNamespace(ema=True, sync_bn=True, average_best=5)
 
     changed = apply_qat_training_guards(config)
 
-    assert changed == ("ema", "sync_bn")
+    assert changed == ("ema", "sync_bn", "average_best")
     assert config.ema is False
     assert config.sync_bn is False
+    assert config.average_best == 0
 
 
 def test_qat_guards_leave_disabled_options_unchanged():
-    config = SimpleNamespace(ema=False, sync_bn=False)
+    config = SimpleNamespace(ema=False, sync_bn=False, average_best=0)
 
     assert apply_qat_training_guards(config) == ()
     assert config.ema is False
     assert config.sync_bn is False
+    assert config.average_best == 0
 
 
 def test_trainer_logs_qat_guard_changes(caplog):
-    config = SimpleNamespace(ema=True, sync_bn=True, imgsz=(32, 64))
+    config = SimpleNamespace(ema=True, sync_bn=True, average_best=3, imgsz=(32, 64))
     trainer = _ProbeTrainer.__new__(_ProbeTrainer)
     trainer._is_setup = False
     trainer.config = config
@@ -68,12 +70,13 @@ def test_trainer_logs_qat_guard_changes(caplog):
 
     assert config.ema is False
     assert config.sync_bn is False
-    assert "ema=False, sync_bn=False" in caplog.text
+    assert config.average_best == 0
+    assert "ema=False, sync_bn=False, average_best=0" in caplog.text
     assert "QAT recipe 'int8'" in caplog.text
 
 
 def test_float_trainer_does_not_apply_qat_guards():
-    config = SimpleNamespace(ema=True, sync_bn=True, imgsz=(32, 64))
+    config = SimpleNamespace(ema=True, sync_bn=True, average_best=3, imgsz=(32, 64))
     trainer = _ProbeTrainer.__new__(_ProbeTrainer)
     trainer._is_setup = False
     trainer.config = config
@@ -84,3 +87,4 @@ def test_float_trainer_does_not_apply_qat_guards():
 
     assert config.ema is True
     assert config.sync_bn is True
+    assert config.average_best == 3

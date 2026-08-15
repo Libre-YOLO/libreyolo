@@ -447,6 +447,10 @@ def _build_rfdetr_train_kwargs(
         "freeze": "freeze",
         "log_interval": "log_interval",
         "cache": "cache",
+        "class_balanced": "class_balanced",
+        "average_best": "average_best",
+        "export_check": "export_check",
+        "precise_bn": "precise_bn",
     }
 
     for cli_name, target_name in direct_mappings.items():

@@ -219,6 +219,23 @@ class TrainConfig:
     # behavior is identical to before the knob existed. Only families that
     # build their train loader through the shared create_dataloader honor it.
     min_samples: int = 0
+    # Opt-in LVIS-style repeat-factor sampling. Rare classes are oversampled
+    # so long-tailed sets (RF100-style) see them every epoch. Off by default:
+    # the historical uniform / DistributedSampler is unchanged. Honored by
+    # families that build the train loader through create_dataloader.
+    class_balanced: bool = False
+    # Rolling uniform average of the N best checkpoints ranked by the
+    # watched validation metric, written to weights/average.pt at the end
+    # of training. 0 (default) is off: best.pt / last.pt are unchanged.
+    average_best: int = 0
+    # Export the model to ONNX before epoch 1 and fail the run if export
+    # breaks. Numeric compare runs only when torch and ONNX layouts match.
+    export_check: bool = False
+    # Recompute BatchNorm running stats from this many train images after
+    # the last epoch (before its validation), and refresh a historical
+    # best checkpoint if it remains selected. 0 (default) is off. No-op on
+    # LayerNorm-only families.
+    precise_bn: int = 0
     patience: int = 50
     resume: bool = False
     log_interval: int = 10
@@ -255,6 +272,14 @@ class TrainConfig:
         self.min_samples = int(self.min_samples)
         if self.min_samples < 0:
             raise ValueError(f"min_samples must be >= 0, got {self.min_samples}")
+        self.average_best = int(self.average_best)
+        if self.average_best < 0:
+            raise ValueError(f"average_best must be >= 0, got {self.average_best}")
+        self.precise_bn = int(self.precise_bn)
+        if self.precise_bn < 0:
+            raise ValueError(f"precise_bn must be >= 0, got {self.precise_bn}")
+        self.class_balanced = bool(self.class_balanced)
+        self.export_check = bool(self.export_check)
 
     @classmethod
     def from_kwargs(cls, **kwargs):

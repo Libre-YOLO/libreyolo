@@ -277,15 +277,22 @@ Used for: PP-LiteSeg semantic segmentation family
           libreyolo/models/ppliteseg/NOTICE.
 
 --------------------------------------------------------------------
-SuperGradients / QAT training safeguards
+SuperGradients / training safeguards and helpers
 --------------------------------------------------------------------
 Source: https://github.com/Deci-AI/super-gradients
         pinned commit 63de22c404d5740f34f7706c302b37fce3c8fe5d
 License: Apache License 2.0 (repository LICENSE.md at that commit)
 Copyright (c) 2021-2024 Deci AI
-Used for: the QAT-time EMA and SyncBatchNorm disable policy in
-          libreyolo/training/qat_defaults.py. The LibreYOLO implementation
-          is original; no upstream source code was copied.
+Used for: original LibreYOLO implementations of the QAT-time EMA and
+          SyncBatchNorm disable policy, metric-gated top-N checkpoint
+          averaging, precise BatchNorm re-estimation, repeat-factor
+          class-balanced sampling, and an epoch-0 ONNX export check. Code
+          lives in libreyolo/training/qat_defaults.py,
+          libreyolo/training/weight_averaging.py,
+          libreyolo/training/precise_bn.py,
+          libreyolo/training/export_check.py, and
+          libreyolo/data/class_balanced.py. No upstream source code was
+          copied.
 
 --------------------------------------------------------------------
 STDC-Seg (MichaelFan01)

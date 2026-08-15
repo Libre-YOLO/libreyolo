@@ -24,6 +24,13 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **Opt-in training helpers (#768).** `class_balanced=True` enables
+  repeat-factor sampling for long-tailed detection datasets;
+  `average_best=N` writes the uniform mean of the N best validation
+  checkpoints; `export_check=True` verifies ONNX export before epoch 1; and
+  `precise_bn=N` recomputes BatchNorm statistics from N training images before
+  final validation. All four default off.
+
 - **Gemma 4 and Moondream in LibreVLM.** `LibreVLM("gemma-4")` loads
   Gemma 4 E4B (Apache-2.0; `e2b` also aliased) and parses the official
   y-first `box_2d` 0-1000 JSON. `LibreVLM("moondream")` loads Moondream 2

@@ -39,6 +39,16 @@ _LORA_TRAIN_FAMILIES = {
     "convnext",
 }
 
+# Always own their train loader; class_balanced never reaches create_dataloader.
+# EC / YOLO-NAS are task-dependent and are rejected at trainer setup instead.
+_CLASS_BALANCED_UNSUPPORTED_FAMILIES = {
+    "dfine",
+    "deim",
+    "deimv2",
+    "fomo",
+    "vjepa2",
+}
+
 
 def _model_ref_exists(model_path: str) -> bool:
     path = Path(model_path)
@@ -286,6 +296,28 @@ def train_cmd(
         help="Epoch-length floor for tiny datasets: when the dataset has "
         "fewer images, draw this many samples per epoch with replacement "
         "(0 = off)",
+    ),
+    class_balanced: bool = typer.Option(
+        False,
+        "--class-balanced/--no-class-balanced",
+        help="LVIS-style repeat-factor sampling for long-tailed datasets "
+        "(default: off)",
+    ),
+    average_best: int = typer.Option(
+        0,
+        help="Uniform-average the N best checkpoints by the watched metric "
+        "into weights/average.pt at the end of training (0 = off)",
+    ),
+    export_check: bool = typer.Option(
+        False,
+        "--export-check/--no-export-check",
+        help="Export ONNX before epoch 1 and fail the run if export breaks "
+        "(default: off)",
+    ),
+    precise_bn: int = typer.Option(
+        0,
+        help="Recompute BatchNorm running stats from this many train images "
+        "after the last epoch (0 = off)",
     ),
     seed: int = typer.Option(0, help="Random seed"),
     resume: str = typer.Option("", help="Resume training: true, or path to checkpoint"),
@@ -556,6 +588,10 @@ def train_cmd(
         "workers": workers,
         "cache": cache_val,
         "min_samples": min_samples,
+        "class_balanced": class_balanced,
+        "average_best": average_best,
+        "export_check": export_check,
+        "precise_bn": precise_bn,
         "seed": seed,
         "resume": resume_val,
         "amp": amp,
@@ -633,6 +669,22 @@ def train_cmd(
                 f"{', '.join(sorted(ignored_warnings))}"
             )
 
+    if (
+        family in _CLASS_BALANCED_UNSUPPORTED_FAMILIES
+        and "class_balanced" in user_provided
+        and params.get("class_balanced")
+    ):
+        exit_with_error(
+            out,
+            "config_unsupported",
+            f"class_balanced=True is not supported for {family}.",
+            suggestion=(
+                "This family builds its own dataloader. Use a family that "
+                "trains through the shared detection sampler (e.g. YOLO9), "
+                "or omit class_balanced."
+            ),
+        )
+
     # Dry run: validate and show resolved config
     if dry_run:
         resolved_config = {
@@ -648,6 +700,10 @@ def train_cmd(
             "amp": params["amp"],
             "amp_dtype": params["amp_dtype"],
             "max_det": params["max_det"],
+            "class_balanced": params["class_balanced"],
+            "average_best": params["average_best"],
+            "export_check": params["export_check"],
+            "precise_bn": params["precise_bn"],
         }
         if params.get("freeze") is not None:
             resolved_config["freeze"] = params["freeze"]
@@ -679,6 +735,10 @@ def train_cmd(
                 "max_det": params["max_det"],
                 "save_period": params["save_period"],
                 "lora": params["lora"],
+                "class_balanced": params["class_balanced"],
+                "average_best": params["average_best"],
+                "export_check": params["export_check"],
+                "precise_bn": params["precise_bn"],
             }
             if params.get("freeze") is not None:
                 resolved_config["freeze"] = params["freeze"]
