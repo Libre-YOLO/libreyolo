@@ -161,7 +161,7 @@ from libreyolo import LibreGround
 r = LibreGround()("screen.png", prompt="Bluetooth")   # ShowUI-2B default
 x, y = r.points.xy[0].tolist()                        # original-canvas pixels
 
-model = LibreGround("holo-7b")                        # or ui-tars, tinyclick,
+model = LibreGround("holo-7b")                        # or ui-tars, moondream,
 model.set_query("the red Save button")                # florence-2, qwen3-vl, ...
 r = model.predict("folder/")
 ```

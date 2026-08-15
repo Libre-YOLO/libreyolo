@@ -25,8 +25,12 @@ __all__ = [
 
 COORD_SPACES = ("unit", "milli", "pixel", "pixel_view")
 
+_CLICK_KWARGS = re.compile(
+    r"\b(?:pyautogui\.)?click\s*\(\s*x\s*=\s*([\d.]+)\s*,\s*y\s*=\s*([\d.]+)\s*\)",
+    re.IGNORECASE,
+)
 _CLICK_XY = re.compile(
-    r"\bclick\s*\(\s*(?:(?:point|start_box)\s*=\s*)?"
+    r"\b(?:pyautogui\.)?click\s*\(\s*(?:(?:point|start_box)\s*=\s*)?"
     r"(?:['\"]?<point>\s*)?"
     r"([\d.]+)\s*[, ]\s*([\d.]+)"
     r"(?:\s*</point>['\"]?)?"
@@ -145,6 +149,12 @@ def extract_clicks(text: str | None) -> List[dict]:
     if not isinstance(text, str) or not text.strip():
         return []
 
+    clicks = [
+        {"point": [float(match.group(1)), float(match.group(2))]}
+        for match in _CLICK_KWARGS.finditer(text)
+    ]
+    if clicks:
+        return clicks
     clicks = [
         {"point": [float(match.group(1)), float(match.group(2))]}
         for match in _CLICK_XY.finditer(text)

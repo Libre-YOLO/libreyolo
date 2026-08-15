@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import ClassVar, Dict
 
+from ..vlm.base import LibreVLMModel
 from .base import LibreGroundModel
 
 
@@ -24,6 +25,12 @@ class LibreShowUI(LibreGroundModel):
     }
     COORD_SPACE = "unit"
     MAX_NEW_TOKENS = 64
+    # Upstream ships only pytorch_model.bin (no safetensors).
+    SNAPSHOT_IGNORE_PATTERNS = tuple(
+        pattern
+        for pattern in LibreVLMModel.SNAPSHOT_IGNORE_PATTERNS
+        if pattern not in ("*.bin", "*.bin.index.json")
+    )
 
     def _format_grounding_prompt(self, query: str) -> str:
         return (

@@ -59,6 +59,12 @@ OPTIONAL_MODELS = (
         "transformers",
     ),
     (
+        "libreyolo.models.ground.moondream",
+        "LibreGroundMoondream",
+        "vlm",
+        "transformers",
+    ),
+    (
         "libreyolo.models.openvocab.grounding_dino",
         "LibreGroundingDINO",
         "openvocab",

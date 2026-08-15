@@ -17,6 +17,7 @@ from .base import GroundAPIMixin, LibreGroundModel
 from .florence import LibreGroundFlorence2
 from .holo import LibreHolo
 from .locate import LibreGroundLocateAnything
+from .moondream import LibreGroundMoondream
 from .qwen3vl import LibreGroundQwen3VL
 from .showui import LibreShowUI
 from .tinyclick import LibreTinyClick
@@ -45,6 +46,11 @@ _ALIASES: Dict[str, Tuple[Type, str]] = {
     "florence-2-large": (LibreGroundFlorence2, "large"),
     "tinyclick": (LibreTinyClick, "b"),
     "tiny-click": (LibreTinyClick, "b"),
+    "moondream": (LibreGroundMoondream, "2"),
+    "moondream2": (LibreGroundMoondream, "2"),
+    "moondream-2": (LibreGroundMoondream, "2"),
+    "moondream3": (LibreGroundMoondream, "3"),
+    "moondream-3": (LibreGroundMoondream, "3"),
     "locate-anything": (LibreGroundLocateAnything, "3b"),
     "locateanything": (LibreGroundLocateAnything, "3b"),
     "locate-anything-3b": (LibreGroundLocateAnything, "3b"),
@@ -92,5 +98,6 @@ __all__ = [
     "LibreTinyClick",
     "LibreGroundFlorence2",
     "LibreGroundLocateAnything",
+    "LibreGroundMoondream",
     "LibreGroundQwen3VL",
 ]

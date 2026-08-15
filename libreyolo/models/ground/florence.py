@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Dict, Tuple
 
 from ...utils.image_loader import ImageInput, ImageLoader
+from ..vlm.base import _INSTALL_HINT
 from .base import LibreGroundModel
 from .parsing import build_point_dict
 
@@ -30,6 +31,25 @@ class LibreGroundFlorence2(LibreGroundModel):
     TASK = "<CAPTION_TO_PHRASE_GROUNDING>"
     NUM_BEAMS = 3
     MAX_NEW_TOKENS = 256
+
+    def _load_pretrained(self, snapshot_dir: str):
+        try:
+            from transformers import AutoProcessor
+        except ImportError as exc:
+            raise ImportError(_INSTALL_HINT) from exc
+        try:
+            from transformers import Florence2ForConditionalGeneration as model_cls
+        except ImportError:
+            from transformers import AutoModelForImageTextToText as model_cls
+        model = model_cls.from_pretrained(
+            snapshot_dir,
+            dtype=self._resolve_dtype(),
+            trust_remote_code=self.TRUST_REMOTE_CODE,
+        )
+        processor = AutoProcessor.from_pretrained(
+            snapshot_dir, trust_remote_code=self.TRUST_REMOTE_CODE
+        )
+        return model, processor
 
     def _preprocess(
         self,
@@ -75,6 +95,10 @@ class LibreGroundFlorence2(LibreGroundModel):
         labels = payload.get("bboxes_labels", payload.get("labels", []))
         items = []
         query = self._active_query()
+        query_key = query.strip().lower()
+        width, height = original_size
+        frame_area = max(float(width) * float(height), 1.0)
+        scored = []
         for index, box in enumerate(boxes):
             if not isinstance(box, (list, tuple)) or len(box) != 4:
                 continue
@@ -83,12 +107,38 @@ class LibreGroundFlorence2(LibreGroundModel):
             except (TypeError, ValueError):
                 continue
             label = labels[index] if index < len(labels) else query
-            items.append(
-                {
-                    "label": str(label) if label else query,
-                    "point": [(x1 + x2) / 2.0, (y1 + y2) / 2.0],
-                }
+            area = max(0.0, (x2 - x1) * (y2 - y1))
+            scored.append(
+                (
+                    area,
+                    {
+                        "label": str(label) if label else query,
+                        "point": [(x1 + x2) / 2.0, (y1 + y2) / 2.0],
+                    },
+                )
             )
+        # Drop whole-image boxes; phrase grounding often emits those first.
+        compact = [item for area, item in scored if area < 0.5 * frame_area]
+        pool = compact or [item for _, item in scored]
+        matched = [
+            item
+            for item in pool
+            if query_key in str(item.get("label") or "").strip().lower()
+        ]
+        if matched:
+            pool = matched
+        if pool:
+            # Tightest remaining box is the click target.
+            items = [
+                min(
+                    (
+                        (area, item)
+                        for area, item in scored
+                        if item in pool
+                    ),
+                    key=lambda pair: pair[0],
+                )[1]
+            ]
         return build_point_dict(
             items,
             getattr(self, "_name_to_id", {}) or {query.lower(): 0},

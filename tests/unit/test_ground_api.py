@@ -9,6 +9,7 @@ from libreyolo.models.ground import (
     LibreGround,
     LibreGroundFlorence2,
     LibreGroundLocateAnything,
+    LibreGroundMoondream,
     LibreGroundQwen3VL,
     LibreHolo,
     LibreShowUI,
@@ -116,6 +117,7 @@ class TestFactoryResolution:
         assert _ALIASES["tinyclick"] == (LibreTinyClick, "b")
         assert _ALIASES["florence-2"] == (LibreGroundFlorence2, "base")
         assert _ALIASES["locate-anything"] == (LibreGroundLocateAnything, "3b")
+        assert _ALIASES["moondream"] == (LibreGroundMoondream, "2")
         assert _ALIASES["qwen3-vl-4b"] == (LibreGroundQwen3VL, "4b")
 
     def test_unknown_alias_raises_before_loading(self):
@@ -141,6 +143,6 @@ class TestContract:
         assert LibreGroundFlorence2.COORD_SPACE == "pixel"
         assert LibreGroundQwen3VL.COORD_SPACE == "milli"
 
-    def test_tinyclick_pins_remote_code_revision(self):
-        assert LibreTinyClick.TRUST_REMOTE_CODE is True
-        assert len(LibreTinyClick.HF_REVISIONS["b"]) == 40
+    def test_tinyclick_uses_native_florence(self):
+        assert LibreTinyClick.TRUST_REMOTE_CODE is False
+        assert LibreTinyClick.HF_REPOS["b"] == "Krystianz/TinyClick"

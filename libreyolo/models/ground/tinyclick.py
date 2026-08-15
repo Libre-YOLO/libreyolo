@@ -19,41 +19,39 @@ class LibreTinyClick(LibreGroundModel):
     FILENAME_PREFIX = "LibreTinyClick"
 
     HF_REPOS: ClassVar[Dict[str, str]] = {
-        "b": "kzawistowsk/TinyClick",
-    }
-    HF_REVISIONS: ClassVar[Dict[str, str]] = {
-        "b": "a9c0e2cfb9d3660217254838198d227501629085",
+        "b": "Krystianz/TinyClick",
     }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         "b": 768,
     }
     COORD_SPACE = "milli"
-    TRUST_REMOTE_CODE = True
+    TRUST_REMOTE_CODE = False
     MAX_NEW_TOKENS = 64
 
-    _LICENSE_NOTICE = (
-        "\n"
-        "----------------------------------------------------------------\n"
-        "TinyClick is a Florence-2 fine-tune (MIT). Loading it downloads\n"
-        "and executes Hugging Face remote code from the model repository.\n"
-        "LibreYOLO pins the snapshot revision and does not redistribute it.\n"
-        "  https://huggingface.co/kzawistowsk/TinyClick\n"
-        "----------------------------------------------------------------\n"
-    )
-
     def _load_pretrained(self, snapshot_dir: str):
+        import json
+        from pathlib import Path
+
         try:
-            from transformers import AutoModelForCausalLM, AutoProcessor
+            from transformers import AutoProcessor, Florence2Config
+            from transformers import Florence2ForConditionalGeneration
         except ImportError as exc:
             raise ImportError(_INSTALL_HINT) from exc
-        model = AutoModelForCausalLM.from_pretrained(
+
+        raw = json.loads((Path(snapshot_dir) / "config.json").read_text(encoding="utf-8"))
+        text = raw.get("text_config")
+        if isinstance(text, dict) and text.get("model_type") == "florence2_language":
+            text["model_type"] = "bart"
+        vision = raw.get("vision_config")
+        if isinstance(vision, dict) and vision.get("model_type") == "davit":
+            vision["model_type"] = "florence_vision"
+        config = Florence2Config.from_dict(raw)
+        model = Florence2ForConditionalGeneration.from_pretrained(
             snapshot_dir,
+            config=config,
             dtype=self._resolve_dtype(),
-            trust_remote_code=self.TRUST_REMOTE_CODE,
         )
-        processor = AutoProcessor.from_pretrained(
-            snapshot_dir, trust_remote_code=self.TRUST_REMOTE_CODE
-        )
+        processor = AutoProcessor.from_pretrained(snapshot_dir)
         return model, processor
 
     def _format_grounding_prompt(self, query: str) -> str:

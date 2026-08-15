@@ -107,6 +107,7 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
     from libreyolo import (
         LibreGround,
         LibreGroundFlorence2,
+        LibreGroundMoondream,
         LibreHolo,
         LibreShowUI,
         LibreTinyClick,
@@ -121,6 +122,7 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
         LibreUITARS,
         LibreTinyClick,
         LibreGroundFlorence2,
+        LibreGroundMoondream,
     ):
         if not isinstance(family, type):
             raise AssertionError(

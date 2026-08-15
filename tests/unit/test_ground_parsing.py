@@ -16,6 +16,11 @@ class TestExtractClicks:
     def test_click_function(self):
         assert extract_clicks("Click(352, 348)") == [{"point": [352.0, 348.0]}]
 
+    def test_click_kwargs(self):
+        assert extract_clicks("pyautogui.click(x=120, y=80)") == [
+            {"point": [120.0, 80.0]}
+        ]
+
     def test_click_point_tag(self):
         text = "Action: click(point='<point>450 320</point>')"
         assert extract_clicks(text) == [{"point": [450.0, 320.0]}]

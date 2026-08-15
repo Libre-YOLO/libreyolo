@@ -65,7 +65,8 @@ size marked `*`. The authoritative table is `_ALIASES` in
 | `holo`, `holo-7b`* | Holo1.5-7B | Apache-2.0 | resized pixels | quality tier |
 | `ui-tars`, `ui-tars-7b`* | UI-TARS-1.5-7B | Apache-2.0 | 0–1000 | quality tier |
 | `florence-2`, `-base`*, `-large` | Florence-2 | MIT | pixel boxes → center | already in LibreVLM |
-| `tinyclick`* | TinyClick | MIT | Florence `<loc_*>` | 0.27B; remote code, pinned |
+| `tinyclick`* | TinyClick | MIT | Florence `<loc_*>` | 0.27B; current transformers 5 cannot load the 2024 checkpoint |
+| `moondream`, `moondream-2`* | Moondream 2 | Apache-2.0 | `[0,1]` | wraps the VLM family; native `point()` |
 | `locate-anything`* | LocateAnything | NVIDIA NC | 0–1000 | wraps the VLM family |
 | `qwen3-vl`, `-2b`, `-4b`*, `-8b` | Qwen3-VL | Apache-2.0 | 0–1000 | generalist, last resort |
 
