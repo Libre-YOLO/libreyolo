@@ -167,6 +167,14 @@ casing (CamelCase) is intentionally preserved. See
 [`librevlm_design.md`](librevlm_design.md) and
 [`adr/0007-libresam-contract.md`](adr/0007-libresam-contract.md).
 
+The grounding tier (`LibreGround`) is also separate from the checkpoint
+factory. Its weights-directory prefixes (`LibreShowUI`, `LibreHolo`,
+`LibreUITARS`, `LibreTinyClick`, `LibreGroundFlorence2`,
+`LibreGroundQwen3VL`) identify downloaded Hugging Face snapshots. These
+models emit `Results.points` (task `point`); they are not registered into
+the detector factory. See [`libreground_design.md`](libreground_design.md)
+and [`adr/0020-libreground-contract.md`](adr/0020-libreground-contract.md).
+
 The open-vocabulary detector tier is also separate from the checkpoint factory.
 Its weights-directory prefixes (`LibreGroundingDINO`, `LibreOWLv2`,
 `LibreOMDetTurbo`) identify

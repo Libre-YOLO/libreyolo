@@ -100,8 +100,12 @@ llm = [
     # endpoints through the official Apache-2.0 OpenAI Python SDK.
     "openai>=1.66.0",
 ]
+ground = [
+    # LibreGround (instruction → click) shares the VLM extra stack.
+    "libreyolo[vlm]",
+]
 vlm = [
-    # VLM-as-detector families load through transformers.
+    # VLM-as-detector and LibreGround families load through transformers.
     # huggingface_hub (used for snapshot download) ships with transformers.
     "transformers>=5.1.0",
     # SmolVLM2's processor requires num2words.

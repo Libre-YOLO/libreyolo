@@ -42,6 +42,22 @@ OPTIONAL_MODELS = (
     ("libreyolo.models.vlm.moondream", "LibreMoondream", "vlm", "transformers"),
     ("libreyolo.models.vlm.qwen3vl", "LibreQwen3VL", "vlm", "transformers"),
     ("libreyolo.models.vlm.smolvlm", "LibreSmolVLM2", "vlm", "transformers"),
+    ("libreyolo.models.ground.showui", "LibreShowUI", "vlm", "transformers"),
+    ("libreyolo.models.ground.holo", "LibreHolo", "vlm", "transformers"),
+    ("libreyolo.models.ground.uitars", "LibreUITARS", "vlm", "transformers"),
+    ("libreyolo.models.ground.tinyclick", "LibreTinyClick", "vlm", "transformers"),
+    (
+        "libreyolo.models.ground.florence",
+        "LibreGroundFlorence2",
+        "vlm",
+        "transformers",
+    ),
+    (
+        "libreyolo.models.ground.qwen3vl",
+        "LibreGroundQwen3VL",
+        "vlm",
+        "transformers",
+    ),
     (
         "libreyolo.models.openvocab.grounding_dino",
         "LibreGroundingDINO",

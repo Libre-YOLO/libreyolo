@@ -104,6 +104,29 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
         LibreVLM,
     )
 
+    from libreyolo import (
+        LibreGround,
+        LibreGroundFlorence2,
+        LibreHolo,
+        LibreShowUI,
+        LibreTinyClick,
+        LibreUITARS,
+    )
+
+    if not callable(LibreGround):
+        raise AssertionError("LibreGround import did not resolve to a callable")
+    for family in (
+        LibreShowUI,
+        LibreHolo,
+        LibreUITARS,
+        LibreTinyClick,
+        LibreGroundFlorence2,
+    ):
+        if not isinstance(family, type):
+            raise AssertionError(
+                f"Ground family export did not resolve to a class: {family!r}"
+            )
+
     if not callable(LibreVLM):
         raise AssertionError("LibreVLM import did not resolve to a callable")
     for family in (
