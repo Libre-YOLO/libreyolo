@@ -35,18 +35,32 @@ project the weights were derived from. Per-family summary:
              recoverable, so LibreYOLO1t ships as code only (bring your own
              tiny-yolov1.weights to convert).
 
-    Dome-DETR (LibreDOMEDETR{s,m,l}-{aitod,visdrone})  NOT REDISTRIBUTED
+    Dome-DETR (LibreDOMEDETR{s,m,l}-{aitod,visdrone})
+                                                        ACADEMIC-RESEARCH-ONLY
              upstream: https://huggingface.co/RicePasteM/Dome-DETR
-             Not mirrored to the LibreYOLO organization. The upstream model
-             card carries no license field in its metadata, and its prose
-             simultaneously states the project is Apache-2.0 and that the
-             material is "for academic research purposes only". Those do not
-             agree, and the stricter reading is not a redistribution grant, so
-             the weight license is implied from the source repository rather
-             than stated. Until upstream sets an explicit license, download the
-             checkpoints from the link above and convert locally with
-             weights/convert_domedetr_weights.py. This follows the YOLO-NAS
-             precedent of linking rather than rehosting.
+             revision: 530230620d1f3261a267d462989cddf204cc6e10
+             Mirrored to the LibreYOLO organization under the upstream model
+             card's stricter statement that the weight files are "for academic
+             research purposes only". These checkpoints are NOT covered by
+             LibreYOLO's MIT license and must not be presented as commercially
+             cleared.
+
+             Full context: the upstream model repo carries no license field in
+             its Hugging Face metadata and no LICENSE file. Its README also
+             says "This project is licensed under the Apache 2.0 license", but
+             that sentence links to a missing LICENSE file. LibreYOLO's
+             maintainer approved rehosting by treating the Apache statement as
+             the redistribution basis and preserving the academic-only sentence
+             as the controlling use restriction. This is a disclosed LibreYOLO
+             interpretation, not an upstream clarification or a claim that the
+             two statements are legally consistent. Every mirror uses
+             `license: other`, leads with the restriction, and ships a LICENSE
+             and NOTICE reproducing this context. Users remain responsible for
+             reviewing the upstream terms.
+
+             Conversion only adds LibreYOLO checkpoint metadata; state-dict
+             keys and learned tensors are unchanged. Source SHA-256 values are
+             recorded in the converted checkpoints and per-repository notices.
              There is no COCO checkpoint for this family: only AI-TOD-V2
              (9 classes) and VisDrone (12), hence the dataset suffix on every
              canonical filename and the absence of a bare LibreDOMEDETRs.pt.

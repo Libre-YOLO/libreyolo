@@ -24,6 +24,14 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **Hosted Dome-DETR checkpoints.** The six official AI-TOD-V2 and VisDrone
+  checkpoints now auto-download from LibreYOLO under the upstream card's
+  academic-research-only restriction. Every download warns that the weights
+  are not covered by LibreYOLO's MIT license. Each mirror uses `license: other`
+  and records the complete upstream ambiguity: the card also claims
+  Apache-2.0 but has neither license metadata nor a weight-repository LICENSE
+  file. The learned tensors are unchanged; conversion adds metadata only.
+
 - **Opt-in training helpers (#768).** `class_balanced=True` enables
   repeat-factor sampling for long-tailed detection datasets;
   `average_best=N` writes the uniform mean of the N best validation
