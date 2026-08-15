@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -11,6 +12,15 @@ import torch
 from PIL import Image
 
 pytestmark = pytest.mark.unit
+
+
+def _export_stub():
+    return SimpleNamespace(
+        task="matte",
+        device=torch.device("cpu"),
+        _get_model_name=lambda: "ben2",
+        _get_input_size=lambda: 1024,
+    )
 
 
 @pytest.mark.external_data
@@ -114,6 +124,27 @@ def test_ben2_checkpoint_detection_and_filename():
     assert LibreBEN2.detect_checkpoint_task(state_dict) == "matte"
     assert LibreBEN2.detect_size_from_filename("LibreBEN2b-matte.pt") == "b"
     assert LibreBEN2.detect_size_from_filename("LibreBEN2b.pt") is None
+
+
+def test_ben2_export_rejects_non_batch_one():
+    from libreyolo.export.exporter import OnnxExporter
+
+    with pytest.raises(ValueError, match=r"batch-1.*batch=2"):
+        OnnxExporter(_export_stub())(batch=2, dynamic=False)
+
+
+@pytest.mark.parametrize("imgsz", [640, (1024, 640)])
+def test_ben2_export_rejects_non_native_imgsz(imgsz):
+    from libreyolo.export.exporter import OnnxExporter
+
+    with pytest.raises(ValueError, match=r"fixed native resolution 1024x1024"):
+        OnnxExporter(_export_stub())._resolve_params(
+            output_path="ben2.onnx",
+            imgsz=imgsz,
+            device="cpu",
+            half=False,
+            int8=False,
+        )
 
 
 def test_ben2_rejects_other_matte_and_generic_state_dicts():
