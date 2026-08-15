@@ -32,6 +32,11 @@ before 1.4.0 are documented in the
   Apache-2.0 but has neither license metadata nor a weight-repository LICENSE
   file. The learned tensors are unchanged; conversion adds metadata only.
 
+- **BEN2 background removal.** `LibreBEN2b-matte.pt` adds the MIT-licensed
+  BEN2 Base model at fixed 1024 resolution with batched prediction, matte
+  validation, transparent cutout saving, strict safetensors conversion, and
+  fixed-resolution ONNX/TorchScript export.
+
 - **Opt-in training helpers (#768).** `class_balanced=True` enables
   repeat-factor sampling for long-tailed detection datasets;
   `average_best=N` writes the uniform mean of the N best validation

@@ -506,6 +506,11 @@ def _wrap_claim(
         # releases normally carry no names, so never fabricate ``class_0``.
         nc = 1
         names = {0: "depth"}
+    if task == "matte":
+        # Alpha-matte checkpoints also use a schema-only slot. Keep raw
+        # upstream auto-conversion consistent with the matte task contract.
+        nc = 1
+        names = {0: "matte"}
     if task == "pose":
         num_keypoints = None
         detect_keypoints = getattr(cls, "detect_num_keypoints", None)

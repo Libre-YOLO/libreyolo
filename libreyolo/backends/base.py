@@ -858,10 +858,12 @@ class BaseBackend(ABC):
             ratio,
         )
 
-    @staticmethod
-    def _preprocess_matte(image, input_size, color_format):
-        """BiRefNet fixed-canvas ImageNet-normalized matte preprocessing."""
-        from ..models.birefnet.utils import preprocess_numpy
+    def _preprocess_matte(self, image, input_size, color_format):
+        """Family-specific fixed-canvas ImageNet-normalized matte preprocessing."""
+        if self.model_family == "ben2":
+            from ..models.ben2.utils import preprocess_numpy
+        else:
+            from ..models.birefnet.utils import preprocess_numpy
 
         input_h, input_w = _imgsz_hw(input_size)
         if input_h != input_w:

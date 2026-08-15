@@ -17,6 +17,24 @@
     "available": true,
     "group": "g3"
   },
+  "ben2": {
+    "class": "libreyolo.models.ben2.model.LibreBEN2",
+    "tasks": [
+      "matte"
+    ],
+    "default_task": "matte",
+    "sizes": {
+      "b": 1024
+    },
+    "default_imgsz": {
+      "b": 1024
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "birefnet": {
     "class": "libreyolo.models.birefnet.model.LibreBiRefNet",
     "tasks": [

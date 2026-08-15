@@ -1326,6 +1326,35 @@ Used for: the FeyNobg background-removal model family
           the released weights.
 
 --------------------------------------------------------------------
+BEN2 (Prama LLC)
+--------------------------------------------------------------------
+Source: https://github.com/PramaLLC/BEN2
+Commit: 2c99a5da477b5523585bfa5c893888a6e818a8f6
+License: MIT
+Copyright (c) 2025 Prama LLC
+Used for: the BEN2 Base background-removal model family
+          (libreyolo/models/ben2/, matte task). The port covers the
+          public Base mask network, keeps the released parameter names,
+          replaces einops-only reshapes with native PyTorch, removes
+          global random-state mutations, and returns logits for the shared
+          matte-task postprocessing contract. Exact fp32 parity is recorded
+          by weights/parity_ben2.py for batch 1 and batch 2 at 1024.
+
+BEN2's multi-field cross-attention and refinement modules follow MVANet:
+Source: https://github.com/qianyu-dlut/MVANet
+Commit: edecec5db30c1c40d5204c630ec3779a428795ee
+License: MIT
+Copyright (c) 2024 qianyu-dlut
+
+The optional upstream foreground-colour refinement helper is excluded because
+its separately attributed source has no declared license. Upstream video and
+media helpers are also outside the port. Released BEN2 Base weights are
+declared MIT by the upstream Hugging Face model card and are documented in
+weights/LICENSE_NOTICE.txt. Upstream states that BEN2 was trained on DIS5K and
+Prama LLC's proprietary 22K segmentation dataset; LibreYOLO redistributes no
+training data.
+
+--------------------------------------------------------------------
 PaddleOCR (PaddlePaddle)
 --------------------------------------------------------------------
 Source: https://github.com/PaddlePaddle/PaddleOCR (commit 211989f)

@@ -475,10 +475,11 @@ class BaseExporter(ABC):
             # in the tuple export wrapper). Other families default to 13.
             opset = 17 if _requires_onnx_opset17(self.model._get_model_name()) else 13
 
-        # BiRefNet's decoder uses torchvision deform_conv2d, which maps to the
-        # standard ONNX ``DeformConv`` op (opset 19+). Force a compatible opset
-        # and register the symbolic before tracing.
-        if getattr(self.model, "task", "detect") == "matte":
+        # The BiRefNet-derived decoders use torchvision deform_conv2d, which
+        # maps to the standard ONNX ``DeformConv`` op (opset 19+). BEN2 is also
+        # a matte family but has no deformable convolution, so it keeps the
+        # normal exporter opset and needs no custom symbolic.
+        if self.model._get_model_name() in {"birefnet", "feynobg"}:
             from ..models.birefnet.export import (
                 MIN_OPSET as _MATTE_MIN_OPSET,
             )
