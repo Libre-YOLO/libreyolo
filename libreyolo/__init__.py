@@ -186,6 +186,7 @@ def __getattr__(name):
         "TrackConfig": (".tracking", "TrackConfig"),
         "OCSortTracker": (".tracking", "OCSortTracker"),
         "OCSortConfig": (".tracking", "OCSortConfig"),
+        "LibreLLM": (".models.llm", "LibreLLM"),
         "LibreVLM": (".models.vlm", "LibreVLM"),
         "LibreLFM2VL": (".models.vlm", "LibreLFM2VL"),
         "LibreQwen3VL": (".models.vlm", "LibreQwen3VL"),
@@ -330,6 +331,8 @@ __all__ = [
     "LibreNorthMicroVision",
     "LibreMODUS",
     "LibreModus",
+    # OpenAI-compatible LLM client (optional, requires libreyolo[llm])
+    "LibreLLM",
     # Promptable-segmentation tier (optional, requires libreyolo[sam])
     "LibreSAM",
     "LibreSAM1",
