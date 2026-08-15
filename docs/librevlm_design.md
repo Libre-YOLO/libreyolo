@@ -308,11 +308,13 @@ What is different, loudly:
 - **Live sources raise.** Webcam, network streams, and screen capture are
   unbounded metered calls; pass finite sources. Multi-image runs log a
   one-line metered banner first.
-- **An empty result is never ambiguous.** HTTP failure, unparseable text,
-  and refusals yield empty boxes plus
-  `result.remote = {"error": "http" | "parse" | "refusal", ...}`, and the
-  run logs a failure summary. A clean "found nothing" has no `.remote`.
-  Auth or bad-model errors raise immediately instead.
+- **An empty result is never ambiguous.** HTTP failures, unparseable text,
+  refusals, and truncated answers set
+  `result.remote = {"error": "http" | "parse" | "refusal" | "truncated", ...}`,
+  and the run logs a failure summary. A clean "found nothing" has no
+  `.remote`. Auth or bad-model errors raise immediately instead. Raising
+  `max_new_tokens=` is the fix for `truncated` (a crowded image needs more
+  output budget than a sparse one).
 - **`batch=` means request concurrency** (thread pool over per-image HTTP,
   default 8), not a stacked tensor.
 - `device=`, `tiling=`, `augment=`, `train()`, `val()`, `export()` raise.

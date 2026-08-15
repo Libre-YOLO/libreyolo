@@ -58,13 +58,27 @@ closed local alias table to disambiguate against; `LibreLLM` does not.
 
 ### An empty result is never ambiguous
 
-Per-image failure never aborts a folder, and every non-clean empty carries
-`result.remote = {"error": "http" | "parse" | "refusal", "detail", "model"}`.
-Auth / bad-model / bad-request errors raise loudly (they would fail on every
-image; converting them to empties would silently zero a run). Multi-image
-runs log a failure summary. A chatty prose answer without boxes counts as a
-parse failure: the model broke the format contract, and the caller deserves
-to know before trusting it as a negative.
+Per-image failure never aborts a folder, and every non-clean result carries
+`result.remote = {"error": kind, "detail", "model"}` with kind one of
+`http`, `parse`, `refusal`, `truncated`. Auth / bad-model / malformed-request
+errors raise loudly (they would fail on every image; converting them to
+empties would silently zero a run). Multi-image runs log a failure summary.
+A chatty prose answer without boxes counts as a parse failure: the model
+broke the format contract, and the caller deserves to know before trusting
+it as a negative.
+
+`truncated` is its own kind because the classification is not obvious.
+First-party OpenAI answers an output-limit overflow with a **400**, not a
+truncated string, and 400s are otherwise fatal. But truncation depends on
+how much the model had to say about *this* image (a crowded frame overflows
+where a sparse one does not), so treating it as fatal would abort a folder
+partway through. It is therefore isolated per image, while a genuinely
+malformed request (same 400 class, identical on every image) still raises;
+the two are told apart by requiring both a length signal and a
+"was reached" signal in the message. Compat hosts instead return 200 with
+`finish_reason="length"` (or `status="incomplete"` on Responses) and partial
+content; there the parsed boxes are kept and the result is still flagged,
+since the list is incomplete by definition.
 
 ### Cost safety (v1 scope; cost accounting is not)
 

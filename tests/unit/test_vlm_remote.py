@@ -42,14 +42,30 @@ class FakeAuthError(FakeOpenAIError):
     pass
 
 
-def _chat_response(text):
+class FakeBadRequestError(FakeOpenAIError):
+    pass
+
+
+def _chat_response(text, finish_reason="stop"):
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=text))]
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=text), finish_reason=finish_reason
+            )
+        ]
     )
 
 
-def _responses_response(text):
-    return SimpleNamespace(output_text=text)
+def _responses_response(text, status="completed", reason=None):
+    return SimpleNamespace(
+        output_text=text,
+        status=status,
+        incomplete_details=SimpleNamespace(reason=reason),
+    )
+
+
+class Truncated(str):
+    """Marker: serve this text with a length/incomplete finish signal."""
 
 
 class FakeChatCompletions:
@@ -77,6 +93,8 @@ class FakeChatCompletions:
                 time.sleep(getattr(self, "sleep", 0))
             if isinstance(entry, Exception):
                 raise entry
+            if isinstance(entry, Truncated):
+                return _chat_response(str(entry), finish_reason="length")
             return _chat_response(entry)
         finally:
             with self._lock:
@@ -93,6 +111,10 @@ class FakeResponsesAPI:
         entry = self.script.pop(0) if len(self.script) > 1 else self.script[0]
         if isinstance(entry, Exception):
             raise entry
+        if isinstance(entry, Truncated):
+            return _responses_response(
+                str(entry), status="incomplete", reason="max_output_tokens"
+            )
         return _responses_response(entry)
 
 
@@ -110,6 +132,7 @@ def _fake_openai(client):
         APITimeoutError=FakeTimeoutError,
         InternalServerError=FakeServerError,
         AuthenticationError=FakeAuthError,
+        BadRequestError=FakeBadRequestError,
     )
 
 
@@ -328,6 +351,59 @@ def test_transient_http_error_becomes_empty_result(make_remote, image_100x50):
     assert len(result.boxes.xyxy) == 0
     assert result.remote["error"] == "http"
     assert "FakeRateLimitError" in result.remote["detail"]
+
+
+def test_truncation_400_is_per_image_not_fatal(make_remote, image_100x50):
+    # OpenAI returns a 400 (not a truncated string) when the output limit is
+    # hit. That depends on how much the model had to say about THIS image, so
+    # it must isolate like a parse failure instead of aborting the run.
+    error = FakeBadRequestError(
+        "Error code: 400 - Could not finish the message because max_tokens "
+        "or model output limit was reached. Please try again with higher "
+        "max_tokens."
+    )
+    model, _ = make_remote([error], names=["boat"])
+    result = model.predict(str(image_100x50))
+    assert len(result.boxes.xyxy) == 0
+    assert result.remote["error"] == "truncated"
+
+
+def test_truncation_400_isolated_in_folder(make_remote, image_dir, caplog):
+    error = FakeBadRequestError(
+        "Could not finish the message because max_tokens or model output "
+        "limit was reached."
+    )
+    model, _ = make_remote([BOAT_JSON, error, BOAT_JSON], names=["boat"])
+    with caplog.at_level(logging.WARNING):
+        results = model.predict(str(image_dir), batch=1)
+    assert len(results) == 3
+    assert results[1].remote["error"] == "truncated"
+    assert any("truncated: 1" in rec.getMessage() for rec in caplog.records)
+
+
+def test_malformed_bad_request_still_raises(make_remote, image_100x50):
+    # Same 400 class, but a config error identical on every image: fatal.
+    error = FakeBadRequestError("Invalid value: 'max_tokens' must be an integer")
+    model, _ = make_remote([error], names=["boat"])
+    with pytest.raises(FakeBadRequestError):
+        model.predict(str(image_100x50))
+
+
+def test_finish_reason_length_flags_truncation(make_remote, image_100x50):
+    # Compat hosts (vLLM, Ollama) return 200 + finish_reason="length" with
+    # partial content instead of a 400. Keep the parsed boxes, flag the run.
+    model, _ = make_remote([Truncated(BOAT_JSON)], names=["boat"])
+    result = model.predict(str(image_100x50))
+    assert len(result.boxes.xyxy) == 1  # partial boxes beat none
+    assert result.remote["error"] == "truncated"
+
+
+def test_responses_incomplete_flags_truncation(make_remote, image_100x50):
+    model, _ = make_remote(
+        [Truncated(BOAT_JSON)], api="responses", names=["boat"]
+    )
+    result = model.predict(str(image_100x50))
+    assert result.remote["error"] == "truncated"
 
 
 def test_auth_error_raises_loud(make_remote, image_100x50):

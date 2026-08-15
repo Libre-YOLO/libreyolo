@@ -107,13 +107,30 @@ class _RemotePayload:
         return self
 
 
+class _RemoteReply:
+    """One decoded response: the text plus whether it was cut off.
+
+    A truncated answer is a per-image event (a crowded image overflows the
+    token budget where a sparse one does not), so it is reported through the
+    side channel rather than raised.
+    """
+
+    __slots__ = ("text", "truncated")
+
+    def __init__(self, text: str, truncated: bool = False):
+        self.text = text
+        self.truncated = truncated
+
+
 class _RemoteFailure:
-    """Sentinel returned by ``_forward`` when the HTTP call failed after the
-    SDK's retries. Carries the detail for the ``result.remote`` side channel."""
+    """Sentinel returned by ``_forward`` when a request failed in a way that
+    is per-image rather than fatal. Carries the kind and detail for the
+    ``result.remote`` side channel."""
 
-    __slots__ = ("detail",)
+    __slots__ = ("kind", "detail")
 
-    def __init__(self, detail: str):
+    def __init__(self, kind: str, detail: str):
+        self.kind = kind
         self.detail = detail
 
 
@@ -241,13 +258,13 @@ class RemoteVLMModel(LibreVLMModel):
         openai = _load_openai()
         return openai.OpenAI(**client_kwargs(self.api_key, self.base_url))
 
-    def _request_text(
+    def _request(
         self,
         image_url: str,
         prompt: str,
         max_new_tokens: Optional[int] = None,
-    ) -> str:
-        """One image+prompt request; returns the model's text verbatim."""
+    ) -> _RemoteReply:
+        """One image+prompt request; returns the text and a truncation flag."""
         cap = max_new_tokens if max_new_tokens is not None else self._token_cap
         payload = build_user_payload(self.api, prompt, image_url)
         body: Dict[str, Any] = {"model": self.model_id}
@@ -256,6 +273,10 @@ class RemoteVLMModel(LibreVLMModel):
             if cap:
                 body["max_output_tokens"] = int(cap)
             response = self._client_instance.responses.create(**body)
+            details = getattr(response, "incomplete_details", None)
+            truncated = getattr(response, "status", None) == "incomplete" and (
+                getattr(details, "reason", None) == "max_output_tokens"
+            )
         else:
             body["messages"] = payload
             if cap:
@@ -268,14 +289,49 @@ class RemoteVLMModel(LibreVLMModel):
                 )
                 body[key] = int(cap)
             response = self._client_instance.chat.completions.create(**body)
-        return response_text(self.api, response)
+            choices = getattr(response, "choices", None) or []
+            truncated = bool(choices) and (
+                getattr(choices[0], "finish_reason", None) == "length"
+            )
+        return _RemoteReply(response_text(self.api, response), truncated)
+
+    def _request_text(
+        self,
+        image_url: str,
+        prompt: str,
+        max_new_tokens: Optional[int] = None,
+    ) -> str:
+        """One image+prompt request; returns the model's text verbatim."""
+        return self._request(image_url, prompt, max_new_tokens=max_new_tokens).text
 
     @staticmethod
-    def _failure_kind(exc: BaseException) -> Optional[str]:
-        """``"http"`` for transient transport failures (already retried by the
-        SDK), None for everything that must raise (auth, bad model, bad
-        request: those fail on every image, so converting them into empty
-        results would silently zero a whole folder)."""
+    def _is_truncation_error(exc: BaseException) -> bool:
+        """True for the "output limit reached" 400 that OpenAI returns instead
+        of a truncated message.
+
+        Matched on the message because the API gives no distinct error code.
+        Both a length signal and a "was reached" signal are required, so a
+        genuine bad request such as "max_tokens must be an integer" (fatal,
+        identical on every image) is not swallowed as a per-image event.
+        """
+        message = str(exc).lower()
+        length_signal = "max_tokens" in message or "max_output_tokens" in message
+        reached_signal = "was reached" in message or "output limit" in message
+        return length_signal and reached_signal
+
+    @classmethod
+    def _failure_kind(cls, exc: BaseException) -> Optional[str]:
+        """Per-image failure kind, or None when the error must raise.
+
+        ``"http"`` covers transient transport failures (already retried by the
+        SDK). ``"truncated"`` covers the output-limit 400: it depends on how
+        much the model had to say about *this* image, so it must not abort a
+        folder. Everything else (auth, bad model, malformed request) fails on
+        every image, and converting those into empty results would silently
+        zero a whole run.
+        """
+        if cls._is_truncation_error(exc):
+            return "truncated"
         try:
             openai = _load_openai()
         except ImportError:
@@ -286,8 +342,8 @@ class RemoteVLMModel(LibreVLMModel):
             "APITimeoutError",
             "InternalServerError",
         ):
-            cls = getattr(openai, name, None)
-            if isinstance(cls, type) and isinstance(exc, cls):
+            klass = getattr(openai, name, None)
+            if isinstance(klass, type) and isinstance(exc, klass):
                 return "http"
         status = getattr(exc, "status_code", None)
         try:
@@ -388,11 +444,12 @@ class RemoteVLMModel(LibreVLMModel):
     def _forward(self, inputs: Any):
         prompt = self._detection_prompt()
         try:
-            return self._request_text(inputs.image_url, prompt)
+            return self._request(inputs.image_url, prompt)
         except Exception as exc:
-            if self._failure_kind(exc) is None:
+            kind = self._failure_kind(exc)
+            if kind is None:
                 raise
-            return _RemoteFailure(f"{type(exc).__name__}: {exc}")
+            return _RemoteFailure(kind, f"{type(exc).__name__}: {exc}")
 
     def _postprocess(
         self,
@@ -405,12 +462,17 @@ class RemoteVLMModel(LibreVLMModel):
         **kwargs,
     ) -> Dict:
         if isinstance(output, _RemoteFailure):
-            self._record_error("http", output.detail)
+            self._record_error(output.kind, output.detail)
             items = []
         else:
-            text = output if isinstance(output, str) else ""
+            text = output.text if isinstance(output, _RemoteReply) else ""
             items = [self._normalize_item(i) for i in extract_detections(text)]
-            if not items:
+            if isinstance(output, _RemoteReply) and output.truncated:
+                # Whatever parsed is kept (partial boxes beat none), but the
+                # list is incomplete by definition, so it is never a clean
+                # result.
+                self._record_error("truncated", text)
+            elif not items:
                 kind = self._classify_empty(text)
                 if kind is not None:
                     self._record_error(kind, text)
