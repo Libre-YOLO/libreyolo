@@ -52,6 +52,7 @@ file = name + ".pt"
 | RFDETR | `LibreRFDETR` | `LibreRFDETRn.pt`, `LibreRFDETRn-seg.pt`, `LibreRFDETRx-pose.pt` |
 | DETR | `LibreDETR` | `LibreDETRr50.pt` (original DETR; Apache-2.0 code + weights; inference-only) |
 | LWDETR | `LibreLWDETR` | `LibreLWDETRt.pt` (LW-DETR, RF-DETR's ancestor; Apache-2.0 code + weights; inference-only) |
+| DOMEDETR | `LibreDOMEDETR` | `LibreDOMEDETRs-aitod.pt`, `LibreDOMEDETRs-visdrone.pt` (dataset-specific tiny-object weights; academic-research-only, see below) |
 | FasterRCNN | `LibreFasterRCNN` | `LibreFasterRCNNn.pt` (modernized torchvision Faster R-CNN; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
 | RetinaNet | `LibreRetinaNet` | `LibreRetinaNetr50.pt` (torchvision RetinaNet; BSD-3-Clause implied for weights, with the pretrained-model caveat on every card; inference-only) |
 | SSD | `LibreSSD` | `LibreSSD300.pt` (torchvision SSD300 VGG16; BSD-3-Clause implied for the checkpoint, Oxford VGG feature-weight lineage CC BY 4.0; inference-only) |
@@ -199,6 +200,11 @@ LibreDETRr101.pt, LibreDETRr101dc5.pt,
 LibreLWDETRt.pt, LibreLWDETRs.pt, LibreLWDETRm.pt,
 LibreLWDETRl.pt, LibreLWDETRx.pt,
 
+LibreDOMEDETRs-aitod.pt, LibreDOMEDETRm-aitod.pt,
+LibreDOMEDETRl-aitod.pt,
+LibreDOMEDETRs-visdrone.pt, LibreDOMEDETRm-visdrone.pt,
+LibreDOMEDETRl-visdrone.pt,
+
 LibreFasterRCNNn.pt, LibreFasterRCNNs.pt,
 LibreFasterRCNNm.pt, LibreFasterRCNNl.pt,
 
@@ -344,6 +350,19 @@ Oxford VGG-16 feature-weight lineage under CC BY 4.0, link the Oxford source
 and CC license, and state the torchvision training plus LibreYOLO metadata
 changes. Do not describe CC BY 4.0 as the license for torchvision's SSD code.
 A name being *valid* does not make it *hostable*; run the gate.
+
+**LibreDOMEDETR s/m/l AI-TOD-V2 and VisDrone weights are ACADEMIC-RESEARCH-ONLY.**
+The upstream Hugging Face card has no license metadata or LICENSE file and
+simultaneously says the project is Apache-2.0 and the weights are "for academic
+research purposes only". The maintainer approved rehosting by treating the
+Apache statement as the redistribution basis while preserving the stricter
+academic-use sentence. Cards use `license: other` +
+`license_name: dome-detr-academic-research-only` + a revision-pinned upstream
+`license_link`, lead with an academic-only banner, and disclose that this is a
+LibreYOLO interpretation rather than upstream clarification. Every mirror's
+LICENSE and NOTICE reproduce the complete context. The loader warns before
+every auto-download. Never tag these repos `apache-2.0` or imply commercial
+clearance.
 
 The `-visdrone` suffix is a `WEIGHT_VARIANTS` dataset variant (grammar in
 `docs/nomenclature.md`): only families that declare `WEIGHT_VARIANTS` in

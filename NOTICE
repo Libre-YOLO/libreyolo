@@ -631,11 +631,17 @@ Dome-DETR (Apache License 2.0)
     stack, MS-deformable attention) is imported from libreyolo/models/dfine/
     rather than re-vendored, so the D-FINE entry above continues to cover it.
 
-    Model weights are NOT redistributed by LibreYOLO. The upstream model
-    card at https://huggingface.co/RicePasteM/Dome-DETR states no license in
-    its card metadata, and its prose simultaneously claims Apache-2.0 and
-    restricts use to "academic research purposes only". Users download from
-    upstream and convert locally.
+    The six official AI-TOD-V2 and VisDrone model checkpoints are distributed
+    separately on the LibreYOLO Hugging Face organization under an
+    ACADEMIC-RESEARCH-ONLY restriction. They are not covered by LibreYOLO's
+    MIT license. The upstream weight repository has no license metadata or
+    LICENSE file; its README both calls the project Apache-2.0 and says the
+    weights are "for academic research purposes only". LibreYOLO's maintainer
+    approved mirroring on the explicitly disclosed interpretation that the
+    Apache statement permits redistribution while the stricter academic-use
+    statement remains controlling. Each weight repository uses the Hugging
+    Face `license: other` tag and ships the complete context in its LICENSE
+    and NOTICE. See weights/LICENSE_NOTICE.txt.
 
 TinyFormer (Apache License 2.0)
     Path:    libreyolo/models/tinyformer/,
