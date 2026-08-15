@@ -1,0 +1,67 @@
+"""The four hosted LibreGround families resolve to LibreYOLO snapshot repos."""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import pytest
+
+from libreyolo.models.ground import HOSTED_SNAPSHOTS, LibreGround, _ALIASES
+from libreyolo.models.ground.florence import LibreGroundFlorence2
+from libreyolo.models.ground.moondream import LibreGroundMoondream
+from libreyolo.models.ground.qwen3vl import LibreGroundQwen3VL
+from libreyolo.models.ground.showui import LibreShowUI
+
+pytestmark = pytest.mark.unit
+
+_CLASSES = {
+    "LibreGroundFlorence2": LibreGroundFlorence2,
+    "LibreShowUI": LibreShowUI,
+    "LibreGroundQwen3VL": LibreGroundQwen3VL,
+    "LibreGroundMoondream": LibreGroundMoondream,
+}
+
+
+def test_four_hosted_snapshots_are_declared():
+    assert len(HOSTED_SNAPSHOTS) >= 4
+    for alias, (class_name, size, repo) in HOSTED_SNAPSHOTS.items():
+        assert alias in _ALIASES
+        family_cls, alias_size = _ALIASES[alias]
+        assert family_cls.__name__ == class_name
+        assert alias_size == size
+        assert repo.startswith("LibreYOLO/")
+        assert family_cls.HF_REPOS[size] == repo
+
+
+def test_public_factory_resolves_hosted_aliases_without_loading():
+    for alias, (class_name, size, _repo) in HOSTED_SNAPSHOTS.items():
+        family_cls, resolved_size = _ALIASES[alias]
+        assert family_cls is _CLASSES[class_name]
+        assert resolved_size == size
+    with pytest.raises(ValueError, match="Unknown grounding model"):
+        LibreGround("not-a-hosted-grounder")
+
+
+def test_upload_script_mirrors_match_hosted_factory_repos():
+    """The upload helper's new mirrors must match the factory HOSTED_SNAPSHOTS."""
+    script = Path(__file__).resolve().parents[2] / "weights" / "upload_ground_snapshot_hf.py"
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    mirrors = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "MIRRORS":
+                    mirrors = ast.literal_eval(node.value)
+    assert mirrors is not None
+    uploaded = {item["repo"] for item in mirrors}
+    hosted = {repo for _alias, (_cls, _size, repo) in HOSTED_SNAPSHOTS.items()}
+    # Moondream was already published; the other three must be in the uploader.
+    assert "LibreYOLO/LibreMoondream2" in hosted
+    assert uploaded <= hosted
+    assert {"LibreYOLO/LibreGroundFlorence2base", "LibreYOLO/LibreShowUI2b", "LibreYOLO/LibreGroundQwen3VL2b"} <= hosted
+    assert uploaded == {
+        "LibreYOLO/LibreGroundFlorence2base",
+        "LibreYOLO/LibreShowUI2b",
+        "LibreYOLO/LibreGroundQwen3VL2b",
+    }

@@ -61,6 +61,15 @@ _ALIASES: Dict[str, Tuple[Type, str]] = {
     "qwen3-vl-8b": (LibreGroundQwen3VL, "8b"),
 }
 
+# The four snapshot-mirrored families hosted on the LibreYOLO org.
+# alias -> (family class name, size, hf repo id)
+HOSTED_SNAPSHOTS: Dict[str, Tuple[str, str, str]] = {
+    "florence-2-base": ("LibreGroundFlorence2", "base", "LibreYOLO/LibreGroundFlorence2base"),
+    "showui-2b": ("LibreShowUI", "2b", "LibreYOLO/LibreShowUI2b"),
+    "qwen3-vl-2b": ("LibreGroundQwen3VL", "2b", "LibreYOLO/LibreGroundQwen3VL2b"),
+    "moondream": ("LibreGroundMoondream", "2", "LibreYOLO/LibreMoondream2"),
+}
+
 _DEFAULT_MODEL = "showui-2b"
 
 
@@ -92,6 +101,7 @@ __all__ = [
     "LibreGround",
     "LibreGroundModel",
     "GroundAPIMixin",
+    "HOSTED_SNAPSHOTS",
     "LibreShowUI",
     "LibreHolo",
     "LibreUITARS",

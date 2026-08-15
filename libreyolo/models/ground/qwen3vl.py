@@ -17,7 +17,7 @@ class LibreGroundQwen3VL(LibreGroundModel):
     FILENAME_PREFIX = "LibreGroundQwen3VL"
 
     HF_REPOS: ClassVar[Dict[str, str]] = {
-        "2b": "Qwen/Qwen3-VL-2B-Instruct",
+        "2b": "LibreYOLO/LibreGroundQwen3VL2b",
         "4b": "Qwen/Qwen3-VL-4B-Instruct",
         "8b": "Qwen/Qwen3-VL-8B-Instruct",
     }

@@ -20,7 +20,7 @@ class LibreGroundFlorence2(LibreGroundModel):
     FILENAME_PREFIX = "LibreGroundFlorence2"
 
     HF_REPOS: ClassVar[Dict[str, str]] = {
-        "base": "florence-community/Florence-2-base",
+        "base": "LibreYOLO/LibreGroundFlorence2base",
         "large": "florence-community/Florence-2-large",
     }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {

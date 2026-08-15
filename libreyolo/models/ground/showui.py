@@ -18,7 +18,7 @@ class LibreShowUI(LibreGroundModel):
     FILENAME_PREFIX = "LibreShowUI"
 
     HF_REPOS: ClassVar[Dict[str, str]] = {
-        "2b": "showlab/ShowUI-2B",
+        "2b": "LibreYOLO/LibreShowUI2b",
     }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         "2b": 1344,
