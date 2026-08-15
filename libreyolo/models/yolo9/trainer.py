@@ -234,6 +234,10 @@ class YOLO9Trainer(BaseTrainer):
             return None
         if type(self.model.head) is not DDetect:
             return None
+        # Captured forward runs without targets, so the PGI aux branch never
+        # executes and aux params get zero gradients. Fall back to eager.
+        if getattr(self.model, "aux", None) is not None:
+            return None
 
         network = GraphableNetwork(self.model)
 

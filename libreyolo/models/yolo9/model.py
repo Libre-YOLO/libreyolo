@@ -35,6 +35,13 @@ def _is_yolo9_aux_key(key: str) -> bool:
     return str(key).startswith("aux.") or str(key).startswith("aux_head.")
 
 
+def resolve_aux_weight(aux_weight) -> float:
+    """Canonical PGI weight. ``None`` is the recipe default; ``0`` stays off."""
+    if aux_weight is None:
+        return 0.25
+    return float(aux_weight)
+
+
 class LibreYOLO9(BaseModel):
     """YOLOv9 model for object detection.
 
@@ -462,15 +469,16 @@ class LibreYOLO9(BaseModel):
         return self._prepare_state_dict(self._strip_ddp_prefix(state))
 
     def _maybe_enable_aux_from_path(
-        self, source: str | Path | dict | None, aux_weight: float = 0.25
+        self, source: str | Path | dict | None, aux_weight: float | None = None
     ) -> int:
         """Attach PGI if *source* carries aux tensors. Returns loaded aux count."""
-        if type(self.model).__name__ != "LibreYOLO9Model":
+        weight = resolve_aux_weight(aux_weight)
+        if weight <= 0 or type(self.model).__name__ != "LibreYOLO9Model":
             return 0
         state = self._extract_checkpoint_state(source)
         if not any(_is_yolo9_aux_key(key) for key in state):
             return 0
-        self.model.enable_aux(weight=float(aux_weight or 0.25))
+        self.model.enable_aux(weight=weight)
         return self._load_aux_tensors(state)
 
     def _reload_aux_from_path(self, source: str | Path | dict | None) -> int:
@@ -698,12 +706,12 @@ class LibreYOLO9(BaseModel):
         # PGI aux is training-only. Attach before trainer.setup() so the
         # optimizer / EMA / DDP see the extra parameters. Resume of a
         # single-head 1.5 checkpoint stays single-head.
-        aux_weight = kwargs.get("aux_weight", _TRAIN_DEFAULTS.aux_weight)
+        aux_weight = resolve_aux_weight(kwargs.get("aux_weight", _TRAIN_DEFAULTS.aux_weight))
         if type(self.model).__name__ == "LibreYOLO9Model":
             if resume:
                 self._maybe_enable_aux_from_path(self.model_path, aux_weight)
-            elif float(aux_weight or 0) > 0:
-                self.model.enable_aux(weight=float(aux_weight))
+            elif aux_weight > 0:
+                self.model.enable_aux(weight=aux_weight)
                 # Inference load stripped aux.* from official converts; put
                 # those PGI tensors back now that the branch exists.
                 self._reload_aux_from_path(self.model_path)

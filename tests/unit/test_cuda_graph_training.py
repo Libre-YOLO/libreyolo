@@ -579,6 +579,11 @@ class TestYolo9SpecGating:
         host.model.head = derived
         assert fn(host) is None
 
+    def test_pgi_aux_unsupported(self):
+        fn, host = self._host()
+        host.model.enable_aux(0.25)
+        assert fn(host) is None
+
 
 class TestRFDETRSpecGating:
     def _host(self, task="detect", **model_flags):

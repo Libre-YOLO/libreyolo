@@ -453,3 +453,53 @@ def test_ddp_bootstrap_merges_aux_and_keeps_flat_dict(tmp_path):
     fake.letterbox_pad = "center"
     init_kw = _build_init_kw(fake)
     assert init_kw["letterbox_pad"] == "center"
+
+
+def test_resolve_aux_weight_keeps_zero():
+    from libreyolo.models.yolo9.model import resolve_aux_weight
+
+    assert resolve_aux_weight(None) == 0.25
+    assert resolve_aux_weight(0) == 0.0
+    assert resolve_aux_weight(0.0) == 0.0
+    assert resolve_aux_weight(0.25) == 0.25
+
+
+def test_aux_weight_zero_does_not_attach_pgi(tmp_path):
+    from libreyolo.models.yolo9.model import LibreYOLO9
+    from libreyolo.models.yolo9.nn import LibreYOLO9Model
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    raw = LibreYOLO9Model(config="t", nb_classes=2)
+    raw.enable_aux(0.25)
+    ckpt = wrap_libreyolo_checkpoint(
+        raw.state_dict(),
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=2,
+        names={0: "a", 1: "b"},
+        imgsz=640,
+    )
+    path = tmp_path / "with_aux.pt"
+    torch.save(ckpt, path)
+
+    loaded = LibreYOLO9(str(path), size="t", nb_classes=2, device="cpu")
+    assert loaded.model.aux is None
+    n = loaded._maybe_enable_aux_from_path(str(path), aux_weight=0)
+    assert n == 0
+    assert loaded.model.aux is None
+
+
+def test_cuda_graph_spec_disabled_when_pgi_attached():
+    from types import SimpleNamespace
+
+    from libreyolo.models.yolo9.nn import LibreYOLO9Model
+    from libreyolo.models.yolo9.trainer import YOLO9Trainer
+
+    model = LibreYOLO9Model(config="t", nb_classes=2)
+    host = SimpleNamespace(
+        wrapper_model=SimpleNamespace(task="detect"), model=model
+    )
+    assert YOLO9Trainer.cuda_graph_train_spec(host) is not None
+    model.enable_aux(0.25)
+    assert YOLO9Trainer.cuda_graph_train_spec(host) is None
