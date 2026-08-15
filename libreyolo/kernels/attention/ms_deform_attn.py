@@ -89,6 +89,16 @@ def _kernel_selection_disables_acceleration() -> bool:
     return forced in ("off", "reference")
 
 
+def _hub_client_installed_for_hint() -> bool:
+    """Check discovery without letting an importer error break fallback."""
+    try:
+        return importlib.util.find_spec("kernels") is not None
+    except Exception:
+        # The registry already logs predicate failures. Suppress this optional
+        # install hint rather than raising again or misdiagnosing the package.
+        return True
+
+
 def _warn_missing_hub_kernels_once(value: Optional[torch.Tensor]) -> None:
     """Hint once when a real CUDA call has no Hub client to accelerate it."""
     global _missing_hub_hint_emitted
@@ -97,7 +107,7 @@ def _warn_missing_hub_kernels_once(value: Optional[torch.Tensor]) -> None:
         or not getattr(value, "is_cuda", False)
         or not _hub_enabled()
         or _kernel_selection_disables_acceleration()
-        or importlib.util.find_spec("kernels") is not None
+        or _hub_client_installed_for_hint()
     ):
         return
     _missing_hub_hint_emitted = True

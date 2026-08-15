@@ -193,6 +193,27 @@ def test_missing_provider_hint_ignores_installed_hub_client(monkeypatch, caplog)
     )
 
 
+def test_missing_provider_hint_does_not_propagate_importer_errors(
+    monkeypatch, caplog
+):
+    from libreyolo.kernels.attention import ms_deform_attn as module
+
+    def broken_finder(_name):
+        raise RuntimeError("broken meta path finder")
+
+    monkeypatch.delenv("LIBREYOLO_HUB_KERNELS", raising=False)
+    monkeypatch.setattr(module.importlib.util, "find_spec", broken_finder)
+    kernels.clear_cache()
+
+    with caplog.at_level("WARNING"):
+        assert not module.ms_deform_attn_available(_CudaValue())
+
+    assert not any(
+        "libreyolo[hub-kernels]" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 def test_missing_provider_hint_ignores_cpu_calls(monkeypatch, caplog):
     from libreyolo.kernels.attention import ms_deform_attn as module
 
