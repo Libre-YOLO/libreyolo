@@ -17,6 +17,7 @@ See ``docs/librevlm_design.md`` and ``docs/adr/0002-librevlm-contract.md``.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, Tuple, Type
 
 from .base import LibreVLMModel
@@ -78,6 +79,57 @@ _MODUS_ALIASES: Dict[str, str] = {
 
 _DEFAULT_MODEL = "qwen3-vl-4b"
 
+# Remote transport (ADR 0020): a slash means remote, a bare alias stays
+# local. No local alias will ever contain a slash, which keeps the routing
+# unambiguous.
+_REMOTE_PROVIDERS = ("openai", "openrouter", "openai-compat")
+_REMOTE_ONLY_KWARGS = ("base_url", "api_key", "api")
+
+
+def _all_aliases() -> list:
+    return sorted(set(_ALIASES) | set(_LAZY_ALIASES) | set(_MODUS_ALIASES))
+
+
+def _looks_like_path(s: str) -> bool:
+    """Path-shaped strings are never parsed as ``provider/model``."""
+    import re
+
+    if "\\" in s or re.match(r"^[A-Za-z]:[\\/]", s):
+        return True
+    return s.startswith(("/", "./", "../", "~"))
+
+
+def _reject_remote_kwargs(kwargs: dict, model) -> None:
+    offending = [k for k in _REMOTE_ONLY_KWARGS if kwargs.get(k) is not None]
+    if offending:
+        raise ValueError(
+            f"{', '.join(k + '=' for k in offending)} only applies to remote "
+            f"models ('provider/model-id' form). {str(model)!r} resolves to a "
+            "local model. Did you mean LibreVLM('openai-compat/"
+            f"{model}', base_url=...)?"
+        )
+
+
+def _unknown_provider_error(full: str, prefix: str) -> ValueError:
+    try:
+        resolved = Path(full).resolve()
+    except OSError:
+        resolved = full
+    return ValueError(
+        f"Unknown remote provider {prefix!r} in {full!r}.\n"
+        f"  Known providers: {', '.join(_REMOTE_PROVIDERS)} (self-hosted: "
+        "LibreVLM('openai-compat/<model-id>', base_url=...)).\n"
+        "  Hugging Face repo ids are not accepted; local aliases: "
+        f"{', '.join(_all_aliases())}.\n"
+        f"  If you meant a checkpoint path: nothing exists at {resolved}."
+    )
+
+
+def _load_remote(provider: str, model_id: str, **kwargs) -> LibreVLMModel:
+    from .remote import RemoteVLMModel
+
+    return RemoteVLMModel(provider, model_id, **kwargs)
+
 
 def _load_checkpoint(path, **kwargs) -> LibreVLMModel:
     """Load a fine-tune checkpoint directory produced by ``train()``."""
@@ -97,27 +149,70 @@ def _load_checkpoint(path, **kwargs) -> LibreVLMModel:
 
 
 def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
-    """Load a vision-language detector by name or fine-tune checkpoint path.
+    """Load a vision-language detector: local family, checkpoint, or remote.
 
     Args:
-        model: Model alias (e.g. ``"qwen3-vl-4b"``, ``"lfm2-vl-450m"``), or a
-            path to a fine-tune checkpoint directory produced by ``train()``
-            (it carries ``libreyolo_vlm.json``). Defaults to Qwen3-VL-4B
-            (Apache-2.0).
-        **kwargs: Forwarded to the family constructor: ``device``, ``names``
-            (initial class vocabulary, same as calling ``set_classes`` after
-            load), ``prompt`` (override the detection prompt), ``max_new_tokens``.
-            When loading a checkpoint, ``names`` defaults to the vocabulary the
-            fine-tune was trained on.
+        model: One of:
+
+            - a local model alias (e.g. ``"qwen3-vl-4b"``, ``"lfm2-vl-450m"``;
+              defaults to Qwen3-VL-4B, Apache-2.0),
+            - a path to a fine-tune checkpoint directory produced by
+              ``train()`` (it carries ``libreyolo_vlm.json``),
+            - a remote ``"provider/model-id"`` string (ADR 0020). Known
+              providers: ``openai/``, ``openrouter/``, and
+              ``openai-compat/`` + ``base_url=`` for any self-hosted or
+              gateway endpoint. The model id after the first slash is passed
+              through verbatim, so newly shipped hosted models work without a
+              libreyolo release.
+        **kwargs: Forwarded to the family constructor. Local: ``device``,
+            ``names`` (initial vocabulary, same as ``set_classes`` after
+            load), ``prompt`` (override the detection prompt),
+            ``max_new_tokens``. Remote adds ``base_url``, ``api_key``,
+            ``api`` (``"chat.completions"`` default or ``"responses"``), and
+            ``provider=`` as the kwarg form of the prefix; ``device`` raises.
 
     Returns:
         A ``LibreVLMModel`` instance with the standard predict/track surface.
     """
     from .training.checkpoint import is_vlm_checkpoint
 
+    provider = kwargs.pop("provider", None)
+    if provider is not None:
+        # Kwarg form: LibreVLM(model="gpt-5.6-luna", provider="openai")
+        # normalizes to the string form LibreVLM("openai/gpt-5.6-luna").
+        return _load_remote(str(provider).lower(), str(model), **kwargs)
+
     if is_vlm_checkpoint(model):
+        _reject_remote_kwargs(kwargs, model)
         return _load_checkpoint(model, **kwargs)
-    key = str(model).strip().lower()
+
+    s = str(model)
+    try:
+        path_exists = Path(s).exists()
+    except OSError:
+        path_exists = False
+    if path_exists:
+        raise ValueError(
+            f"{s!r} exists on disk but is not a VLM fine-tune checkpoint "
+            "(no libreyolo_vlm.json inside). LibreVLM loads aliases, "
+            "checkpoint directories, or remote 'provider/model-id' strings."
+        )
+    if _looks_like_path(s):
+        raise FileNotFoundError(
+            f"No VLM checkpoint exists at {Path(s).resolve()}. "
+            "Pass a fine-tune checkpoint directory, a local alias, or a "
+            "remote 'provider/model-id' string."
+        )
+    if "/" in s:
+        # Split on the FIRST slash only, before lowercasing, so
+        # case-sensitive provider model ids survive.
+        prefix, rest = s.split("/", 1)
+        if prefix.lower() in _REMOTE_PROVIDERS:
+            return _load_remote(prefix.lower(), rest, **kwargs)
+        raise _unknown_provider_error(s, prefix)
+
+    _reject_remote_kwargs(kwargs, model)
+    key = s.strip().lower()
     if key in _LAZY_ALIASES:
         from ..sensenova import LibreSenseNovaVision
 

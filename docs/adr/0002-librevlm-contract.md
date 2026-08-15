@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-06-05 (updated 2026-06-06)
 - Scope: New model tier (vision-language models used as open-vocab detectors)
+- Extended by ADR 0020 (2026-08-15): the same contract over an
+  OpenAI-compatible remote transport (`LibreVLM("provider/model-id")`).
+  The contract in this document is unchanged; remote is a new backend.
 
 ## Context
 

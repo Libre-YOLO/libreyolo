@@ -276,6 +276,59 @@ precision tiers, and terms distinction are documented in
 [`libremodus.md`](libremodus.md) and
 [`adr/0016-libremodus-analysis-contract.md`](adr/0016-libremodus-analysis-contract.md).
 
+## Remote models (ADR 0020)
+
+The same factory also runs hosted vision chat models as detectors. A slash
+means remote; a bare alias stays local:
+
+```python
+from libreyolo import LibreVLM
+
+model = LibreVLM("openai/gpt-5.6-luna")           # OPENAI_API_KEY
+model = LibreVLM("openrouter/qwen/qwen3.8-max")   # OPENROUTER_API_KEY
+model = LibreVLM(
+    "openai-compat/qwen3-vl-32b",                 # any vLLM/Ollama-style host
+    base_url="http://localhost:8000/v1",
+    api_key="empty",
+)
+
+model.set_classes(["helmet", "person", "forklift"])
+model.selftest()                       # 2 metered probes: does it ground?
+result = model.predict("frame.jpg")    # same Results, pixel xyxy
+results = model.predict("folder/")     # banner, per-image error isolation
+text = model.chat("frame.jpg", "Anyone missing a helmet?")   # str
+```
+
+What is identical to local: sticky `set_classes`, `predict` on
+image/list/folder/video file, pixel-xyxy `Results`, `chat() -> str`,
+`track()` on video files, soft confidence 1.0.
+
+What is different, loudly:
+
+- **Live sources raise.** Webcam, network streams, and screen capture are
+  unbounded metered calls; pass finite sources. Multi-image runs log a
+  one-line metered banner first.
+- **An empty result is never ambiguous.** HTTP failures, unparseable text,
+  refusals, and truncated answers set
+  `result.remote = {"error": "http" | "parse" | "refusal" | "truncated", ...}`,
+  and the run logs a failure summary. A clean "found nothing" has no
+  `.remote`. Auth or bad-model errors raise immediately instead. Raising
+  `max_new_tokens=` is the fix for `truncated` (a crowded image needs more
+  output budget than a sparse one).
+- **`batch=` means request concurrency** (thread pool over per-image HTTP,
+  default 8), not a stacked tensor.
+- `device=`, `tiling=`, `augment=`, `train()`, `val()`, `export()` raise.
+- Requires `pip install "libreyolo[llm]"` (the OpenAI SDK), not
+  `libreyolo[vlm]`; hosted-only machines skip transformers entirely.
+
+Wire API defaults differ on purpose: remote `LibreVLM` speaks
+`chat.completions` (the format every compat host supports; pass
+`api="responses"` for first-party OpenAI), while `LibreLLM` defaults to
+`responses`. Boxes from hosted chat models are uncalibrated; for calibrated
+detection train a `LibreYOLO` model, and treat remote detect as the
+explore / auto-label ramp. Remote sends your images to the provider under
+that provider's terms.
+
 ## Known limitations (v1)
 
 These are deliberate v1 scoping choices, called out so behavior matches expectations:
