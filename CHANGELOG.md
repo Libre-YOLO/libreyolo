@@ -9,6 +9,9 @@ before 1.4.0 are documented in the
 
 ### Fixed
 
+- **QAT training-state guards (#768).** Training a quantized model now
+  disables EMA and SyncBatchNorm before setup and logs the changes, preventing
+  those features from interfering with fake-quant observer and scale state.
 - **CUDA MSDA discovery (#781).** Eager DETR-family CUDA calls that no
   accelerated provider accepts log one hint for `libreyolo[hub-kernels]`;
   `LIBREYOLO_HUB_KERNELS=0` keeps the portable path and silences the hint.

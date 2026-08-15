@@ -54,6 +54,7 @@ from .distributed import (
 from .ema import ModelEMA
 from .optim import build_optimizer, restore_optimizer_state
 from .freezing import FreezeGroup, apply_freeze, default_freeze_groups
+from .qat_defaults import apply_qat_training_guards
 from ..data.dataset import YOLODataset, COCODataset, create_dataloader
 from ..data import (
     get_coco_annotation_file,
@@ -1487,6 +1488,16 @@ class BaseTrainer(ABC):
             from ..quant.api import reprepare_model
 
             reprepare_model(self.wrapper_model)
+
+        if quant_manifest:
+            qat_changes = apply_qat_training_guards(self.config)
+            if qat_changes and is_main_process():
+                logger.warning(
+                    "QAT recipe '%s': disabled %s because these features can "
+                    "interfere with fake-quant observer and scale state.",
+                    quant_manifest.get("recipe", "unknown"),
+                    ", ".join(f"{option}=False" for option in qat_changes),
+                )
 
         if getattr(self.config, "lora", False) and not self.supports_lora:
             family = self.get_model_family() if hasattr(self, "get_model_family") else "this model"
