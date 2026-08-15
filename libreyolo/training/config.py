@@ -377,8 +377,18 @@ class YOLO9Config(TrainConfig):
     sync_bn: bool = True
     # Per-image ground-truth cap in the train transforms. Dense datasets
     # (e.g. aerial imagery) exceed the historical 100-box default; boxes
-    # beyond the cap are silently dropped, so raise it for such data.
-    max_labels: int = 100
+    # beyond the cap are silently dropped. 300 matches the MTL/YOLO-NAS
+    # recipe and is a training-only change (old checkpoints still load).
+    max_labels: int = 300
+    # PGI auxiliary-head loss weight. 0 disables the branch. Training-only;
+    # inference stays single-head. Resume of a checkpoint without ``aux.*``
+    # weights keeps the single-head graph.
+    aux_weight: float = 0.25
+    # SGD momentum at the start of warmup (MTL LinearL: 0.8 → 0.937).
+    warmup_momentum: float = 0.8
+    # Letterbox pad for new training. ``None`` inherits the loaded
+    # checkpoint stamp, or top-left when the checkpoint is unmarked.
+    letterbox_pad: Optional[str] = None
     # Copy-paste instance augmentation (segmentation task only). ``copy_paste``
     # is the per-sample probability (0 disables it); ``copy_paste_mode`` selects
     # the source: "flip" reuses the same sample mirrored, "mixup" pulls a second

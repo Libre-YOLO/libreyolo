@@ -115,6 +115,7 @@ def postprocess(
     original_size: Tuple[int, int] | None = None,
     max_det: int = 300,
     letterbox: bool = True,
+    letterbox_pad: str | None = None,
 ) -> Dict:
     """
     Postprocess YOLOv9 model outputs to get final detections.
@@ -182,9 +183,19 @@ def postprocess(
 
         if original_size is not None:
             if letterbox:
+                from ..preprocess.letterbox import letterbox_geometry
+
                 orig_w, orig_h = original_size
-                ratio = min(input_h / orig_h, input_w / orig_w)
-                xywhr[:, :4] = xywhr[:, :4] / ratio
+                # xywhr is cx,cy,w,h,angle. Undo pad on the center only;
+                # scale w/h by ratio. Going through the enclosing AABB would
+                # destroy width/height whenever angle != 0.
+                ratio, _nh, _nw, pad_left, pad_top = letterbox_geometry(
+                    orig_h, orig_w, input_h, input_w, letterbox_pad
+                )
+                xywhr[:, 0] = (xywhr[:, 0] - pad_left) / ratio
+                xywhr[:, 1] = (xywhr[:, 1] - pad_top) / ratio
+                xywhr[:, 2] = xywhr[:, 2] / ratio
+                xywhr[:, 3] = xywhr[:, 3] / ratio
             else:
                 scale_x = original_size[0] / input_w
                 scale_y = original_size[1] / input_h
@@ -272,11 +283,18 @@ def postprocess(
 
     if original_size is not None:
         if letterbox:
+            from ..preprocess.letterbox import letterbox_geometry, unletterbox_xyxy
+
             orig_w, orig_h = original_size
-            ratio = min(input_h / orig_h, input_w / orig_w)
-            boxes[:, :4] = boxes[:, :4] / ratio
+            boxes = unletterbox_xyxy(
+                boxes, orig_w, orig_h, input_h, input_w, pad=letterbox_pad
+            )
             if keypoints is not None:
-                keypoints[..., :2] = keypoints[..., :2] / ratio
+                _ratio, _nh, _nw, pad_left, pad_top = letterbox_geometry(
+                    orig_h, orig_w, input_h, input_w, letterbox_pad
+                )
+                keypoints[..., 0] = (keypoints[..., 0] - pad_left) / _ratio
+                keypoints[..., 1] = (keypoints[..., 1] - pad_top) / _ratio
         else:
             scale_x = original_size[0] / input_w
             scale_y = original_size[1] / input_h

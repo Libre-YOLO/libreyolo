@@ -489,7 +489,11 @@ class BoxMatcher:
 
 class YOLO9Loss:
     """
-    Combined loss for YOLOv9 training (single head, no auxiliary).
+    Combined loss for one YOLOv9 detection head.
+
+    The optional PGI auxiliary head uses a second ``YOLO9Loss`` instance;
+    ``LibreYOLO9Model`` adds ``aux_weight * aux_loss`` when that branch is
+    attached. Inference never instantiates this class.
 
     Computes:
     - Box loss (CIoU)

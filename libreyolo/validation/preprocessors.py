@@ -541,13 +541,23 @@ class CenterNetValPreprocessor(BaseValPreprocessor):
 
 
 class YOLO9ValPreprocessor(BaseValPreprocessor):
-    """YOLOv9 preprocessor: letterbox with gray padding, 0-1 range, RGB format."""
+    """YOLOv9 preprocessor: letterbox with gray padding, 0-1 range, RGB format.
+
+    Pad defaults to top-left (LibreYOLO <=1.5). Official MTL geometry is
+    center-pad and is selected only when the checkpoint stamps
+    ``letterbox_pad="center"``.
+    """
 
     def __init__(
-        self, img_size: Tuple[int, int], max_labels: int = 120, pad_value: int = 114
+        self,
+        img_size: Tuple[int, int],
+        max_labels: int = 120,
+        pad_value: int = 114,
+        letterbox_pad: str | None = None,
     ):
         super().__init__(img_size, max_labels)
         self.pad_value = pad_value
+        self.letterbox_pad = letterbox_pad
 
     @property
     def normalize(self) -> bool:
@@ -557,31 +567,45 @@ class YOLO9ValPreprocessor(BaseValPreprocessor):
     def uses_letterbox(self) -> bool:
         return True
 
+    def letterbox_scale(
+        self, orig_h: int, orig_w: int, imgsz: int
+    ) -> Tuple[float, float, float]:
+        from libreyolo.preprocess.letterbox import letterbox_geometry
+
+        if isinstance(imgsz, (list, tuple)):
+            input_h, input_w = int(imgsz[0]), int(imgsz[1])
+        else:
+            input_h = input_w = int(imgsz)
+        ratio, _nh, _nw, pad_left, pad_top = letterbox_geometry(
+            orig_h, orig_w, input_h, input_w, self.letterbox_pad
+        )
+        return ratio, float(pad_left), float(pad_top)
+
     def __call__(
         self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
     ) -> Tuple[np.ndarray, np.ndarray]:
-        orig_h, orig_w = img.shape[:2]
+        from libreyolo.preprocess.letterbox import apply_letterbox_hwc
+
         target_h, target_w = input_size
-
-        # Letterbox resize maintaining aspect ratio
-        ratio = min(target_h / orig_h, target_w / orig_w)
-        new_h = int(orig_h * ratio)
-        new_w = int(orig_w * ratio)
-
-        resized_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-
-        padded_img = np.full((target_h, target_w, 3), self.pad_value, dtype=np.uint8)
-        padded_img[:new_h, :new_w] = resized_img
+        padded_img, _ratio, pad_left, pad_top = apply_letterbox_hwc(
+            img, target_h, target_w, pad=self.letterbox_pad, fill=self.pad_value
+        )
 
         padded_img = padded_img[:, :, ::-1]  # BGR → RGB
         padded_img = padded_img.transpose(2, 0, 1)  # HWC → CHW
         padded_img = np.ascontiguousarray(padded_img, dtype=np.float32) / 255.0
 
-        # Targets are already in letterbox coords
+        # Dataset already scaled boxes by the letterbox ratio onto the
+        # unpadded resized frame. Only the pad offset is missing. Top-left
+        # pad is 0 so this is a no-op for unmarked ≤1.5 checkpoints.
         padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
         if len(targets) > 0:
             targets = np.array(targets).copy()
             n = min(len(targets), self.max_labels)
+            targets[:n, 0] = targets[:n, 0] + pad_left
+            targets[:n, 1] = targets[:n, 1] + pad_top
+            targets[:n, 2] = targets[:n, 2] + pad_left
+            targets[:n, 3] = targets[:n, 3] + pad_top
             padded_targets[:n] = targets[:n]
 
         return padded_img, padded_targets

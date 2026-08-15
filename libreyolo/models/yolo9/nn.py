@@ -909,10 +909,11 @@ class Backbone9(nn.Module):
         x = self.down3(p3)
         p4 = self.elan3(x)
 
-        # Stage 4 - B5/P5
+        # Stage 4 - B5 (pre-SPP) then SPP → P5. Stash B5 for the optional
+        # PGI aux neck without changing this method's 3-tuple return.
         x = self.down4(p4)
-        x = self.elan4(x)
-        p5 = self.spp(x)
+        self.last_b5 = self.elan4(x)
+        p5 = self.spp(self.last_b5)
 
         return p3, p4, p5
 
@@ -998,6 +999,46 @@ class Neck9(nn.Module):
         return out_p3, out_p4, out_p5
 
 
+class AuxNeck(nn.Module):
+    """PGI auxiliary FPN used only during training.
+
+    Mirrors MultimediaTechLab/YOLO ``auxiliary`` in ``v9-*.yaml``: SPPELAN
+    on pre-SPP B5, then top-down concat with B4/B3. Inference never calls
+    this module, so old single-head checkpoints keep their exact graph.
+    """
+
+    def __init__(self, config="c"):
+        super().__init__()
+        cfg = YOLO9_CONFIGS[config]
+        n = cfg["repeat_num"]
+        b3_ch = cfg["stages"][0][1]
+        b4_ch = cfg["stages"][1][1]
+        b5_ch = cfg["stages"][2][1]
+        spp_out = cfg["spp_out"]
+
+        self.spp = SPPELAN(b5_ch, spp_out // 2, spp_out)
+        self.up1 = nn.Upsample(scale_factor=2, mode="nearest")
+        a4_out, a4_part = cfg["neck_elan_up1"]
+        self.elan_a4 = RepNCSPELAN(
+            spp_out + b4_ch, a4_part, a4_part // 2, a4_out, n
+        )
+        self.up2 = nn.Upsample(scale_factor=2, mode="nearest")
+        a3_out, a3_part = cfg["neck_elan_up2"]
+        self.elan_a3 = RepNCSPELAN(
+            a4_out + b3_ch, a3_part, a3_part // 2, a3_out, n
+        )
+
+    def forward(self, p3, p4, b5):
+        a5 = self.spp(b5)
+        x = self.up1(a5)
+        x = torch.cat([x, p4], 1)
+        a4 = self.elan_a4(x)
+        x = self.up2(a4)
+        x = torch.cat([x, p3], 1)
+        a3 = self.elan_a3(x)
+        return a3, a4, a5
+
+
 class LibreYOLO9Model(nn.Module):
     """
     Complete LibreYOLO9 model.
@@ -1046,6 +1087,32 @@ class LibreYOLO9Model(nn.Module):
             reg_max=reg_max,
             stride=(8, 16, 32),
         )
+        # Built only when training with PGI. Inference checkpoints stay
+        # single-head so a 1.6 upgrade does not change the exported graph.
+        self.aux = None
+        self.aux_head = None
+        self.aux_weight = 0.0
+
+    def enable_aux(self, weight: float = 0.25):
+        """Attach the PGI auxiliary neck/head if they are not already present."""
+        self.aux_weight = float(weight)
+        if self.aux is not None:
+            return self
+        cfg = YOLO9_CONFIGS[self.config]
+        self.aux = AuxNeck(self.config)
+        self.aux_head = DDetect(
+            nc=self.nc,
+            ch=cfg["head_channels"],
+            reg_max=self.reg_max,
+            stride=(8, 16, 32),
+        )
+        try:
+            device = next(self.parameters()).device
+        except StopIteration:
+            device = torch.device("cpu")
+        self.aux.to(device)
+        self.aux_head.to(device)
+        return self
 
     def forward(self, x, targets=None):
         """
@@ -1061,7 +1128,8 @@ class LibreYOLO9Model(nn.Module):
             Training without targets: Raw predictions (list of tensors)
             Inference: Dict with decoded predictions and features
         """
-        # Backbone
+        # Backbone. ``last_b5`` is the pre-SPP B5 feature the PGI aux
+        # branch needs; the public 3-tuple return stays (p3, p4, post-SPP p5).
         p3, p4, p5 = self.backbone(x)
 
         # Neck
@@ -1071,7 +1139,20 @@ class LibreYOLO9Model(nn.Module):
         if self.training and targets is not None:
             # Pass image size for anchor generation
             img_size = (x.shape[3], x.shape[2])  # (W, H)
-            return self.head([n3, n4, n5], targets=targets, img_size=img_size)
+            main = self.head([n3, n4, n5], targets=targets, img_size=img_size)
+            if self.aux is None or self.aux_weight <= 0:
+                return main
+            b5 = getattr(self.backbone, "last_b5", None)
+            if b5 is None:
+                return main
+            a3, a4, a5 = self.aux(p3, p4, b5)
+            aux = self.aux_head([a3, a4, a5], targets=targets, img_size=img_size)
+            weight = self.aux_weight
+            combined = dict(main)
+            for key in ("total_loss", "box_loss", "dfl_loss", "cls_loss", "box", "dfl", "cls"):
+                if key in main and key in aux:
+                    combined[key] = main[key] + weight * aux[key]
+            return combined
 
         # Normal forward (training without targets or inference)
         output = self.head([n3, n4, n5])

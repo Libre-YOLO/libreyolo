@@ -79,7 +79,7 @@ class YOLO9Trainer(BaseTrainer):
 
         return YOLO9ValidationLoss(
             model,
-            max_labels=int(getattr(self.config, "max_labels", 100)),
+            max_labels=int(getattr(self.config, "max_labels", 300)),
         )
 
     def get_freeze_groups(self) -> List[FreezeGroup]:
@@ -100,17 +100,73 @@ class YOLO9Trainer(BaseTrainer):
                     groups.append((f"neck.{name}", module))
         if head is not None:
             groups.append(("head", head))
+        aux = getattr(model, "aux", None)
+        if aux is not None:
+            groups.append(("aux", aux))
+        aux_head = getattr(model, "aux_head", None)
+        if aux_head is not None:
+            groups.append(("aux_head", aux_head))
         return groups or super().get_freeze_groups()
+
+    def _resolved_letterbox_pad(self) -> str | None:
+        from libreyolo.preprocess.letterbox import normalize_letterbox_pad
+
+        configured = getattr(self.config, "letterbox_pad", None)
+        if configured:
+            pad = normalize_letterbox_pad(configured)
+            if self.wrapper_model is not None:
+                self.wrapper_model.letterbox_pad = pad
+            return pad
+        return getattr(self.wrapper_model, "letterbox_pad", None)
 
     def create_transforms(self):
         preproc = YOLO9TrainTransform(
-            max_labels=getattr(self.config, "max_labels", 100),
+            max_labels=getattr(self.config, "max_labels", 300),
             flip_prob=self.config.flip_prob,
             vertical_flip_prob=getattr(self.config, "flipud", 0.0),
             hsv_prob=self.config.hsv_prob,
             rot90_prob=getattr(self.config, "rot90", 0.0),
+            letterbox_pad=self._resolved_letterbox_pad(),
         )
         return preproc, YOLO9MosaicMixupDataset
+
+    def _checkpoint_extra_metadata(self):
+        extra = super()._checkpoint_extra_metadata()
+        from libreyolo.preprocess.letterbox import normalize_letterbox_pad
+
+        pad = self._resolved_letterbox_pad()
+        extra["letterbox_pad"] = normalize_letterbox_pad(pad)
+        return extra
+
+    def setup(self):
+        # Attach PGI before optimizer / EMA / DDP when the resume file has it.
+        # ``train(resume=True)`` already did this; this covers setup-first
+        # callers that only pass the path to ``resume()`` later.
+        path = getattr(getattr(self, "wrapper_model", None), "model_path", None)
+        if path and self.wrapper_model is not None:
+            self.wrapper_model._maybe_enable_aux_from_path(
+                path, getattr(self.config, "aux_weight", 0.25)
+            )
+        return super().setup()
+
+    def resume(self, checkpoint_path: str):
+        if self.wrapper_model is not None:
+            self.wrapper_model._maybe_enable_aux_from_path(
+                checkpoint_path, getattr(self.config, "aux_weight", 0.25)
+            )
+            from libreyolo.utils.serialization import load_trusted_torch_file
+            from libreyolo.preprocess.letterbox import normalize_letterbox_pad
+
+            checkpoint = load_trusted_torch_file(
+                checkpoint_path,
+                map_location="cpu",
+                context="yolo9 resume letterbox probe",
+            )
+            if isinstance(checkpoint, dict) and "letterbox_pad" in checkpoint:
+                self.wrapper_model.letterbox_pad = normalize_letterbox_pad(
+                    checkpoint.get("letterbox_pad")
+                )
+        return super().resume(checkpoint_path)
 
     def create_scheduler(self, iters_per_epoch: int):
         scheduler_name = self.config.scheduler
@@ -122,6 +178,8 @@ class YOLO9Trainer(BaseTrainer):
                 warmup_epochs=self.config.warmup_epochs,
                 warmup_lr_start=self.config.warmup_lr_start,
                 min_lr_ratio=self.config.min_lr_ratio,
+                warmup_momentum=getattr(self.config, "warmup_momentum", None),
+                momentum=getattr(self.config, "momentum", None),
             )
         elif scheduler_name in ("cos", "warmcos"):
             return CosineAnnealingScheduler(
@@ -175,6 +233,10 @@ class YOLO9Trainer(BaseTrainer):
         if not isinstance(self.model, LibreYOLO9Model):
             return None
         if type(self.model.head) is not DDetect:
+            return None
+        # Captured forward runs without targets, so the PGI aux branch never
+        # executes and aux params get zero gradients. Fall back to eager.
+        if getattr(self.model, "aux", None) is not None:
             return None
 
         network = GraphableNetwork(self.model)

@@ -2309,11 +2309,24 @@ class BaseTrainer(ABC):
         for param_group in self.optimizer.param_groups:
             param_group["lr"] = self._scale_lr(base_lr, param_group)
 
+    def _apply_scheduler(self, iters: int) -> float:
+        """Step the LR scheduler and optional momentum warmup."""
+        lr = self.lr_scheduler.update_lr(iters)
+        self._set_optimizer_lr(lr)
+        update_momentum = getattr(self.lr_scheduler, "update_momentum", None)
+        if callable(update_momentum):
+            momentum = update_momentum(iters)
+            if momentum is not None:
+                for param_group in self.optimizer.param_groups:
+                    if "momentum" in param_group:
+                        param_group["momentum"] = momentum
+        return lr
+
     def _initialize_scheduler_lr(self) -> None:
         if self.optimizer is None or self.lr_scheduler is None:
             return
         init_iter = getattr(self, "start_epoch", 0) * self._scheduler_steps_per_epoch()
-        self._set_optimizer_lr(self.lr_scheduler.update_lr(init_iter))
+        self._apply_scheduler(init_iter)
 
     def _gradient_clip_parameters(self) -> List[torch.nn.Parameter]:
         if self.optimizer is None:
@@ -2477,8 +2490,7 @@ class BaseTrainer(ABC):
             del outputs, loss, total_loss_raw
 
             # LR update
-            lr = self.lr_scheduler.update_lr(self.current_iter + 1)
-            self._set_optimizer_lr(lr)
+            lr = self._apply_scheduler(self.current_iter + 1)
             num_batches += 1
 
             # Progress bar
@@ -2650,8 +2662,7 @@ class BaseTrainer(ABC):
                 if self.ema_model is not None:
                     self.ema_model.update(self.model)
                 # LR update
-                lr = self.lr_scheduler.update_lr(opt_step + 1)
-                self._set_optimizer_lr(lr)
+                lr = self._apply_scheduler(opt_step + 1)
 
             # Logging uses the raw pre-scale value (single-GPU semantics).
             loss_val = float(total_loss_raw.detach().item())
