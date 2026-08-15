@@ -76,6 +76,7 @@ class LibreMODUS(LibreVLMModel):
     DEFAULT_TASK = "detect"
     SUPPORTS_BATCHED_PREDICT = False
     TTA_ENABLED = False
+    CONFIDENCE_METHOD = "constrained_token_min"
 
     def __init__(
         self,

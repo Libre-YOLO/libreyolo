@@ -732,6 +732,7 @@ def test_factory_aliases_and_lazy_exports(monkeypatch):
     assert vlm.LibreMODUS is LibreMODUS
     assert vlm.LibreModus is LibreMODUS
     assert vlm._MODUS_ALIASES["libremodus-14b-a7b"] == "14b-a7b"
+    assert LibreMODUS.CONFIDENCE_METHOD == "constrained_token_min"
 
     class Sentinel:
         def __init__(self, size, **kwargs):

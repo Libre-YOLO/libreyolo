@@ -39,6 +39,9 @@ class LibreQwen3VL(LibreVLMModel):
     # Qwen emits {"bbox_2d": [x1,y1,x2,y2], "label": ...} on a 0-1000 scale.
     BBOX_KEY = "bbox_2d"
     COORD_DIVISOR = 1000.0
+    # The bounded-memory scoring candidate remains off until a real-data gate
+    # establishes useful ordering and a safe interaction with ``conf=``.
+    TOKEN_LOGPROB_CONFIDENCE = False
 
     # First trainable family: grounding-pretrained, Apache-2.0, native
     # transformers classes, and an official upstream fine-tuning recipe this

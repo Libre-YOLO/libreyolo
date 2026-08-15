@@ -103,8 +103,10 @@ shared `InferenceRunner` drives:
 - `_preprocess(image, ...)` builds the chat-template inputs from the image plus
   the detection prompt; returns `(inputs, pil_image, (W, H), ratio=1.0)`. Boxes
   come back normalized to the image, so there is no letterbox/unpad math.
-- `_forward(inputs)` runs `model.generate(...)` greedily and returns only the
-  newly generated tokens.
+- `_forward(inputs)` runs `model.generate(...)` greedily and returns the newly
+  generated tokens. A family-gated scoring path can also attach one
+  selected-token log-probability per step without retaining vocabulary-sized
+  score tensors.
 - `_postprocess(output, conf, ...)` decodes, tolerantly parses the JSON, scales
   the coordinates per `BBOX_KEY`/`COORD_DIVISOR`, and returns the standard
   detection dict `{boxes, scores, classes, num_detections}` that
@@ -126,18 +128,31 @@ in [`../librevlm_design.md`](../librevlm_design.md).
 
 ## Confidence
 
-Generated detections carry no calibrated per-box score. The tier assigns a
-constant placeholder (`DEFAULT_SCORE = 1.0`), so `predict`/draw/`track` behave
-normally and `conf=` filtering still functions mechanically. Consequences:
+Generated detections carry no calibrated per-box score. The generic VLM families
+currently assign a constant placeholder (`DEFAULT_SCORE = 1.0`). A bounded-memory
+candidate for Qwen3-VL can derive a ranking signal from the geometric mean of
+generated label-token and coordinate-token probabilities. It records one
+selected-token log-probability after the configured generation processors per
+step, rather than retaining a vocabulary-sized score tensor for every token.
+The candidate remains disabled until its real-data gate passes, so ordinary
+`predict()` keeps the established constant-score behavior. LibreMODUS separately
+uses the minimum constrained-token probability for each detection.
 
-- `conf=` thresholds and ranking are soft, not calibrated.
-- `track()` runs, but because every box is scored 1.0, ByteTrack's two-stage,
-  score-stratified association is inert (no separate low-confidence recovery
-  stage and `new_track_thresh` never bites) until a real score lands.
-- `val()` (mAP) is intentionally unsupported; it would be misleading.
+`model.confidence_method` reports the configured source (`constant` today for
+Qwen3-VL, and `constrained_token_min` for LibreMODUS).
 
-`_score_detections(items)` is the documented override point for a real signal
-(decoder token log-probs or self-consistency) in a later iteration.
+Consequences:
+
+- On constant-score families, `conf=` filtering is mechanical and ByteTrack's
+  score-stratified association remains inert (no separate low-confidence
+  recovery stage).
+- `val()` (mAP) remains unsupported until the candidate score orders correct
+  detections better than the constant baseline, behaves safely with the public
+  confidence threshold, and is reproducible. Unit tests establish plumbing, not
+  score quality.
+
+`_score_detections(items)` remains the scalar fallback for custom generation
+paths. Scored greedy generations use the additive per-item scoring path.
 
 ## Licensing
 
@@ -180,7 +195,8 @@ executing mutable upstream model-repository code under the same alias.
 
 ### Negative
 
-- Confidence is synthetic until the log-prob path lands.
+- Generic-family confidence remains constant until each score path passes its
+  real-data quality gate; LibreMODUS's constrained-token score is uncalibrated.
 - Generation is slower and less deterministic than a detector forward.
 - Adds `transformers` (already an optional extra) to the `vlm` extra.
 

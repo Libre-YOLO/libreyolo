@@ -23,6 +23,7 @@ import json
 import logging
 import re
 from collections.abc import MutableMapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
@@ -31,6 +32,7 @@ import torch.nn as nn
 
 from ...utils.image_loader import ImageInput, ImageLoader
 from ..base.model import BaseModel
+from .confidence import TokenSpan, decode_token_spans, score_detection_items
 from .parsing import build_detection_dict, extract_detections
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,37 @@ _INSTALL_HINT = (
 )
 _SNAPSHOT_COMPLETE_MARKER = ".libreyolo_snapshot_complete"
 _COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+
+
+@dataclass(frozen=True)
+class _ScoredGeneration:
+    """Generated token ids plus one generation-policy log-probability per step."""
+
+    token_ids: torch.Tensor
+    token_logprobs: torch.Tensor
+
+
+class _GreedyTokenLogprobRecorder:
+    """Record greedy post-processor log-probabilities without retaining logits."""
+
+    def __init__(self) -> None:
+        self._steps: list[torch.Tensor] = []
+
+    def __call__(self, input_ids: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
+        # This processor is appended after repetition/constraint processors. With
+        # do_sample=False and num_beams=1, generate selects scores.argmax(-1).
+        # Keep only one scalar per batch row instead of a vocabulary-sized tensor
+        # for each generation step (MAX_NEW_TOKENS is 1024).
+        del input_ids
+        logits = scores.float()
+        selected_logprob = logits.amax(dim=-1) - torch.logsumexp(logits, dim=-1)
+        self._steps.append(selected_logprob.detach())
+        return scores
+
+    def values(self) -> torch.Tensor:
+        if not self._steps:
+            return torch.empty((1, 0), dtype=torch.float32)
+        return torch.stack(self._steps, dim=1).to(device="cpu", dtype=torch.float32)
 
 
 class LibreVLMModel(BaseModel):
@@ -57,10 +90,14 @@ class LibreVLMModel(BaseModel):
     SUPPORTED_TASKS: ClassVar[tuple] = ("detect",)
     DEFAULT_TASK: ClassVar[str] = "detect"
 
-    # Generative output has no calibrated per-box confidence. v1 assigns a
-    # constant placeholder so predict/draw/track behave; ``conf=`` filtering and
-    # mAP are therefore soft. Override ``_score_detections`` for a real signal.
+    # Generative output has no calibrated per-box confidence. Families that have
+    # not verified a ranking signal use a constant placeholder so predict/draw/
+    # track behave. ``confidence_method`` makes that provenance inspectable.
     DEFAULT_SCORE: ClassVar[float] = 1.0
+    CONFIDENCE_METHOD: ClassVar[str] = "constant"
+    # Opt-in only after a family has verified both its greedy generation path
+    # and score quality on real detection data. Other families keep DEFAULT_SCORE.
+    TOKEN_LOGPROB_CONFIDENCE: ClassVar[bool] = False
     MAX_NEW_TOKENS: ClassVar[int] = 1024
     # Output coordinate convention. LFM2-VL emits ``bbox`` normalized to [0, 1];
     # Qwen-style models emit ``bbox_2d`` on a 0-1000 scale. Families override.
@@ -201,6 +238,12 @@ class LibreVLMModel(BaseModel):
         self.nb_classes = len(self.names)
         self._name_to_id = {v.strip().lower(): k for k, v in self.names.items()}
         return self
+
+    @property
+    def confidence_method(self) -> str:
+        """Name the configured source of ``boxes.conf`` values for this family."""
+
+        return self.CONFIDENCE_METHOD
 
     def set_task(self, task: str) -> "LibreVLMModel":
         """Switch the active task without reloading the model.
@@ -566,21 +609,75 @@ class LibreVLMModel(BaseModel):
         # normalized to the image, so no letterbox/unpad bookkeeping is needed.
         return inputs, img, img.size, 1.0
 
-    def _forward(self, inputs: Any) -> torch.Tensor:
+    def _forward(self, inputs: Any) -> Any:
         inputs = self._prepare_generation_inputs(inputs)
         input_len = inputs["input_ids"].shape[1]
-        generated = self.model.generate(
-            **inputs,
-            max_new_tokens=self.MAX_NEW_TOKENS,
-            do_sample=False,
-            repetition_penalty=self.REPETITION_PENALTY,
-        )
+        generate_kwargs = {
+            "max_new_tokens": self.MAX_NEW_TOKENS,
+            "do_sample": False,
+            "repetition_penalty": self.REPETITION_PENALTY,
+        }
+        recorder = None
+        if self.TOKEN_LOGPROB_CONFIDENCE:
+            recorder = _GreedyTokenLogprobRecorder()
+            # The recorder relies on the selected token being argmax(scores).
+            generate_kwargs.update(num_beams=1, logits_processor=[recorder])
+        generated = self.model.generate(**inputs, **generate_kwargs)
+        sequences = getattr(generated, "sequences", generated)
         # Strip the prompt tokens; keep only what the model generated.
-        return generated[:, input_len:]
+        new_tokens = sequences[:, input_len:]
+        if recorder is None:
+            return new_tokens
+        token_logprobs = recorder.values()
+        if token_logprobs.shape != new_tokens.shape:
+            logger.warning(
+                "Token-confidence alignment failed for %s: %s token ids vs %s "
+                "log-probabilities; using fallback scores.",
+                self.FAMILY,
+                tuple(new_tokens.shape),
+                tuple(token_logprobs.shape),
+            )
+            return new_tokens
+        return _ScoredGeneration(new_tokens, token_logprobs)
 
     def _score_detections(self, items: list) -> float:
         """Per-call confidence for parsed detections (placeholder in v1)."""
         return self.DEFAULT_SCORE
+
+    def _decode_token_ids(self, token_ids) -> str:
+        """Decode generated ids without whitespace cleanup that shifts spans."""
+
+        payload = token_ids
+        if isinstance(token_ids, (list, tuple)):
+            payload = [list(token_ids)]
+        kwargs = {"skip_special_tokens": True, "clean_up_tokenization_spaces": False}
+        try:
+            return self.processor.batch_decode(payload, **kwargs)[0]
+        except TypeError:
+            kwargs.pop("clean_up_tokenization_spaces")
+            return self.processor.batch_decode(payload, **kwargs)[0]
+
+    def _scores_for_detections(
+        self,
+        output: Any,
+        text: str,
+        items: list,
+        token_spans: list[TokenSpan],
+    ) -> Optional[list[float]]:
+        """Return per-item scores when generation carries aligned policy logprobs."""
+
+        if not isinstance(output, _ScoredGeneration) or not token_spans:
+            return None
+        raw_scores = score_detection_items(
+            text, items, token_spans, bbox_key=self.BBOX_KEY
+        )
+        # Never mix a maximum-valued placeholder with real scores: that would
+        # rank an unaligned item above every successfully scored detection. If
+        # any source object cannot be aligned, keep the established constant
+        # behavior for the whole response.
+        if any(score is None for score in raw_scores):
+            return None
+        return [float(score) for score in raw_scores if score is not None]
 
     def _postprocess(
         self,
@@ -592,8 +689,19 @@ class LibreVLMModel(BaseModel):
         ratio: float = 1.0,
         **kwargs,
     ) -> Dict:
-        text = self.processor.batch_decode(output, skip_special_tokens=True)[0]
+        token_spans: list[TokenSpan] = []
+        if isinstance(output, _ScoredGeneration):
+            text, token_spans = decode_token_spans(
+                output.token_ids,
+                output.token_logprobs,
+                self._decode_token_ids,
+            )
+        else:
+            # Preserve the established family decode behavior when scoring is
+            # disabled; whitespace-stable decoding is needed only for spans.
+            text = self.processor.batch_decode(output, skip_special_tokens=True)[0]
         items = extract_detections(text)
+        item_scores = self._scores_for_detections(output, text, items, token_spans)
         return build_detection_dict(
             items,
             self._name_to_id,
@@ -602,6 +710,7 @@ class LibreVLMModel(BaseModel):
             max_det=max_det,
             classes=kwargs.get("classes"),
             default_score=self._score_detections(items),
+            item_scores=item_scores,
             bbox_key=self.BBOX_KEY,
             coord_divisor=self.COORD_DIVISOR,
             box_format=self.BOX_FORMAT,
@@ -651,8 +760,8 @@ class LibreVLMModel(BaseModel):
     def val(self, *args, **kwargs):
         raise NotImplementedError(
             f"Dataset validation is not supported for {type(self).__name__}: "
-            "generated boxes carry only a placeholder confidence, so COCO mAP "
-            "would be misleading. Evaluate qualitatively via predict()."
+            "per-box score ordering has not passed the real-data validation gate, "
+            "so publishing COCO mAP would be premature. Evaluate via predict()."
         )
 
     def export(self, format: str = "onnx", **kwargs) -> str:

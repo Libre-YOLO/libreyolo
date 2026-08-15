@@ -126,13 +126,16 @@ The tier returns the standard `Results` (`boxes.xyxy`, `boxes.cls`,
 `boxes.conf`, `.plot()`, `.save()`), so folders, video, tracking, and drawing
 all work unchanged. No new output type is invented.
 
-But these models emit no calibrated per-box score, so `conf` is a placeholder.
-We do not pretend otherwise:
+These models emit no calibrated detector score. The generic VLM families retain
+`1.0`. A bounded-memory Qwen3-VL candidate can derive a ranking signal from
+generated label-token and coordinate-token probabilities, but it remains off
+until the real-data quality gate passes. Inspect `model.confidence_method` for
+the configured source. We do not pretend any token-derived score is calibrated:
 
-- `conf=` filtering and ranking are soft, not calibrated.
-- `val()` (mAP) is intentionally unsupported, because it would be misleading.
-- `_score_detections()` is the documented hook for a real signal later (decoder
-  token log-probabilities or self-consistency).
+- On constant-score families, `conf=` filtering is mechanical.
+- `val()` (mAP) remains unsupported until a real Qwen benchmark demonstrates
+  useful ordering, safe threshold behavior, and reproducibility.
+- `_score_detections()` remains the scalar fallback for custom generation paths.
 
 This is the honest boundary of the tier: it gives you boxes and labels, not a
 calibrated detector contract. For calibrated scores and tight boxes, the
@@ -286,11 +289,11 @@ precision tiers, and terms distinction are documented in
 
 These are deliberate v1 scoping choices, called out so behavior matches expectations:
 
-- **Confidence is usually synthetic.** Chat-model adapters assign every box
-  `1.0`; `conf=` filtering is mechanical, and ByteTrack's score-stratified
-  association is inert. LibreMODUS derives a sequence score from constrained
-  token probabilities, but it is still not calibrated detector confidence.
-  Generic `val()`/mAP remains unsupported.
+- **Confidence is not calibrated.** Local chat VLM families currently backfill
+  `1.0`; the bounded-memory Qwen3-VL scoring candidate is staged but disabled.
+  LibreMODUS derives a separate per-box minimum from constrained token
+  probabilities. Generic `val()`/mAP remains unsupported until each score path
+  passes its real-data quality gate.
 - **`batch=` does not speed up VLMs.** `predict("folder/")` works, but generation
   runs one image at a time, so a larger `batch=` gives no throughput gain in v1.
 - **Python-API only.** The `libreyolo` CLI does not resolve VLM aliases yet; use
