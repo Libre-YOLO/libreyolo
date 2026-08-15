@@ -224,8 +224,10 @@ noise. The CLI equivalent is
 ## QAT and QAD mechanics
 
 Quantized modules keep fp32 master weights; fake-quantization applies STE so
-gradients flow to the masters. The existing trainers work unchanged: EMA,
-AMP, checkpoint resume, and the `distill_*` kwargs (MGD/CWD) all compose.
+gradients flow to the masters. AMP, checkpoint resume, and the `distill_*`
+kwargs (MGD/CWD) compose with QAT. At setup, QAT automatically disables EMA
+and SyncBatchNorm and logs the changes because both can interfere with
+fake-quant observer and scale state. Float training is unchanged.
 `fp16`-quantized models are inference-only; the trainer rejects them with a
 pointer to `amp=True`.
 
