@@ -563,7 +563,7 @@ def inspect_vlm_hub_artifact(
         info = _read_manifest_from_hub(
             hub,
             ref,
-            Path(temporary),
+            Path(temporary).resolve(),
             token=token,
             local_files_only=local_files_only,
             cache_dir=None,
@@ -765,7 +765,7 @@ def download_vlm_artifact(
         staged = _stage_vlm_artifact(
             hub,
             ref,
-            Path(temporary),
+            Path(temporary).resolve(),
             token=token,
             local_files_only=local_files_only,
         )
@@ -1155,7 +1155,7 @@ def push_vlm_artifact(
     # malformed local artifact must fail without authentication or network.
     artifact = validate_vlm_artifact(path)
     with tempfile.TemporaryDirectory(prefix="libreyolo-vlm-upload-") as upload_temp:
-        upload_root = Path(upload_temp)
+        upload_root = Path(upload_temp).resolve()
         stable = _stage_local_artifact_for_upload(artifact, upload_root / "artifact")
 
         # Network and authentication begin only after the isolated copy has
