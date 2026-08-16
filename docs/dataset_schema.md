@@ -335,7 +335,8 @@ Restore rules:
 - input and target resolution must match exactly;
 - validation keeps native resolution and pads only enough to stack a batch;
 - metrics are computed on the original image canvas;
-- training applies coupled crop and horizontal flip to the input/target pair.
+- training applies coupled crop, horizontal flip, vertical flip, and 90-degree
+  rotation to the input/target pair.
 
 YAML adds these optional keys on top of the common split contract:
 
@@ -348,6 +349,10 @@ YAML adds these optional keys on top of the common split contract:
 - `target_stem_suffixes`: list form of `target_stem_suffix`.
 - `degradation`: optional metadata label such as `deblur` or `denoise`.
 - `dataset`: optional dataset/provenance label such as `GoPro`.
+- `mask_dir`: same-stem binary-mask directory required by LibreLaMa validation.
+  It substitutes for the `input_dir` path component while preserving the
+  split, subdirectories, and file stem. Each mask must share its source
+  image's canvas; zero means preserve and every nonzero pixel means fill.
 
 The class-like YAML fields are schema placeholders: use `nc: 1` and
 `names: {0: image}`. Restore models expose `Results.restored`, not detections.
@@ -380,6 +385,12 @@ Matte rules:
   the shapes differ;
 - metrics are MAE and S-measure (Fan et al., ICCV 2017), computed on the
   original image canvas; best-checkpoint fitness is S-measure.
+- trimap-guided families may accept `trimap_dir=` at validation time, with one
+  `0/128/255` guide per image stem. `LibreViTMatte.val(...,
+  trimap_dir=path)` uses those guides. When the directory is omitted,
+  `trimap_radius=15` is the default: alpha values >= 0.5 form a binary
+  foreground, which is eroded and dilated by that fixed radius to derive the
+  known-foreground, unknown, and known-background regions.
 
 The class-like YAML fields are schema placeholders: use `nc: 1` and
 `names: {0: matte}`. Matte models expose `Results.matte`, not detections.

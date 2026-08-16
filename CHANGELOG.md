@@ -48,6 +48,20 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **Four restoration and guided-matting specialists.**
+  `LibreDDColor{t,l}-restore.pt` adds automatic colorization;
+  `LibreHVICIDNett-restore.pt` adds adjustable low-light enhancement;
+  `LibreLaMab-restore.pt` adds mask-guided inpainting through the pinned
+  OpenCV Zoo ONNX graph; and `LibreViTMattes-matte.pt` adds trimap-guided
+  alpha matting. All use existing `restore` or `matte` result contracts,
+  include paired validation, strict hash-pinned conversion, and
+  family-specific pinned parity harnesses. `mask=` and `trimap=` are
+  available in Python and the CLI for one-image guided prediction. Checkpoint
+  and training-data terms are documented separately from source-code terms;
+  ViTMatte's published
+  Composition-1k checkpoint is non-commercial. LaMa runtime requires
+  `libreyolo[onnx]`.
+
 - **QuickSRNet Medium 2x super-resolution.** `LibreQuickSRNetm2-restore.pt`
   adds compact native-resolution RGB upscaling, paired PSNR/SSIM validation,
   dynamic-spatial ONNX and fixed-canvas TorchScript export, exact parity with

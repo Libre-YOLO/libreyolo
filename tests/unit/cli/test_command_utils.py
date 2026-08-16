@@ -1250,6 +1250,8 @@ def test_predict_json_reports_obb_payload(monkeypatch):
         ("tiling=true", "tiling"),
         ("overlap_ratio=0.3", "overlap_ratio"),
         ("output_file_format=png", "output_file_format"),
+        ("mask=mask.png", "mask"),
+        ("trimap=trimap.png", "trimap"),
     ],
 )
 def test_predict_exported_backend_rejects_requested_native_only_kwargs(

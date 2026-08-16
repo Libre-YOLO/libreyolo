@@ -50,15 +50,24 @@ class TestResolveModelName:
         ("short_name", "advertised_name", "weight_name"),
         [
             ("clip-b32", "clip-b32-cls", "LibreCLIPb32-cls.pt"),
+            ("ddcolor-t", "ddcolor-t-restore", "LibreDDColort-restore.pt"),
+            ("ddcolor-l", "ddcolor-l-restore", "LibreDDColorl-restore.pt"),
             (
                 "depth_anything-s",
                 "depth_anything-s-depth",
                 "LibreDepthAnythingV2s-depth.pt",
             ),
             ("fomo-s", "fomo-s-point", "LibreFOMOs-point.pt"),
+            (
+                "hvi_cidnet-t",
+                "hvi_cidnet-t-restore",
+                "LibreHVICIDNett-restore.pt",
+            ),
+            ("lama-b", "lama-b-restore", "LibreLaMab-restore.pt"),
             ("midas-s", "midas-s-depth", "LibreMiDaSs-depth.pt"),
             ("siglip2-b16", "siglip2-b16-cls", "LibreSigLIP2b16-cls.pt"),
             ("vit-ti", "vit-ti-cls", "LibreViTti-cls.pt"),
+            ("vitmatte-s", "vitmatte-s-matte", "LibreViTMattes-matte.pt"),
             ("zipdepth-b", "zipdepth-b-depth", "LibreZipDepthb-depth.pt"),
         ],
     )

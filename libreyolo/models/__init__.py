@@ -113,9 +113,13 @@ from .depth_anything3.model import (  # noqa: E402,F401  (import registers famil
     LibreDepthAnything3,
 )
 from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
+from .ddcolor.model import LibreDDColor  # noqa: E402,F401  (restore-only colorization)
+from .hvi_cidnet.model import LibreHVICIDNet  # noqa: E402,F401  (restore-only low-light enhancement)
+from .lama.model import LibreLaMa  # noqa: E402,F401  (mask-guided restore/inpainting)
 from .birefnet.model import LibreBiRefNet  # noqa: E402,F401  (matte-only; can_load keyed on squeeze_module+gdt_convs_attn+ipt_blk)
 from .feynobg.model import LibreFeyNobg  # noqa: E402,F401  (matte-only; BiRefNet keys + 24-block stage-3 marker, disjoint from birefnet)
 from .ben2.model import LibreBEN2  # noqa: E402,F401  (matte-only; BEN2 cross-attention/refinement fingerprint)
+from .vitmatte.model import LibreViTMatte  # noqa: E402,F401  (trimap-guided matte)
 from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
 from .quicksrnet.model import LibreQuickSRNet  # noqa: E402,F401  (restore/super-resolution; exact compact CNN fingerprint)
 from .swinir.model import LibreSwinIR  # noqa: E402,F401  (restore/super-resolution; RSTB keys are unique)
@@ -880,9 +884,13 @@ __all__ = [
     "LibreDexiNed",
     "LibreDepthAnything3",
     "LibreNAFNet",
+    "LibreDDColor",
+    "LibreHVICIDNet",
+    "LibreLaMa",
     "LibreBiRefNet",
     "LibreFeyNobg",
     "LibreBEN2",
+    "LibreViTMatte",
     "LibreRealESRGAN",
     "LibreQuickSRNet",
     "LibreSwinIR",

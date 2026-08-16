@@ -120,6 +120,26 @@
     "available": true,
     "group": "g2"
   },
+  "ddcolor": {
+    "class": "libreyolo.models.ddcolor.model.LibreDDColor",
+    "tasks": [
+      "restore"
+    ],
+    "default_task": "restore",
+    "sizes": {
+      "t": 512,
+      "l": 512
+    },
+    "default_imgsz": {
+      "t": 512,
+      "l": 512
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "deeplabv3": {
     "class": "libreyolo.models.deeplabv3.model.LibreDeepLabv3",
     "tasks": [
@@ -870,6 +890,24 @@
     "available": true,
     "group": "g3"
   },
+  "hvi_cidnet": {
+    "class": "libreyolo.models.hvi_cidnet.model.LibreHVICIDNet",
+    "tasks": [
+      "restore"
+    ],
+    "default_task": "restore",
+    "sizes": {
+      "t": 256
+    },
+    "default_imgsz": {
+      "t": 256
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
   "internvl3": {
     "class": "libreyolo.models.vlm.internvl3.LibreInternVL3",
     "tasks": [
@@ -933,6 +971,24 @@
     "task_sizes": {},
     "export_override": "custom",
     "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
+  "lama": {
+    "class": "libreyolo.models.lama.model.LibreLaMa",
+    "tasks": [
+      "restore"
+    ],
+    "default_task": "restore",
+    "sizes": {
+      "b": 512
+    },
+    "default_imgsz": {
+      "b": 512
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "onnx",
     "available": true,
     "group": "g3"
   },
@@ -2057,6 +2113,24 @@
       "s": 224,
       "b": 224,
       "l": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true,
+    "group": "g3"
+  },
+  "vitmatte": {
+    "class": "libreyolo.models.vitmatte.model.LibreViTMatte",
+    "tasks": [
+      "matte"
+    ],
+    "default_task": "matte",
+    "sizes": {
+      "s": 512
+    },
+    "default_imgsz": {
+      "s": 512
     },
     "task_sizes": {},
     "export_override": "none",

@@ -84,6 +84,9 @@ logger = logging.getLogger(__name__)
 # Tasks whose result is one row for a whole clip rather than one per frame.
 # A family still has to opt in via ``VIDEO_EMBED_MODE = "clip"``.
 _WHOLE_CLIP_TASKS = frozenset({"embed", "classify"})
+_COMMON_PREDICT_PASSTHROUGH = frozenset(
+    {"num_select", "gallery", "threshold", "clip_frames"}
+)
 
 
 def _as_float_tensor(
@@ -170,6 +173,78 @@ class InferenceRunner:
     def __init__(self, model: BaseModel):
         self.model = model
 
+    def _predict_input_contract(self) -> tuple[frozenset[str], frozenset[str]]:
+        """Return and validate the loaded family's auxiliary-input contract."""
+        declared = frozenset(getattr(self.model, "PREDICT_INPUT_KWARGS", ()) or ())
+        required = frozenset(
+            getattr(self.model, "REQUIRED_PREDICT_INPUT_KWARGS", ()) or ()
+        )
+        invalid = required - declared
+        if invalid:
+            raise ValueError(
+                f"{type(self.model).__name__} declares required prediction "
+                "input option(s) that it does not accept: "
+                f"{', '.join(sorted(invalid))}."
+            )
+        return declared, required
+
+    def _preprocess_model_input(
+        self,
+        image: ImageInput,
+        color_format: str,
+        input_size,
+        predict_input_kwargs: Optional[Dict[str, object]] = None,
+    ):
+        """Call the prediction hook, retaining support for duck-typed stubs."""
+        preprocess = getattr(self.model, "_preprocess_predict", None)
+        if preprocess is None:
+            preprocess = self.model._preprocess
+        return preprocess(
+            image,
+            color_format,
+            input_size=input_size,
+            **(predict_input_kwargs or {}),
+        )
+
+    @staticmethod
+    def _reject_guided_source_modes(
+        source_spec,
+        predict_input_kwargs: Dict[str, object],
+        *,
+        stream: bool,
+        tiling: bool,
+        augment: bool,
+    ) -> None:
+        """Keep auxiliary guides scoped to an unambiguous single image."""
+        if not predict_input_kwargs:
+            return
+
+        unsupported = []
+        if source_spec.kind == SourceKind.VIDEO:
+            unsupported.append("video")
+        if source_spec.live:
+            unsupported.append("live source")
+        if source_spec.kind == SourceKind.SCREEN:
+            unsupported.append("screen capture")
+        if source_spec.kind == SourceKind.DIRECTORY:
+            unsupported.append("directory source")
+        if source_spec.kind == SourceKind.IMAGE_BATCH:
+            unsupported.append("image batch")
+        if stream:
+            unsupported.append("stream=True")
+        if tiling:
+            unsupported.append("tiling=True")
+        if augment:
+            unsupported.append("augment=True")
+
+        if unsupported:
+            keys = ", ".join(sorted(predict_input_kwargs))
+            raise ValueError(
+                f"Guided prediction input(s) {keys} currently support only "
+                "one non-streamed, non-tiled, non-augmented image. "
+                f"Unsupported mode(s): {', '.join(unsupported)}."
+            )
+
     @with_cuda_graph_scope
     def __call__(
         self,
@@ -249,10 +324,36 @@ class InferenceRunner:
         Returns:
             Results, list of Results, or generator of Results (stream=True).
         """
+        declared_predict_inputs, required_predict_inputs = (
+            self._predict_input_contract()
+        )
         kwargs = normalize_predict_kwargs(
             kwargs,
-            passthrough={"num_select", "gallery", "threshold", "clip_frames"},
+            passthrough=_COMMON_PREDICT_PASSTHROUGH | declared_predict_inputs,
         )
+        predict_input_kwargs = {
+            key: kwargs.pop(key) for key in declared_predict_inputs if key in kwargs
+        }
+        missing_predict_inputs = sorted(
+            key
+            for key in required_predict_inputs
+            if key not in predict_input_kwargs or predict_input_kwargs[key] is None
+        )
+        if missing_predict_inputs:
+            raise ValueError(
+                f"{type(self.model).__name__} requires prediction input "
+                f"option(s): {', '.join(missing_predict_inputs)}."
+            )
+        source_spec = None
+        if predict_input_kwargs:
+            source_spec = classify_source(source)
+            self._reject_guided_source_modes(
+                source_spec,
+                predict_input_kwargs,
+                stream=stream,
+                tiling=tiling,
+                augment=augment,
+            )
         if device is not None:
             self._set_device(device)
         if (
@@ -300,7 +401,8 @@ class InferenceRunner:
                 "Use augment=False for edge models."
             )
 
-        source_spec = classify_source(source)
+        if source_spec is None:
+            source_spec = classify_source(source)
 
         # Whole-clip inference. Opt-in per family: only when the family declares
         # clip support, the resolved task consumes a whole clip, and the source
@@ -311,9 +413,10 @@ class InferenceRunner:
         # video head (V-JEPA 2's attentive probe). Both collapse the video to a
         # single result, so they share this route rather than adding a second
         # one.
-        if getattr(
-            self.model, "VIDEO_EMBED_MODE", "frames"
-        ) == "clip" and getattr(self.model, "task", None) in _WHOLE_CLIP_TASKS:
+        if (
+            getattr(self.model, "VIDEO_EMBED_MODE", "frames") == "clip"
+            and getattr(self.model, "task", None) in _WHOLE_CLIP_TASKS
+        ):
             if source_spec.live or source_spec.kind == SourceKind.SCREEN:
                 raise ValueError(
                     f"{type(self.model).__name__} embeds a whole video as a "
@@ -497,6 +600,7 @@ class InferenceRunner:
             max_det=max_det,
             color_format=color_format,
             output_file_format=output_file_format,
+            predict_input_kwargs=predict_input_kwargs,
             **kwargs,
         )
 
@@ -709,8 +813,10 @@ class InferenceRunner:
 
         preprocessed = []
         for image in chunk:
-            input_tensor, original_img, original_size, ratio = self.model._preprocess(
-                image, color_format, input_size=effective_imgsz
+            input_tensor, original_img, original_size, ratio = (
+                self._preprocess_model_input(
+                    image, color_format, input_size=effective_imgsz
+                )
             )
             preprocessed.append(
                 (input_tensor, original_img, original_size, ratio, image)
@@ -808,9 +914,7 @@ class InferenceRunner:
         sampled frame -- there is no per-frame video to render, because the
         whole clip collapses to one result.
         """
-        clip_frames = kwargs.pop(
-            "clip_frames", getattr(self.model, "clip_frames", 8)
-        )
+        clip_frames = kwargs.pop("clip_frames", getattr(self.model, "clip_frames", 8))
         clip_frames = int(clip_frames)
         if clip_frames < 1:
             raise ValueError(f"clip_frames must be positive; got {clip_frames}.")
@@ -826,7 +930,7 @@ class InferenceRunner:
         else:
             frames = sample_clip_frames(source, clip_frames)
         preprocessed = [
-            self.model._preprocess(frame, color_format="rgb", input_size=imgsz)
+            self._preprocess_model_input(frame, color_format="rgb", input_size=imgsz)
             for frame in frames
         ]
         tensors = [item[0] for item in preprocessed]
@@ -1394,6 +1498,7 @@ class InferenceRunner:
         color_format: str = "auto",
         output_file_format: Optional[str] = None,
         save_stem: Optional[str] = None,
+        predict_input_kwargs: Optional[Dict[str, object]] = None,
         **kwargs,
     ) -> Results:
         """Run inference on a single image.
@@ -1410,8 +1515,11 @@ class InferenceRunner:
         kwargs["input_size"] = effective_imgsz
 
         # Preprocess
-        input_tensor, original_img, original_size, ratio = self.model._preprocess(
-            image, color_format, input_size=effective_imgsz
+        input_tensor, original_img, original_size, ratio = self._preprocess_model_input(
+            image,
+            color_format,
+            input_size=effective_imgsz,
+            predict_input_kwargs=predict_input_kwargs,
         )
 
         # Forward pass
@@ -1505,8 +1613,8 @@ class InferenceRunner:
         kwargs["input_size"] = effective_imgsz
 
         def predict_frame(pil_img):
-            input_tensor, original_img, original_size, ratio = self.model._preprocess(
-                pil_img, "rgb", input_size=effective_imgsz
+            input_tensor, original_img, original_size, ratio = (
+                self._preprocess_model_input(pil_img, "rgb", input_size=effective_imgsz)
             )
             with torch.no_grad():
                 output = forward_maybe_graphed(

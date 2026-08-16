@@ -96,6 +96,20 @@ def test_non_runnable_exports_are_blocked_in_preflight(
         exporter._preflight(half=False, int8=False, data=None)
 
 
+@pytest.mark.parametrize(
+    ("family", "task"),
+    [
+        ("ddcolor", "restore"),
+        ("hvi_cidnet", "restore"),
+        ("lama", "restore"),
+        ("vitmatte", "matte"),
+    ],
+)
+def test_guided_restoration_specialists_block_unvalidated_exports(family, task):
+    for format_name in EXPORT_FORMATS:
+        assert get_support(family, task, format_name).tier == "blocked"
+
+
 @pytest.mark.parametrize("family", ["yolo9", "yolo9_e2e", "yolonas", "picodet"])
 def test_rknn_retained_families_are_available(family):
     entry = get_support(family, "detect", "rknn")
@@ -114,6 +128,8 @@ def test_vit_onnx_is_parity_validated():
     assert entry.tier == "validated"
     assert entry.constraint == "FP32, fixed 224x224 input"
     assert "test_vit_export.py" in entry.reason
+
+
 def test_ssd_exports_only_through_its_validated_onnx_contract():
     assert get_support("ssd", "detect", "onnx").tier == "validated"
     for fmt in EXPORT_FORMATS:
@@ -617,9 +633,7 @@ def test_round14_records_ten_measured_tflite_holds():
         ("rtdetrv4", "detect", "tflite", "640x640"),
     ],
 )
-def test_round7_measured_blocks_are_explicit(
-    family, task, format, reason_fragment
-):
+def test_round7_measured_blocks_are_explicit(family, task, format, reason_fragment):
     entry = get_support(family, task, format)
     assert entry.tier == "blocked"
     assert reason_fragment in entry.reason

@@ -116,6 +116,9 @@ the `alexnet` / `deit` / `mobilenetv4` / `convnext` / `efficientnetv2` /
 | `pe`        | `LibrePE`       | All-caps acronym (`PE`, Perception Encoder) kept short so canonical filenames stay compact; zero-shot classify + image/text/video embed; inference-only |
 | `vjepa2`    | `LibreVJEPA2`   | All-caps acronym + version (`V-JEPA 2`), hyphen dropped; video clip embedding (`embed`) + attentive-probe video classification (`classify`) |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
+| `ddcolor`   | `LibreDDColor`  | Upstream mixed-case brand preserved (`DDColor`); restore-only automatic colorization family |
+| `hvi_cidnet` | `LibreHVICIDNet` | All-caps upstream acronyms (`HVI-CIDNet`) with the separator retained only in the family id; restore-only low-light enhancement family |
+| `lama`      | `LibreLaMa`     | Upstream mixed-case acronym preserved (`LaMa`); mask-guided inpainting under the restore task |
 | `realesrgan` | `LibreRealESRGAN` | Upstream brand casing (`RealESRGAN`); restore-only super-resolution family |
 | `quicksrnet` | `LibreQuickSRNet` | Upstream brand casing (`QuickSRNet`); compact restore-only super-resolution family |
 | `swinir`    | `LibreSwinIR`    | Upstream brand casing (`SwinIR`); restore-only transformer super-resolution family |
@@ -129,6 +132,7 @@ the `alexnet` / `deit` / `mobilenetv4` / `convnext` / `efficientnetv2` /
 | `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
 | `feynobg`   | `LibreFeyNobg` | CamelCase preserved (FeyNobg); matte-only background-removal family built on the BiRefNet architecture |
 | `ben2`      | `LibreBEN2` | All-caps acronym plus version digit; matte-only BEN2 Base background-removal family |
+| `vitmatte`  | `LibreViTMatte` | Upstream brand casing preserved (`ViTMatte`); trimap-guided matte family |
 | `ppocr`     | `LibrePPOCR`    | All-caps acronym (PP-OCR brand, hyphen dropped); ocr-only two-stage text detection + recognition family |
 | `facerec`   | `LibreFaceEmbedder` | Descriptive family name (no upstream brand): embed-only two-stage face detection + identity-embedding family, inference-only |
 | `sam3dbody` | `LibreSAM3DBody` | All-caps acronym plus CamelCase `Body` (hyphens dropped); mesh-only family. Named in full rather than shortened so it does not collide with the `LibreSAM` promptable-segmentation tier. Sizes are backbone codes: `d3` (DINOv3 ViT-H/16+) and `h` (ViT-H). This family wraps an optional third-party package rather than porting it; see ADR 0013 |
@@ -252,6 +256,9 @@ ships:
 | `vgg`       | `16`, `19`, `16bn`, `19bn` (VGG depth plus optional batch normalization; all fixed 224) |
 | `swin`      | `t`, `s`, `b`, `l` (Swin V1 Tiny/Small/Base/Large; patch 4, window 7, all at 224) |
 | `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models). Weight variants select the degradation: `LibreNAFNetl-restore.pt` (GoPro deblur) and `LibreNAFNetl-restore-sidd.pt` (SIDD denoise, the model behind the `denoise` alias) |
+| `ddcolor`   | `t`, `l` (ConvNeXt-T and ConvNeXt-L encoders; both use a fixed 512 colorization graph and restore the source canvas) |
+| `hvi_cidnet` | `t` (the 1.98M-parameter generalization checkpoint; native resolution with padding to a multiple of 8) |
+| `lama`      | `b` (the single fixed-512 OpenCV Zoo QDQ ONNX graph embedded in a safe LibreYOLO checkpoint) |
 | `realesrgan` | `x4`, `x2`, `x4t` (size code encodes scale + tier: `x4` = RealESRGAN_x4plus RRDBNet 4x quality default, `x2` = RealESRGAN_x2plus RRDBNet 2x, `x4t` = realesr-general-x4v3 SRVGG compact 4x fast/video tier) |
 | `quicksrnet` | `m2` (QuickSRNet Medium architecture with 2x pixel-shuffle output; the scale is encoded in the size code) |
 | `swinir`    | `s`, `m`, `l` (all 4x: lightweight SwinIR-S, real-world SwinIR-M, and real-world SwinIR-L) |
@@ -265,6 +272,7 @@ ships:
 | `birefnet`  | `t` (BiRefNet_lite, Swin-T tier), `l` (BiRefNet general, Swin-L tier); both at fixed 1024 |
 | `feynobg`   | `l` (single released variant: Swin-L tier with stage 3 deepened to 24 blocks, 263M params) at fixed 1024 |
 | `ben2`      | `b` (the single public BEN2 Base checkpoint, 94M parameters) at fixed 1024 |
+| `vitmatte`  | `s` (ViT-S backbone; native image resolution with bottom/right padding to a multiple of 32; nominal checkpoint canvas 512) |
 | `ppocr`     | `t` (PP-OCRv5 mobile det + mobile rec, CPU tier), `l` (PP-OCRv5 server det + server rec, quality tier); detection long side 960 |
 | `clip`      | `b32`, `b16`, `l14` (ViT patch size baked in, all at 224) |
 | `siglip2`   | `b16` (base patch-16 at 256), `so400m` (shape-optimized 400M patch-14 at 384) |
@@ -525,9 +533,13 @@ Detector-factory family support follows:
 | `teed`      | `("edge",)`                         | edge   | TEED tiny edge CNN at 352; MIT architecture source; predict + ODS/OIS `val` + fixed-resolution ONNX; local checkpoints only because the released BIPED-trained weights are non-commercial |
 | `dexined`   | `("edge",)`                         | edge   | DexiNed base edge CNN at 352; MIT architecture source; predict + ODS/OIS `val` + fixed-resolution ONNX; local checkpoints only because the released BIPED-trained weights are non-commercial |
 | `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1. Published denoise weights: `LibreNAFNetl-restore-sidd.pt` (SIDD width-64, bit-exact conversion, upstream PSNR 40.3045 dB) |
+| `ddcolor`   | `("restore",)`                      | restore | DDColor automatic image colorization; sizes `t`/`l`; fixed 512 Lab chroma prediction plus exact original-resolution luminance reconstruction; inference + paired PSNR/SSIM `val`; export blocked pending a luminance side-input contract |
+| `hvi_cidnet` | `("restore",)`                    | restore | HVI-CIDNet low-light enhancement; size `t`; native-resolution predict with `gamma`, `saturation`, and `intensity` controls; paired PSNR/SSIM `val`; inference-only |
+| `lama`      | `("restore",)`                      | restore | LaMa mask-guided inpainting; size `b`, fixed 512 graph; `predict(image, mask=mask)` preserves unmasked pixels exactly; paired validation additionally requires `mask_dir`; inference-only opaque ONNX Runtime path |
 | `birefnet`  | `("matte",)`                        | matte  | BiRefNet background removal; sizes `t` (lite)/`l` (general), both fixed 1024; predict + `cutout` + transparent-PNG save + zero-shot `val` (MAE/S-measure); inference-only in v1; fixed-resolution ONNX (opset 19 DeformConv) |
 | `feynobg`   | `("matte",)`                        | matte  | FeyNobg background removal (BiRefNet architecture, deeper stage 3); size `l`, fixed 1024; same matte surface as birefnet; inference-only; fp8/nvfp4 pre-quantized checkpoints published on HF |
 | `ben2`      | `("matte",)`                        | matte  | BEN2 Base background removal; size `b`, fixed 1024; batched predict + `cutout` + transparent-PNG save + zero-shot `val`; inference-only; fixed-resolution ONNX/TorchScript export |
+| `vitmatte`  | `("matte",)`                       | matte  | ViTMatte trimap-guided alpha matting; size `s`; `predict(image, trimap=trimap)` accepts only three-level guides; validation accepts explicit trimaps or derives a deterministic guide from GT; pretrained Composition-1k weights are non-commercial; inference-only |
 | `ppocr`     | `("ocr",)`                          | ocr    | PP-OCRv5 two-stage text detection + recognition (zh/zh-TW/en/ja/pinyin, one dictionary); sizes `t` (mobile)/`l` (server); one composite checkpoint bundles det.* and rec.* plus the charset; predict + `val` (hmean / e2e F1 / 1-NED); inference-only; export unsupported (two-network pipeline) |
 | `realesrgan` | `("restore",)`                     | restore | Real-ESRGAN super-resolution; sizes `x4`/`x2`/`x4t`; native predict at original resolution, `Results.restored` is `restore_scale` x the input; optional seam-free tiling (`predict(..., tile=512)`); inference + PSNR/SSIM `val` only (no training); dynamic-H/W ONNX |
 | `quicksrnet` | `("restore",)`                     | restore | QuickSRNet Medium 2x compact super-resolution; size `m2`; native arbitrary-resolution predict; inference + PSNR/SSIM `val` only (no training); dynamic-H/W ONNX and fixed-canvas TorchScript |
@@ -705,6 +717,12 @@ LibreDexiNedb-edge.pt            # base DexiNed, local compatible checkpoint
 LibreNAFNets-restore.pt
 LibreNAFNetl-restore.pt
 
+# specialist restoration (restore-only)
+LibreDDColort-restore.pt         # DDColor ConvNeXt-T automatic colorization
+LibreDDColorl-restore.pt         # DDColor ConvNeXt-L automatic colorization
+LibreHVICIDNett-restore.pt       # HVI-CIDNet low-light enhancement
+LibreLaMab-restore.pt            # LaMa mask-guided inpainting, fixed 512
+
 # quicksrnet: QuickSRNet Medium 2x super-resolution (restore-only)
 LibreQuickSRNetm2-restore.pt
 
@@ -724,6 +742,9 @@ LibreFeyNobgl-matte-fp8.pt       # pre-quantized fp8 variant (HF only, pass path
 
 # ben2 - BEN2 Base background removal (matte-only)
 LibreBEN2b-matte.pt              # BEN2 Base, MIT weights, fixed 1024
+
+# vitmatte - trimap-guided professional matting (matte-only)
+LibreViTMattes-matte.pt          # ViTMatte-S Composition-1k, non-commercial weights
 
 # ppocr — PP-OCRv5 text detection + recognition (ocr-only)
 LibrePPOCRt-ocr.pt               # mobile det + mobile rec (CPU tier), Apache-2.0 weights
