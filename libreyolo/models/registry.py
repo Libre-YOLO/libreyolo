@@ -122,7 +122,6 @@ MODEL_GROUPS: dict[str, str] = {
     "qwen3vl": "s",
     "ground_florence2": "s",
     "ground_qwen3vl": "s",
-    "ground_moondream": "s",
     "showui": "s",
     "smolvlm2": "s",
     "clip": "s",

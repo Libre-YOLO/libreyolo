@@ -11,9 +11,8 @@ before 1.4.0 are documented in the
 
 - **LibreGround** sibling factory: screenshot + instruction →
   `Results.points`. Shipped adapters are Florence-2-base (MIT), ShowUI-2B
-  (MIT weights; Apache-2.0 code/base), Qwen3-VL-2B (Apache-2.0), and
-  Moondream 2 (Apache-2.0). Inference-only. Install
-  `libreyolo[vlm]` or `libreyolo[ground]`.
+  (MIT weights; Apache-2.0 code/base), and Qwen3-VL-2B (Apache-2.0).
+  Inference-only. Install `libreyolo[vlm]` or `libreyolo[ground]`.
 
 ### Changed
 

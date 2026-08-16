@@ -169,11 +169,11 @@ casing (CamelCase) is intentionally preserved. See
 
 The grounding tier (`LibreGround`) is also separate from the checkpoint
 factory. Its weights-directory prefixes (`LibreShowUI`,
-`LibreGroundFlorence2`, `LibreGroundQwen3VL`, `LibreMoondream`) identify
+`LibreGroundFlorence2`, `LibreGroundQwen3VL`) identify
 downloaded Hugging Face snapshots. Ground wrappers that share an upstream
 with a VLM family use distinct `FAMILY` ids (`ground_florence2`,
-`ground_qwen3vl`, `ground_moondream`) so they do not replace the VLM
-inventory row. These models emit `Results.points` (task `point`). See
+`ground_qwen3vl`) so they do not replace the VLM inventory row. These models
+emit `Results.points` (task `point`). See
 [`libreground_design.md`](libreground_design.md) and
 [`adr/0020-libreground-contract.md`](adr/0020-libreground-contract.md).
 

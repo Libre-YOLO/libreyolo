@@ -15,12 +15,11 @@ from typing import Dict, Tuple, Type
 
 from .base import GroundAPIMixin, LibreGroundModel
 from .florence import LibreGroundFlorence2
-from .moondream import LibreGroundMoondream
 from .qwen3vl import LibreGroundQwen3VL
 from .showui import LibreShowUI
 
 # Public aliases are only the families that load and return one click.
-# TinyClick / Holo / UI-TARS / LocateAnything / Moondream 3 stay out
+# TinyClick / Holo / UI-TARS / LocateAnything / Moondream stay out
 # until they are load-tested and contract-compliant.
 _ALIASES: Dict[str, Tuple[Type, str]] = {
     "showui": (LibreShowUI, "2b"),
@@ -31,9 +30,6 @@ _ALIASES: Dict[str, Tuple[Type, str]] = {
     "florence2": (LibreGroundFlorence2, "base"),
     "florence-2-base": (LibreGroundFlorence2, "base"),
     "florence-2-large": (LibreGroundFlorence2, "large"),
-    "moondream": (LibreGroundMoondream, "2"),
-    "moondream2": (LibreGroundMoondream, "2"),
-    "moondream-2": (LibreGroundMoondream, "2"),
     "qwen3-vl": (LibreGroundQwen3VL, "2b"),
     "qwen3vl": (LibreGroundQwen3VL, "2b"),
     "qwen3-vl-2b": (LibreGroundQwen3VL, "2b"),
@@ -55,6 +51,9 @@ _UNVERIFIED_ALIASES: Dict[str, str] = {
     "ui-tars-1.5-7b": "UI-TARS is not a factory alias until a size is load-tested.",
     "tinyclick": "TinyClick is not a factory alias: the 2024 checkpoint does not load on transformers 5.",
     "tiny-click": "TinyClick is not a factory alias: the 2024 checkpoint does not load on transformers 5.",
+    "moondream": "Moondream 2 is not a LibreGround alias: click-in-box testing showed center-biased output.",
+    "moondream2": "Moondream 2 is not a LibreGround alias: click-in-box testing showed center-biased output.",
+    "moondream-2": "Moondream 2 is not a LibreGround alias: click-in-box testing showed center-biased output.",
     "moondream3": "Moondream 3 is BSL 1.1 and is not a LibreGround factory alias.",
     "moondream-3": "Moondream 3 is BSL 1.1 and is not a LibreGround factory alias.",
     "locate-anything": "LocateAnything is NVIDIA non-commercial and is not a LibreGround factory alias.",
@@ -62,13 +61,16 @@ _UNVERIFIED_ALIASES: Dict[str, str] = {
     "locate-anything-3b": "LocateAnything is NVIDIA non-commercial and is not a LibreGround factory alias.",
 }
 
-# The four snapshot-mirrored families hosted on the LibreYOLO org.
+# The three snapshot-mirrored families hosted on the LibreYOLO org.
 # alias -> (family class name, size, hf repo id)
 HOSTED_SNAPSHOTS: Dict[str, Tuple[str, str, str]] = {
-    "florence-2-base": ("LibreGroundFlorence2", "base", "LibreYOLO/LibreGroundFlorence2base"),
+    "florence-2-base": (
+        "LibreGroundFlorence2",
+        "base",
+        "LibreYOLO/LibreGroundFlorence2base",
+    ),
     "showui-2b": ("LibreShowUI", "2b", "LibreYOLO/LibreShowUI2b"),
     "qwen3-vl-2b": ("LibreGroundQwen3VL", "2b", "LibreYOLO/LibreGroundQwen3VL2b"),
-    "moondream": ("LibreGroundMoondream", "2", "LibreYOLO/LibreMoondream2"),
 }
 
 _DEFAULT_MODEL = "showui-2b"
@@ -79,7 +81,7 @@ def LibreGround(model: str = _DEFAULT_MODEL, **kwargs):
 
     Args:
         model: Alias such as ``"showui-2b"``, ``"florence-2-base"``,
-            ``"qwen3-vl-2b"``, ``"moondream"``. Defaults to ShowUI-2B.
+            or ``"qwen3-vl-2b"``. Defaults to ShowUI-2B.
         **kwargs: Forwarded to the family constructor: ``device``,
             ``query`` / ``prompt`` (initial instruction), ``max_new_tokens``.
 
@@ -108,6 +110,5 @@ __all__ = [
     "HOSTED_SNAPSHOTS",
     "LibreShowUI",
     "LibreGroundFlorence2",
-    "LibreGroundMoondream",
     "LibreGroundQwen3VL",
 ]

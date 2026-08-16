@@ -63,13 +63,13 @@ size marked `*`. The authoritative table is `_ALIASES` in
 |---|---|---|---|---|
 | `showui`, `showui-2b`* | ShowUI-2B | MIT weights; Apache-2.0 code/base | `[0,1]` | default; 2B Qwen2-VL |
 | `florence-2`, `-base`*, `-large` | Florence-2 | MIT | pixel boxes → center | `FAMILY=ground_florence2` |
-| `moondream`, `moondream-2`* | Moondream 2 | Apache-2.0 | `[0,1]` | wraps the VLM family; one click |
 | `qwen3-vl`, `-2b`*, `-4b`, `-8b` | Qwen3-VL | Apache-2.0 | 0–1000 | `FAMILY=ground_qwen3vl` |
 
 Default is **ShowUI-2B**: small enough for a consumer GPU, native
-`transformers`, documented `[0,1]` clicks. TinyClick, Holo, UI-TARS, and
-LocateAnything are not factory aliases until they load and satisfy the
-one-click contract.
+`transformers`, documented `[0,1]` clicks. TinyClick, Holo, UI-TARS,
+LocateAnything, and Moondream are not factory aliases until they load and
+satisfy the one-click contract. Moondream 2 was removed after a ten-image
+click-in-box probe showed center-biased points rather than reliable grounding.
 
 A per-call `prompt=` does not become sticky. Coordinates that fall well
 outside the image after scaling are dropped, not clamped into the frame.
