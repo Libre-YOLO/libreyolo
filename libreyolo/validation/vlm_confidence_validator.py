@@ -728,7 +728,7 @@ class VLMConfidenceValidator(DetectionValidator):
                     ) from exc
                 if linked:
                     raise RuntimeError(
-                        f"{kind.capitalize()} directory content must not contain a "
+                        f"{kind.capitalize()} directory content must not be a "
                         f"symlink or junction: {relative.as_posix()}"
                     )
                 if path.is_dir():
@@ -1217,8 +1217,7 @@ class VLMConfidenceValidator(DetectionValidator):
                     ) from exc
                 if linked:
                     raise RuntimeError(
-                        "Local base snapshot content must not contain a symlink or "
-                        "junction: "
+                        "Local base snapshot content must not be a symlink or junction: "
                         f"{relative.as_posix()}"
                     )
                 if path.is_dir():
