@@ -103,6 +103,7 @@ class VLMConfidenceValidator(DetectionValidator):
         seed: int = 0,
         default_conf: float = 0.25,
         confidence_iou: float = 0.5,
+        benchmark_context: Optional[Mapping[str, Any]] = None,
         **kwargs,
     ) -> None:
         self.generation_model = generation_model
@@ -117,6 +118,13 @@ class VLMConfidenceValidator(DetectionValidator):
         self.default_conf = _probability(default_conf, "default_conf")
         self.confidence_iou = _probability(
             confidence_iou, "confidence_iou", positive=True
+        )
+        if benchmark_context is not None and not isinstance(benchmark_context, Mapping):
+            raise TypeError("benchmark_context must be a mapping when supplied.")
+        self._benchmark_context = (
+            None
+            if benchmark_context is None
+            else self._canonical_config_value(benchmark_context, "benchmark_context")
         )
         super().__init__(model, config, **kwargs)
         self._validate_gate_contract()
@@ -773,6 +781,8 @@ class VLMConfidenceValidator(DetectionValidator):
             "hardware": self._hardware_identity(device),
             "software": self._software_identity(),
         }
+        if self._benchmark_context is not None:
+            config["benchmark_run"] = self._benchmark_context
         # Exercise the pure contract before the first expensive generation.
         benchmark_manifest_hash(
             self.model._detection_prompt(), {"preflight": True}, config

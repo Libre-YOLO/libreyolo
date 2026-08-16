@@ -19,6 +19,7 @@ torch = pytest.importorskip("torch")
 from libreyolo.validation.config import ValidationConfig  # noqa: E402
 from libreyolo.validation.detection_validator import DetectionValidator  # noqa: E402
 from libreyolo.validation.preprocessors import StandardValPreprocessor  # noqa: E402
+from libreyolo.validation import vlm_confidence_benchmark as benchmark  # noqa: E402
 from libreyolo.validation.vlm_confidence import compare_repeats  # noqa: E402
 from libreyolo.validation.vlm_confidence_report import (  # noqa: E402
     compare_confidence_reports,
@@ -295,7 +296,8 @@ def _targets():
     return targets
 
 
-def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
+def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path, monkeypatch):
+    monkeypatch.setattr(benchmark, "_IMAGE_SIZE", 100)
     paths = [tmp_path / "one.jpg", tmp_path / "two.jpg"]
     for path in paths:
         path.write_bytes(b"offline")
@@ -304,14 +306,57 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
         _variants([[20, 20, 40, 40]], [0.7], available=False),
     ]
     model = _stub_model(tmp_path, paths, variants)
+    model.size = "2b"
+    model.HF_REPOS = {"2b": "stub/base"}
+    model.HF_REVISIONS = {"2b": "a" * 40}
     model.set_classes(["dog"])
     live_model = _LivePeftModel(model.model)
+    runner_context = {
+        "schema": "libreyolo.vlm-confidence-benchmark-context.v1",
+        "git": {"commit": "c" * 40, "dirty": False},
+        "runtime": {
+            "python": "3.11.0",
+            "implementation": "CPython",
+            "platform": "offline",
+            "torch": "offline",
+            "numpy": "offline",
+            "pillow": "offline",
+            "opencv": "offline",
+            "packages": {
+                "transformers": "offline",
+                "huggingface_hub": "offline",
+                "tokenizers": "offline",
+                "safetensors": "offline",
+                "pycocotools": "offline",
+            },
+            "cuda_runtime": None,
+            "cudnn": None,
+            "nvidia_driver": None,
+            "cuda_available": False,
+            "requested_device": "auto",
+            "resolved_device": "cpu",
+            "attention_backends": {"model": "offline"},
+        },
+        "determinism": {
+            "seed": 0,
+            "python_hash_seed": "0",
+            "python_hash_randomization": False,
+            "cublas_workspace_config": ":4096:8",
+            "torch_deterministic_algorithms": True,
+            "cudnn_benchmark": False,
+            "cudnn_deterministic": True,
+            "cuda_matmul_allow_tf32": False,
+            "cudnn_allow_tf32": False,
+        },
+    }
     validator = _Harness(
         model,
         _config(tmp_path),
         paths,
         _targets(),
         generation_model=live_model,
+        benchmark_context=runner_context,
+        evaluator_backend="pycocotools offline-stub",
     )
     caller_rng_state = torch.random.get_rng_state().clone()
 
@@ -360,7 +405,7 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
         "max_det": 100,
         "faster_coco_eval": False,
         "imgsz": [100, 100],
-        "backend": "offline-stub",
+        "backend": "pycocotools offline-stub",
         "label_to_category_id": None,
     }
     assert validator.benchmark_config["confidence_evaluation"] == {
@@ -374,6 +419,7 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
     }
     assert len(validator.benchmark_config["checkpoint"]["sha256"]) == 64
     assert len(validator.benchmark_config["processor"]["sha256"]) == 64
+    assert validator.benchmark_config["benchmark_run"] == runner_context
 
     report_path = tmp_path / "results" / "vlm_confidence_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -388,6 +434,36 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
     ]
     assert report["predictions"][2]["candidate_score"] is None
     assert report["predictions"][2]["effective_score"] == 1.0
+
+    normalized_metrics, nonfinite_metrics = benchmark._normalized_metrics(metrics)
+    benchmark._write_json_atomic(
+        report_path.parent / "vlm_confidence_run.json",
+        {
+            "schema": "libreyolo.vlm-confidence-benchmark-run.v1",
+            "run_id": "1" * 32,
+            "process_id": "2" * 32,
+            "request": {
+                "dataset_yaml": str(tmp_path / "dataset.yaml"),
+                "seed": 0,
+                "model_family": "qwen3vl",
+                "model_size": "2b",
+                "device": "auto",
+                "imgsz": 100,
+                "default_conf": 0.25,
+                "confidence_iou": 0.5,
+            },
+            "execution_context": runner_context,
+            "report": {
+                "path": "vlm_confidence_report.json",
+                "sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            },
+            "metrics": normalized_metrics,
+            "nonfinite_metrics": list(nonfinite_metrics),
+        },
+    )
+    envelope = benchmark._load_runner_envelope(report_path, "round_trip")
+    assert envelope.run_id == "1" * 32
+    assert envelope.process_id == "2" * 32
     assert report["calibration"]["population"] == "scored_postprocessed_predictions"
     assert report["calibration"]["total_predictions"] == 3
     assert report["calibration"]["scored_predictions"] == 2

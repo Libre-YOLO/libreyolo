@@ -188,6 +188,8 @@ class PersistedRepeatComparison:
 @dataclass(frozen=True)
 class _ValidatedReport:
     file_sha256: str
+    benchmark_config: dict[str, Any]
+    metrics: tuple[tuple[str, Optional[float]], ...]
     run: ConfidenceRun
     response_diagnostics: tuple[int, int, int, int]
     fallback_reasons: tuple[tuple[str, int], ...]
@@ -1126,10 +1128,30 @@ def _validate_report(path_value: Any, label: str) -> _ValidatedReport:
         )
     return _ValidatedReport(
         file_sha256=file_digest,
+        benchmark_config=benchmark,
+        metrics=tuple(
+            sorted(
+                (key, None if value is None else float(value))
+                for key, value in metrics.items()
+            )
+        ),
         run=run,
         response_diagnostics=response_diagnostics,
         fallback_reasons=tuple(sorted(normalized_fallbacks.items())),
         semantic_metrics=tuple(sorted(expected_semantic.items())),
+    )
+
+
+def read_confidence_report_identity(
+    path: str | os.PathLike[str], *, label: str = "report"
+) -> tuple[str, dict[str, Any], dict[str, Optional[float]]]:
+    """Return digest, configuration, and metrics from a validated report."""
+
+    validated = _validate_report(path, label)
+    return (
+        validated.file_sha256,
+        dict(validated.benchmark_config),
+        dict(validated.metrics),
     )
 
 
