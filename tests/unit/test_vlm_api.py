@@ -662,3 +662,14 @@ class TestInternVL3Flatten:
             {"label": "boat", "bbox": [5, 6, 7, 8]},
             {"label": "ship", "bbox": [9, 10, 11, 12]},
         ]
+
+
+def test_vlm_generic_save_and_hub_upload_are_rejected():
+    from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+    model = object.__new__(LibreQwen3VL)
+
+    with pytest.raises(NotImplementedError, match="structured directories"):
+        model.save("invalid.pt")
+    with pytest.raises(NotImplementedError, match="publication manifest"):
+        model.push_to_hub("owner/repo")

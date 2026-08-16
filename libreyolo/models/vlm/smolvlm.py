@@ -33,6 +33,10 @@ class LibreSmolVLM2(LibreVLMModel):
         "2.2b": "HuggingFaceTB/SmolVLM2-2.2B-Instruct",
         "500m": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
     }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "2.2b": "482adb537c021c86670beed01cd58990d01e72e4",
+        "500m": "7b375e1b73b11138ff12fe22c8f2822d8fe03467",
+    }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         "2.2b": 512,
         "500m": 512,

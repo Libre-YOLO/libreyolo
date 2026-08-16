@@ -212,7 +212,9 @@ class LibreSenseNovaVision(LibreVLMModel):
     }
     # Weight-only repo (no remote code); the pin still keeps downloads
     # reproducible across releases.
-    HF_REVISIONS: ClassVar[Dict[str, str]] = {}
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "7b": "bd67637b1536f1149fb31a05568c4b6b2cf2d032",
+    }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         "7b": 1024,
     }

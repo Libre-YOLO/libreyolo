@@ -274,7 +274,7 @@ def test_vlm_rejects_invalid_dataset_reference_before_loading(data, monkeypatch)
             "path: .\ntrain: images/train\n"
             "annotations:\n  train: annotations/train.json\n"
             "names: [cat]\n",
-            "config_unsupported",
+            "data_not_found",
         ),
         ("path: .\ntrain: missing/images\nnames: [cat]\n", "data_not_found"),
         (
@@ -284,6 +284,10 @@ def test_vlm_rejects_invalid_dataset_reference_before_loading(data, monkeypatch)
         ),
         (
             "path: .\ntrain: missing/images\nnames: [cat]\ndownload: [bad]\n",
+            "config_type_error",
+        ),
+        (
+            "path: .\ntrain: images/train\nnc: 1\nnames: [cat, dog]\n",
             "config_type_error",
         ),
     ],
@@ -306,6 +310,207 @@ def test_vlm_dataset_contract_errors_are_structured_before_loading(
 
     assert result.exit_code != 0, result.output
     assert json.loads(result.stdout)["error"] == expected_error
+
+
+def _write_native_coco_cli_dataset(tmp_path, *, annotation_text=None):
+    from PIL import Image
+
+    images = tmp_path / "images" / "train"
+    annotations = tmp_path / "annotations"
+    images.mkdir(parents=True)
+    annotations.mkdir()
+    Image.new("RGB", (32, 24), (20, 30, 40)).save(images / "sample.png")
+    payload = {
+        "images": [{"id": 1, "file_name": "sample.png", "width": 32, "height": 24}],
+        "categories": [{"id": 5, "name": "cat"}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 5,
+                "bbox": [2, 3, 10, 8],
+                "area": 80,
+                "iscrowd": 0,
+            }
+        ],
+    }
+    (annotations / "train.json").write_text(
+        json.dumps(payload) if annotation_text is None else annotation_text,
+        encoding="utf-8",
+    )
+    dataset = tmp_path / "native-coco.yaml"
+    dataset.write_text(
+        f"path: {tmp_path.as_posix()}\n"
+        "train: images/train\n"
+        "annotations:\n  train: annotations/train.json\n"
+        "names: [cat]\n",
+        encoding="utf-8",
+    )
+    return dataset
+
+
+def test_vlm_native_coco_dry_run_validates_without_loading(monkeypatch, tmp_path):
+    dataset = _write_native_coco_cli_dataset(tmp_path)
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("dry-run loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={dataset}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["valid"] is True
+
+
+def test_vlm_malformed_native_coco_is_rejected_before_loading(monkeypatch, tmp_path):
+    dataset = _write_native_coco_cli_dataset(tmp_path, annotation_text="{")
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("invalid COCO loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={dataset}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert json.loads(result.stdout)["error"] == "config_type_error"
+
+
+@pytest.mark.parametrize("invalid", ["category", "bbox"])
+def test_vlm_invalid_native_coco_annotations_are_rejected_before_loading(
+    invalid, monkeypatch, tmp_path
+):
+    dataset = _write_native_coco_cli_dataset(tmp_path)
+    annotation_file = tmp_path / "annotations" / "train.json"
+    payload = json.loads(annotation_file.read_text(encoding="utf-8"))
+    if invalid == "category":
+        payload["annotations"][0]["category_id"] = 999
+    else:
+        payload["annotations"][0]["bbox"][0] = float("nan")
+    annotation_file.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("invalid COCO loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={dataset}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert json.loads(result.stdout)["error"] == "config_type_error"
+
+
+def test_vlm_orphan_coco_validation_annotations_are_rejected(monkeypatch, tmp_path):
+    annotations = tmp_path / "annotations"
+    annotations.mkdir()
+    (annotations / "val.json").write_text("{}", encoding="utf-8")
+    dataset = tmp_path / "orphan-val.yaml"
+    dataset.write_text(
+        f"path: {tmp_path.as_posix()}\ntrain: missing/train\n"
+        "annotations:\n  val: annotations/val.json\n"
+        "names: [cat]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("orphan COCO loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={dataset}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert json.loads(result.stdout)["error"] == "config_type_error"
+
+
+def test_vlm_downloadable_native_coco_may_defer_all_missing_artifacts(
+    monkeypatch, tmp_path
+):
+    dataset = tmp_path / "downloadable.yaml"
+    dataset.write_text(
+        "path: missing\ntrain: images/train\n"
+        "annotations:\n  train: annotations/train.json\n"
+        "names: [cat]\ndownload: https://example.invalid/dataset.zip\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("dry-run loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={dataset}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_vlm_downloadable_native_coco_may_defer_when_only_annotation_exists(
+    monkeypatch, tmp_path
+):
+    root = tmp_path / "partial"
+    annotations = root / "annotations"
+    annotations.mkdir(parents=True)
+    (annotations / "train.json").write_text("{}", encoding="utf-8")
+    dataset = tmp_path / "downloadable-annotation.yaml"
+    dataset.write_text(
+        f"path: {root.as_posix()}\ntrain: images/train\n"
+        "annotations:\n  train: annotations/train.json\n"
+        "names: [cat]\ndownload: https://example.invalid/dataset.zip\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={dataset}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_vlm_downloadable_native_coco_rejects_images_without_annotation(
+    monkeypatch, tmp_path
+):
+    from PIL import Image
+
+    images = tmp_path / "images" / "train"
+    images.mkdir(parents=True)
+    Image.new("RGB", (16, 16)).save(images / "sample.png")
+    dataset = tmp_path / "downloadable-images.yaml"
+    dataset.write_text(
+        f"path: {tmp_path.as_posix()}\ntrain: images/train\n"
+        "annotations:\n  train: annotations/train.json\n"
+        "names: [cat]\ndownload: https://example.invalid/dataset.zip\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("partial COCO loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={dataset}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert json.loads(result.stdout)["error"] == "data_not_found"
 
 
 def test_vlm_missing_val_split_is_rejected_before_loading(monkeypatch, tmp_path):
@@ -543,6 +748,8 @@ def test_vlm_train_rejects_unsupported_contract_options_before_loading(
 def test_vlm_train_routes_only_vlm_kwargs_and_reports_loss_truthfully(
     monkeypatch, tmp_path
 ):
+    from libreyolo.models.vlm.training import trainer as trainer_module
+
     captured = {}
     images = tmp_path / "images" / "train"
     images.mkdir(parents=True)
@@ -576,6 +783,7 @@ def test_vlm_train_routes_only_vlm_kwargs_and_reports_loss_truthfully(
         "load_model_or_exit",
         lambda *args, **kwargs: FakeVLM(),
     )
+    monkeypatch.setattr(trainer_module, "require_vlm_lora_dependencies", lambda: None)
 
     result = runner.invoke(
         _make_app(),

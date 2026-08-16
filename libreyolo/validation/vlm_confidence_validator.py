@@ -146,6 +146,11 @@ class VLMConfidenceValidator(DetectionValidator):
                 "VLM confidence validation is serial autoregressive generation; "
                 "cuda_graph is not supported."
             )
+        if self.config.allow_download_scripts:
+            raise NotImplementedError(
+                "VLM confidence validation is a local-only reproducibility gate; "
+                "allow_download_scripts=True is not supported."
+            )
         for hook in (
             "_preprocess",
             "_forward_for_confidence_gate",
@@ -180,6 +185,16 @@ class VLMConfidenceValidator(DetectionValidator):
         if isinstance(names, (list, tuple)):
             return tuple(str(name) for name in names)
         return None
+
+    def _load_detection_data_config(self) -> Dict[str, Any]:
+        """Resolve local benchmark data without downloads or embedded scripts."""
+        from libreyolo.data import load_data_config
+
+        return load_data_config(
+            self.config.data,
+            autodownload=False,
+            allow_scripts=False,
+        )
 
     def _setup_dataloader(self):
         data_dir = self.config.data_dir

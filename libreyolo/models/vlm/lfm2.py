@@ -44,6 +44,11 @@ class LibreLFM2VL(LibreVLMModel):
         "1.6b": "LiquidAI/LFM2.5-VL-1.6B",
         "3b": "LiquidAI/LFM2.5-VL-3B",
     }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "450m": "fc6221ca597f3315e4f82fc2df606783267b34ba",
+        "1.6b": "919fde3d022e3f90a4716006f993938ee8c2eb97",
+        "3b": "5a414ead75d45db003906d06fb62bd5b6846cec0",
+    }
     # Nominal input size: the LFM2-VL processor owns the real (native-resolution)
     # resize, so this value is only used as the runner's default ``imgsz``.
     INPUT_SIZES: ClassVar[Dict[str, int]] = {

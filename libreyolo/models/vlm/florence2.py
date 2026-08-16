@@ -31,6 +31,10 @@ class LibreFlorence2(LibreVLMModel):
         "base": "florence-community/Florence-2-base",
         "large": "florence-community/Florence-2-large",
     }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "base": "00921df66db728a9ceb750f5eca43e5c203a2051",
+        "large": "4271c66b88cdbc05735372ec13b2360108de5317",
+    }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         "base": 768,
         "large": 768,

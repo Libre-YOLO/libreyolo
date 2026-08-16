@@ -438,7 +438,7 @@ def test_native_coco_bbox_clipping_matches_loader_semantics(tmp_path):
     path = _write(
         tmp_path / "clipped-bbox.json",
         _payload(
-            target_box=(0.0, 10.0, 20.0, 30.0),
+            target_box=(0.0, 10.0, 15.0, 30.0),
             evaluator_bbox=(-5.0, 10.0, 20.0, 20.0),
         ),
     )

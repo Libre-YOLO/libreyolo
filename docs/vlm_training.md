@@ -54,8 +54,9 @@ pip install "libreyolo[vlm-train]"
 ```
 
 - `data` is the standard detect dataset (`docs/dataset_schema.md`): YAML with
-  `train`/`val` image sources and txt label rows. Native COCO JSON datasets
-  are not supported yet and raise with a clear message.
+  `train`/`val` image sources and either normalized txt label rows or native
+  COCO JSON annotations. COCO category names must match the YAML vocabulary;
+  crowd and ignored annotations are excluded from training targets.
 - The `names` in the YAML become the training vocabulary. Names may be any
   phrases ("ripe strawberry", "person wearing a helmet"); they are rendered
   into the model's own grounding prompt and answer format automatically, using
@@ -84,7 +85,9 @@ pip install "libreyolo[vlm-train]"
   adapter payload plus family, size, base revision, prompt, and box convention
   before loading the base model.
 - `callbacks=` and `loggers=` are the standard training layers; TensorBoard,
-  MLflow, and W&B loggers work unchanged.
+  MLflow, and W&B loggers work unchanged. The generic Hugging Face Hub logger
+  is rejected because it only publishes detector `.pt` files, while VLM
+  checkpoints are directories with a different reload and licensing contract.
 
 The CLI accepts the VLM trainer's small option set and rejects explicitly
 requested detector-only optimizer, scheduler, image-size, and augmentation
@@ -129,6 +132,12 @@ Each `best` or `last` write is staged and replaces the complete prior directory,
 so switching between LoRA and full-model runs cannot leave stale files that
 change how the checkpoint is interpreted.
 
+The inherited generic `save()` and `push_to_hub()` methods are deliberately
+disabled for LibreVLM. They would create a monolithic detector-style `.pt`
+artifact that the LibreVLM factory cannot reload and that lacks the required
+dataset, benchmark, and upstream-license publication manifest. Keep `best` or
+`last` local until the VLM Hub artifact contract is released.
+
 ## Best/last selection
 
 `best` tracks validation loss when the dataset has a `val` split, else
@@ -139,13 +148,43 @@ model-execution commands, including `val`, `export`, `quantize`, `info`,
 `compare`, and face-detector roles, fail before loading weights. Validation mAP
 remains blocked on real per-box confidence; see the ADR.
 
+## Local benchmark preparation
+
+The internal confidence gate has a no-download COCO metadata builder:
+
+```text
+python -m libreyolo.validation.vlm_benchmark_dataset build \
+  --annotations /data/coco/annotations/instances_val2017.json \
+  --images-dir /data/coco/val2017 \
+  --output-root /data/libreyolo-vlm-benchmark
+```
+
+It accepts only the pinned COCO val2017 annotation content, selects image
+license id 4 (CC BY 2.0), decodes the local image files, and requires their
+aggregate identity to match members independently hashed from the official
+val2017 archive. It writes no image bytes and emits self-verifying holdout100,
+train400, and promotion500 metadata. The filtered annotation artifacts are
+identified separately as modified COCO annotations under CC BY 4.0.
+
+This is machine-checkable provenance evidence, not legal or privacy clearance.
+Image attribution sufficiency, annotation redistribution, privacy/PII, visual
+quality, selection stability, benchmark suitability, and publication approval
+remain explicit human-review gates before a run or upload.
+
+The manifest records category coverage per partition. In the current pin,
+holdout100 and promotion500 represent 79 of 80 COCO categories (raw category
+89 is unavailable after the eligibility filter); train400 represents 76 of 80
+(raw categories 21, 38, 87, and 89 are absent). Train400 must therefore not be
+described as full 80-class supervised coverage.
+
 ## Trainable families
 
 | Family | train() | Why |
 |---|---|---|
 | qwen3-vl 2B/4B | yes | grounding-pretrained, Apache-2.0; first verified training cohort |
 | qwen3-vl 8B | not yet | outside the first verified training cohort |
-| lfm2-vl, florence-2, north-micro-vision, internvl3, gemma-4, moondream | not yet | planned; see the training ADR draft |
+| lfm2-vl 450M | not yet | immutable base and original LoRA scope prepared; activation waits for the live Vast smoke and real detection gate |
+| lfm2-vl 1.6B/3B, florence-2, north-micro-vision, internvl3, gemma-4, moondream | not yet | planned; see the training ADR draft |
 | smolvlm2 | no | not grounding-pretrained; cannot reliably learn box emission |
 | kosmos-2 | no | no established recipe; 224px 32x32 grid caps localization |
 | locate-anything | no | research-only non-commercial upstream weights |

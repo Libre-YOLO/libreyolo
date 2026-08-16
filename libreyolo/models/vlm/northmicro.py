@@ -75,6 +75,9 @@ class LibreNorthMicroVision(LibreVLMModel):
     HF_REPOS: ClassVar[Dict[str, str]] = {
         "2.4b": "CohereLabs/North-Micro-Vision-Instruct",
     }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "2.4b": "8be3368e3ad675d84c162d458b4499aadefc3aeb",
+    }
     # Nominal only; the processor owns the real native-resolution handling.
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         "2.4b": 1024,

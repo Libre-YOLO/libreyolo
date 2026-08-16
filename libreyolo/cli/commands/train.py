@@ -467,7 +467,11 @@ def _preflight_vlm_dataset(
     import yaml
 
     from libreyolo.data import get_img_files, load_data_config
-    from libreyolo.models.vlm.training.data import resolve_split_source
+    from libreyolo.models.vlm.training.data import (
+        VLMDetectDataset,
+        resolve_split_annotation,
+        resolve_split_source,
+    )
     from libreyolo.models.vlm.training.trainer import _normalize_names
 
     try:
@@ -476,10 +480,18 @@ def _preflight_vlm_dataset(
             autodownload=prepare,
             allow_scripts=allow_download_scripts if prepare else False,
         )
-        _normalize_names(config.get("names"))
+        names = _normalize_names(config.get("names"), config.get("nc"))
         train_source = resolve_split_source(config, "train")
         if not train_source:
             raise ValueError(f"Dataset {data!r} has no train split.")
+        train_annotation = resolve_split_annotation(config, "train")
+        val_source = resolve_split_source(config, "val")
+        val_annotation = resolve_split_annotation(config, "val")
+        if val_annotation and not val_source:
+            raise ValueError(
+                "Dataset declares native COCO validation annotations but has "
+                "no val image source."
+            )
         download_spec = config.get("download")
         can_download = False
         if download_spec is not None:
@@ -492,12 +504,15 @@ def _preflight_vlm_dataset(
             )
 
         split_sources = {"train": train_source}
-        val_source = resolve_split_source(config, "val")
         if val_source:
             split_sources["val"] = val_source
 
         available = {}
+        annotations = {}
         for split, source in split_sources.items():
+            annotations[split] = (
+                train_annotation if split == "train" else val_annotation
+            )
             source_paths = source if isinstance(source, list) else [source]
             if any(not Path(path).exists() for path in source_paths):
                 available[split] = None
@@ -516,16 +531,32 @@ def _preflight_vlm_dataset(
         # The shared dataset loader downloads only when every configured split
         # is absent. Once any split exists it will not repair another missing
         # split, so fail that partial state before loading model weights.
+        annotation_exists = {
+            split: annotation is None or Path(annotation).is_file()
+            for split, annotation in annotations.items()
+        }
         if not (not prepare and can_download and not any(available.values())):
-            missing = [split for split, files in available.items() if not files]
+            missing = [
+                split
+                for split, files in available.items()
+                if not files or not annotation_exists[split]
+            ]
             if missing:
                 raise FileNotFoundError(
-                    f"Dataset {data!r} has no images for split(s): "
+                    f"Dataset {data!r} has incomplete image/annotation data "
+                    "for split(s): "
                     f"{', '.join(missing)}."
                 )
+            for split, annotation in annotations.items():
+                if annotation is not None:
+                    VLMDetectDataset.validate_native_coco_source(
+                        split_sources[split], names, annotation
+                    )
     except FileNotFoundError as exc:
         exit_with_error(out, "data_not_found", str(exc))
     except NotImplementedError as exc:
+        exit_with_error(out, "config_unsupported", str(exc))
+    except ImportError as exc:
         exit_with_error(out, "config_unsupported", str(exc))
     except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
         exit_with_error(out, "config_type_error", str(exc))

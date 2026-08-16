@@ -6,9 +6,10 @@ becomes trainable by adding a recipe, setting ``TRAINABLE = True``, and listing
 each verified size in ``TRAINABLE_SIZES`` on its adapter class; the trainer
 refuses families or sizes without all three.
 
-Qwen3-VL: LoRA on the language model's attention and MLP projections, vision
-tower and merger frozen. Matches the official qwen-vl-finetune defaults
-(rank 16 scale, frozen ViT) and the ms-swift best-practice recipe.
+Recipes here are original LibreYOLO configurations over native Transformers
+module layouts. Their adapter scope is asserted at injection time so an
+upstream architecture change fails closed instead of training the vision
+tower accidentally.
 """
 
 from __future__ import annotations
@@ -50,6 +51,15 @@ _RECIPES: Dict[str, VLMTrainRecipe] = {
             r"(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$"
         ),
         frozen_prefixes=("model.visual",),
+    ),
+    # Candidate for the next live-verified cohort. The family remains publicly
+    # untrainable until the 450M Vast smoke and real detection gate pass.
+    "lfm2vl": VLMTrainRecipe(
+        target_modules=(
+            r".*language_model.*\."
+            r"(in_proj|out_proj|q_proj|k_proj|v_proj|w1|w2|w3)$"
+        ),
+        frozen_prefixes=("model.vision_tower", "model.multi_modal_projector"),
     ),
 }
 

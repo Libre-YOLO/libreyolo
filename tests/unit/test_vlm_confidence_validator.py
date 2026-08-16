@@ -505,10 +505,7 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path, monkeypa
     assert constant_scores == [1.0, 1.0, 1.0]
 
 
-@pytest.mark.parametrize(
-    "option",
-    ["augment", "cuda_graph"],
-)
+@pytest.mark.parametrize("option", ["augment", "cuda_graph", "allow_download_scripts"])
 def test_unsupported_modes_fail_loudly(tmp_path, option):
     path = tmp_path / "one.jpg"
     path.write_bytes(b"offline")
@@ -762,7 +759,7 @@ def test_actual_evaluator_backend_changes_configuration_identity(tmp_path):
     assert second.benchmark_config["evaluation"]["backend"] == "faster-coco-eval 1.7.2"
 
 
-def test_real_yolo_loader_writer_and_report_reader_round_trip(tmp_path):
+def test_real_yolo_loader_writer_and_report_reader_round_trip(tmp_path, monkeypatch):
     pytest.importorskip("pycocotools")
     images = tmp_path / "images" / "val"
     labels = tmp_path / "labels" / "val"
@@ -779,9 +776,14 @@ def test_real_yolo_loader_writer_and_report_reader_round_trip(tmp_path):
                 "val": "images/val",
                 "nc": 1,
                 "names": ["cat"],
+                "download": "https://example.invalid/must-not-run.zip",
             }
         ),
         encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "libreyolo.data.utils.check_dataset",
+        lambda *_args, **_kwargs: pytest.fail("confidence gate attempted a download"),
     )
     model = _stub_model(
         tmp_path,
@@ -817,10 +819,50 @@ def test_real_yolo_loader_writer_and_report_reader_round_trip(tmp_path):
     assert compare_confidence_reports(report_path, report_path).reproducible
 
 
+def test_missing_url_dataset_fails_without_download_or_generation(
+    tmp_path, monkeypatch
+):
+    data_yaml = tmp_path / "missing.yaml"
+    data_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path / "not-present"),
+                "val": "images/val",
+                "nc": 1,
+                "names": ["cat"],
+                "download": "https://example.invalid/must-not-run.zip",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "libreyolo.data.utils.check_dataset",
+        lambda *_args, **_kwargs: pytest.fail("confidence gate attempted a download"),
+    )
+    model = _stub_model(tmp_path, [], [])
+    model._get_val_preprocessor = lambda img_size=None: StandardValPreprocessor(
+        img_size=(img_size, img_size)
+    )
+    config = ValidationConfig(
+        data=str(data_yaml),
+        batch_size=1,
+        imgsz=100,
+        num_workers=0,
+        verbose=False,
+        save_dir=str(tmp_path / "missing-results"),
+        faster_coco_eval=False,
+    )
+
+    with pytest.raises((FileNotFoundError, RuntimeError, ValueError)):
+        VLMConfidenceValidator(model, config).run()
+
+    assert model.forward_count == 0
+
+
 @pytest.mark.parametrize(
     ("image_size", "raw_bbox", "clean_box", "names"),
     [
-        ((100, 100), (-5, 10, 20, 20), (0, 10, 20, 30), ("cat", "dog")),
+        ((100, 100), (-5, 10, 20, 20), (0, 10, 15, 30), ("cat", "dog")),
         ((1000, 333), (100, 100, 233, 200), (100, 100, 333, 300), ("cat",)),
     ],
 )

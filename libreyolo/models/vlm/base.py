@@ -210,16 +210,6 @@ class LibreVLMModel(BaseModel):
             )
 
             contract = read_contract(self._checkpoint_dir)
-            representation = validate_vlm_checkpoint_artifact(self._checkpoint_dir)
-            if representation == "adapter":
-                # Fail before resolving or loading the multi-GB base snapshot.
-                try:
-                    from peft import PeftModel as _PeftModel  # noqa: F401, PLC0415
-                except ImportError as exc:
-                    raise ImportError(
-                        "Loading a LoRA fine-tune checkpoint requires PEFT. "
-                        "Install with:\n    pip install 'libreyolo[vlm]'"
-                    ) from exc
             if contract["family"] != self.FAMILY:
                 raise ValueError(
                     f"VLM checkpoint {self._checkpoint_dir} belongs to family "
@@ -230,6 +220,16 @@ class LibreVLMModel(BaseModel):
                     f"VLM checkpoint {self._checkpoint_dir} was trained at size "
                     f"{contract['size']!r}, not {size!r}."
                 )
+            representation = validate_vlm_checkpoint_artifact(self._checkpoint_dir)
+            if representation == "adapter":
+                # Fail before resolving or loading the multi-GB base snapshot.
+                try:
+                    from peft import PeftModel as _PeftModel  # noqa: F401, PLC0415
+                except ImportError as exc:
+                    raise ImportError(
+                        "Loading a LoRA fine-tune checkpoint requires PEFT. "
+                        "Install with:\n    pip install 'libreyolo[vlm]'"
+                    ) from exc
 
             # Fine-tune checkpoints are self-describing: keep their learned
             # prompt/output convention even if family defaults evolve later.
@@ -1004,6 +1004,21 @@ class LibreVLMModel(BaseModel):
     # =========================================================================
     # Out of scope for the inference-first VLM tier
     # =========================================================================
+
+    def save(self, path: str) -> str:
+        raise NotImplementedError(
+            "LibreVLM checkpoints are structured directories, not generic .pt "
+            "files. Use the best/last directory returned by train(); a "
+            "standalone VLM save contract has not been released."
+        )
+
+    def push_to_hub(self, *args, **kwargs) -> str:
+        raise NotImplementedError(
+            "LibreVLM Hub publication is not available yet. The generic model "
+            "uploader produces a .pt artifact that LibreVLM cannot reload; keep "
+            "the structured best/last checkpoint directory local until the VLM "
+            "publication manifest and license gates are implemented."
+        )
 
     def val(self, *args, **kwargs):
         raise NotImplementedError(

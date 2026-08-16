@@ -7,6 +7,7 @@ contract, and the train() gating surface.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from libreyolo.models.vlm.training.checkpoint import (  # noqa: E402
 from libreyolo.models.vlm.training.collate import VLMChatCollator  # noqa: E402
 from libreyolo.models.vlm.training.data import (  # noqa: E402
     VLMDetectDataset,
+    resolve_split_annotation,
     resolve_split_source,
 )
 from libreyolo.models.vlm.training.recipes import get_recipe  # noqa: E402
@@ -140,6 +142,57 @@ def _write_dataset(root: Path, rows_by_image: dict) -> Path:
     return images
 
 
+def _write_coco_dataset(
+    root: Path, *, file_name: str = "sample.png"
+) -> tuple[Path, Path]:
+    images = root / "images" / "train"
+    annotations = root / "annotations"
+    images.mkdir(parents=True)
+    annotations.mkdir(parents=True)
+    Image.new("RGB", (100, 50), (120, 130, 140)).save(images / "sample.png")
+    payload = {
+        "images": [{"id": 11, "file_name": file_name, "width": 100, "height": 50}],
+        "categories": [{"id": 7, "name": "cat"}, {"id": 3, "name": "dog"}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 11,
+                "category_id": 7,
+                "bbox": [-10, 5, 30, 20],
+                "area": 600,
+                "iscrowd": 0,
+            },
+            {
+                "id": 2,
+                "image_id": 11,
+                "category_id": 3,
+                "bbox": [50, 10, 25, 20],
+                "area": 500,
+                "iscrowd": 0,
+            },
+            {
+                "id": 3,
+                "image_id": 11,
+                "category_id": 7,
+                "bbox": [0, 0, 10, 10],
+                "area": 100,
+                "iscrowd": 1,
+            },
+            {
+                "id": 4,
+                "image_id": 11,
+                "category_id": 3,
+                "bbox": [0, 0, 10, 10],
+                "area": 100,
+                "ignore": 1,
+            },
+        ],
+    }
+    annotation_file = annotations / "train.json"
+    annotation_file.write_text(json.dumps(payload), encoding="utf-8")
+    return images, annotation_file
+
+
 class TestVLMDetectDataset:
     def test_renders_prompt_and_target(self, tmp_path):
         images = _write_dataset(tmp_path, {"a": "0 0.5 0.5 0.2 0.4\n"})
@@ -176,13 +229,236 @@ class TestVLMDetectDataset:
         with pytest.raises(FileNotFoundError):
             VLMDetectDataset(empty, {0: "cat"}, QWEN_FMT)
 
-    def test_coco_json_dataset_rejected_clearly(self):
-        cfg = {"train": "imgs", "annotations": {"train": "x.json"}}
-        with pytest.raises(NotImplementedError, match="COCO JSON"):
-            resolve_split_source(cfg, "train")
-        cfg2 = {"train": "imgs", "train_annotation_file": "x.json"}
-        with pytest.raises(NotImplementedError, match="COCO JSON"):
-            resolve_split_source(cfg2, "train")
+    def test_native_coco_renders_clipped_boxes_and_skips_crowd_ignore(self, tmp_path):
+        images, annotation_file = _write_coco_dataset(tmp_path)
+        ds = VLMDetectDataset(
+            images,
+            {0: "cat", 1: "dog"},
+            QWEN_FMT,
+            annotation_file=annotation_file,
+        )
+
+        sample = ds[0]
+
+        assert sample["image"].size == (100, 50)
+        assert json.loads(sample["target"]) == [
+            {"bbox_2d": [0, 100, 200, 500], "label": "cat"},
+            {"bbox_2d": [500, 200, 750, 600], "label": "dog"},
+        ]
+
+    def test_native_coco_requires_matching_categories_and_contained_images(
+        self, tmp_path
+    ):
+        images, annotation_file = _write_coco_dataset(tmp_path)
+        with pytest.raises(ValueError, match="category name"):
+            VLMDetectDataset(
+                images,
+                {0: "cat"},
+                QWEN_FMT,
+                annotation_file=annotation_file,
+            )
+
+        _, escaped_annotation = _write_coco_dataset(
+            tmp_path / "escaped", file_name="../outside.png"
+        )
+        with pytest.raises(ValueError, match="escapes"):
+            VLMDetectDataset(
+                tmp_path / "escaped" / "images" / "train",
+                {0: "cat", 1: "dog"},
+                QWEN_FMT,
+                annotation_file=escaped_annotation,
+            )
+
+    def test_native_coco_rejects_multiple_categories_for_one_yaml_label(self, tmp_path):
+        images, annotation_file = _write_coco_dataset(tmp_path)
+        payload = json.loads(annotation_file.read_text(encoding="utf-8"))
+        payload["categories"] = [
+            {"id": 7, "name": "cat"},
+            {"id": 8, "name": "cat"},
+        ]
+        for annotation in payload["annotations"]:
+            if annotation["category_id"] == 3:
+                annotation["category_id"] = 8
+        annotation_file.write_text(json.dumps(payload), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Multiple COCO categories"):
+            VLMDetectDataset(
+                images,
+                {0: "cat"},
+                QWEN_FMT,
+                annotation_file=annotation_file,
+            )
+
+    @pytest.mark.parametrize(
+        ("mutation", "match"),
+        [
+            ("string_image_id", "exact integer"),
+            ("string_category_id", "exact integer"),
+            ("duplicate_annotation_id", "duplicate id"),
+            ("string_crowd", "integer 0 or 1"),
+            ("string_bbox", "invalid bbox"),
+        ],
+    )
+    def test_native_coco_rejects_ambiguous_index_fields(
+        self, mutation, match, tmp_path
+    ):
+        images, annotation_file = _write_coco_dataset(tmp_path)
+        payload = json.loads(annotation_file.read_text(encoding="utf-8"))
+        if mutation == "string_image_id":
+            payload["images"][0]["id"] = "11"
+        elif mutation == "string_category_id":
+            payload["categories"][0]["id"] = "7"
+        elif mutation == "duplicate_annotation_id":
+            duplicate = dict(payload["annotations"][0])
+            duplicate["bbox"] = [50, 25, 20, 10]
+            payload["annotations"].append(duplicate)
+        elif mutation == "string_crowd":
+            payload["annotations"][0]["iscrowd"] = "0"
+        else:
+            payload["annotations"][0]["bbox"][0] = "0"
+        annotation_file.write_text(json.dumps(payload), encoding="utf-8")
+
+        with pytest.raises(ValueError, match=match):
+            VLMDetectDataset(
+                images,
+                {0: "cat", 1: "dog"},
+                QWEN_FMT,
+                annotation_file=annotation_file,
+            )
+
+    def test_native_coco_rejects_duplicate_json_keys(self, tmp_path):
+        images, annotation_file = _write_coco_dataset(tmp_path)
+        text = annotation_file.read_text(encoding="utf-8")
+        annotation_file.write_text(
+            text.replace('"images":', '"images": [], "images":', 1),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="duplicate key|invalid"):
+            VLMDetectDataset(
+                images,
+                {0: "cat", 1: "dog"},
+                QWEN_FMT,
+                annotation_file=annotation_file,
+            )
+
+    def test_native_coco_rejects_overflowing_json_float(self, tmp_path):
+        images, annotation_file = _write_coco_dataset(tmp_path)
+        text = annotation_file.read_text(encoding="utf-8")
+        annotation_file.write_text(
+            text.replace('"area": 600', '"area": 1e400', 1),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="invalid"):
+            VLMDetectDataset(
+                images,
+                {0: "cat", 1: "dog"},
+                QWEN_FMT,
+                annotation_file=annotation_file,
+            )
+
+    def test_native_coco_preflight_decodes_image_bytes(self, tmp_path):
+        images, annotation_file = _write_coco_dataset(tmp_path)
+        image_path = images / "sample.png"
+        Image.new("RGB", (100, 50), (120, 130, 140)).save(image_path, format="JPEG")
+        payload = image_path.read_bytes()
+        image_path.write_bytes(payload[:-20])
+
+        with pytest.raises(ValueError, match="cannot be read"):
+            VLMDetectDataset.validate_native_coco_source(
+                images,
+                {0: "cat", 1: "dog"},
+                annotation_file,
+            )
+
+    def test_native_coco_rejects_image_above_pixel_limit(self, tmp_path, monkeypatch):
+        images, annotation_file = _write_coco_dataset(tmp_path)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+
+        with pytest.raises(ValueError, match="safe pixel limit"):
+            VLMDetectDataset.validate_native_coco_source(
+                images,
+                {0: "cat", 1: "dog"},
+                annotation_file,
+            )
+
+    def test_native_coco_checks_declared_image_dimensions(self, tmp_path):
+        images, annotation_file = _write_coco_dataset(tmp_path)
+        payload = json.loads(annotation_file.read_text(encoding="utf-8"))
+        payload["images"][0]["width"] = 101
+        annotation_file.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(ValueError, match="annotations declare"):
+            VLMDetectDataset(
+                images,
+                {0: "cat", 1: "dog"},
+                QWEN_FMT,
+                annotation_file=annotation_file,
+            )
+
+    def test_split_helpers_keep_source_and_resolved_annotation_separate(self):
+        cfg = {"train": "imgs", "train_annotation_file": "x.json"}
+        assert resolve_split_source(cfg, "train") == "imgs"
+        assert resolve_split_annotation(cfg, "train") == "x.json"
+        assert resolve_split_annotation(cfg, "val") is None
+
+    def test_trainer_propagates_native_coco_annotations_to_both_splits(
+        self, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        from libreyolo.models.vlm.training import trainer as trainer_module
+        from libreyolo.models.vlm.training.trainer import (
+            VLMDetectionTrainer,
+            VLMTrainConfig,
+        )
+
+        captured = []
+
+        def fake_dataset(source, names, fmt, **kwargs):
+            captured.append((source, names, fmt, kwargs))
+            return [source]
+
+        monkeypatch.setattr(trainer_module, "VLMDetectDataset", fake_dataset)
+        monkeypatch.setattr(
+            trainer_module, "VLMChatCollator", lambda *_args, **_kwargs: object()
+        )
+        monkeypatch.setattr(
+            trainer_module,
+            "DataLoader",
+            lambda dataset, **_kwargs: dataset,
+        )
+        trainer = object.__new__(VLMDetectionTrainer)
+        trainer.config = VLMTrainConfig(data="unused.yaml", workers=0, device="cpu")
+        trainer.wrapper = SimpleNamespace(processor=object())
+        trainer.recipe = SimpleNamespace(max_length_warn=4096)
+        monkeypatch.setattr(trainer, "_resolve_device", lambda: torch.device("cpu"))
+
+        train_loader, val_loader = trainer._build_dataloaders(
+            {
+                "train": "train-images",
+                "val": "val-images",
+                "train_annotation_file": "train.json",
+                "val_annotation_file": "val.json",
+            },
+            {0: "cat"},
+            QWEN_FMT,
+        )
+
+        assert train_loader == ["train-images"]
+        assert val_loader == ["val-images"]
+        assert captured[0][3]["annotation_file"] == "train.json"
+        assert captured[1][3]["annotation_file"] == "val.json"
+
+        with pytest.raises(ValueError, match="no val image source"):
+            trainer._build_dataloaders(
+                {
+                    "train": "train-images",
+                    "val_annotation_file": "val.json",
+                },
+                {0: "cat"},
+                QWEN_FMT,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -720,6 +996,9 @@ class TestCheckpointContract:
     def test_schema_one_prompt_and_coordinate_convention_are_restored(
         self, tmp_path, monkeypatch
     ):
+        import sys
+        from types import SimpleNamespace
+
         from libreyolo.models.base.model import BaseModel
         from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
 
@@ -752,6 +1031,7 @@ class TestCheckpointContract:
             instance.model = _Model()
 
         monkeypatch.setattr(BaseModel, "__init__", _offline_base_init)
+        monkeypatch.setitem(sys.modules, "peft", SimpleNamespace(PeftModel=object))
         with pytest.raises(ValueError, match="prompt must be a non-empty string"):
             LibreQwen3VL(size="2b", prompt="", device="cpu")
         model = LibreQwen3VL(
@@ -1067,6 +1347,34 @@ class TestTrainGating:
                 recipe = get_recipe(cls.FAMILY)
                 assert recipe.target_modules
 
+    def test_lfm_candidate_recipe_is_pinned_and_scope_limited(self):
+        from libreyolo.models.vlm.lfm2 import LibreLFM2VL
+
+        assert LibreLFM2VL.HF_REVISIONS == {
+            "450m": "fc6221ca597f3315e4f82fc2df606783267b34ba",
+            "1.6b": "919fde3d022e3f90a4716006f993938ee8c2eb97",
+            "3b": "5a414ead75d45db003906d06fb62bd5b6846cec0",
+        }
+        assert LibreLFM2VL.TRAINABLE is False
+        recipe = get_recipe("lfm2vl")
+        for name in (
+            "model.language_model.layers.0.self_attn.q_proj",
+            "model.language_model.layers.0.self_attn.in_proj",
+            "model.language_model.layers.0.feed_forward.w1",
+            "model.language_model.layers.0.feed_forward.w3",
+        ):
+            assert re.fullmatch(recipe.target_modules, name)
+        for name in (
+            "model.vision_tower.blocks.0.attn.q_proj",
+            "model.multi_modal_projector.linear",
+            "model.language_model.embed_tokens",
+        ):
+            assert re.fullmatch(recipe.target_modules, name) is None
+        assert recipe.frozen_prefixes == (
+            "model.vision_tower",
+            "model.multi_modal_projector",
+        )
+
     def test_unknown_recipe_raises(self):
         with pytest.raises(NotImplementedError):
             get_recipe("not-a-family")
@@ -1078,6 +1386,34 @@ class TestTrainGating:
         assert (
             VLMTrainConfig(allow_download_scripts=True).allow_download_scripts is True
         )
+
+    def test_dataset_name_mapping_normalizes_supported_numeric_string_ids(self):
+        from libreyolo.models.vlm.training.trainer import _normalize_names
+
+        assert _normalize_names({"0": "cat", 1: "dog"}, nc=2) == {
+            0: "cat",
+            1: "dog",
+        }
+
+    @pytest.mark.parametrize(
+        "names",
+        [
+            {False: "cat"},
+            {-1: "cat"},
+            {0.0: "cat"},
+            {"zero": "cat"},
+            {0: "cat", "0": "dog"},
+            {0: 7},
+            ["cat", 7],
+        ],
+    )
+    def test_dataset_name_mapping_rejects_ambiguous_ids_and_nonstring_names(
+        self, names
+    ):
+        from libreyolo.models.vlm.training.trainer import _normalize_names
+
+        with pytest.raises(ValueError):
+            _normalize_names(names)
 
     @pytest.mark.parametrize(
         ("kwargs", "match"),
@@ -1109,6 +1445,44 @@ class TestTrainGating:
 
         with pytest.raises(ImportError, match="peft>=0.17.0"):
             trainer_module.require_vlm_lora_dependencies()
+
+    @pytest.mark.parametrize("configured", [False, True])
+    def test_vlm_hub_logger_is_rejected_before_resolution(
+        self, configured, monkeypatch
+    ):
+        from libreyolo.models.vlm.training import trainer as trainer_module
+        from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
+        from libreyolo.training.loggers import HuggingFaceHubLogger
+
+        logger_request = (
+            object.__new__(HuggingFaceHubLogger)
+            if configured
+            else "hf:owner/vlm-adapter"
+        )
+        monkeypatch.setattr(
+            trainer_module,
+            "resolve_loggers",
+            lambda *_args, **_kwargs: pytest.fail("Hub logger was resolved"),
+        )
+
+        with pytest.raises(NotImplementedError, match="checkpoint directories"):
+            VLMDetectionTrainer(
+                _StubWrapper(),
+                data="unused.yaml",
+                loggers=logger_request,
+            )
+
+    def test_vlm_hub_logger_is_rejected_when_passed_as_callback(self):
+        from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
+        from libreyolo.training.loggers import HuggingFaceHubLogger
+
+        callback = object.__new__(HuggingFaceHubLogger)
+        with pytest.raises(NotImplementedError, match="checkpoint directories"):
+            VLMDetectionTrainer(
+                _StubWrapper(),
+                data="unused.yaml",
+                callbacks=(item for item in [callback]),
+            )
 
     @pytest.mark.parametrize(
         ("step", "total", "accumulate", "expected"),

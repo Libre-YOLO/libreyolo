@@ -179,8 +179,9 @@ Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
           get_assignments/get_geometry_constraint/simota_matching/get_losses
           assignment logic to the v7 anchor head). The shared COCO bounding-box
           clipping helper (libreyolo/utils/coco_geometry.py) is used by the COCO
-          dataset loader (libreyolo/data/dataset.py) and VLM confidence gate
-          writer/report reconstruction (libreyolo/validation/
+          dataset loader (libreyolo/data/dataset.py), native COCO VLM training
+          dataset (libreyolo/models/vlm/training/data.py), and VLM confidence
+          gate writer/report reconstruction (libreyolo/validation/
           vlm_confidence_validator.py and vlm_confidence_report.py).
 
 --------------------------------------------------------------------

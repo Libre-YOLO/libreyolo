@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -35,7 +36,7 @@ from ....training.callbacks import (
     TrainExceptionEvent,
     TrainStartEvent,
 )
-from ....training.loggers import resolve_loggers
+from ....training.loggers import HuggingFaceHubLogger, resolve_loggers
 from .checkpoint import (
     is_vlm_checkpoint,
     read_contract,
@@ -43,7 +44,7 @@ from .checkpoint import (
     validate_lora_artifact,
 )
 from .collate import VLMChatCollator
-from .data import VLMDetectDataset, resolve_split_source
+from .data import VLMDetectDataset, resolve_split_annotation, resolve_split_source
 from .recipes import VLMTrainRecipe, get_recipe
 from .targets import FamilyFormat
 
@@ -88,11 +89,31 @@ class VLMTrainConfig:
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
-def _normalize_names(raw) -> Dict[int, str]:
+def _normalize_names(raw, nc=None) -> Dict[int, str]:
     if isinstance(raw, dict):
-        names = {int(k): str(v) for k, v in raw.items()}
+        names = {}
+        for raw_key, raw_name in raw.items():
+            if isinstance(raw_key, bool):
+                raise ValueError("Dataset YAML name ids must be non-negative integers.")
+            if isinstance(raw_key, int):
+                key = raw_key
+            elif isinstance(raw_key, str) and raw_key.strip().isdigit():
+                key = int(raw_key.strip())
+            else:
+                raise ValueError("Dataset YAML name ids must be non-negative integers.")
+            if key < 0:
+                raise ValueError("Dataset YAML name ids must be non-negative integers.")
+            if key in names:
+                raise ValueError(
+                    f"Dataset YAML names contain duplicate normalized id {key}."
+                )
+            if not isinstance(raw_name, str):
+                raise ValueError("Dataset YAML names must be strings.")
+            names[key] = raw_name
     elif isinstance(raw, (list, tuple)):
-        names = {i: str(v) for i, v in enumerate(raw)}
+        if any(not isinstance(value, str) for value in raw):
+            raise ValueError("Dataset YAML names must be strings.")
+        names = dict(enumerate(raw))
     else:
         raise ValueError("Dataset YAML must define names as a list or an id mapping.")
     if not names or any(not name.strip() for name in names.values()):
@@ -102,6 +123,13 @@ def _normalize_names(raw) -> Dict[int, str]:
     normalized = [name.strip().lower() for name in names.values()]
     if len(normalized) != len(set(normalized)):
         raise ValueError("Dataset YAML names must be unique case-insensitively.")
+    if nc is not None:
+        if isinstance(nc, bool) or not isinstance(nc, int) or nc < 1:
+            raise ValueError("Dataset YAML nc must be an integer >= 1.")
+        if nc != len(names):
+            raise ValueError(
+                f"Dataset YAML nc={nc} does not match {len(names)} class names."
+            )
     return names
 
 
@@ -290,8 +318,61 @@ class VLMDetectionTrainer:
             raise ValueError(f"seed must be an integer, got {self.config.seed!r}.")
         self.wrapper = wrapper
         self.recipe: VLMTrainRecipe = get_recipe(wrapper.FAMILY)
-        self.callbacks = TrainCallbackList(callbacks)
-        for logger_cb in resolve_loggers(loggers):
+        logger_request = loggers
+        if (
+            logger_request is not None
+            and not isinstance(logger_request, str)
+            and isinstance(logger_request, Iterable)
+        ):
+            logger_request = list(logger_request)
+        logger_items = (
+            []
+            if logger_request is None
+            else (
+                [logger_request]
+                if isinstance(logger_request, str)
+                or not isinstance(logger_request, Iterable)
+                else logger_request
+            )
+        )
+        if any(
+            (
+                isinstance(item, str)
+                and item.strip().lower().startswith(("hf:", "huggingface:"))
+            )
+            or isinstance(item, HuggingFaceHubLogger)
+            for item in logger_items
+        ):
+            raise NotImplementedError(
+                "The Hugging Face Hub logger supports detector .pt checkpoints, "
+                "not LibreVLM checkpoint directories. Keep the VLM best/last "
+                "directory local until the VLM publication contract is released."
+            )
+        callback_request = callbacks
+        if (
+            callback_request is not None
+            and not TrainCallbackList._is_callback_object(callback_request)
+            and not callable(callback_request)
+            and isinstance(callback_request, Iterable)
+        ):
+            callback_request = list(callback_request)
+        callback_items = (
+            []
+            if callback_request is None
+            else (
+                callback_request
+                if isinstance(callback_request, list)
+                else [callback_request]
+            )
+        )
+        if any(isinstance(item, HuggingFaceHubLogger) for item in callback_items):
+            raise NotImplementedError(
+                "The Hugging Face Hub logger supports detector .pt checkpoints, "
+                "not LibreVLM checkpoint directories. Keep the VLM best/last "
+                "directory local until the VLM publication contract is released."
+            )
+        self.callbacks = TrainCallbackList(callback_request)
+        for logger_cb in resolve_loggers(logger_request):
             self.callbacks.append(logger_cb)
         self.save_dir = self._resolve_save_dir()
 
@@ -451,7 +532,14 @@ class VLMDetectionTrainer:
         train_source = resolve_split_source(data_cfg, "train")
         if not train_source:
             raise ValueError(f"Dataset {cfg.data!r} has no train split.")
+        train_annotation = resolve_split_annotation(data_cfg, "train")
         val_source = resolve_split_source(data_cfg, "val")
+        val_annotation = resolve_split_annotation(data_cfg, "val")
+        if val_annotation and not val_source:
+            raise ValueError(
+                "Dataset declares native COCO validation annotations but has "
+                "no val image source."
+            )
 
         collator = VLMChatCollator(
             self.wrapper.processor, max_length_warn=self.recipe.max_length_warn
@@ -464,6 +552,7 @@ class VLMDetectionTrainer:
             augment=cfg.hflip > 0,
             hflip_p=cfg.hflip,
             seed=cfg.seed,
+            annotation_file=train_annotation,
         )
         train_loader = DataLoader(
             train_set,
@@ -477,7 +566,13 @@ class VLMDetectionTrainer:
         )
         val_loader = None
         if val_source:
-            val_set = VLMDetectDataset(val_source, names, fmt, augment=False)
+            val_set = VLMDetectDataset(
+                val_source,
+                names,
+                fmt,
+                augment=False,
+                annotation_file=val_annotation,
+            )
             val_loader = DataLoader(
                 val_set,
                 batch_size=cfg.batch,
@@ -554,7 +649,7 @@ class VLMDetectionTrainer:
         resume_dir = self._resolve_resume_dir()
 
         data_cfg = load_data_config(cfg.data, allow_scripts=cfg.allow_download_scripts)
-        names = _normalize_names(data_cfg.get("names"))
+        names = _normalize_names(data_cfg.get("names"), data_cfg.get("nc"))
         # Vocabulary comes from the dataset; sticky on the wrapper from here on.
         self.wrapper.set_classes([names[i] for i in range(len(names))])
         fmt = FamilyFormat.from_model(self.wrapper)
