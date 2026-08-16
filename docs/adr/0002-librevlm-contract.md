@@ -103,8 +103,11 @@ The v1 publication builder accepts only Qwen3-VL 2B/4B detection LoRA output
 written with `peft==0.19.1` and `transformers==5.12.1`. It requires external,
 human-approved evidence that binds the adapter, checkpoint contract, processor,
 complete immutable base snapshot, training-data manifest, evaluation report,
-clean code revision, and fixed recipe. The library can generate an unapproved
-template with derived hashes, but it cannot manufacture an approval.
+an exact-zero two-run repeatability receipt, clean code revision, and fixed
+recipe. Publication evidence v2 binds the primary and repeat run identities,
+the raw receipt, and its canonical comparison. The library can generate an
+unapproved template with derived hashes, but it cannot manufacture an
+approval.
 
 The artifact includes the adapter and exact Qwen processor, tokenizer, and
 chat-template assets under Apache-2.0. Base weights remain reference-only.
@@ -200,6 +203,11 @@ Consequences:
   after strict reconstruction validates their hashes and duplicated metrics.
   Timing and plot artifacts do not define reproducibility. The hashes provide
   consistency checks, not report authentication.
+- A canonical repeatability receipt uses two distinct run and process
+  identifiers and binds both report/envelope byte identities, zero tolerances,
+  and the complete comparison. Publication treats it as structural integrity
+  evidence, not publisher or reviewer authentication or proof that reports are
+  truthful.
 
 `_score_detections(items)` remains the scalar fallback for custom generation
 paths. Scored greedy generations use the additive per-item scoring path.

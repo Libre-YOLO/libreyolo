@@ -346,6 +346,13 @@ identities. Base weights are referenced and verified but are not included;
 the exact Qwen processor, tokenizer, and chat-template assets are redistributed
 under Apache-2.0 with generated license and notice files.
 
+The artifact carries reviewed `libreyolo.vlm-publication-evidence.v2` evidence.
+Its evaluation record binds one primary confidence report and envelope plus a
+canonical `libreyolo.vlm-confidence-repeatability-receipt.v1` comparison of
+that primary run with a second fresh-process run. Both the raw receipt and its
+canonical comparison object are SHA-256 bound. These are structural integrity
+records, not publisher or reviewer authentication.
+
 Published artifacts are addressed as
 `hf+vlm://owner/repo@<40-character-commit>`. This is distinct from the
 single-file detector `hf://` transport. The evidence and Hub workflow are

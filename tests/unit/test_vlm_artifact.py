@@ -26,6 +26,7 @@ from libreyolo.models.vlm.artifact import (
     validate_vlm_base_snapshot,
 )
 from libreyolo.models.vlm.training.checkpoint import inspect_vlm_checkpoint_identity
+from libreyolo.validation import vlm_confidence_benchmark as confidence_benchmark
 from libreyolo.validation.vlm_confidence import VLMDetection, build_confidence_run
 from libreyolo.validation import vlm_confidence_report as confidence_report_module
 
@@ -263,6 +264,30 @@ def _publication_metrics() -> dict[str, float]:
     }
 
 
+def _repeatability_claim(report_sha: str, envelope_sha: str) -> dict:
+    return {
+        "schema": artifact_module._REPEATABILITY_CLAIM_SCHEMA,
+        "receipt_sha256": "7" * 64,
+        "comparison_sha256": "8" * 64,
+        "runs": [
+            {
+                "run_id": "1" * 32,
+                "process_id": "2" * 32,
+                "report_sha256": report_sha,
+                "envelope_sha256": envelope_sha,
+            },
+            {
+                "run_id": "3" * 32,
+                "process_id": "4" * 32,
+                "report_sha256": "9" * 64,
+                "envelope_sha256": "a" * 64,
+            },
+        ],
+        "tolerances": {"score_atol": 0.0, "metric_atol": 0.0, "map_atol": 0.0},
+        "reproducible": True,
+    }
+
+
 def _evidence(size: str = "2b") -> dict:
     repo, revision = _BASES[size]
     snapshot = _base_snapshot(size)
@@ -283,6 +308,7 @@ def _evidence(size: str = "2b") -> dict:
         "envelope_sha256": envelope_sha,
         "checkpoint_sha256": adapter_sha,
         "metrics": _publication_metrics(),
+        "repeatability": _repeatability_claim(report_sha, envelope_sha),
         "passed": True,
     }
     evidence = {
@@ -336,6 +362,8 @@ def _evidence(size: str = "2b") -> dict:
                 "training_data_manifest_sha256": data_sha,
                 "evaluation_report_sha256": report_sha,
                 "evaluation_envelope_sha256": envelope_sha,
+                "evaluation_repeatability_receipt_sha256": "7" * 64,
+                "evaluation_repeatability_comparison_sha256": "8" * 64,
                 "evaluation_claim_sha256": artifact_module._evaluation_claim_sha256(
                     evaluation
                 ),
@@ -477,10 +505,46 @@ def _bind_confidence_report(
             ),
         ),
     )
+    receipt = checkpoint.parent / "vlm_confidence_repeatability.json"
+    receipt.write_text("mock receipt\n", encoding="utf-8")
+    monkeypatch.setattr(
+        artifact_module,
+        "_read_confidence_repeatability_identity",
+        lambda path: SimpleNamespace(
+            receipt_sha256="7" * 64,
+            comparison_sha256="8" * 64,
+            tolerances={"score_atol": 0.0, "metric_atol": 0.0, "map_atol": 0.0},
+            comparison=SimpleNamespace(reproducible=True),
+            runs=(
+                SimpleNamespace(
+                    run_id="1" * 32,
+                    process_id="2" * 32,
+                    report_sha256=report_sha,
+                    envelope_sha256=envelope_sha,
+                ),
+                SimpleNamespace(
+                    run_id="3" * 32,
+                    process_id="4" * 32,
+                    report_sha256="9" * 64,
+                    envelope_sha256="a" * 64,
+                ),
+            ),
+        ),
+    )
     return report
 
 
-def _write_strict_confidence_run(root: Path, checkpoint: Path) -> Path:
+def _bound_repeatability_receipt(report: Path) -> Path:
+    return report.with_name("vlm_confidence_repeatability.json")
+
+
+def _write_strict_confidence_run(
+    root: Path,
+    checkpoint: Path,
+    *,
+    run_id: str = "9" * 32,
+    process_id: str = "a" * 32,
+) -> Path:
     """Write a real report/envelope pair accepted by the public strict reader."""
 
     root.mkdir()
@@ -770,8 +834,8 @@ def _write_strict_confidence_run(root: Path, checkpoint: Path) -> Path:
 
     envelope = {
         "schema": "libreyolo.vlm-confidence-benchmark-run.v3",
-        "run_id": "9" * 32,
-        "process_id": "a" * 32,
+        "run_id": run_id,
+        "process_id": process_id,
         "request": {
             "manifest": absolute("manifest.json"),
             "annotations": absolute("instances_val2017.json"),
@@ -829,6 +893,11 @@ def _artifact(tmp_path: Path, size: str = "2b"):
 
 
 def test_production_qwen_lora_layout_is_exact():
+    assert PUBLICATION_EVIDENCE_SCHEMA == "libreyolo.vlm-publication-evidence.v2"
+    assert (
+        artifact_module._EVALUATION_CLAIM_SCHEMA
+        == "libreyolo.vlm-publication-evaluation-claim.v2"
+    )
     assert artifact_module._PRODUCTION_QWEN_LORA_LAYOUT == {
         "2b": {
             "layers": 28,
@@ -943,6 +1012,9 @@ def test_publication_rejects_invalid_validation_metric_contract(
         lambda evidence: evidence["evaluation"].__setitem__(
             "envelope_sha256", "0" * 64
         ),
+        lambda evidence: evidence["evaluation"]["repeatability"].__setitem__(
+            "comparison_sha256", "0" * 64
+        ),
     ],
 )
 def test_publication_rejects_evaluation_edit_with_stale_claim_binding(
@@ -953,7 +1025,10 @@ def test_publication_rejects_evaluation_edit_with_stale_claim_binding(
     mutation(evidence_value)
     evidence = _write_evidence(tmp_path / "publication.json", value=evidence_value)
 
-    with pytest.raises(VLMArtifactError, match="review.bindings do not match"):
+    with pytest.raises(
+        VLMArtifactError,
+        match="review.bindings do not match|must match the primary evaluation run",
+    ):
         build_vlm_artifact(
             checkpoint, tmp_path / "artifact", publication_evidence=evidence
         )
@@ -1807,6 +1882,7 @@ def _create_template_fixture(tmp_path: Path, monkeypatch):
         training_data=training_data,
         code=code,
         confidence_report=confidence_report,
+        repeatability_receipt=_bound_repeatability_receipt(confidence_report),
     )
     return checkpoint, base, result
 
@@ -1817,14 +1893,24 @@ def _strict_template_inputs(tmp_path: Path, monkeypatch):
     base = tmp_path / "base"
     _materialize_base_snapshot(base, identity)
     report = _write_strict_confidence_run(tmp_path / "confidence-run", checkpoint)
+    repeated_report = _write_strict_confidence_run(
+        tmp_path / "confidence-run-repeat",
+        checkpoint,
+        run_id="b" * 32,
+        process_id="c" * 32,
+    )
+    receipt = tmp_path / "confidence-repeatability.json"
+    confidence_benchmark.create_benchmark_repeatability_receipt(
+        report, repeated_report, receipt
+    )
     training_data, code = _template_context()
-    return checkpoint, base, report, training_data, code
+    return checkpoint, base, report, receipt, training_data, code
 
 
 def test_publication_template_reads_real_strict_report_and_envelope(
     tmp_path, monkeypatch
 ):
-    checkpoint, base, report, training_data, code = _strict_template_inputs(
+    checkpoint, base, report, receipt, training_data, code = _strict_template_inputs(
         tmp_path, monkeypatch
     )
     output = tmp_path / "publication-template.json"
@@ -1836,12 +1922,25 @@ def test_publication_template_reads_real_strict_report_and_envelope(
         training_data=training_data,
         code=code,
         confidence_report=report,
+        repeatability_receipt=receipt,
     )
 
     evidence = json.loads(output.read_text(encoding="utf-8"))
     envelope = report.with_name("vlm_confidence_run.json")
     assert evidence["evaluation"]["report_sha256"] == _sha(report.read_bytes())
     assert evidence["evaluation"]["envelope_sha256"] == _sha(envelope.read_bytes())
+    receipt_identity = confidence_benchmark.read_benchmark_repeatability_receipt(
+        receipt
+    )
+    assert evidence["evaluation"]["repeatability"]["receipt_sha256"] == (
+        receipt_identity.receipt_sha256
+    )
+    assert evidence["evaluation"]["repeatability"]["comparison_sha256"] == (
+        receipt_identity.comparison_sha256
+    )
+    assert evidence["evaluation"]["repeatability"]["runs"][0]["report_sha256"] == _sha(
+        report.read_bytes()
+    )
     assert evidence["evaluation"]["benchmark"] == (
         artifact_module._CONFIDENCE_BENCHMARK_ID
     )
@@ -1856,7 +1955,7 @@ def test_publication_template_reads_real_strict_report_and_envelope(
 def test_publication_template_rejects_missing_envelope_without_output(
     tmp_path, monkeypatch
 ):
-    checkpoint, base, report, training_data, code = _strict_template_inputs(
+    checkpoint, base, report, receipt, training_data, code = _strict_template_inputs(
         tmp_path, monkeypatch
     )
     report.with_name("vlm_confidence_run.json").unlink()
@@ -1870,6 +1969,7 @@ def test_publication_template_rejects_missing_envelope_without_output(
             training_data=training_data,
             code=code,
             confidence_report=report,
+            repeatability_receipt=receipt,
         )
     assert not output.exists()
 
@@ -1877,7 +1977,7 @@ def test_publication_template_rejects_missing_envelope_without_output(
 def test_publication_template_rejects_tampered_envelope_without_output(
     tmp_path, monkeypatch
 ):
-    checkpoint, base, report, training_data, code = _strict_template_inputs(
+    checkpoint, base, report, receipt, training_data, code = _strict_template_inputs(
         tmp_path, monkeypatch
     )
     envelope_path = report.with_name("vlm_confidence_run.json")
@@ -1894,6 +1994,7 @@ def test_publication_template_rejects_tampered_envelope_without_output(
             training_data=training_data,
             code=code,
             confidence_report=report,
+            repeatability_receipt=receipt,
         )
     assert not output.exists()
 
@@ -1933,6 +2034,8 @@ def test_publication_template_derives_bindings_and_remains_unapproved(
             template["evaluation"]
         ),
         "evaluation_envelope_sha256": "f" * 64,
+        "evaluation_repeatability_receipt_sha256": "7" * 64,
+        "evaluation_repeatability_comparison_sha256": "8" * 64,
         "evaluation_report_sha256": "e" * 64,
         "processor_sha256": _processor_sha(),
         "recipe_sha256": artifact_module._recipe_sha256(),
@@ -1944,6 +2047,142 @@ def test_publication_template_derives_bindings_and_remains_unapproved(
             checkpoint,
             tmp_path / "unapproved-artifact",
             publication_evidence=output,
+        )
+
+
+@pytest.mark.parametrize("mode", ["nonreproducible", "tolerant", "wrong_primary"])
+def test_publication_template_rejects_invalid_repeatability_claim_source(
+    tmp_path, monkeypatch, mode
+):
+    identity = _tiny_base_identity(monkeypatch)
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    base = tmp_path / "base"
+    _materialize_base_snapshot(base, identity)
+    training_data, code = _template_context()
+    confidence_report = _bind_confidence_report(monkeypatch, checkpoint)
+    read_receipt = artifact_module._read_confidence_repeatability_identity
+
+    def altered_receipt(path):
+        current = read_receipt(path)
+        values = vars(current).copy()
+        if mode == "nonreproducible":
+            values["comparison"] = SimpleNamespace(reproducible=False)
+        elif mode == "tolerant":
+            values["tolerances"] = {
+                "score_atol": 0.01,
+                "metric_atol": 0.0,
+                "map_atol": 0.0,
+            }
+        else:
+            runs = list(values["runs"])
+            first = vars(runs[0]).copy()
+            first["run_id"] = "5" * 32
+            runs[0] = SimpleNamespace(**first)
+            values["runs"] = tuple(runs)
+        return SimpleNamespace(**values)
+
+    monkeypatch.setattr(
+        artifact_module,
+        "_read_confidence_repeatability_identity",
+        altered_receipt,
+    )
+    output = tmp_path / "publication-template.json"
+
+    with pytest.raises(
+        VLMArtifactError, match="reproducible|zero comparison tolerances|runs\[0\]"
+    ):
+        create_vlm_publication_evidence_template(
+            checkpoint,
+            base,
+            output,
+            training_data=training_data,
+            code=code,
+            confidence_report=confidence_report,
+            repeatability_receipt=_bound_repeatability_receipt(confidence_report),
+        )
+    assert not output.exists()
+
+
+def test_publication_template_rechecks_repeatability_receipt_before_output(
+    tmp_path, monkeypatch
+):
+    (
+        checkpoint,
+        base,
+        confidence_report,
+        receipt,
+        training_data,
+        code,
+    ) = _strict_template_inputs(tmp_path, monkeypatch)
+    read_receipt = artifact_module._read_confidence_repeatability_identity
+    calls = 0
+
+    def changed_second_read(path):
+        nonlocal calls
+        calls += 1
+        current = read_receipt(path)
+        if calls == 1:
+            receipt.write_bytes(receipt.read_bytes() + b" ")
+        return current
+
+    monkeypatch.setattr(
+        artifact_module,
+        "_read_confidence_repeatability_identity",
+        changed_second_read,
+    )
+    output = tmp_path / "publication-template.json"
+
+    with pytest.raises(VLMArtifactError, match="repeatability receipt|canonical JSON"):
+        create_vlm_publication_evidence_template(
+            checkpoint,
+            base,
+            output,
+            training_data=training_data,
+            code=code,
+            confidence_report=confidence_report,
+            repeatability_receipt=receipt,
+        )
+    assert calls == 2
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "mutation, message",
+    [
+        (
+            lambda evidence: evidence["evaluation"]["repeatability"][
+                "tolerances"
+            ].__setitem__("map_atol", 1.0),
+            "map_atol must equal 0",
+        ),
+        (
+            lambda evidence: evidence["evaluation"]["repeatability"]["runs"][
+                1
+            ].__setitem__(
+                "process_id",
+                evidence["evaluation"]["repeatability"]["runs"][0]["process_id"],
+            ),
+            "process_id values must differ",
+        ),
+        (
+            lambda evidence: evidence["evaluation"]["repeatability"].__setitem__(
+                "reproducible", False
+            ),
+            "reproducible must be true",
+        ),
+    ],
+)
+def test_publication_evidence_rejects_invalid_repeatability_claim(
+    tmp_path, mutation, message
+):
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    evidence_value = _evidence()
+    mutation(evidence_value)
+    evidence = _write_evidence(tmp_path / "publication.json", value=evidence_value)
+
+    with pytest.raises(VLMArtifactError, match=message):
+        build_vlm_artifact(
+            checkpoint, tmp_path / "artifact", publication_evidence=evidence
         )
 
 
@@ -1981,6 +2220,7 @@ def test_publication_template_rejects_report_checkpoint_identity_mismatch(
             training_data=training_data,
             code=code,
             confidence_report=confidence_report,
+            repeatability_receipt=_bound_repeatability_receipt(confidence_report),
         )
     assert not output.exists()
 
@@ -2020,6 +2260,7 @@ def test_publication_template_rejects_nonvalidation_report_context(
             training_data=training_data,
             code=code,
             confidence_report=confidence_report,
+            repeatability_receipt=_bound_repeatability_receipt(confidence_report),
         )
 
 
@@ -2047,6 +2288,7 @@ def test_publication_template_rejects_unusable_validation_metric(
             training_data=training_data,
             code=code,
             confidence_report=confidence_report,
+            repeatability_receipt=_bound_repeatability_receipt(confidence_report),
         )
     assert not output.exists()
 
@@ -2082,6 +2324,7 @@ def test_publication_template_rejects_checkpoint_mutation_during_report_read(
             training_data=training_data,
             code=code,
             confidence_report=confidence_report,
+            repeatability_receipt=_bound_repeatability_receipt(confidence_report),
         )
     assert not output.exists()
 
@@ -2089,9 +2332,14 @@ def test_publication_template_rejects_checkpoint_mutation_during_report_read(
 def test_publication_template_rechecks_run_identity_before_creating_output(
     tmp_path, monkeypatch
 ):
-    checkpoint, base, confidence_report, training_data, code = _strict_template_inputs(
-        tmp_path, monkeypatch
-    )
+    (
+        checkpoint,
+        base,
+        confidence_report,
+        receipt,
+        training_data,
+        code,
+    ) = _strict_template_inputs(tmp_path, monkeypatch)
     read_identity = artifact_module._read_confidence_benchmark_identity
     calls = 0
 
@@ -2113,7 +2361,9 @@ def test_publication_template_rechecks_run_identity_before_creating_output(
     )
     output = tmp_path / "publication-template.json"
 
-    with pytest.raises(VLMArtifactError, match="benchmark run changed"):
+    with pytest.raises(
+        VLMArtifactError, match="benchmark.*changed|must match the confidence_report"
+    ):
         create_vlm_publication_evidence_template(
             checkpoint,
             base,
@@ -2121,6 +2371,7 @@ def test_publication_template_rechecks_run_identity_before_creating_output(
             training_data=training_data,
             code=code,
             confidence_report=confidence_report,
+            repeatability_receipt=receipt,
         )
     assert calls == 2
     assert not output.exists()
@@ -2171,6 +2422,7 @@ def test_publication_template_is_create_only_and_rejects_internal_output(
             training_data=training_data,
             code=code,
             confidence_report=confidence_report,
+            repeatability_receipt=_bound_repeatability_receipt(confidence_report),
         )
     assert existing.read_text(encoding="utf-8") == "racer"
 
@@ -2182,6 +2434,7 @@ def test_publication_template_is_create_only_and_rejects_internal_output(
             training_data=training_data,
             code=code,
             confidence_report=confidence_report,
+            repeatability_receipt=_bound_repeatability_receipt(confidence_report),
         )
 
 
@@ -2209,6 +2462,7 @@ def test_publication_template_rejects_symlinked_output_parent(tmp_path, monkeypa
             training_data=training_data,
             code=code,
             confidence_report=confidence_report,
+            repeatability_receipt=_bound_repeatability_receipt(confidence_report),
         )
 
 
@@ -2235,6 +2489,7 @@ def test_publication_template_preserves_racing_destination(tmp_path, monkeypatch
             training_data=training_data,
             code=code,
             confidence_report=confidence_report,
+            repeatability_receipt=_bound_repeatability_receipt(confidence_report),
         )
     assert output.read_bytes() == b"racer"
     assert not list(tmp_path.glob(".publication-template.json.staging-*.tmp"))
@@ -2258,6 +2513,7 @@ def test_publication_template_rejects_non_plain_or_unknown_context(
             training_data=training_data,
             code=code,
             confidence_report=confidence_report,
+            repeatability_receipt=_bound_repeatability_receipt(confidence_report),
         )
 
 

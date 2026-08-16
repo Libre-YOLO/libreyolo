@@ -39,7 +39,7 @@ VLM_ARTIFACT_SCHEMA = "libreyolo.vlm-artifact.v1"
 VLM_ARTIFACT_MANIFEST = "libreyolo_vlm_artifact.json"
 VLM_ARTIFACT_MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 VLM_ARTIFACT_MAX_PAYLOAD_BYTES = 384 * 1024 * 1024
-PUBLICATION_EVIDENCE_SCHEMA = "libreyolo.vlm-publication-evidence.v1"
+PUBLICATION_EVIDENCE_SCHEMA = "libreyolo.vlm-publication-evidence.v2"
 PUBLICATION_EVIDENCE_FILENAME = "publication_evidence.json"
 VLM_BASE_SNAPSHOT_SCHEMA = "libreyolo.vlm-base-snapshot.v1"
 
@@ -59,6 +59,7 @@ _MAX_SAFETENSORS_HEADER_BYTES = 16 * 1024 * 1024
 _COPY_CHUNK_BYTES = 1024 * 1024
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_RUN_IDENTIFIER_RE = re.compile(r"^[0-9a-f]{32}$")
 _VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]{0,127}$")
 _TOKEN_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z ._+:/-]{0,255}$")
 _SPDX_TOKEN_RE = re.compile(
@@ -122,7 +123,9 @@ _CONFIDENCE_BENCHMARK_ID = ":".join(
         _CONFIDENCE_PARTITION_ROLE,
     )
 )
-_EVALUATION_CLAIM_SCHEMA = "libreyolo.vlm-publication-evaluation-claim.v1"
+_EVALUATION_CLAIM_SCHEMA = "libreyolo.vlm-publication-evaluation-claim.v2"
+_REPEATABILITY_RECEIPT_SCHEMA = "libreyolo.vlm-confidence-repeatability-receipt.v1"
+_REPEATABILITY_CLAIM_SCHEMA = "libreyolo.vlm-confidence-repeatability-claim.v1"
 _CONFIDENCE_CONTEXT_KEYS = {
     "schema",
     "git",
@@ -486,8 +489,24 @@ _EVALUATION_KEYS = {
     "envelope_sha256",
     "checkpoint_sha256",
     "metrics",
+    "repeatability",
     "passed",
 }
+_REPEATABILITY_KEYS = {
+    "schema",
+    "receipt_sha256",
+    "comparison_sha256",
+    "runs",
+    "tolerances",
+    "reproducible",
+}
+_REPEATABILITY_RUN_KEYS = {
+    "run_id",
+    "process_id",
+    "report_sha256",
+    "envelope_sha256",
+}
+_REPEATABILITY_TOLERANCE_KEYS = {"score_atol", "metric_atol", "map_atol"}
 _CODE_KEYS = {"repository", "revision", "clean", "recipe", "dependencies"}
 _RECIPE_KEYS = {"id", "sha256"}
 _TEMPLATE_TRAINING_DATA_KEYS = _TRAINING_DATA_KEYS - {"redistribution_decision"}
@@ -498,6 +517,8 @@ _BINDING_KEYS = {
     "training_data_manifest_sha256",
     "evaluation_report_sha256",
     "evaluation_envelope_sha256",
+    "evaluation_repeatability_receipt_sha256",
+    "evaluation_repeatability_comparison_sha256",
     "evaluation_claim_sha256",
     "code_revision",
     "recipe_sha256",
@@ -1314,7 +1335,7 @@ def _validate_template_context(
     for name, expected in _PUBLICATION_DEPENDENCY_PINS.items():
         if dependencies[name] != expected:
             raise VLMArtifactError(
-                f"code.dependencies.{name} must be {expected!r} for publication v1"
+                f"code.dependencies.{name} must be {expected!r} for VLM artifact v1"
             )
     return training_data, code
 
@@ -1335,6 +1356,74 @@ def _read_confidence_benchmark_identity(path: str | os.PathLike[str]) -> Any:
         return read_benchmark_run_identity(path, label="publication_evaluation")
     except (OSError, TypeError, VLMConfidenceReportError) as exc:
         raise VLMArtifactError(f"invalid confidence benchmark run: {exc}") from exc
+
+
+def _read_confidence_repeatability_identity(path: str | os.PathLike[str]) -> Any:
+    """Read one strict two-run receipt without an eager validation import."""
+
+    try:
+        from libreyolo.validation.vlm_confidence_benchmark import (
+            VLMConfidenceReportError,
+            read_benchmark_repeatability_receipt,
+        )
+    except ImportError as exc:  # pragma: no cover - package integrity guard
+        raise VLMArtifactError(
+            "confidence repeatability validation is unavailable in this runtime"
+        ) from exc
+    try:
+        return read_benchmark_repeatability_receipt(
+            path, label="publication_repeatability"
+        )
+    except (OSError, TypeError, VLMConfidenceReportError) as exc:
+        raise VLMArtifactError(
+            f"invalid confidence repeatability receipt: {exc}"
+        ) from exc
+
+
+def _confidence_run_ref(identity: Any) -> dict[str, str]:
+    return {
+        "run_id": identity.run_id,
+        "process_id": identity.process_id,
+        "report_sha256": identity.report_sha256,
+        "envelope_sha256": identity.envelope_sha256,
+    }
+
+
+def _repeatability_claim_from_receipt(
+    receipt_path: str | os.PathLike[str], primary_run: Mapping[str, str]
+) -> tuple[dict[str, Any], Any]:
+    identity = _read_confidence_repeatability_identity(receipt_path)
+    if not identity.comparison.reproducible:
+        raise VLMArtifactError(
+            "confidence repeatability receipt must record a reproducible comparison"
+        )
+    tolerances = dict(identity.tolerances)
+    if tolerances != {"score_atol": 0.0, "metric_atol": 0.0, "map_atol": 0.0}:
+        raise VLMArtifactError(
+            "publication repeatability requires exact zero comparison tolerances"
+        )
+    runs = [
+        {
+            "run_id": run.run_id,
+            "process_id": run.process_id,
+            "report_sha256": run.report_sha256,
+            "envelope_sha256": run.envelope_sha256,
+        }
+        for run in identity.runs
+    ]
+    if runs[0] != dict(primary_run):
+        raise VLMArtifactError(
+            "repeatability receipt runs[0] must match the confidence_report primary run"
+        )
+    claim = {
+        "schema": _REPEATABILITY_CLAIM_SCHEMA,
+        "receipt_sha256": identity.receipt_sha256,
+        "comparison_sha256": identity.comparison_sha256,
+        "runs": runs,
+        "tolerances": tolerances,
+        "reproducible": True,
+    }
+    return claim, identity
 
 
 def _validate_confidence_validation_metrics(
@@ -1368,6 +1457,7 @@ def _evaluation_claim_sha256(evaluation: Mapping[str, Any]) -> str:
         "envelope_sha256": evaluation["envelope_sha256"],
         "checkpoint_sha256": evaluation["checkpoint_sha256"],
         "metrics": evaluation["metrics"],
+        "repeatability": evaluation["repeatability"],
     }
     return _sha256_bytes(_canonical_json(claim))
 
@@ -1434,7 +1524,7 @@ def _confidence_run_identity_bytes(identity: Any) -> bytes:
 
 def _evaluation_from_confidence_report(
     report_path: str | os.PathLike[str], checkpoint_identity: Any
-) -> tuple[dict[str, Any], bytes]:
+) -> tuple[dict[str, Any], bytes, dict[str, str]]:
     """Derive publication evaluation claims from a bound strict gate report."""
 
     run_identity = _read_confidence_benchmark_identity(report_path)
@@ -1542,7 +1632,81 @@ def _evaluation_from_confidence_report(
             "metrics": metrics,
         },
         _confidence_run_identity_bytes(run_identity),
+        _confidence_run_ref(run_identity),
     )
+
+
+def _validate_repeatability_claim(
+    value: Any,
+    *,
+    report_sha256: str,
+    envelope_sha256: str,
+) -> dict[str, Any]:
+    claim = _require_exact_keys(value, _REPEATABILITY_KEYS, "evaluation.repeatability")
+    if claim["schema"] != _REPEATABILITY_CLAIM_SCHEMA:
+        raise VLMArtifactError(
+            f"evaluation.repeatability.schema must be {_REPEATABILITY_CLAIM_SCHEMA!r}"
+        )
+    _require_sha256(claim["receipt_sha256"], "evaluation.repeatability.receipt_sha256")
+    _require_sha256(
+        claim["comparison_sha256"],
+        "evaluation.repeatability.comparison_sha256",
+    )
+    runs_value = claim["runs"]
+    if not isinstance(runs_value, list) or len(runs_value) != 2:
+        raise VLMArtifactError(
+            "evaluation.repeatability.runs must contain exactly two runs"
+        )
+    runs = []
+    for index, value in enumerate(runs_value):
+        run = _require_exact_keys(
+            value,
+            _REPEATABILITY_RUN_KEYS,
+            f"evaluation.repeatability.runs[{index}]",
+        )
+        for field in ("run_id", "process_id"):
+            if not isinstance(run[field], str) or not _RUN_IDENTIFIER_RE.fullmatch(
+                run[field]
+            ):
+                raise VLMArtifactError(
+                    f"evaluation.repeatability.runs[{index}].{field} must be a "
+                    "32-character lowercase hex identifier"
+                )
+        for field in ("report_sha256", "envelope_sha256"):
+            _require_sha256(
+                run[field], f"evaluation.repeatability.runs[{index}].{field}"
+            )
+        runs.append(run)
+    if runs[0]["run_id"] == runs[1]["run_id"]:
+        raise VLMArtifactError("evaluation.repeatability run_id values must differ")
+    if runs[0]["process_id"] == runs[1]["process_id"]:
+        raise VLMArtifactError("evaluation.repeatability process_id values must differ")
+    if (
+        runs[0]["report_sha256"] != report_sha256
+        or runs[0]["envelope_sha256"] != envelope_sha256
+    ):
+        raise VLMArtifactError(
+            "evaluation.repeatability.runs[0] must match the primary evaluation run"
+        )
+
+    tolerances = _require_exact_keys(
+        claim["tolerances"],
+        _REPEATABILITY_TOLERANCE_KEYS,
+        "evaluation.repeatability.tolerances",
+    )
+    for field in sorted(_REPEATABILITY_TOLERANCE_KEYS):
+        value = tolerances[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) != 0.0
+        ):
+            raise VLMArtifactError(
+                f"evaluation.repeatability.tolerances.{field} must equal 0"
+            )
+    _require_true(claim["reproducible"], "evaluation.repeatability.reproducible")
+    return claim
 
 
 def _validate_publication_evidence(
@@ -1631,6 +1795,11 @@ def _validate_publication_evidence(
         evaluation["checkpoint_sha256"], "evaluation.checkpoint_sha256"
     )
     _validate_confidence_validation_metrics(evaluation["metrics"], "evaluation.metrics")
+    repeatability = _validate_repeatability_claim(
+        evaluation["repeatability"],
+        report_sha256=report_sha,
+        envelope_sha256=envelope_sha,
+    )
     _require_true(evaluation["passed"], "evaluation.passed")
     evaluation_claim_sha = _evaluation_claim_sha256(evaluation)
 
@@ -1657,7 +1826,7 @@ def _validate_publication_evidence(
     for name, expected in _PUBLICATION_DEPENDENCY_PINS.items():
         if dependencies[name] != expected:
             raise VLMArtifactError(
-                f"code.dependencies.{name} must be {expected!r} for publication v1"
+                f"code.dependencies.{name} must be {expected!r} for VLM artifact v1"
             )
 
     review = _require_exact_keys(evidence["review"], _REVIEW_KEYS, "review")
@@ -1698,6 +1867,10 @@ def _validate_publication_evidence(
         "training_data_manifest_sha256": data_sha,
         "evaluation_report_sha256": report_sha,
         "evaluation_envelope_sha256": envelope_sha,
+        "evaluation_repeatability_receipt_sha256": repeatability["receipt_sha256"],
+        "evaluation_repeatability_comparison_sha256": repeatability[
+            "comparison_sha256"
+        ],
         "evaluation_claim_sha256": evaluation_claim_sha,
         "code_revision": code_revision,
         "recipe_sha256": recipe_sha,
@@ -3072,16 +3245,18 @@ def create_vlm_publication_evidence_template(
     training_data: Mapping[str, Any],
     code: Mapping[str, Any],
     confidence_report: str | os.PathLike[str],
+    repeatability_receipt: str | os.PathLike[str],
 ) -> Path:
     """Create an exact, deliberately unapproved publication-evidence template.
 
-    The checkpoint, pinned base snapshot, strict confidence report, and all
-    byte-derived review bindings are validated before a complete canonical JSON
-    file is published. Evaluation claims come only from the report bound to the
-    exact checkpoint identity. Legal, privacy, evaluation, and provenance
-    approvals remain false or unreviewed; the returned file therefore cannot
-    authorize :func:`build_vlm_artifact` until a human reviews and edits those
-    fields outside this helper.
+    The checkpoint, pinned base snapshot, strict confidence report, strict
+    two-run repeatability receipt, and all byte-derived review bindings are
+    validated before a complete canonical JSON file is published. Evaluation
+    claims come only from the primary report and its exact-zero comparison
+    receipt. Legal, privacy, evaluation, and provenance approvals remain false
+    or unreviewed; the returned file therefore cannot authorize
+    :func:`build_vlm_artifact` until a human reviews and edits those fields
+    outside this helper.
     """
 
     source = _required_directory(checkpoint_dir, "VLM checkpoint")
@@ -3128,8 +3303,13 @@ def create_vlm_publication_evidence_template(
     base_identity = _canonical_base_snapshot(contract["size"])
     validate_vlm_base_snapshot(base_root, base_identity)
     training_record, code_record = _validate_template_context(training_data, code)
-    derived_evaluation_record, confidence_run_identity = (
-        _evaluation_from_confidence_report(confidence_report, checkpoint_identity)
+    (
+        derived_evaluation_record,
+        confidence_run_identity,
+        primary_run,
+    ) = _evaluation_from_confidence_report(confidence_report, checkpoint_identity)
+    repeatability_claim, repeatability_identity = _repeatability_claim_from_receipt(
+        repeatability_receipt, primary_run
     )
     dependencies = code_record["dependencies"]
     if dependencies["libreyolo"] != contract["libreyolo_version"]:
@@ -3154,6 +3334,7 @@ def create_vlm_publication_evidence_template(
     evaluation_record = {
         **derived_evaluation_record,
         "checkpoint_sha256": weights_sha,
+        "repeatability": repeatability_claim,
         "passed": False,
     }
     evaluation_claim_sha = _evaluation_claim_sha256(evaluation_record)
@@ -3196,6 +3377,12 @@ def create_vlm_publication_evidence_template(
                 "training_data_manifest_sha256": training_manifest_sha,
                 "evaluation_report_sha256": evaluation_report_sha,
                 "evaluation_envelope_sha256": evaluation_envelope_sha,
+                "evaluation_repeatability_receipt_sha256": repeatability_claim[
+                    "receipt_sha256"
+                ],
+                "evaluation_repeatability_comparison_sha256": repeatability_claim[
+                    "comparison_sha256"
+                ],
                 "evaluation_claim_sha256": evaluation_claim_sha,
                 "code_revision": code_revision,
                 "recipe_sha256": recipe_sha,
@@ -3214,15 +3401,23 @@ def create_vlm_publication_evidence_template(
         raise VLMArtifactError(
             "VLM checkpoint changed while publication evidence was prepared"
         )
-    rechecked_evaluation, rechecked_run_identity = _evaluation_from_confidence_report(
-        confidence_report, checkpoint_identity
+    (
+        rechecked_evaluation,
+        rechecked_run_identity,
+        rechecked_primary_run,
+    ) = _evaluation_from_confidence_report(confidence_report, checkpoint_identity)
+    rechecked_repeatability, rechecked_repeatability_identity = (
+        _repeatability_claim_from_receipt(repeatability_receipt, rechecked_primary_run)
     )
     if (
         rechecked_evaluation != derived_evaluation_record
         or rechecked_run_identity != confidence_run_identity
+        or rechecked_repeatability != repeatability_claim
+        or rechecked_repeatability_identity != repeatability_identity
     ):
         raise VLMArtifactError(
-            "confidence benchmark run changed while publication evidence was prepared"
+            "confidence benchmark or repeatability receipt changed while publication "
+            "evidence was prepared"
         )
     _write_bytes_atomic_create_only(
         destination,

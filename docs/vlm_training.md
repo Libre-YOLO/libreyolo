@@ -156,7 +156,9 @@ Qwen3-VL 2B/4B LoRA checkpoint, the strict publication workflow is:
    `create_vlm_publication_evidence_template()`, passing the strict confidence
    report produced against that exact checkpoint on `holdout100` as
    `confidence_report=`. Its strict sibling run envelope is required and bound
-   automatically.
+   automatically. Also pass the create-only, exact-zero two-run comparison
+   receipt as `repeatability_receipt=`. The report must be `runs[0]` in that
+   receipt; `runs[1]` must come from a second fresh Python process.
 2. Have a human review the bound data, license, privacy, evaluation, code, base,
    adapter, contract, and processor evidence. The library never creates an
    approval.
@@ -303,16 +305,29 @@ Run twice in fresh processes and compare the persisted reports:
 ```text
 python -m libreyolo.validation.vlm_confidence_benchmark compare \
   /data/runs/qwen-confidence-1/vlm_confidence_report.json \
-  /data/runs/qwen-confidence-2/vlm_confidence_report.json
+  /data/runs/qwen-confidence-2/vlm_confidence_report.json \
+  --receipt /data/reviews/qwen-confidence-repeatability.json
 ```
+
+The receipt uses schema
+`libreyolo.vlm-confidence-repeatability-receipt.v1`. It contains no operational
+paths. It binds the ordered report and envelope SHA-256 identities, distinct
+run and process identifiers, exact tolerances, and the complete strict
+comparison result. The command compares private descriptor-bound copies and
+revalidates all four source files before publishing the receipt create-only.
+Publication evidence accepts only a reproducible receipt with all three
+tolerances equal to zero.
 
 This runner remains an internal promotion gate. A reproducible result does not
 activate public Qwen confidence or `val()` by itself; ranking, mAP, coverage,
 default-threshold retention, and calibration still require maintainer review.
-The publication template binds one `holdout100` validation run, not an
-untouched test set. The second fresh-process run and strict comparison remain a
-human gate; publication evidence v1 does not bind the comparison receipt or
-make a machine claim of repeatability.
+The publication template uses the first `holdout100` validation run as its
+metric source, not as an untouched test set. Publication evidence v2 also binds
+the second fresh-process run through the receipt SHA-256 and the canonical
+comparison SHA-256. This is structural, byte-bound evidence that the strict
+comparator returned reproducible. It does not authenticate the publisher or
+reviewer, prove that either report is truthful, or replace human review of
+quality and publication suitability.
 
 ## Trainable families
 

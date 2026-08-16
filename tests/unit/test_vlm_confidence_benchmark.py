@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import math
@@ -1251,7 +1252,9 @@ def test_runner_envelope_wraps_oversized_json_integer(tmp_path):
         '{"value":' + "1" * 5000 + "}\n", encoding="utf-8"
     )
 
-    with pytest.raises(VLMConfidenceReportError, match="invalid JSON value"):
+    with pytest.raises(
+        VLMConfidenceReportError, match="invalid JSON value|canonical JSON"
+    ):
         benchmark._load_runner_envelope(report, "run")
 
 
@@ -3287,6 +3290,397 @@ def test_direct_compare_requires_distinct_processes(monkeypatch):
 
     with pytest.raises(VLMConfidenceReportError, match="fresh Python processes"):
         benchmark.compare_benchmarks("first.json", "second.json")
+
+
+def _repeatability_comparison(
+    first_sha256: str,
+    second_sha256: str,
+    *,
+    reproducible: bool = True,
+) -> benchmark.PersistedRepeatComparison:
+    core = benchmark.RepeatComparison(
+        same_manifest=True,
+        same_configuration=True,
+        same_generation=reproducible,
+        same_prediction_structure=True,
+        same_matches=True,
+        same_score_availability=True,
+        scores_within_tolerance=True,
+        metrics_within_tolerance=True,
+        same_calibration_bin_assignments=True,
+        calibration_bins_within_tolerance=True,
+        same_evaluator_metric_keys=True,
+        evaluator_metrics_within_tolerance=True,
+        same_diagnostics=True,
+        max_abs_score_delta=0.0,
+        max_abs_calibration_bin_delta=0.0,
+        max_abs_evaluator_metric_delta=0.0,
+        auroc_delta=0.0,
+        ranking_ap_delta=0.0,
+        brier_score_delta=0.0,
+        expected_calibration_error_delta=0.0,
+        maximum_calibration_error_delta=0.0,
+        reproducible=reproducible,
+    )
+    return benchmark.PersistedRepeatComparison(
+        first_report_sha256=first_sha256,
+        second_report_sha256=second_sha256,
+        core=core,
+        same_response_diagnostics=True,
+        same_fallback_reasons=True,
+        same_semantic_metric_keys=True,
+        map_metrics_within_tolerance=True,
+        non_map_metrics_within_tolerance=True,
+        semantic_metrics_within_tolerance=True,
+        max_abs_semantic_metric_delta=0.0,
+        differing_fields=() if reproducible else ("hashes.generation",),
+        reproducible=reproducible,
+    )
+
+
+def _receipt_inputs(tmp_path: Path, monkeypatch, *, reproducible: bool = True):
+    reports = []
+    for index in (1, 2):
+        run = tmp_path / f"run-{index}"
+        run.mkdir()
+        report = run / "vlm_confidence_report.json"
+        report.write_text(json.dumps({"run": index}) + "\n", encoding="utf-8")
+        (run / "vlm_confidence_run.json").write_text(
+            json.dumps({"envelope": index}) + "\n", encoding="utf-8"
+        )
+        reports.append(report)
+    report_digests = tuple(
+        hashlib.sha256(path.read_bytes()).hexdigest() for path in reports
+    )
+    envelope_digests = tuple(
+        hashlib.sha256(
+            path.with_name("vlm_confidence_run.json").read_bytes()
+        ).hexdigest()
+        for path in reports
+    )
+    comparison = _repeatability_comparison(
+        report_digests[0], report_digests[1], reproducible=reproducible
+    )
+    captured = {}
+
+    def fake_envelope(path, label):
+        index = 0 if label == "first_run" else 1
+        return benchmark._ValidatedEnvelope(
+            run_id=("1" if index == 0 else "3") * 32,
+            process_id=("2" if index == 0 else "4") * 32,
+            report_sha256=report_digests[index],
+            envelope_sha256=envelope_digests[index],
+            execution_context={},
+            benchmark_config={},
+            metrics={},
+            nonfinite_metrics=(),
+        )
+
+    def fake_compare(first, second, **kwargs):
+        captured["reports"] = (Path(first), Path(second))
+        captured["tolerances"] = kwargs
+        return comparison
+
+    monkeypatch.setattr(benchmark, "_load_runner_envelope", fake_envelope)
+    monkeypatch.setattr(benchmark, "compare_benchmarks", fake_compare)
+    return (reports[0], reports[1]), comparison, captured
+
+
+def test_repeatability_receipt_is_canonical_path_free_and_immutable(
+    tmp_path, monkeypatch
+):
+    reports, comparison, captured = _receipt_inputs(tmp_path, monkeypatch)
+    output = tmp_path / "repeatability.json"
+
+    identity = benchmark.create_benchmark_repeatability_receipt(
+        reports[0], reports[1], output
+    )
+
+    payload = output.read_bytes()
+    decoded = json.loads(payload)
+    assert payload == benchmark._json_text(decoded).encode()
+    assert decoded["schema"] == benchmark.REPEATABILITY_RECEIPT_SCHEMA
+    assert decoded["comparison"]["reproducible"] is True
+    assert decoded["tolerances"] == {
+        "score_atol": 0.0,
+        "metric_atol": 0.0,
+        "map_atol": 0.0,
+    }
+    assert identity.receipt_sha256 == hashlib.sha256(payload).hexdigest()
+    assert (
+        identity.comparison_sha256
+        == hashlib.sha256(
+            benchmark._json_text(decoded["comparison"]).encode()
+        ).hexdigest()
+    )
+    assert identity.comparison == comparison
+    assert captured["tolerances"] == decoded["tolerances"]
+    assert all(
+        path.parent != report.parent
+        for path, report in zip(captured["reports"], reports)
+    )
+    assert all(
+        str(report.parent.resolve()) not in payload.decode() for report in reports
+    )
+    with pytest.raises(TypeError):
+        identity.tolerances["score_atol"] = 1.0
+
+
+@pytest.mark.parametrize(
+    "run_index, filename",
+    [
+        (0, "vlm_confidence_report.json"),
+        (0, "vlm_confidence_run.json"),
+        (1, "vlm_confidence_report.json"),
+        (1, "vlm_confidence_run.json"),
+    ],
+)
+def test_repeatability_receipt_revalidates_all_sources_before_publication(
+    tmp_path, monkeypatch, run_index, filename
+):
+    reports, _comparison, _captured = _receipt_inputs(tmp_path, monkeypatch)
+    output = tmp_path / "repeatability.json"
+    revalidate = benchmark._revalidate_repeatability_sources
+
+    def mutate_then_revalidate(records):
+        target = reports[run_index].with_name(filename)
+        target.write_text('{"changed":true}\n', encoding="utf-8")
+        revalidate(records)
+
+    monkeypatch.setattr(
+        benchmark, "_revalidate_repeatability_sources", mutate_then_revalidate
+    )
+
+    with pytest.raises(VLMConfidenceReportError, match="changed"):
+        benchmark.create_benchmark_repeatability_receipt(reports[0], reports[1], output)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "run_index, filename",
+    [
+        (0, "vlm_confidence_report.json"),
+        (0, "vlm_confidence_run.json"),
+        (1, "vlm_confidence_report.json"),
+        (1, "vlm_confidence_run.json"),
+    ],
+)
+def test_repeatability_receipt_revalidates_private_inputs_before_publication(
+    tmp_path, monkeypatch, run_index, filename
+):
+    reports, _comparison, _captured = _receipt_inputs(tmp_path, monkeypatch)
+    output = tmp_path / "repeatability.json"
+    load_envelope = benchmark._load_runner_envelope
+    target_label = "first_run" if run_index == 0 else "second_run"
+    mutated = False
+
+    def mutate_private_then_load(path, label):
+        nonlocal mutated
+        if label == target_label and not mutated:
+            Path(path).with_name(filename).write_text(
+                '{"substituted":true}\n', encoding="utf-8"
+            )
+            mutated = True
+        return load_envelope(path, label)
+
+    monkeypatch.setattr(benchmark, "_load_runner_envelope", mutate_private_then_load)
+
+    with pytest.raises(VLMConfidenceReportError, match="private byte snapshot|private"):
+        benchmark.create_benchmark_repeatability_receipt(reports[0], reports[1], output)
+    assert not output.exists()
+
+
+def test_repeatability_receipt_rejects_transient_private_identity(
+    tmp_path, monkeypatch
+):
+    reports, _comparison, _captured = _receipt_inputs(tmp_path, monkeypatch)
+    output = tmp_path / "repeatability.json"
+    load_envelope = benchmark._load_runner_envelope
+
+    def substitute_validated_identity(path, label):
+        envelope = load_envelope(path, label)
+        if label == "first_run":
+            return dataclasses.replace(envelope, report_sha256="a" * 64)
+        return envelope
+
+    monkeypatch.setattr(
+        benchmark, "_load_runner_envelope", substitute_validated_identity
+    )
+
+    with pytest.raises(VLMConfidenceReportError, match="private byte snapshot"):
+        benchmark.create_benchmark_repeatability_receipt(reports[0], reports[1], output)
+    assert not output.exists()
+
+
+def test_repeatability_receipt_reader_rejects_duplicate_ids_and_noncanonical_json(
+    tmp_path, monkeypatch
+):
+    reports, _comparison, _captured = _receipt_inputs(tmp_path, monkeypatch)
+    valid = tmp_path / "valid.json"
+    benchmark.create_benchmark_repeatability_receipt(reports[0], reports[1], valid)
+    payload = json.loads(valid.read_text(encoding="utf-8"))
+    payload["runs"][1]["process_id"] = payload["runs"][0]["process_id"]
+    duplicate_process = tmp_path / "duplicate-process.json"
+    duplicate_process.write_bytes(benchmark._json_text(payload).encode())
+    with pytest.raises(VLMConfidenceReportError, match="process_id values must differ"):
+        benchmark.read_benchmark_repeatability_receipt(duplicate_process)
+
+    inconsistent_delta = json.loads(valid.read_text(encoding="utf-8"))
+    inconsistent_delta["comparison"]["max_abs_semantic_metric_delta"] = 0.5
+    inconsistent = tmp_path / "inconsistent.json"
+    inconsistent.write_bytes(benchmark._json_text(inconsistent_delta).encode())
+    with pytest.raises(VLMConfidenceReportError, match="metric tolerances"):
+        benchmark.read_benchmark_repeatability_receipt(inconsistent)
+
+    noncanonical = tmp_path / "noncanonical.json"
+    noncanonical.write_text(json.dumps(json.loads(valid.read_text())), encoding="utf-8")
+    with pytest.raises(VLMConfidenceReportError, match="canonical JSON"):
+        benchmark.read_benchmark_repeatability_receipt(noncanonical)
+
+
+def test_repeatability_receipt_reader_rejects_untrusted_json_shapes(tmp_path):
+    duplicate = tmp_path / "duplicate.json"
+    duplicate.write_bytes(b'{"schema":"first","schema":"second"}\n')
+    with pytest.raises(VLMConfidenceReportError, match="duplicate JSON object key"):
+        benchmark.read_benchmark_repeatability_receipt(duplicate)
+
+    nonfinite = tmp_path / "nonfinite.json"
+    nonfinite.write_bytes(
+        b'{"comparison":{},"runs":[],"schema":"x","tolerances":{"map_atol":1e400}}\n'
+    )
+    with pytest.raises(
+        VLMConfidenceReportError, match="invalid JSON value|canonical JSON"
+    ):
+        benchmark.read_benchmark_repeatability_receipt(nonfinite)
+
+    oversized = tmp_path / "oversized.json"
+    oversized.write_bytes(b"x" * (benchmark._MAX_REPEATABILITY_RECEIPT_BYTES + 1))
+    with pytest.raises(VLMConfidenceReportError, match="exceeds"):
+        benchmark.read_benchmark_repeatability_receipt(oversized)
+
+
+def test_repeatability_receipt_records_failure_but_public_result_remains_false(
+    tmp_path, monkeypatch
+):
+    reports, _comparison, _captured = _receipt_inputs(
+        tmp_path, monkeypatch, reproducible=False
+    )
+    output = tmp_path / "different.json"
+
+    identity = benchmark.create_benchmark_repeatability_receipt(
+        reports[0], reports[1], output
+    )
+
+    assert not identity.comparison.reproducible
+    assert identity.comparison.differing_fields == ("hashes.generation",)
+
+
+def test_repeatability_receipt_preserves_comparator_diagnostic_order(
+    tmp_path, monkeypatch
+):
+    reports, comparison, _captured = _receipt_inputs(
+        tmp_path, monkeypatch, reproducible=False
+    )
+    comparison = dataclasses.replace(
+        comparison,
+        same_response_diagnostics=False,
+        differing_fields=("response_diagnostics", "hashes.generation"),
+    )
+    monkeypatch.setattr(
+        benchmark, "compare_benchmarks", lambda *args, **kwargs: comparison
+    )
+    output = tmp_path / "different.json"
+
+    identity = benchmark.create_benchmark_repeatability_receipt(
+        reports[0], reports[1], output
+    )
+
+    assert identity.comparison.differing_fields == (
+        "response_diagnostics",
+        "hashes.generation",
+    )
+    assert json.loads(output.read_bytes())["comparison"]["differing_fields"] == [
+        "response_diagnostics",
+        "hashes.generation",
+    ]
+
+
+def test_repeatability_receipt_rejects_path_in_differing_fields(tmp_path, monkeypatch):
+    reports, _comparison, _captured = _receipt_inputs(
+        tmp_path, monkeypatch, reproducible=False
+    )
+    valid = tmp_path / "valid.json"
+    benchmark.create_benchmark_repeatability_receipt(reports[0], reports[1], valid)
+    payload = json.loads(valid.read_bytes())
+    payload["comparison"]["differing_fields"] = ["C:/private/user/path"]
+    forged = tmp_path / "forged.json"
+    forged.write_bytes(benchmark._json_text(payload).encode())
+
+    with pytest.raises(VLMConfidenceReportError, match="supported comparator"):
+        benchmark.read_benchmark_repeatability_receipt(forged)
+
+
+def test_repeatability_receipt_is_create_only(tmp_path, monkeypatch):
+    reports, _comparison, _captured = _receipt_inputs(tmp_path, monkeypatch)
+    output = tmp_path / "existing.json"
+    output.write_bytes(b"racer")
+
+    with pytest.raises(benchmark.BenchmarkOutputExistsError):
+        benchmark.create_benchmark_repeatability_receipt(reports[0], reports[1], output)
+    assert output.read_bytes() == b"racer"
+
+
+def test_repeatability_receipt_rejects_hardlinked_source(tmp_path, monkeypatch):
+    reports, _comparison, _captured = _receipt_inputs(tmp_path, monkeypatch)
+    outside = tmp_path / "hardlink.json"
+    try:
+        os.link(reports[0], outside)
+    except OSError as exc:
+        pytest.skip(f"hardlink creation unavailable: {exc}")
+
+    with pytest.raises(VLMConfidenceReportError, match="hard-linked"):
+        benchmark.create_benchmark_repeatability_receipt(
+            reports[0], reports[1], tmp_path / "receipt.json"
+        )
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
+def test_repeatability_receipt_reader_rejects_symlink(tmp_path, monkeypatch):
+    reports, _comparison, _captured = _receipt_inputs(tmp_path, monkeypatch)
+    receipt = tmp_path / "receipt.json"
+    benchmark.create_benchmark_repeatability_receipt(reports[0], reports[1], receipt)
+    linked = tmp_path / "linked.json"
+    try:
+        linked.symlink_to(receipt)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    with pytest.raises(VLMConfidenceReportError, match="symlink|junction"):
+        benchmark.read_benchmark_repeatability_receipt(linked)
+
+
+def test_compare_cli_can_create_repeatability_receipt(monkeypatch, capsys, tmp_path):
+    reports, _comparison, _captured = _receipt_inputs(tmp_path, monkeypatch)
+    requested = tmp_path / "requested.json"
+
+    code = benchmark.main(
+        [
+            "compare",
+            str(reports[0]),
+            str(reports[1]),
+            "--receipt",
+            str(requested),
+        ]
+    )
+
+    assert code == benchmark.EXIT_OK
+    identity = benchmark.read_benchmark_repeatability_receipt(requested)
+    status = _status(capsys)
+    assert status["receipt"] == {
+        "path": str(requested.resolve()),
+        "sha256": identity.receipt_sha256,
+        "comparison_sha256": identity.comparison_sha256,
+    }
 
 
 @pytest.mark.parametrize("value", [True, -1, 2**32, 1.5, "1.5"])

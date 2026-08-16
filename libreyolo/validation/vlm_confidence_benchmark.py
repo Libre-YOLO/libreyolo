@@ -1,8 +1,10 @@
 """Internal process-level runner for the Qwen VLM confidence benchmark.
 
 Run one benchmark per process, then compare the two persisted validator reports
-in a separate invocation.  This module intentionally is not exported from the
-validation package and does not change the public ``LibreVLM.val()`` contract.
+in a separate invocation. The comparison can publish a canonical, path-free
+repeatability receipt for strict publication evidence. This module intentionally
+is not exported from the validation package and does not change the public
+``LibreVLM.val()`` contract.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib import import_module, metadata
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Iterator
 
 import cv2
@@ -48,9 +51,12 @@ from .vlm_benchmark_dataset import (
     VerifiedBenchmarkRunInputs,
     verify_benchmark_run_inputs,
 )
+from .vlm_confidence import RepeatComparison
 from .vlm_confidence_report import (
     PersistedRepeatComparison,
     VLMConfidenceReportError,
+    _SEMANTIC_METRICS,
+    _validate_json_depth,
     compare_confidence_reports,
     read_confidence_report_identity,
 )
@@ -65,6 +71,7 @@ _CONFIDENCE_IOU = 0.5
 _REPORT_NAME = "vlm_confidence_report.json"
 _ENVELOPE_NAME = "vlm_confidence_run.json"
 _RUN_SCHEMA = "libreyolo.vlm-confidence-benchmark-run.v3"
+REPEATABILITY_RECEIPT_SCHEMA = "libreyolo.vlm-confidence-repeatability-receipt.v1"
 _STATUS_SCHEMA = "libreyolo.vlm-confidence-benchmark-status.v1"
 _CONTEXT_SCHEMA = "libreyolo.vlm-confidence-benchmark-context.v3"
 _PREFLIGHT_SCHEMA = "libreyolo.vlm-confidence-benchmark-preflight.v2"
@@ -106,7 +113,9 @@ _REVIEW_CHECKS = {
 }
 _UTC_RFC3339 = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 _MAX_SAFE_INTEGER = (1 << 53) - 1
+_MAX_CONFIDENCE_REPORT_BYTES = 256 * 1024 * 1024
 _MAX_ENVELOPE_BYTES = 16 * 1024 * 1024
+_MAX_REPEATABILITY_RECEIPT_BYTES = 64 * 1024
 _HEX_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
 _RUN_IDENTIFIER = re.compile(r"^[0-9a-f]{32}$")
@@ -216,6 +225,86 @@ _CHECKPOINT_FILE_ROLES = {
     "adapter_weights",
     "processor",
 }
+_RECEIPT_COMPARISON_FIELDS = {
+    "first_report_sha256",
+    "second_report_sha256",
+    "core",
+    "same_response_diagnostics",
+    "same_fallback_reasons",
+    "same_semantic_metric_keys",
+    "map_metrics_within_tolerance",
+    "non_map_metrics_within_tolerance",
+    "semantic_metrics_within_tolerance",
+    "max_abs_semantic_metric_delta",
+    "differing_fields",
+    "reproducible",
+}
+_RECEIPT_COMPARISON_BOOLEAN_FIELDS = {
+    "same_response_diagnostics",
+    "same_fallback_reasons",
+    "same_semantic_metric_keys",
+    "map_metrics_within_tolerance",
+    "non_map_metrics_within_tolerance",
+    "semantic_metrics_within_tolerance",
+    "reproducible",
+}
+_RECEIPT_CORE_FIELDS = {
+    "same_manifest",
+    "same_configuration",
+    "same_generation",
+    "same_prediction_structure",
+    "same_matches",
+    "same_score_availability",
+    "scores_within_tolerance",
+    "metrics_within_tolerance",
+    "same_calibration_bin_assignments",
+    "calibration_bins_within_tolerance",
+    "same_evaluator_metric_keys",
+    "evaluator_metrics_within_tolerance",
+    "same_diagnostics",
+    "max_abs_score_delta",
+    "max_abs_calibration_bin_delta",
+    "max_abs_evaluator_metric_delta",
+    "auroc_delta",
+    "ranking_ap_delta",
+    "brier_score_delta",
+    "expected_calibration_error_delta",
+    "maximum_calibration_error_delta",
+    "reproducible",
+}
+_RECEIPT_CORE_BOOLEAN_FIELDS = {
+    "same_manifest",
+    "same_configuration",
+    "same_generation",
+    "same_prediction_structure",
+    "same_matches",
+    "same_score_availability",
+    "scores_within_tolerance",
+    "metrics_within_tolerance",
+    "same_calibration_bin_assignments",
+    "calibration_bins_within_tolerance",
+    "same_evaluator_metric_keys",
+    "evaluator_metrics_within_tolerance",
+    "same_diagnostics",
+    "reproducible",
+}
+_RECEIPT_CORE_DELTA_FIELDS = _RECEIPT_CORE_FIELDS - _RECEIPT_CORE_BOOLEAN_FIELDS
+_RECEIPT_DIFFERING_FIELDS = {
+    "calibration.bins.assignments",
+    "calibration.bins.values",
+    "diagnostics",
+    "evaluator_metrics",
+    "fallback_reasons",
+    "hashes.configuration",
+    "hashes.generation",
+    "hashes.manifest",
+    "hashes.prediction_structure",
+    "metrics.<keys>",
+    "predictions[*].candidate_score",
+    "predictions[*].candidate_score.availability",
+    "predictions[*].matched",
+    "response_diagnostics",
+} | {f"metrics.{key}" for key in _SEMANTIC_METRICS}
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -308,6 +397,39 @@ class BenchmarkRunIdentity:
 
 
 @dataclass(frozen=True)
+class BenchmarkReceiptRunIdentity:
+    """Path-free identity of one run bound into a repeatability receipt."""
+
+    run_id: str
+    process_id: str
+    report_sha256: str
+    envelope_sha256: str
+
+
+@dataclass(frozen=True)
+class BenchmarkRepeatabilityReceiptIdentity:
+    """Immutable identity of one validated two-run comparison receipt."""
+
+    receipt_sha256: str
+    comparison_sha256: str
+    runs: tuple[BenchmarkReceiptRunIdentity, BenchmarkReceiptRunIdentity]
+    tolerances: Mapping[str, float]
+    comparison: PersistedRepeatComparison
+
+
+@dataclass(frozen=True)
+class _RepeatabilityInputRecord:
+    """One requested input and the private byte snapshot compared from it."""
+
+    source: Path
+    isolated: Path
+    sha256: str
+    size: int
+    label: str
+    max_bytes: int
+
+
+@dataclass(frozen=True)
 class _ValidatedEnvelope(BenchmarkRunIdentity):
     """Internal validated envelope result used by writer and public reader."""
 
@@ -357,6 +479,18 @@ def _arg_tolerance(value: str) -> float:
         raise argparse.ArgumentTypeError(
             "tolerance must be a finite non-negative number"
         )
+    return result
+
+
+def _validate_tolerance(value: Any, name: str) -> float:
+    if isinstance(value, (bool, str, bytes)):
+        raise TypeError(f"{name} must be a finite non-negative number")
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise TypeError(f"{name} must be a finite non-negative number") from exc
+    if not math.isfinite(result) or result < 0.0:
+        raise ValueError(f"{name} must be finite and non-negative")
     return result
 
 
@@ -2602,6 +2736,7 @@ def _load_envelope_json(path: Path, label: str) -> tuple[dict[str, Any], bytes]:
         raise _envelope_error(label, "$", "contains an invalid JSON value") from exc
     if not isinstance(decoded, dict):
         raise _envelope_error(label, "$", "top level must be a JSON object")
+    _validate_json_depth(decoded, label)
     return decoded, payload
 
 
@@ -3551,6 +3686,589 @@ def read_benchmark_run_identity(
     )
 
 
+def _comparison_report_paths(
+    first_report: str | os.PathLike[str],
+    second_report: str | os.PathLike[str],
+    *,
+    require_canonical_name: bool = False,
+) -> tuple[Path, Path]:
+    paths = []
+    for value, label in (
+        (first_report, "first report"),
+        (second_report, "second report"),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (str, os.PathLike)):
+            raise TypeError(f"{label} must be a filesystem path")
+        requested = Path(value).expanduser()
+        if require_canonical_name:
+            try:
+                from libreyolo.models.vlm import artifact as artifact_module
+
+                path = artifact_module._required_file(requested, label)
+            except (OSError, TypeError, ValueError) as exc:
+                raise VLMConfidenceReportError(f"{label}: {exc}") from exc
+        else:
+            path = requested.resolve(strict=False)
+        if require_canonical_name and path.name != _REPORT_NAME:
+            raise VLMConfidenceReportError(f"{label} must be named {_REPORT_NAME}")
+        paths.append(path)
+    first_path, second_path = paths
+    same_file = first_path == second_path
+    if not same_file and first_path.is_file() and second_path.is_file():
+        try:
+            same_file = os.path.samefile(first_path, second_path)
+        except OSError:
+            same_file = False
+    if same_file:
+        raise VLMConfidenceReportError(
+            "benchmark comparison requires reports from two distinct run processes"
+        )
+    return first_path, second_path
+
+
+def _repeatability_receipt_destination(
+    value: str | os.PathLike[str], report_paths: tuple[Path, Path]
+) -> Path:
+    try:
+        from libreyolo.models.vlm import artifact as artifact_module
+
+        destination = artifact_module._new_file_destination(
+            value, "VLM confidence repeatability receipt"
+        )
+    except FileExistsError as exc:
+        raise BenchmarkOutputExistsError(str(exc)) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise BenchmarkInputError(
+            f"invalid repeatability receipt output: {exc}"
+        ) from exc
+    for report_path in report_paths:
+        if report_path.parent in destination.parents:
+            raise BenchmarkInputError(
+                "repeatability receipt output must remain outside both run directories"
+            )
+    return destination
+
+
+def _stable_file_sha256(path: Path, *, label: str, max_bytes: int) -> tuple[str, int]:
+    try:
+        from libreyolo.models.vlm import artifact as artifact_module
+
+        with artifact_module._open_stable_regular_file(
+            path, label, max_bytes=max_bytes
+        ) as (stream, opened):
+            first_digest = hashlib.sha256()
+            first_size = 0
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                first_digest.update(chunk)
+                first_size += len(chunk)
+            stream.seek(0)
+            second_digest = hashlib.sha256()
+            second_size = 0
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                second_digest.update(chunk)
+                second_size += len(chunk)
+    except (OSError, TypeError, ValueError) as exc:
+        raise VLMConfidenceReportError(f"{label}: {exc}") from exc
+    if (
+        first_size != opened.st_size
+        or second_size != first_size
+        or second_digest.digest() != first_digest.digest()
+    ):
+        raise VLMConfidenceReportError(f"{label}: changed while it was being read")
+    return first_digest.hexdigest(), first_size
+
+
+@contextmanager
+def _isolated_repeatability_inputs(
+    report_paths: tuple[Path, Path],
+) -> Iterator[
+    tuple[
+        tuple[Path, Path],
+        tuple[_RepeatabilityInputRecord, ...],
+    ]
+]:
+    """Copy both report/envelope pairs before any comparison reads them."""
+
+    try:
+        from libreyolo.models.vlm import artifact as artifact_module
+    except ImportError as exc:  # pragma: no cover - package integrity guard
+        raise VLMConfidenceReportError(
+            "stable repeatability input handling is unavailable"
+        ) from exc
+
+    try:
+        temporary_inputs = tempfile.TemporaryDirectory(
+            prefix="libreyolo-vlm-confidence-repeatability-"
+        )
+    except OSError as exc:
+        raise VLMConfidenceReportError(
+            f"could not create private comparison inputs: {exc}"
+        ) from exc
+
+    body_completed = False
+    try:
+        isolated_reports = []
+        source_records = []
+        for index, report_path in enumerate(report_paths, start=1):
+            isolated_root = Path(temporary_inputs.name) / f"run-{index}"
+            isolated_root.mkdir(mode=0o700)
+            isolated_report = isolated_root / _REPORT_NAME
+            isolated_envelope = isolated_root / _ENVELOPE_NAME
+            for source, destination, maximum, kind in (
+                (
+                    report_path,
+                    isolated_report,
+                    _MAX_CONFIDENCE_REPORT_BYTES,
+                    f"run {index} confidence report",
+                ),
+                (
+                    report_path.parent / _ENVELOPE_NAME,
+                    isolated_envelope,
+                    _MAX_ENVELOPE_BYTES,
+                    f"run {index} confidence envelope",
+                ),
+            ):
+                try:
+                    source_stat = artifact_module._assert_regular_unlinked_file(
+                        source, kind
+                    )
+                    if source_stat.st_size > maximum:
+                        raise VLMConfidenceReportError(
+                            f"{kind}: exceeds the {maximum}-byte limit"
+                        )
+                    artifact_module._copy_file_stable(source, destination)
+                except VLMConfidenceReportError:
+                    raise
+                except (OSError, TypeError, ValueError) as exc:
+                    raise VLMConfidenceReportError(f"{kind}: {exc}") from exc
+                digest, size = _stable_file_sha256(
+                    destination, label=f"private {kind}", max_bytes=maximum
+                )
+                source_records.append(
+                    _RepeatabilityInputRecord(
+                        source=source,
+                        isolated=destination,
+                        sha256=digest,
+                        size=size,
+                        label=kind,
+                        max_bytes=maximum,
+                    )
+                )
+            isolated_reports.append(isolated_report)
+        yield (
+            (isolated_reports[0], isolated_reports[1]),
+            tuple(source_records),
+        )
+        body_completed = True
+    finally:
+        try:
+            temporary_inputs.cleanup()
+        except OSError as exc:
+            if body_completed:
+                raise VLMConfidenceReportError(
+                    f"could not remove private comparison inputs: {exc}"
+                ) from exc
+
+
+def _revalidate_repeatability_sources(
+    source_records: tuple[_RepeatabilityInputRecord, ...],
+) -> None:
+    for record in source_records:
+        for path, qualifier in (
+            (record.isolated, "private"),
+            (record.source, "source"),
+        ):
+            digest, size = _stable_file_sha256(
+                path,
+                label=f"rechecked {qualifier} {record.label}",
+                max_bytes=record.max_bytes,
+            )
+            if digest != record.sha256 or size != record.size:
+                raise VLMConfidenceReportError(
+                    f"{record.label}: {qualifier} bytes changed while the "
+                    "repeatability receipt was prepared"
+                )
+
+
+def _require_envelope_matches_repeatability_snapshot(
+    envelope: _ValidatedEnvelope,
+    report_record: _RepeatabilityInputRecord,
+    envelope_record: _RepeatabilityInputRecord,
+) -> None:
+    if (
+        envelope.report_sha256 != report_record.sha256
+        or envelope.envelope_sha256 != envelope_record.sha256
+    ):
+        raise VLMConfidenceReportError(
+            f"{report_record.label}: validated identity does not match its private "
+            "byte snapshot"
+        )
+
+
+def _receipt_run_identity(envelope: _ValidatedEnvelope) -> dict[str, str]:
+    return {
+        "run_id": envelope.run_id,
+        "process_id": envelope.process_id,
+        "report_sha256": envelope.report_sha256,
+        "envelope_sha256": envelope.envelope_sha256,
+    }
+
+
+def _optional_nonnegative_number(value: Any, label: str, path: str) -> float | None:
+    if value is None:
+        return None
+    number = _finite_number(value, label, path)
+    if number < 0.0:
+        raise _envelope_error(label, path, "must be null or non-negative")
+    return number
+
+
+def _receipt_comparison(
+    value: Any, tolerances: Mapping[str, float], label: str
+) -> PersistedRepeatComparison:
+    if {
+        field.name for field in dataclasses.fields(PersistedRepeatComparison)
+    } != _RECEIPT_COMPARISON_FIELDS or {
+        field.name for field in dataclasses.fields(RepeatComparison)
+    } != _RECEIPT_CORE_FIELDS:
+        raise RuntimeError(
+            "repeatability comparison dataclasses changed without a receipt schema bump"
+        )
+    outer = _exact_object(value, _RECEIPT_COMPARISON_FIELDS, label, "$.comparison")
+    core = _exact_object(
+        outer["core"], _RECEIPT_CORE_FIELDS, label, "$.comparison.core"
+    )
+
+    for field in sorted(_RECEIPT_COMPARISON_BOOLEAN_FIELDS):
+        if type(outer[field]) is not bool:
+            raise _envelope_error(label, f"$.comparison.{field}", "must be boolean")
+    for field in sorted(_RECEIPT_CORE_BOOLEAN_FIELDS):
+        if type(core[field]) is not bool:
+            raise _envelope_error(
+                label, f"$.comparison.core.{field}", "must be boolean"
+            )
+
+    for field in ("first_report_sha256", "second_report_sha256"):
+        if not isinstance(outer[field], str) or not _HEX_DIGEST.fullmatch(outer[field]):
+            raise _envelope_error(
+                label, f"$.comparison.{field}", "must be a lowercase SHA256 digest"
+            )
+
+    normalized_core = dict(core)
+    for field in sorted(_RECEIPT_CORE_DELTA_FIELDS):
+        normalized_core[field] = _optional_nonnegative_number(
+            core[field], label, f"$.comparison.core.{field}"
+        )
+    max_semantic_delta = _optional_nonnegative_number(
+        outer["max_abs_semantic_metric_delta"],
+        label,
+        "$.comparison.max_abs_semantic_metric_delta",
+    )
+    differing_fields = outer["differing_fields"]
+    if (
+        not isinstance(differing_fields, list)
+        or any(
+            not isinstance(field, str) or field not in _RECEIPT_DIFFERING_FIELDS
+            for field in differing_fields
+        )
+        or len(differing_fields) != len(set(differing_fields))
+    ):
+        raise _envelope_error(
+            label,
+            "$.comparison.differing_fields",
+            "must contain unique supported comparator diagnostic fields",
+        )
+
+    expected_core_reproducible = all(
+        core[field] for field in _RECEIPT_CORE_BOOLEAN_FIELDS - {"reproducible"}
+    )
+    if core["reproducible"] != expected_core_reproducible:
+        raise _envelope_error(
+            label,
+            "$.comparison.core.reproducible",
+            "does not match the comparison flags",
+        )
+    expected_reproducible = all(
+        outer[field] for field in _RECEIPT_COMPARISON_BOOLEAN_FIELDS - {"reproducible"}
+    ) and bool(core["reproducible"])
+    if outer["reproducible"] != expected_reproducible:
+        raise _envelope_error(
+            label,
+            "$.comparison.reproducible",
+            "does not match the comparison flags",
+        )
+    if outer["reproducible"] and differing_fields:
+        raise _envelope_error(
+            label,
+            "$.comparison.differing_fields",
+            "must be empty for a reproducible comparison",
+        )
+    if outer["reproducible"]:
+        if max_semantic_delta is None or max_semantic_delta > max(
+            tolerances["metric_atol"], tolerances["map_atol"]
+        ):
+            raise _envelope_error(
+                label,
+                "$.comparison.max_abs_semantic_metric_delta",
+                "does not satisfy the recorded metric tolerances",
+            )
+        tolerance_bounds = {
+            "max_abs_score_delta": tolerances["score_atol"],
+            "max_abs_calibration_bin_delta": tolerances["metric_atol"],
+            "max_abs_evaluator_metric_delta": tolerances["map_atol"],
+            "auroc_delta": tolerances["metric_atol"],
+            "ranking_ap_delta": tolerances["metric_atol"],
+            "brier_score_delta": tolerances["metric_atol"],
+            "expected_calibration_error_delta": tolerances["metric_atol"],
+            "maximum_calibration_error_delta": tolerances["metric_atol"],
+        }
+        for field, maximum in tolerance_bounds.items():
+            delta = normalized_core[field]
+            if delta is None or delta > maximum:
+                raise _envelope_error(
+                    label,
+                    f"$.comparison.core.{field}",
+                    "does not satisfy the recorded tolerance",
+                )
+
+    repeat_comparison = RepeatComparison(**normalized_core)
+    return PersistedRepeatComparison(
+        first_report_sha256=outer["first_report_sha256"],
+        second_report_sha256=outer["second_report_sha256"],
+        core=repeat_comparison,
+        same_response_diagnostics=outer["same_response_diagnostics"],
+        same_fallback_reasons=outer["same_fallback_reasons"],
+        same_semantic_metric_keys=outer["same_semantic_metric_keys"],
+        map_metrics_within_tolerance=outer["map_metrics_within_tolerance"],
+        non_map_metrics_within_tolerance=outer["non_map_metrics_within_tolerance"],
+        semantic_metrics_within_tolerance=outer["semantic_metrics_within_tolerance"],
+        max_abs_semantic_metric_delta=max_semantic_delta,
+        differing_fields=tuple(differing_fields),
+        reproducible=outer["reproducible"],
+    )
+
+
+def _decode_repeatability_receipt(
+    payload: bytes, *, label: str
+) -> BenchmarkRepeatabilityReceiptIdentity:
+    try:
+        text = payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise _envelope_error(label, "$", "is not strict UTF-8") from exc
+    try:
+        decoded = json.loads(
+            text,
+            object_pairs_hook=_duplicate_checked_object,
+            parse_constant=_reject_json_constant,
+        )
+    except RecursionError as exc:
+        raise _envelope_error(label, "$", "JSON nesting is too deep") from exc
+    except json.JSONDecodeError as exc:
+        raise _envelope_error(label, "$", f"invalid JSON: {exc.msg}") from exc
+    except VLMConfidenceReportError as exc:
+        raise _envelope_error(label, "$", str(exc)) from exc
+    if not isinstance(decoded, dict):
+        raise _envelope_error(label, "$", "top level must be a JSON object")
+    try:
+        canonical = _json_text(decoded).encode("utf-8")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise _envelope_error(label, "$", "contains an invalid JSON value") from exc
+    if payload != canonical:
+        raise _envelope_error(label, "$", "must use canonical JSON encoding")
+
+    root = _exact_object(
+        decoded,
+        {"schema", "runs", "tolerances", "comparison"},
+        label,
+        "$",
+    )
+    if root["schema"] != REPEATABILITY_RECEIPT_SCHEMA:
+        raise _envelope_error(
+            label,
+            "$.schema",
+            f"must equal {REPEATABILITY_RECEIPT_SCHEMA!r}",
+        )
+    runs_value = root["runs"]
+    if not isinstance(runs_value, list) or len(runs_value) != 2:
+        raise _envelope_error(label, "$.runs", "must contain exactly two runs")
+    runs = []
+    run_fields = {"run_id", "process_id", "report_sha256", "envelope_sha256"}
+    for index, value in enumerate(runs_value):
+        run = _exact_object(value, run_fields, label, f"$.runs[{index}]")
+        for field in ("run_id", "process_id"):
+            if not isinstance(run[field], str) or not _RUN_IDENTIFIER.fullmatch(
+                run[field]
+            ):
+                raise _envelope_error(
+                    label,
+                    f"$.runs[{index}].{field}",
+                    "must be a 32-character lowercase hex identifier",
+                )
+        for field in ("report_sha256", "envelope_sha256"):
+            if not isinstance(run[field], str) or not _HEX_DIGEST.fullmatch(run[field]):
+                raise _envelope_error(
+                    label,
+                    f"$.runs[{index}].{field}",
+                    "must be a lowercase SHA256 digest",
+                )
+        runs.append(BenchmarkReceiptRunIdentity(**dict(run)))
+    if runs[0].run_id == runs[1].run_id:
+        raise _envelope_error(label, "$.runs", "run_id values must differ")
+    if runs[0].process_id == runs[1].process_id:
+        raise _envelope_error(label, "$.runs", "process_id values must differ")
+
+    tolerance_value = _exact_object(
+        root["tolerances"],
+        {"score_atol", "metric_atol", "map_atol"},
+        label,
+        "$.tolerances",
+    )
+    tolerances = {}
+    for field in ("score_atol", "metric_atol", "map_atol"):
+        number = _finite_number(tolerance_value[field], label, f"$.tolerances.{field}")
+        if number < 0.0:
+            raise _envelope_error(
+                label, f"$.tolerances.{field}", "must be non-negative"
+            )
+        tolerances[field] = number
+
+    comparison = _receipt_comparison(root["comparison"], tolerances, label)
+    if comparison.first_report_sha256 != runs[0].report_sha256:
+        raise _envelope_error(
+            label,
+            "$.comparison.first_report_sha256",
+            "does not match runs[0].report_sha256",
+        )
+    if comparison.second_report_sha256 != runs[1].report_sha256:
+        raise _envelope_error(
+            label,
+            "$.comparison.second_report_sha256",
+            "does not match runs[1].report_sha256",
+        )
+    comparison_payload = _json_text(root["comparison"]).encode("utf-8")
+    return BenchmarkRepeatabilityReceiptIdentity(
+        receipt_sha256=hashlib.sha256(payload).hexdigest(),
+        comparison_sha256=hashlib.sha256(comparison_payload).hexdigest(),
+        runs=(runs[0], runs[1]),
+        tolerances=MappingProxyType(tolerances),
+        comparison=comparison,
+    )
+
+
+def read_benchmark_repeatability_receipt(
+    receipt_path: str | os.PathLike[str], *, label: str = "repeatability_receipt"
+) -> BenchmarkRepeatabilityReceiptIdentity:
+    """Read one canonical, path-free two-run comparison receipt."""
+
+    if not isinstance(label, str) or not label:
+        raise TypeError("label must be a non-empty string")
+    if isinstance(receipt_path, bool) or not isinstance(
+        receipt_path, (str, os.PathLike)
+    ):
+        raise TypeError("receipt_path must be a filesystem path")
+    try:
+        from libreyolo.models.vlm import artifact as artifact_module
+
+        path = artifact_module._required_file(receipt_path, label)
+        payload = artifact_module._read_bounded(
+            path,
+            max_bytes=_MAX_REPEATABILITY_RECEIPT_BYTES,
+            label=label,
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise VLMConfidenceReportError(f"{label}: {exc}") from exc
+    return _decode_repeatability_receipt(payload, label=label)
+
+
+def create_benchmark_repeatability_receipt(
+    first_report: str | os.PathLike[str],
+    second_report: str | os.PathLike[str],
+    output_path: str | os.PathLike[str],
+    *,
+    score_atol: float = 0.0,
+    metric_atol: float = 0.0,
+    map_atol: float = 0.0,
+) -> BenchmarkRepeatabilityReceiptIdentity:
+    """Compare two private byte snapshots and publish a create-only receipt."""
+
+    tolerances = {
+        "score_atol": _validate_tolerance(score_atol, "score_atol"),
+        "metric_atol": _validate_tolerance(metric_atol, "metric_atol"),
+        "map_atol": _validate_tolerance(map_atol, "map_atol"),
+    }
+    report_paths = _comparison_report_paths(
+        first_report, second_report, require_canonical_name=True
+    )
+    destination = _repeatability_receipt_destination(output_path, report_paths)
+    with _isolated_repeatability_inputs(report_paths) as (
+        isolated_reports,
+        source_records,
+    ):
+        first_envelope = _load_runner_envelope(isolated_reports[0], "first_run")
+        second_envelope = _load_runner_envelope(isolated_reports[1], "second_run")
+        _require_envelope_matches_repeatability_snapshot(
+            first_envelope, source_records[0], source_records[1]
+        )
+        _require_envelope_matches_repeatability_snapshot(
+            second_envelope, source_records[2], source_records[3]
+        )
+        comparison = compare_benchmarks(
+            isolated_reports[0],
+            isolated_reports[1],
+            score_atol=tolerances["score_atol"],
+            metric_atol=tolerances["metric_atol"],
+            map_atol=tolerances["map_atol"],
+        )
+        if (
+            comparison.first_report_sha256 != source_records[0].sha256
+            or comparison.second_report_sha256 != source_records[2].sha256
+        ):
+            raise VLMConfidenceReportError(
+                "repeatability comparison report identities do not match the private "
+                "byte snapshots"
+            )
+        comparison_payload = _json_value(comparison)
+        receipt = {
+            "schema": REPEATABILITY_RECEIPT_SCHEMA,
+            "runs": [
+                _receipt_run_identity(first_envelope),
+                _receipt_run_identity(second_envelope),
+            ],
+            "tolerances": tolerances,
+            "comparison": comparison_payload,
+        }
+        payload = _json_text(receipt).encode("utf-8")
+        if len(payload) > _MAX_REPEATABILITY_RECEIPT_BYTES:
+            raise VLMConfidenceReportError(
+                "repeatability receipt exceeds its safety limit"
+            )
+        identity = _decode_repeatability_receipt(payload, label="repeatability_receipt")
+        _revalidate_repeatability_sources(source_records)
+
+    try:
+        from libreyolo.models.vlm import artifact as artifact_module
+
+        artifact_module._write_bytes_atomic_create_only(
+            destination,
+            payload,
+            label="VLM confidence repeatability receipt",
+        )
+    except FileExistsError as exc:
+        raise BenchmarkOutputExistsError(str(exc)) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise BenchmarkInputError(
+            f"could not publish repeatability receipt: {exc}"
+        ) from exc
+    published = read_benchmark_repeatability_receipt(
+        destination, label="published_repeatability_receipt"
+    )
+    if published != identity:
+        raise VLMConfidenceReportError(
+            "published repeatability receipt identity changed"
+        )
+    return published
+
+
 def compare_benchmarks(
     first_report: str | os.PathLike[str],
     second_report: str | os.PathLike[str],
@@ -3561,15 +4279,7 @@ def compare_benchmarks(
 ) -> PersistedRepeatComparison:
     """Strictly compare reports created by two independent run processes."""
 
-    first_path = Path(first_report).expanduser().resolve(strict=False)
-    second_path = Path(second_report).expanduser().resolve(strict=False)
-    same_file = first_path == second_path
-    if not same_file and first_path.is_file() and second_path.is_file():
-        same_file = os.path.samefile(first_path, second_path)
-    if same_file:
-        raise VLMConfidenceReportError(
-            "benchmark comparison requires reports from two distinct run processes"
-        )
+    first_path, second_path = _comparison_report_paths(first_report, second_report)
     first_envelope = _load_runner_envelope(first_path, "first_run")
     second_envelope = _load_runner_envelope(second_path, "second_run")
     if first_envelope.run_id == second_envelope.run_id:
@@ -3631,6 +4341,11 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--score-atol", type=_arg_tolerance, default=0.0)
     compare_parser.add_argument("--metric-atol", type=_arg_tolerance, default=0.0)
     compare_parser.add_argument("--map-atol", type=_arg_tolerance, default=0.0)
+    compare_parser.add_argument(
+        "--receipt",
+        type=Path,
+        help="create a canonical, immutable two-run comparison receipt",
+    )
     return parser
 
 
@@ -3745,31 +4460,48 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return EXIT_OK
 
+        receipt_identity = None
         with redirect_stdout(sys.stderr):
-            comparison = compare_benchmarks(
-                args.first_report,
-                args.second_report,
-                score_atol=args.score_atol,
-                metric_atol=args.metric_atol,
-                map_atol=args.map_atol,
-            )
+            if args.receipt is None:
+                comparison = compare_benchmarks(
+                    args.first_report,
+                    args.second_report,
+                    score_atol=args.score_atol,
+                    metric_atol=args.metric_atol,
+                    map_atol=args.map_atol,
+                )
+            else:
+                receipt_identity = create_benchmark_repeatability_receipt(
+                    args.first_report,
+                    args.second_report,
+                    args.receipt,
+                    score_atol=args.score_atol,
+                    metric_atol=args.metric_atol,
+                    map_atol=args.map_atol,
+                )
+                comparison = receipt_identity.comparison
         comparison_payload = _json_value(comparison)
         reproducible = bool(comparison_payload["reproducible"])
         code = EXIT_OK if reproducible else EXIT_NOT_REPRODUCIBLE
-        _emit_status(
-            {
-                "schema": _STATUS_SCHEMA,
-                "status": "reproducible" if reproducible else "different",
-                "mode": "compare",
-                "code": code,
-                "tolerances": {
-                    "score_atol": args.score_atol,
-                    "metric_atol": args.metric_atol,
-                    "map_atol": args.map_atol,
-                },
-                "comparison": comparison_payload,
+        status = {
+            "schema": _STATUS_SCHEMA,
+            "status": "reproducible" if reproducible else "different",
+            "mode": "compare",
+            "code": code,
+            "tolerances": {
+                "score_atol": args.score_atol,
+                "metric_atol": args.metric_atol,
+                "map_atol": args.map_atol,
+            },
+            "comparison": comparison_payload,
+        }
+        if receipt_identity is not None:
+            status["receipt"] = {
+                "path": str(args.receipt.expanduser().resolve(strict=False)),
+                "sha256": receipt_identity.receipt_sha256,
+                "comparison_sha256": receipt_identity.comparison_sha256,
             }
-        )
+        _emit_status(status)
         return code
     except BenchmarkInputError as exc:
         return _error_status(

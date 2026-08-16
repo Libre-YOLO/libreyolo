@@ -68,6 +68,7 @@ template = create_vlm_publication_evidence_template(
     training_data=training_data_record,
     code=code_record,
     confidence_report="runs/vlm/confidence/vlm_confidence_report.json",
+    repeatability_receipt="reviews/qwen-confidence-repeatability.json",
 )
 ```
 
@@ -93,27 +94,40 @@ deltas must be in `[-1, 1]`, and each delta must equal the candidate metric
 minus its constant-score counterpart. Timing and internal counter metrics are
 not publication evaluation claims.
 
+`repeatability_receipt` must name canonical
+`libreyolo.vlm-confidence-repeatability-receipt.v1` JSON produced by the
+confidence runner's `compare --receipt` command. Its ordered `runs[0]` entry
+must exactly match `confidence_report` and its sibling envelope, including the
+run and process identifiers plus both raw SHA-256 digests. `runs[1]` must have
+different run and process identifiers. Publication accepts only a receipt
+whose strict comparison is reproducible with `score_atol`, `metric_atol`, and
+`map_atol` all equal to zero.
+
 The report and envelope must agree on the complete execution context. The
 helper rejects any difference in the full path-free checkpoint identity,
 including its pinned base, adapter weights, adapter configuration, checkpoint
 contract, processor, and exact file records. It also binds a canonical hash of
 the evaluation claim itself so a reviewer cannot edit its benchmark, report,
 envelope, checkpoint, or metric fields without invalidating the review.
+Publication evidence v2 also carries a path-free repeatability claim and binds
+both the raw receipt SHA-256 and the canonical comparison SHA-256.
 
 The helper validates the checkpoint and complete pinned base snapshot, derives
 the recipe, adapter, contract, processor, evaluation, and base bindings,
 validates the declared training-data and code record shapes, rechecks the
-checkpoint and benchmark run, and writes canonical JSON outside both input
-directories. The training-data and code claims still require human review. The
-template sets legal and redistribution decisions to `unreviewed`, evaluation
-and review approval to `false`, reviewer fields to blank, and every human gate
-to `false`. It never creates an approval, and the artifact builder rejects the
-untouched template.
+checkpoint, benchmark run, and repeatability receipt, and writes canonical
+JSON outside both input directories. The training-data and code claims still
+require human review. The template sets legal and redistribution decisions to
+`unreviewed`, evaluation and review approval to `false`, reviewer fields to
+blank, and every human gate to `false`. It never creates an approval, and the
+artifact builder rejects the untouched template.
 
-One template binds one validation run. `holdout100` is fine-tune validation
-evidence, not an untouched test set. A second fresh-process run and the strict
-comparison result remain a human publication gate; publication v1 does not
-embed that comparison or make a machine claim of repeatability.
+The first receipt run supplies the published validation metrics. `holdout100`
+is fine-tune validation evidence, not an untouched test set. The second
+fresh-process run and complete strict comparison are machine-bound through the
+receipt. This is structural byte-integrity evidence, not publisher or reviewer
+authentication, proof that the source reports are truthful, or a substitute
+for human judgment about quality and publication suitability.
 
 A human reviewer must verify the underlying data, license, privacy,
 evaluation, and code-provenance evidence. The reviewed file must retain its
@@ -128,7 +142,9 @@ derived bindings and explicitly record:
 
 SHA-256 values make accidental or substituted byte changes detectable. They
 are integrity and consistency records, not signatures, proof that a report is
-truthful, proof of repeatability, reviewer authentication, or legal advice.
+truthful, publisher or reviewer authentication, or legal advice. The
+repeatability claim means only that the strict comparator accepted the exact
+bound inputs with zero tolerances.
 
 ## Build, validate, and upload
 
