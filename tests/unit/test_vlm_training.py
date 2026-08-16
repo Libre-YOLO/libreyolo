@@ -997,6 +997,7 @@ class TestCheckpointContract:
     def test_schema_one_prompt_and_coordinate_convention_are_restored(
         self, tmp_path, monkeypatch
     ):
+        import importlib.metadata
         import sys
         from types import SimpleNamespace
 
@@ -1033,6 +1034,12 @@ class TestCheckpointContract:
 
         monkeypatch.setattr(BaseModel, "__init__", _offline_base_init)
         monkeypatch.setitem(sys.modules, "peft", SimpleNamespace(PeftModel=object))
+        real_version = importlib.metadata.version
+        monkeypatch.setattr(
+            importlib.metadata,
+            "version",
+            lambda name: "0.19.1" if name == "peft" else real_version(name),
+        )
         with pytest.raises(ValueError, match="prompt must be a non-empty string"):
             LibreQwen3VL(size="2b", prompt="", device="cpu")
         model = LibreQwen3VL(

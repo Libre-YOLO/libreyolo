@@ -213,7 +213,11 @@ def test_inspect_thaws_real_core_manifest_result(tmp_path, monkeypatch):
         {"2b": processor_records, "4b": processor_records},
     )
 
-    built = _artifact(tmp_path)
+    # macOS exposes its pytest temp root through the /var -> /private/var
+    # compatibility symlink. The publication contract intentionally rejects
+    # linked path components, so pass the canonical temp root to the real
+    # builder boundary.
+    built = _artifact(tmp_path.resolve())
     hub = pytest.importorskip("huggingface_hub")
     monkeypatch.setattr(hub, "HfApi", _NoApi)
     monkeypatch.setattr(
