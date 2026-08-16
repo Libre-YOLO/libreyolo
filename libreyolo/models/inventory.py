@@ -56,12 +56,6 @@ OPTIONAL_MODELS = (
         "transformers",
     ),
     (
-        "libreyolo.models.ground.moondream",
-        "LibreGroundMoondream",
-        "vlm",
-        "transformers",
-    ),
-    (
         "libreyolo.models.openvocab.grounding_dino",
         "LibreGroundingDINO",
         "openvocab",
@@ -170,8 +164,7 @@ def collect_model_inventory() -> dict[str, dict]:
             "default_task": cls.DEFAULT_TASK,
             "sizes": all_sizes,
             "default_imgsz": {
-                size: _jsonable_imgsz(imgsz)
-                for size, imgsz in cls.INPUT_SIZES.items()
+                size: _jsonable_imgsz(imgsz) for size, imgsz in cls.INPUT_SIZES.items()
             },
             "task_sizes": task_sizes,
             "export_override": _export_override(cls, BaseModel),

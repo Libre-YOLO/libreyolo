@@ -50,7 +50,6 @@ in preflight.
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ |
 | gemma4 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | ground_florence2 | point |  |  |  |  |  |  |  |  |  |  |  |  |
-| ground_moondream | point |  |  |  |  |  |  |  |  |  |  |  |  |
 | ground_qwen3vl | point |  |  |  |  |  |  |  |  |  |  |  |  |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | hrnet | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |  |
@@ -911,18 +910,6 @@ These converter paths are callable with the recorded validation context.
 - `ground_florence2` / `point` / `tflite`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `ground_florence2` / `point` / `coreml`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `ground_florence2` / `point` / `coreai`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `onnx`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `torchscript`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `tensorrt`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `openvino`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `paddle`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `mnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `rknn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `ncnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `tflite`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `coreml`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
-- `ground_moondream` / `point` / `coreai`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `ground_qwen3vl` / `point` / `onnx`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `ground_qwen3vl` / `point` / `torchscript`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `ground_qwen3vl` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.

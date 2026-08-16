@@ -35,7 +35,3 @@ Qwen3-VL-2B (``LibreYOLO/LibreGroundQwen3VL2b``)
     Mirrored from ``Qwen/Qwen3-VL-2B-Instruct`` at
     ``89644892e4d85e24eaac8bacfd4f463576704203``.
     Weight license: Apache-2.0.
-
-Moondream 2 (``LibreYOLO/LibreMoondream2``)
-    Already published for LibreVLM. Apache-2.0. The grounding wrapper
-    reuses that snapshot (``FAMILY = ground_moondream``).

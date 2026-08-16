@@ -1,4 +1,4 @@
-"""The four hosted LibreGround families resolve to LibreYOLO snapshot repos."""
+"""The three hosted LibreGround families resolve to LibreYOLO snapshot repos."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import pytest
 
 from libreyolo.models.ground import _ALIASES, HOSTED_SNAPSHOTS, LibreGround
 from libreyolo.models.ground.florence import LibreGroundFlorence2
-from libreyolo.models.ground.moondream import LibreGroundMoondream
 from libreyolo.models.ground.qwen3vl import LibreGroundQwen3VL
 from libreyolo.models.ground.showui import LibreShowUI
 from libreyolo.models.inventory import collect_model_inventory
@@ -20,12 +19,11 @@ _CLASSES = {
     "LibreGroundFlorence2": LibreGroundFlorence2,
     "LibreShowUI": LibreShowUI,
     "LibreGroundQwen3VL": LibreGroundQwen3VL,
-    "LibreGroundMoondream": LibreGroundMoondream,
 }
 
 
-def test_four_hosted_snapshots_are_declared():
-    assert len(HOSTED_SNAPSHOTS) >= 4
+def test_three_hosted_snapshots_are_declared():
+    assert len(HOSTED_SNAPSHOTS) == 3
     for alias, (class_name, size, repo) in HOSTED_SNAPSHOTS.items():
         assert alias in _ALIASES
         family_cls, alias_size = _ALIASES[alias]
@@ -59,8 +57,6 @@ def test_upload_script_mirrors_match_hosted_factory_repos():
     assert mirrors is not None
     uploaded = {item["repo"] for item in mirrors}
     hosted = {repo for _alias, (_cls, _size, repo) in HOSTED_SNAPSHOTS.items()}
-    # Moondream was already published; the other three must be in the uploader.
-    assert "LibreYOLO/LibreMoondream2" in hosted
     assert uploaded <= hosted
     assert {
         "LibreYOLO/LibreGroundFlorence2base",
@@ -102,7 +98,7 @@ def test_ground_families_do_not_clobber_vlm_inventory():
     assert inventory["locateanything"]["class"].endswith("LibreLocateAnything")
     assert inventory["ground_florence2"]["class"].endswith("LibreGroundFlorence2")
     assert inventory["ground_qwen3vl"]["class"].endswith("LibreGroundQwen3VL")
-    assert inventory["ground_moondream"]["class"].endswith("LibreGroundMoondream")
+    assert "ground_moondream" not in inventory
     assert inventory["showui"]["class"].endswith("LibreShowUI")
     assert inventory["ground_florence2"]["tasks"] == ["point"]
     assert (

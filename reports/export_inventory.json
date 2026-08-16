@@ -796,26 +796,6 @@
     "available": true,
     "group": "s"
   },
-  "ground_moondream": {
-    "class": "libreyolo.models.ground.moondream.LibreGroundMoondream",
-    "tasks": [
-      "point"
-    ],
-    "default_task": "point",
-    "sizes": {
-      "2": 384,
-      "3": 512
-    },
-    "default_imgsz": {
-      "2": 384,
-      "3": 512
-    },
-    "task_sizes": {},
-    "export_override": "blocked",
-    "optional_extra": "vlm",
-    "available": true,
-    "group": "s"
-  },
   "ground_qwen3vl": {
     "class": "libreyolo.models.ground.qwen3vl.LibreGroundQwen3VL",
     "tasks": [
