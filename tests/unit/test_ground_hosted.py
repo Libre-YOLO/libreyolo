@@ -12,6 +12,7 @@ from libreyolo.models.ground.florence import LibreGroundFlorence2
 from libreyolo.models.ground.moondream import LibreGroundMoondream
 from libreyolo.models.ground.qwen3vl import LibreGroundQwen3VL
 from libreyolo.models.ground.showui import LibreShowUI
+from libreyolo.models.inventory import collect_model_inventory
 
 pytestmark = pytest.mark.unit
 
@@ -65,3 +66,20 @@ def test_upload_script_mirrors_match_hosted_factory_repos():
         "LibreYOLO/LibreShowUI2b",
         "LibreYOLO/LibreGroundQwen3VL2b",
     }
+    showui = next(item for item in mirrors if item["alias"] == "showui-2b")
+    assert showui["license"] == "mit"
+    assert "Apache-2.0" in showui["license_note"]
+
+
+def test_ground_families_do_not_clobber_vlm_inventory():
+    inventory = collect_model_inventory()
+    assert inventory["florence2"]["class"].endswith("LibreFlorence2")
+    assert inventory["qwen3vl"]["class"].endswith("LibreQwen3VL")
+    assert inventory["moondream"]["class"].endswith("LibreMoondream")
+    assert inventory["locateanything"]["class"].endswith("LibreLocateAnything")
+    assert inventory["ground_florence2"]["class"].endswith("LibreGroundFlorence2")
+    assert inventory["ground_qwen3vl"]["class"].endswith("LibreGroundQwen3VL")
+    assert inventory["ground_moondream"]["class"].endswith("LibreGroundMoondream")
+    assert inventory["showui"]["class"].endswith("LibreShowUI")
+    assert inventory["ground_florence2"]["tasks"] == ["point"]
+    assert inventory["florence2"]["default_task"] != "point" or "detect" in inventory["florence2"]["tasks"]

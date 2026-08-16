@@ -776,6 +776,68 @@
     "available": true,
     "group": "s"
   },
+  "ground_florence2": {
+    "class": "libreyolo.models.ground.florence.LibreGroundFlorence2",
+    "tasks": [
+      "point"
+    ],
+    "default_task": "point",
+    "sizes": {
+      "base": 768,
+      "large": 768
+    },
+    "default_imgsz": {
+      "base": 768,
+      "large": 768
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true,
+    "group": "s"
+  },
+  "ground_moondream": {
+    "class": "libreyolo.models.ground.moondream.LibreGroundMoondream",
+    "tasks": [
+      "point"
+    ],
+    "default_task": "point",
+    "sizes": {
+      "2": 384,
+      "3": 512
+    },
+    "default_imgsz": {
+      "2": 384,
+      "3": 512
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true,
+    "group": "s"
+  },
+  "ground_qwen3vl": {
+    "class": "libreyolo.models.ground.qwen3vl.LibreGroundQwen3VL",
+    "tasks": [
+      "point"
+    ],
+    "default_task": "point",
+    "sizes": {
+      "2b": 1024,
+      "4b": 1024,
+      "8b": 1024
+    },
+    "default_imgsz": {
+      "2b": 1024,
+      "4b": 1024,
+      "8b": 1024
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true,
+    "group": "s"
+  },
   "grounding_dino": {
     "class": "libreyolo.models.openvocab.grounding_dino.LibreGroundingDINO",
     "tasks": [
@@ -1806,6 +1868,24 @@
     "optional_extra": null,
     "available": true,
     "group": "g2"
+  },
+  "showui": {
+    "class": "libreyolo.models.ground.showui.LibreShowUI",
+    "tasks": [
+      "point"
+    ],
+    "default_task": "point",
+    "sizes": {
+      "2b": 1344
+    },
+    "default_imgsz": {
+      "2b": 1344
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true,
+    "group": "s"
   },
   "siglip2": {
     "class": "libreyolo.models.siglip2.model.LibreSigLIP2",

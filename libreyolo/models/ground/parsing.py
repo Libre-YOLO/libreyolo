@@ -223,9 +223,34 @@ def scale_point(
         if view_w <= 0 or view_h <= 0:
             raise ValueError(f"view_size must be positive, got {view_size!r}.")
         px, py = x * width / view_w, y * height / view_h
-    px = min(float(width - 1 if width > 0 else 0), max(0.0, px))
-    py = min(float(height - 1 if height > 0 else 0), max(0.0, py))
     return px, py
+
+
+def _on_canvas(
+    px: float,
+    py: float,
+    original_size: Tuple[int, int],
+    slack: float = 0.5,
+) -> Optional[Tuple[float, float]]:
+    """Keep on-canvas clicks; drop points that are not on the image.
+
+    A half-pixel of slack covers float overshoot. Anything farther is
+    rejected instead of being silently clamped into the frame.
+    """
+    width, height = original_size
+    if width <= 0 or height <= 0:
+        return None
+    if (
+        px < -slack
+        or py < -slack
+        or px > float(width - 1) + slack
+        or py > float(height - 1) + slack
+    ):
+        return None
+    return (
+        min(float(width - 1), max(0.0, px)),
+        min(float(height - 1), max(0.0, py)),
+    )
 
 
 def build_point_dict(
@@ -270,6 +295,10 @@ def build_point_dict(
         if not _finite((x, y)) or default_score < conf_thres:
             continue
         px, py = scale_point(x, y, original_size, coord_space, view_size)
+        snapped = _on_canvas(px, py, original_size)
+        if snapped is None:
+            continue
+        px, py = snapped
         key = (class_id, round(px, 1), round(py, 1))
         if key in seen:
             continue

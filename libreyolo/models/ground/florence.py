@@ -16,7 +16,7 @@ from .parsing import build_point_dict
 
 
 class LibreGroundFlorence2(LibreGroundModel):
-    FAMILY = "florence2"
+    FAMILY = "ground_florence2"
     FILENAME_PREFIX = "LibreGroundFlorence2"
 
     HF_REPOS: ClassVar[Dict[str, str]] = {
@@ -145,7 +145,7 @@ class LibreGroundFlorence2(LibreGroundModel):
             original_size,
             coord_space="pixel",
             conf_thres=conf_thres,
-            max_det=max_det,
+            max_det=1 if max_det is None else min(int(max_det), 1),
             classes=kwargs.get("classes"),
             default_score=self._score_detections(items),
         )

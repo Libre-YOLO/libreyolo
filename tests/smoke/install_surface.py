@@ -108,21 +108,17 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
         LibreGround,
         LibreGroundFlorence2,
         LibreGroundMoondream,
-        LibreHolo,
+        LibreGroundQwen3VL,
         LibreShowUI,
-        LibreTinyClick,
-        LibreUITARS,
     )
 
     if not callable(LibreGround):
         raise AssertionError("LibreGround import did not resolve to a callable")
     for family in (
         LibreShowUI,
-        LibreHolo,
-        LibreUITARS,
-        LibreTinyClick,
         LibreGroundFlorence2,
         LibreGroundMoondream,
+        LibreGroundQwen3VL,
     ):
         if not isinstance(family, type):
             raise AssertionError(

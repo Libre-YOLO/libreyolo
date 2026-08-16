@@ -69,10 +69,9 @@ class GroundAPIMixin:
         previous = list(getattr(self, "_queries", []) or [])
         self.set_query(queries[0])
         try:
-            return super().__call__(source, **kwargs)
+            return self._one_click(super().__call__(source, **kwargs))
         finally:
-            if previous:
-                self.set_query(previous)
+            self._restore_queries(previous)
 
     def _reject_multi_query_batch(self, source) -> None:
         if isinstance(source, (list, tuple)):
@@ -97,13 +96,35 @@ class GroundAPIMixin:
                     raise ValueError(
                         "A list of queries is only supported for a single image."
                     )
-                results.append(result)
+                results.append(self._one_click(result))
         finally:
-            if previous:
-                self.set_query(previous)
-            else:
-                self.set_query(queries)
+            self._restore_queries(previous)
         return _merge_point_results(results, queries)
+
+    def _restore_queries(self, previous: List[str]) -> None:
+        """Put sticky query state back the way the caller left it."""
+        if previous:
+            self.set_query(previous)
+            return
+        self._queries = []
+        self.names = {}
+        if hasattr(self, "nb_classes"):
+            self.nb_classes = 0
+        if hasattr(self, "_name_to_id"):
+            self._name_to_id = {}
+
+    def _one_click(self, result: Results) -> Results:
+        """Keep the first point. The contract is one click per query."""
+        if result.points is None or len(result.points) <= 1:
+            return result
+        data = result.points.data[:1]
+        return Results(
+            boxes=None,
+            orig_shape=result.orig_shape,
+            path=result.path,
+            names=result.names,
+            points=Points(data, result.orig_shape),
+        )
 
 
 def _merge_point_results(results: List[Results], queries: List[str]) -> Results:
@@ -245,7 +266,7 @@ class LibreGroundModel(GroundAPIMixin, LibreVLMModel):
             coord_space=self.COORD_SPACE,
             view_size=getattr(self, "_view_size", None),
             conf_thres=conf_thres,
-            max_det=max_det,
+            max_det=1 if max_det is None else min(int(max_det), 1),
             classes=kwargs.get("classes"),
             default_score=self._score_detections(items),
         )

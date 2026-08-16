@@ -79,4 +79,8 @@ the right future metric; COCO mAP is not.
 
 Same rules as LibreVLM: pin `HF_REVISIONS` to a commit SHA when
 `trust_remote_code` is on; log a notice for non-permissive weights; do not
-redistribute upstream repos. Default model (ShowUI-2B) is Apache-2.0.
+redistribute upstream repos. Default model (ShowUI-2B) weights are MIT on
+the pinned Hugging Face card; the ShowUI GitHub repository and the
+Qwen2-VL-2B base are Apache-2.0. Ground wrappers that share an upstream
+with a LibreVLM family use a distinct `FAMILY` id (`ground_florence2`,
+not `florence2`) so they do not replace the VLM inventory row.

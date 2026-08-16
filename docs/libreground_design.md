@@ -61,17 +61,18 @@ size marked `*`. The authoritative table is `_ALIASES` in
 
 | Aliases | Family | License | Coord space | Notes |
 |---|---|---|---|---|
-| `showui`, `showui-2b`* | ShowUI-2B | Apache-2.0 | `[0,1]` | default; 2B Qwen2-VL |
-| `holo`, `holo-7b`* | Holo1.5-7B | Apache-2.0 | resized pixels | quality tier |
-| `ui-tars`, `ui-tars-7b`* | UI-TARS-1.5-7B | Apache-2.0 | 0–1000 | quality tier |
-| `florence-2`, `-base`*, `-large` | Florence-2 | MIT | pixel boxes → center | already in LibreVLM |
-| `tinyclick`* | TinyClick | MIT | Florence `<loc_*>` | 0.27B; current transformers 5 cannot load the 2024 checkpoint |
-| `moondream`, `moondream-2`* | Moondream 2 | Apache-2.0 | `[0,1]` | wraps the VLM family; native `point()` |
-| `locate-anything`* | LocateAnything | NVIDIA NC | 0–1000 | wraps the VLM family |
-| `qwen3-vl`, `-2b`, `-4b`*, `-8b` | Qwen3-VL | Apache-2.0 | 0–1000 | generalist, last resort |
+| `showui`, `showui-2b`* | ShowUI-2B | MIT weights; Apache-2.0 code/base | `[0,1]` | default; 2B Qwen2-VL |
+| `florence-2`, `-base`*, `-large` | Florence-2 | MIT | pixel boxes → center | `FAMILY=ground_florence2` |
+| `moondream`, `moondream-2`* | Moondream 2 | Apache-2.0 | `[0,1]` | wraps the VLM family; one click |
+| `qwen3-vl`, `-2b`*, `-4b`, `-8b` | Qwen3-VL | Apache-2.0 | 0–1000 | `FAMILY=ground_qwen3vl` |
 
-Default is **ShowUI-2B**: small enough for a consumer GPU, Apache-2.0,
-native `transformers`, documented `[0,1]` clicks.
+Default is **ShowUI-2B**: small enough for a consumer GPU, native
+`transformers`, documented `[0,1]` clicks. TinyClick, Holo, UI-TARS, and
+LocateAnything are not factory aliases until they load and satisfy the
+one-click contract.
+
+A per-call `prompt=` does not become sticky. Coordinates that fall well
+outside the image after scaling are dropped, not clamped into the frame.
 
 ## Coordinate knobs
 

@@ -1,8 +1,10 @@
-"""ShowUI-2B: Apache-2.0 Qwen2-VL GUI grounder.
+"""ShowUI-2B: MIT-weight Qwen2-VL GUI grounder.
 
-Official output is a bare ``[x, y]`` pair normalized to ``[0, 1]`` relative
-to the screenshot. That is the default ``LibreGround`` family because it is
-small, permissively licensed, and loads through native transformers.
+The pinned ``showlab/ShowUI-2B`` card declares MIT for the weights. The
+ShowUI GitHub repository and the Qwen2-VL-2B base are Apache-2.0. Official
+output is a bare ``[x, y]`` pair normalized to ``[0, 1]`` relative to the
+screenshot. That is the default ``LibreGround`` family because it is small
+and loads through native transformers.
 """
 
 from __future__ import annotations

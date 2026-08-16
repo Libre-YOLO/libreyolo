@@ -6,6 +6,8 @@ pinned. Coordinates come back in ``[0, 1]``.
 
 from __future__ import annotations
 
+from typing import Any, Dict, Tuple
+
 from ..vlm.moondream import LibreMoondream
 from .base import GroundAPIMixin
 
@@ -13,6 +15,7 @@ from .base import GroundAPIMixin
 class LibreGroundMoondream(GroundAPIMixin, LibreMoondream):
     """Moondream locked to ``task="point"`` with the grounding API."""
 
+    FAMILY = "ground_moondream"
     DEFAULT_TASK = "point"
     SUPPORTED_TASKS = ("point",)
 
@@ -33,3 +36,23 @@ class LibreGroundMoondream(GroundAPIMixin, LibreMoondream):
             self.nb_classes = 0
             self._name_to_id = {}
             self._queries = []
+
+    def _postprocess(
+        self,
+        output: Any,
+        conf_thres: float,
+        iou_thres: float,
+        original_size: Tuple[int, int],
+        max_det: int = 300,
+        ratio: float = 1.0,
+        **kwargs,
+    ) -> Dict:
+        return super()._postprocess(
+            output,
+            conf_thres,
+            iou_thres,
+            original_size,
+            max_det=1 if max_det is None else min(int(max_det), 1),
+            ratio=ratio,
+            **kwargs,
+        )

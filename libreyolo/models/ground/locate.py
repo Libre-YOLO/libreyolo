@@ -13,6 +13,7 @@ from .base import GroundAPIMixin
 class LibreGroundLocateAnything(GroundAPIMixin, LibreLocateAnything):
     """LocateAnything locked to ``task="point"`` with the grounding API."""
 
+    FAMILY = "ground_locateanything"
     DEFAULT_TASK = "point"
     SUPPORTED_TASKS = ("point",)
 

@@ -51,7 +51,11 @@ MIRRORS = (
         "blurb": "ShowUI-2B snapshot mirrored for LibreYOLO's LibreGround tier.",
         "authors": "Show Lab",
         "alias": "showui-2b",
-        "license": "apache-2.0",
+        "license": "mit",
+        "license_note": (
+            "Pinned showlab/ShowUI-2B card declares MIT for the weights. "
+            "ShowUI GitHub code and the Qwen2-VL-2B base are Apache-2.0."
+        ),
         "allow_bin": True,
     },
     {
@@ -69,10 +73,41 @@ MIRRORS = (
 )
 
 
+_MIT_LICENSE = """\
+MIT License
+
+Copyright (c) 2024 Show Lab
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+
 def _readme(spec: dict) -> str:
     license_yaml = spec["license"]
     license_label = (
         "MIT License" if license_yaml == "mit" else "Apache License 2.0"
+    )
+    extra_license = spec.get("license_note", "")
+    license_body = (
+        f"{license_label}. {extra_license}".strip()
+        if extra_license
+        else license_label
     )
     return f"""---
 license: {license_yaml}
@@ -92,14 +127,13 @@ tags:
 
 Mirrored from [{spec["upstream"]}](https://huggingface.co/{spec["upstream"]})
 at commit `{spec["upstream_sha"]}`.
-Copyright (c) {spec["authors"]}. Licensed under the {license_label}.
+Copyright (c) {spec["authors"]}.
 
 ## Modifications
 
 No learned parameters were changed. This repository preserves the Hugging Face
-snapshot files needed by LibreYOLO's LibreGround wrapper, ships the upstream
-license verbatim, and replaces the model card with LibreYOLO-specific
-loading notes.
+snapshot files needed by LibreYOLO's LibreGround wrapper and replaces the
+model card with LibreYOLO-specific loading notes.
 
 ## Usage
 
@@ -112,15 +146,18 @@ r.points.xy
 
 ## License
 
-{license_label}. See the [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE)
-files in this repository.
+{license_body}
+
+See [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).
 """
 
 
 def _notice(spec: dict) -> str:
+    extra = spec.get("license_note")
     license_label = (
         "the MIT License" if spec["license"] == "mit" else "the Apache License, Version 2.0"
     )
+    extra_block = f"\n{extra}\n" if extra else ""
     return (
         f"{spec['title']} weights\n"
         f"{'-' * (len(spec['title']) + 8)}\n\n"
@@ -128,7 +165,8 @@ def _notice(spec: dict) -> str:
         f"(https://huggingface.co/{spec['upstream']}) at commit\n"
         f"{spec['upstream_sha']}.\n"
         f"Copyright (c) {spec['authors']}.\n"
-        f"Licensed under {license_label}.\n\n"
+        f"Weight grant: {license_label}.\n"
+        f"{extra_block}\n"
         "No learned parameters were changed by LibreYOLO.\n"
     )
 
@@ -147,12 +185,14 @@ def stage_one(spec: dict) -> Path:
     if not _has_weights(dest, spec["allow_bin"]):
         raise FileNotFoundError(f"Missing snapshot weights at {dest}")
     shutil.copy2(hf_hub_download(TEMPLATE_REPO, ".gitattributes"), dest / ".gitattributes")
-    if spec["license"] == "mit":
+    if spec.get("license_source"):
         license_repo, license_name = spec["license_source"]
         shutil.copy2(
             hf_hub_download(license_repo, license_name),
             dest / "LICENSE",
         )
+    elif spec["license"] == "mit":
+        (dest / "LICENSE").write_text(_MIT_LICENSE, encoding="utf-8")
     else:
         shutil.copy2(hf_hub_download(TEMPLATE_REPO, "LICENSE"), dest / "LICENSE")
     (dest / "README.md").write_text(_readme(spec), encoding="utf-8")

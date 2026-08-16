@@ -8,13 +8,9 @@ from libreyolo.models.ground import (
     _DEFAULT_MODEL,
     LibreGround,
     LibreGroundFlorence2,
-    LibreGroundLocateAnything,
     LibreGroundMoondream,
     LibreGroundQwen3VL,
-    LibreHolo,
     LibreShowUI,
-    LibreTinyClick,
-    LibreUITARS,
 )
 from libreyolo.models.ground.base import GroundAPIMixin, LibreGroundModel
 from libreyolo.utils.results import Points, Results
@@ -26,6 +22,7 @@ class _Runner:
     def __init__(self):
         self.names = {}
         self.seen = []
+        self.n_points = 1
 
     def set_classes(self, classes):
         self.names = {i: str(item) for i, item in enumerate(classes)}
@@ -33,7 +30,10 @@ class _Runner:
 
     def __call__(self, source=None, **kwargs):
         self.seen.append(self.names[0])
-        data = torch.tensor([[10.0, 20.0, 0.0, 1.0]])
+        rows = [[10.0, 20.0, 0.0, 1.0]]
+        if self.n_points > 1:
+            rows.append([30.0, 40.0, 0.0, 1.0])
+        data = torch.tensor(rows)
         return Results(
             boxes=None,
             orig_shape=(80, 100),
@@ -80,6 +80,36 @@ class TestPredictQuery:
         assert result.points.xy.tolist() == [[10.0, 20.0]]
         assert result.names[0] == "Bluetooth"
 
+    def test_per_call_prompt_does_not_stick(self):
+        host = _Host()
+        host("screen.png", prompt="Bluetooth")
+        assert host._queries == []
+        assert host.names == {}
+        with pytest.raises(ValueError, match="needs a query"):
+            host("screen.png")
+
+    def test_per_call_prompt_does_not_clobber_sticky(self):
+        host = _Host()
+        host.set_query("Save")
+        host("screen.png", prompt="Bluetooth")
+        assert host.seen == ["Bluetooth"]
+        assert host._queries == ["Save"]
+        host("screen.png")
+        assert host.seen == ["Bluetooth", "Save"]
+
+    def test_multi_query_does_not_stick(self):
+        host = _Host()
+        host("screen.png", prompt=["Wi-Fi", "Bluetooth"])
+        assert host._queries == []
+        with pytest.raises(ValueError, match="needs a query"):
+            host("screen.png")
+
+    def test_one_click_per_query(self):
+        host = _Host()
+        host.n_points = 2
+        result = host("screen.png", prompt="Bluetooth")
+        assert result.points.xy.tolist() == [[10.0, 20.0]]
+
     def test_query_alias(self):
         host = _Host()
         host("screen.png", query="Wi-Fi")
@@ -111,14 +141,22 @@ class TestFactoryResolution:
 
     def test_known_aliases(self):
         assert _ALIASES["showui"] == (LibreShowUI, "2b")
-        assert _ALIASES["holo"] == (LibreHolo, "7b")
-        assert _ALIASES["holo1-7b"] == (LibreHolo, "1-7b")
-        assert _ALIASES["ui-tars"] == (LibreUITARS, "7b")
-        assert _ALIASES["tinyclick"] == (LibreTinyClick, "b")
         assert _ALIASES["florence-2"] == (LibreGroundFlorence2, "base")
-        assert _ALIASES["locate-anything"] == (LibreGroundLocateAnything, "3b")
         assert _ALIASES["moondream"] == (LibreGroundMoondream, "2")
-        assert _ALIASES["qwen3-vl-4b"] == (LibreGroundQwen3VL, "4b")
+        assert _ALIASES["qwen3-vl"] == (LibreGroundQwen3VL, "2b")
+        assert _ALIASES["qwen3-vl-2b"] == (LibreGroundQwen3VL, "2b")
+        assert "tinyclick" not in _ALIASES
+        assert "holo" not in _ALIASES
+        assert "ui-tars" not in _ALIASES
+        assert "locate-anything" not in _ALIASES
+
+    def test_unverified_alias_raises_before_loading(self):
+        with pytest.raises(ValueError, match="TinyClick"):
+            LibreGround("tinyclick")
+        with pytest.raises(ValueError, match="Holo"):
+            LibreGround("holo-7b")
+        with pytest.raises(ValueError, match="UI-TARS"):
+            LibreGround("ui-tars")
 
     def test_unknown_alias_raises_before_loading(self):
         with pytest.raises(ValueError, match="Unknown grounding model"):
@@ -137,12 +175,11 @@ class TestContract:
 
     def test_family_coord_spaces(self):
         assert LibreShowUI.COORD_SPACE == "unit"
-        assert LibreHolo.COORD_SPACE == "pixel_view"
-        assert LibreUITARS.COORD_SPACE == "milli"
-        assert LibreTinyClick.COORD_SPACE == "milli"
         assert LibreGroundFlorence2.COORD_SPACE == "pixel"
         assert LibreGroundQwen3VL.COORD_SPACE == "milli"
 
-    def test_tinyclick_uses_native_florence(self):
-        assert LibreTinyClick.TRUST_REMOTE_CODE is False
-        assert LibreTinyClick.HF_REPOS["b"] == "Krystianz/TinyClick"
+    def test_ground_family_ids_do_not_reuse_vlm_ids(self):
+        assert LibreGroundFlorence2.FAMILY == "ground_florence2"
+        assert LibreGroundQwen3VL.FAMILY == "ground_qwen3vl"
+        assert LibreGroundMoondream.FAMILY == "ground_moondream"
+        assert LibreShowUI.FAMILY == "showui"

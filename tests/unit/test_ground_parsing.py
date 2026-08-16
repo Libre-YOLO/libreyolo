@@ -69,8 +69,8 @@ class TestScalePoint:
     def test_milli(self):
         assert scale_point(500, 250, (200, 100), "milli") == (100.0, 25.0)
 
-    def test_pixel_clamped(self):
-        assert scale_point(-5, 999, (200, 100), "pixel") == (0.0, 99.0)
+    def test_pixel_is_not_clamped(self):
+        assert scale_point(-5, 999, (200, 100), "pixel") == (-5.0, 999.0)
 
     def test_pixel_view(self):
         assert scale_point(50, 25, (200, 100), "pixel_view", (100, 50)) == (100.0, 50.0)
@@ -101,6 +101,25 @@ class TestBuildPointDict:
             default_score=1.0,
         )
         assert out["num_detections"] == 0
+
+    def test_far_out_of_range_is_dropped(self):
+        out = build_point_dict(
+            [{"point": [-5, 999]}],
+            {"a": 0},
+            (200, 100),
+            coord_space="pixel",
+        )
+        assert out["num_detections"] == 0
+
+    def test_tiny_overshoot_is_snapped(self):
+        out = build_point_dict(
+            [{"point": [199.2, -0.2]}],
+            {"a": 0},
+            (200, 100),
+            coord_space="pixel",
+        )
+        assert out["num_detections"] == 1
+        assert out["points"][0][:2] == [199.0, 0.0]
 
 
 class TestCoerceQueries:

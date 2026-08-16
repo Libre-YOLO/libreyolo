@@ -49,6 +49,9 @@ in preflight.
 | florence2 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ |
 | gemma4 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
+| ground_florence2 | point |  |  |  |  |  |  |  |  |  |  |  |  |
+| ground_moondream | point |  |  |  |  |  |  |  |  |  |  |  |  |
+| ground_qwen3vl | point |  |  |  |  |  |  |  |  |  |  |  |  |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | hrnet | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
@@ -100,6 +103,7 @@ in preflight.
 | sam3 | segment |  |  |  |  |  |  |  |  |  |  |  |  |
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |  |  |  |  |
 | segformer | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |
+| showui | point |  |  |  |  |  |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  | ✓ |  | ✓ |
 | siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  | ✓ |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
@@ -895,6 +899,42 @@ These converter paths are callable with the recorded validation context.
 - `gemma4` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `gemma4` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `gemma4` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `ground_florence2` / `point` / `onnx`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `torchscript`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `tensorrt`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `openvino`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `paddle`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `mnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `rknn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `ncnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `tflite`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `coreml`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `coreai`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `onnx`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `torchscript`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `tensorrt`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `openvino`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `paddle`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `mnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `rknn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `ncnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `tflite`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `coreml`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_moondream` / `point` / `coreai`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `onnx`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `torchscript`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `tensorrt`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `openvino`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `paddle`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `mnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `rknn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `ncnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `tflite`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `coreml`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `coreai`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `grounding_dino` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `executorch`: Open-vocabulary runtime export is out of scope for v1.
@@ -1336,6 +1376,18 @@ These converter paths are callable with the recorded validation context.
 - `segformer` / `semantic` / `tflite`: onnx2tf 2.6.7 emits a flatbuffer, but LiteRT 2.1.2 cannot prepare its attention reshape (1024 input elements versus 256 output elements).
 - `segformer` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `coreai`: The SegFormer Core AI capture path has not been assessed. Its published weights are non-commercial regardless of export format.
+- `showui` / `point` / `onnx`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `torchscript`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `tensorrt`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `openvino`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `paddle`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `mnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `rknn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `ncnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `tflite`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `coreml`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `coreai`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `siglip2` / `classify` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
 - `siglip2` / `classify` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `siglip2` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.

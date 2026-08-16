@@ -161,20 +161,20 @@ from libreyolo import LibreGround
 r = LibreGround()("screen.png", prompt="Bluetooth")   # ShowUI-2B default
 x, y = r.points.xy[0].tolist()                        # original-canvas pixels
 
-model = LibreGround("holo-7b")                        # or ui-tars, moondream,
-model.set_query("the red Save button")                # florence-2, qwen3-vl, ...
+model = LibreGround("florence-2-base")                # or qwen3-vl-2b, moondream
+model.set_query("the red Save button")
 r = model.predict("folder/")
 ```
 
 - There is no default COCO vocabulary. A call without `prompt=` / `set_query`
-  raises.
+  raises. A per-call `prompt=` does not become sticky.
 - `query=` is an alias of `prompt=`. `set_classes` forwards to `set_query`.
 - A list of queries on one image runs one generate per query and merges
   points (class id = query index). A list of queries on a folder raises.
 - `conf` is a placeholder. `train()` / `val()` / `export()` raise.
-- Default is ShowUI-2B (Apache-2.0, ~2B). 7B aliases (Holo, UI-TARS) are
-  the quality tier. TinyClick is the 0.27B Florence-2 clicker (remote code,
-  pinned). Do not promise ScreenSpot-Pro pixel-perfect clicks from the 2B.
+- Shipped aliases are ShowUI-2B (default; MIT weights, Apache-2.0 code/base),
+  Florence-2, Qwen3-VL, and Moondream 2. Each call keeps one click per query.
+  Do not promise ScreenSpot-Pro pixel-perfect clicks from the 2B models.
 - The library returns coordinates. It does not move the OS mouse.
 
 ## LibreVLM (generative, last resort for detection)

@@ -13,7 +13,7 @@ from .base import LibreGroundModel
 
 
 class LibreGroundQwen3VL(LibreGroundModel):
-    FAMILY = "qwen3vl"
+    FAMILY = "ground_qwen3vl"
     FILENAME_PREFIX = "LibreGroundQwen3VL"
 
     HF_REPOS: ClassVar[Dict[str, str]] = {

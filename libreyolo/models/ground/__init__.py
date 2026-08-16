@@ -15,50 +15,51 @@ from typing import Dict, Tuple, Type
 
 from .base import GroundAPIMixin, LibreGroundModel
 from .florence import LibreGroundFlorence2
-from .holo import LibreHolo
-from .locate import LibreGroundLocateAnything
 from .moondream import LibreGroundMoondream
 from .qwen3vl import LibreGroundQwen3VL
 from .showui import LibreShowUI
-from .tinyclick import LibreTinyClick
-from .uitars import LibreUITARS
 
-# alias -> (family class, size)
+# Public aliases are only the families that load and return one click.
+# TinyClick / Holo / UI-TARS / LocateAnything / Moondream 3 stay out
+# until they are load-tested and contract-compliant.
 _ALIASES: Dict[str, Tuple[Type, str]] = {
     "showui": (LibreShowUI, "2b"),
     "show-ui": (LibreShowUI, "2b"),
     "showui-2b": (LibreShowUI, "2b"),
     "show-ui-2b": (LibreShowUI, "2b"),
-    "holo": (LibreHolo, "7b"),
-    "holo1.5": (LibreHolo, "7b"),
-    "holo1.5-7b": (LibreHolo, "7b"),
-    "holo-7b": (LibreHolo, "7b"),
-    "holo1-7b": (LibreHolo, "1-7b"),
-    "ui-tars": (LibreUITARS, "7b"),
-    "uitars": (LibreUITARS, "7b"),
-    "ui-tars-7b": (LibreUITARS, "7b"),
-    "uitars-7b": (LibreUITARS, "7b"),
-    "ui-tars-1.5": (LibreUITARS, "7b"),
-    "ui-tars-1.5-7b": (LibreUITARS, "7b"),
     "florence-2": (LibreGroundFlorence2, "base"),
     "florence2": (LibreGroundFlorence2, "base"),
     "florence-2-base": (LibreGroundFlorence2, "base"),
     "florence-2-large": (LibreGroundFlorence2, "large"),
-    "tinyclick": (LibreTinyClick, "b"),
-    "tiny-click": (LibreTinyClick, "b"),
     "moondream": (LibreGroundMoondream, "2"),
     "moondream2": (LibreGroundMoondream, "2"),
     "moondream-2": (LibreGroundMoondream, "2"),
-    "moondream3": (LibreGroundMoondream, "3"),
-    "moondream-3": (LibreGroundMoondream, "3"),
-    "locate-anything": (LibreGroundLocateAnything, "3b"),
-    "locateanything": (LibreGroundLocateAnything, "3b"),
-    "locate-anything-3b": (LibreGroundLocateAnything, "3b"),
-    "qwen3-vl": (LibreGroundQwen3VL, "4b"),
-    "qwen3vl": (LibreGroundQwen3VL, "4b"),
+    "qwen3-vl": (LibreGroundQwen3VL, "2b"),
+    "qwen3vl": (LibreGroundQwen3VL, "2b"),
     "qwen3-vl-2b": (LibreGroundQwen3VL, "2b"),
     "qwen3-vl-4b": (LibreGroundQwen3VL, "4b"),
     "qwen3-vl-8b": (LibreGroundQwen3VL, "8b"),
+}
+
+_UNVERIFIED_ALIASES: Dict[str, str] = {
+    "holo": "Holo is not a factory alias until a size is load-tested.",
+    "holo1.5": "Holo is not a factory alias until a size is load-tested.",
+    "holo1.5-7b": "Holo is not a factory alias until a size is load-tested.",
+    "holo-7b": "Holo is not a factory alias until a size is load-tested.",
+    "holo1-7b": "Holo is not a factory alias until a size is load-tested.",
+    "ui-tars": "UI-TARS is not a factory alias until a size is load-tested.",
+    "uitars": "UI-TARS is not a factory alias until a size is load-tested.",
+    "ui-tars-7b": "UI-TARS is not a factory alias until a size is load-tested.",
+    "uitars-7b": "UI-TARS is not a factory alias until a size is load-tested.",
+    "ui-tars-1.5": "UI-TARS is not a factory alias until a size is load-tested.",
+    "ui-tars-1.5-7b": "UI-TARS is not a factory alias until a size is load-tested.",
+    "tinyclick": "TinyClick is not a factory alias: the 2024 checkpoint does not load on transformers 5.",
+    "tiny-click": "TinyClick is not a factory alias: the 2024 checkpoint does not load on transformers 5.",
+    "moondream3": "Moondream 3 is BSL 1.1 and is not a LibreGround factory alias.",
+    "moondream-3": "Moondream 3 is BSL 1.1 and is not a LibreGround factory alias.",
+    "locate-anything": "LocateAnything is NVIDIA non-commercial and is not a LibreGround factory alias.",
+    "locateanything": "LocateAnything is NVIDIA non-commercial and is not a LibreGround factory alias.",
+    "locate-anything-3b": "LocateAnything is NVIDIA non-commercial and is not a LibreGround factory alias.",
 }
 
 # The four snapshot-mirrored families hosted on the LibreYOLO org.
@@ -77,8 +78,8 @@ def LibreGround(model: str = _DEFAULT_MODEL, **kwargs):
     """Load a grounding model by alias.
 
     Args:
-        model: Alias such as ``"showui-2b"``, ``"holo-7b"``, ``"tinyclick"``.
-            Defaults to ShowUI-2B (Apache-2.0).
+        model: Alias such as ``"showui-2b"``, ``"florence-2-base"``,
+            ``"qwen3-vl-2b"``, ``"moondream"``. Defaults to ShowUI-2B.
         **kwargs: Forwarded to the family constructor: ``device``,
             ``query`` / ``prompt`` (initial instruction), ``max_new_tokens``.
 
@@ -87,6 +88,9 @@ def LibreGround(model: str = _DEFAULT_MODEL, **kwargs):
         ``Results.points``.
     """
     key = str(model).strip().lower().replace("_", "-")
+    blocked = _UNVERIFIED_ALIASES.get(key)
+    if blocked is not None:
+        raise ValueError(blocked)
     match = _ALIASES.get(key)
     if match is None:
         raise ValueError(
@@ -103,11 +107,7 @@ __all__ = [
     "GroundAPIMixin",
     "HOSTED_SNAPSHOTS",
     "LibreShowUI",
-    "LibreHolo",
-    "LibreUITARS",
-    "LibreTinyClick",
     "LibreGroundFlorence2",
-    "LibreGroundLocateAnything",
     "LibreGroundMoondream",
     "LibreGroundQwen3VL",
 ]
