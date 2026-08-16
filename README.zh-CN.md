@@ -118,7 +118,7 @@ libreyolo predict --model yolo9-t --source screen            # 屏幕捕获
 | **视频嵌入** | V-JEPA 2（片段级嵌入，另有可训练注意力探针的视频分类） |
 | **人体网格** | SAM 3D Body |
 | **图像复原** | NAFNet、QuickSRNet、Real-ESRGAN、SwinIR |
-| **背景移除** | BiRefNet、FeyNobg |
+| **背景移除** | BiRefNet、FeyNobg、BEN2 |
 | **OCR** | PP-OCR |
 | **点检测** | FOMO、LocateAnything |
 | **视线估计** | L2CS |
