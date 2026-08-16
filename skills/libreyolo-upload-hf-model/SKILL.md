@@ -312,6 +312,8 @@ LibreDepthAnythingV2l-depth.pt, LibreDepthAnythingV2g-depth.pt,
 
 LibreDepthAnything3l-depth.pt,
 
+LibreMoGe2s-normal.pt, LibreMoGe2b-normal.pt, LibreMoGe2l-normal.pt,
+
 LibreZipDepthb-depth.pt, LibreZipDepthbnpu-depth.pt,
 
 LibreFOMOs-point.pt, LibreFOMOm-point.pt, LibreFOMOl-point.pt

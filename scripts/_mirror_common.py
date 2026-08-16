@@ -30,7 +30,12 @@ def gitattributes() -> str:
     return fetch_text(GITATTRIBUTES_SOURCE)
 
 
-def parse_args(description: str, sizes: list[str]) -> argparse.Namespace:
+def parse_args(
+    description: str,
+    sizes: list[str],
+    *,
+    create_staging: bool = True,
+) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
         "sizes",
@@ -50,9 +55,10 @@ def parse_args(description: str, sizes: list[str]) -> argparse.Namespace:
         help="stage only; do not create or push the Hugging Face repo",
     )
     args = parser.parse_args()
-    if args.staging is None:
+    if args.staging is None and create_staging:
         args.staging = Path(tempfile.mkdtemp(prefix="libreyolo-mirror-"))
-    args.staging.mkdir(parents=True, exist_ok=True)
+    if create_staging:
+        args.staging.mkdir(parents=True, exist_ok=True)
     return args
 
 
@@ -60,5 +66,7 @@ def check_five_file_contract(out: Path) -> list[str]:
     """The contract in skills/libreyolo-upload-hf-model: exactly five files."""
     files = sorted(p.name for p in out.iterdir() if p.is_file())
     if len(files) != 5:
-        raise SystemExit(f"{out.name}: expected exactly 5 files, got {len(files)}: {files}")
+        raise SystemExit(
+            f"{out.name}: expected exactly 5 files, got {len(files)}: {files}"
+        )
     return files
