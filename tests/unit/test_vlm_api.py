@@ -4,6 +4,8 @@
 a bare instance without downloading or loading any model.
 """
 
+import json
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -44,6 +46,8 @@ class TestSetClasses:
         m = _bare_model()
         with pytest.raises(ValueError):
             m.set_classes([])
+        with pytest.raises(ValueError, match="non-empty"):
+            m.set_classes(["boat", "   "])
 
     def test_string_or_scalar_raises(self):
         # A bare string would enumerate into one-character classes; reject it.
@@ -116,6 +120,155 @@ class TestFactoryResolution:
         # Raises during resolution, before any model download/load.
         with pytest.raises(ValueError):
             LibreVLM("definitely-not-a-real-model")
+
+
+class TestReferenceInspection:
+    """VLM references can be classified without loading model weights."""
+
+    @staticmethod
+    def _write_contract(directory: Path, **updates) -> Path:
+        directory.mkdir()
+        contract = {
+            "schema": 1,
+            "family": "qwen3vl",
+            "size": "2b",
+            "base_repo": "Qwen/Qwen3-VL-2B-Instruct",
+            "base_revision": None,
+            "names": ["person"],
+            "bbox_key": "bbox_2d",
+            "coord_divisor": 1000.0,
+            "box_format": "xyxy",
+            "prompt": "Detect person.",
+            "task": "detect",
+        }
+        contract.update(updates)
+        (directory / "libreyolo_vlm.json").write_text(json.dumps(contract))
+        (directory / "adapter_config.json").write_text(
+            json.dumps({"peft_type": "LORA"})
+        )
+        (directory / "adapter_model.safetensors").write_bytes(b"adapter")
+        return directory
+
+    def test_all_aliases_are_exposed_and_inspectable(self):
+        from libreyolo.models import vlm as vlm_module
+        from libreyolo.models.vlm import (
+            _ALIASES,
+            _LAZY_ALIASES,
+            _MODUS_ALIASES,
+            get_vlm_aliases,
+            inspect_vlm_reference,
+        )
+
+        expected = tuple(
+            sorted(set(_ALIASES) | set(_LAZY_ALIASES) | set(_MODUS_ALIASES))
+        )
+        aliases = get_vlm_aliases()
+
+        assert aliases == expected
+        assert isinstance(aliases, tuple)
+        assert all(inspect_vlm_reference(alias) is not None for alias in aliases)
+        assert {
+            "VLMReference",
+            "get_vlm_aliases",
+            "inspect_vlm_reference",
+        } <= set(vlm_module.__all__)
+
+    def test_alias_metadata_is_immutable_and_does_not_construct_model(
+        self, monkeypatch
+    ):
+        from libreyolo.models.vlm import inspect_vlm_reference
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        def fail_if_constructed(*_args, **_kwargs):
+            raise AssertionError("reference inspection constructed a model")
+
+        monkeypatch.setattr(LibreQwen3VL, "__init__", fail_if_constructed)
+        reference = inspect_vlm_reference("  QWEN3-VL-4B  ")
+
+        assert reference is not None
+        assert reference.family == "qwen3vl"
+        assert reference.size == "4b"
+        assert reference.trainable is True
+        assert reference.trainable_sizes == ("2b", "4b")
+        assert reference.checkpoint is False
+        with pytest.raises(FrozenInstanceError):
+            reference.size = "2b"
+
+    def test_lazy_alias_reports_nontrainable_family(self):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        reference = inspect_vlm_reference("sensenova-vision")
+
+        assert reference is not None
+        assert reference.family == "sensenovavision"
+        assert reference.size == "7b"
+        assert reference.trainable is False
+        assert reference.trainable_sizes == ()
+        assert reference.checkpoint is False
+
+    def test_schema_one_checkpoint_is_inspected_without_loading(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        checkpoint = self._write_contract(tmp_path / "checkpoint")
+        reference = inspect_vlm_reference(checkpoint)
+
+        assert reference is not None
+        assert reference.family == "qwen3vl"
+        assert reference.size == "2b"
+        assert reference.trainable is True
+        assert reference.trainable_sizes == ("2b", "4b")
+        assert reference.checkpoint is True
+
+    def test_valid_unknown_family_contract_remains_a_vlm_reference(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        checkpoint = self._write_contract(
+            tmp_path / "future-checkpoint", family="future-vlm", size="tiny"
+        )
+        reference = inspect_vlm_reference(checkpoint)
+
+        assert reference is not None
+        assert reference.family == "future-vlm"
+        assert reference.size == "tiny"
+        assert reference.trainable is False
+        assert reference.trainable_sizes == ()
+        assert reference.checkpoint is True
+
+    def test_incomplete_checkpoint_artifact_fails_reference_inspection(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        checkpoint = self._write_contract(tmp_path / "incomplete")
+        (checkpoint / "adapter_model.safetensors").unlink()
+
+        with pytest.raises(ValueError, match="no adapter tensor payload"):
+            inspect_vlm_reference(checkpoint)
+
+    def test_malformed_contract_raises_its_validation_error(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        checkpoint = tmp_path / "malformed"
+        checkpoint.mkdir()
+        (checkpoint / "libreyolo_vlm.json").write_text('{"schema": 1}')
+
+        with pytest.raises(ValueError, match="missing 'family'"):
+            inspect_vlm_reference(checkpoint)
+
+    def test_non_file_contract_marker_also_fails_closed(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        checkpoint = tmp_path / "wrong-contract-type"
+        checkpoint.mkdir()
+        (checkpoint / "libreyolo_vlm.json").mkdir()
+
+        with pytest.raises(ValueError, match="Unreadable VLM checkpoint contract"):
+            inspect_vlm_reference(checkpoint)
+
+    def test_non_vlm_references_return_none(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        assert inspect_vlm_reference("LibreYOLO9s.pt") is None
+        assert inspect_vlm_reference(tmp_path) is None
+        assert inspect_vlm_reference(object()) is None
 
 
 class TestLFM2CoordinateConvention:

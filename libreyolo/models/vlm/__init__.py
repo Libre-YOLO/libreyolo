@@ -17,6 +17,8 @@ See ``docs/librevlm_design.md`` and ``docs/adr/0002-librevlm-contract.md``.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Tuple, Type
 
 from .base import LibreVLMModel
@@ -92,11 +94,93 @@ _MODUS_ALIASES: Dict[str, str] = {
 _DEFAULT_MODEL = "qwen3-vl-4b"
 
 
+@dataclass(frozen=True)
+class VLMReference:
+    """Side-effect-free metadata for a recognized LibreVLM reference."""
+
+    family: str
+    size: str
+    trainable: bool
+    trainable_sizes: tuple[str, ...]
+    checkpoint: bool
+
+
+def _family_training_metadata(family: str) -> tuple[bool, tuple[str, ...]]:
+    """Return training capability without constructing a model."""
+    for family_cls, _size in _ALIASES.values():
+        if family_cls.FAMILY == family:
+            return bool(family_cls.TRAINABLE), tuple(family_cls.TRAINABLE_SIZES)
+
+    # These families are imported lazily to avoid circular package imports.
+    # Both currently inherit the non-trainable LibreVLMModel defaults.
+    if family in {"sensenovavision", "libremodus"}:
+        return False, ()
+    return False, ()
+
+
+def _reference(family: str, size: str, *, checkpoint: bool) -> VLMReference:
+    trainable, trainable_sizes = _family_training_metadata(family)
+    return VLMReference(
+        family=family,
+        size=size,
+        trainable=trainable,
+        trainable_sizes=trainable_sizes,
+        checkpoint=checkpoint,
+    )
+
+
+def get_vlm_aliases() -> tuple[str, ...]:
+    """Return every accepted LibreVLM alias in stable sorted order."""
+    return tuple(sorted(set(_ALIASES) | set(_LAZY_ALIASES) | set(_MODUS_ALIASES)))
+
+
+def inspect_vlm_reference(model) -> VLMReference | None:
+    """Inspect a VLM alias or schema-1 checkpoint directory without loading it.
+
+    Unknown aliases and directories without a VLM contract return ``None``.
+    A directory that carries ``libreyolo_vlm.json`` is always parsed through
+    the strict checkpoint-contract reader, so malformed contracts raise their
+    validation error instead of falling through to another model factory.
+
+    This function only reads the small local contract file when present. It
+    never constructs a model, resolves a Hugging Face repository, or downloads
+    weights.
+    """
+    from .training.checkpoint import (
+        CONTRACT_FILENAME,
+        read_contract,
+        validate_vlm_checkpoint_artifact,
+    )
+
+    try:
+        path = Path(model)
+    except (TypeError, ValueError):
+        return None
+
+    contract_path = path / CONTRACT_FILENAME
+    if path.is_dir() and (contract_path.exists() or contract_path.is_symlink()):
+        contract = read_contract(path)
+        validate_vlm_checkpoint_artifact(path)
+        return _reference(contract["family"], contract["size"], checkpoint=True)
+
+    key = str(model).strip().lower()
+    match = _ALIASES.get(key)
+    if match is not None:
+        family_cls, size = match
+        return _reference(family_cls.FAMILY, size, checkpoint=False)
+    if key in _LAZY_ALIASES:
+        return _reference("sensenovavision", _LAZY_ALIASES[key], checkpoint=False)
+    if key in _MODUS_ALIASES:
+        return _reference("libremodus", _MODUS_ALIASES[key], checkpoint=False)
+    return None
+
+
 def _load_checkpoint(path, **kwargs) -> LibreVLMModel:
     """Load a fine-tune checkpoint directory produced by ``train()``."""
-    from .training.checkpoint import read_contract
+    from .training.checkpoint import read_contract, validate_vlm_checkpoint_artifact
 
     contract = read_contract(path)
+    validate_vlm_checkpoint_artifact(path)
     family_classes = {cls.FAMILY: cls for cls, _size in _ALIASES.values()}
     family_cls = family_classes.get(contract["family"])
     if family_cls is None:
@@ -143,7 +227,7 @@ def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
     if match is None:
         raise ValueError(
             f"Unknown VLM model {model!r}. Known aliases: "
-            f"{', '.join(sorted(set(_ALIASES) | set(_LAZY_ALIASES) | set(_MODUS_ALIASES)))}."
+            f"{', '.join(get_vlm_aliases())}."
         )
     family_cls, size = match
     return family_cls(size=size, **kwargs)
@@ -164,6 +248,9 @@ def __getattr__(name: str):
 __all__ = [
     "LibreVLM",
     "LibreVLMModel",
+    "VLMReference",
+    "get_vlm_aliases",
+    "inspect_vlm_reference",
     "LibreLFM2VL",
     "LibreQwen3VL",
     "LibreSmolVLM2",

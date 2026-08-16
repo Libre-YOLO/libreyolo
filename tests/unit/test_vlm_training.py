@@ -301,7 +301,29 @@ class TestVLMChatCollator:
 class _StubSaveable:
     def save_pretrained(self, directory):
         Path(directory).mkdir(parents=True, exist_ok=True)
-        (Path(directory) / "adapter_config.json").write_text("{}", encoding="utf-8")
+        (Path(directory) / "adapter_config.json").write_text(
+            '{"peft_type":"LORA"}', encoding="utf-8"
+        )
+        (Path(directory) / "adapter_model.safetensors").write_bytes(b"adapter")
+
+
+class _FilesSaveable:
+    def __init__(self, files):
+        self.files = files
+
+    def save_pretrained(self, directory):
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        for name, contents in self.files.items():
+            (directory / name).write_text(contents, encoding="utf-8")
+
+
+class _FailingSaveable:
+    def save_pretrained(self, directory):
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "partial-processor.json").write_text("new", encoding="utf-8")
+        raise RuntimeError("injected save failure")
 
 
 class _StubWrapper:
@@ -315,14 +337,17 @@ class _StubWrapper:
     names = {0: "cat", 1: "dog"}
     processor = _StubSaveable()
 
-    def _detection_prompt(self):
+    def _format_detection_prompt(self, names):
         return (
-            "Detect all instances of: cat, dog. "
+            f"Detect all instances of: {names}. "
             "Output the result as a JSON array, one object per instance: "
             '[{"bbox_2d": [x1, y1, x2, y2], "label": "..."}]. '
             "Only include objects that are actually visible; if there are none, "
             "respond with an empty array []."
         )
+
+    def _detection_prompt(self):
+        return self._format_detection_prompt(", ".join(self.names.values()))
 
 
 class TestCheckpointContract:
@@ -348,10 +373,290 @@ class TestCheckpointContract:
         assert contract["task"] == "detect"
         assert contract["metrics"]["train/loss"] == 0.5
 
+    @pytest.mark.parametrize("bad_metric", [float("nan"), float("inf"), True])
+    def test_checkpoint_rejects_nonfinite_or_boolean_metrics(
+        self, tmp_path, bad_metric
+    ):
+        target = tmp_path / "bad-metrics"
+
+        with pytest.raises(ValueError, match="metrics must be finite"):
+            save_vlm_checkpoint(
+                target,
+                peft_model=_StubSaveable(),
+                processor=_StubSaveable(),
+                wrapper=_StubWrapper(),
+                metrics={"train/loss": bad_metric},
+            )
+
+        assert not target.exists()
+
+    def test_save_refuses_incomplete_adapter_before_publication(self, tmp_path):
+        target = tmp_path / "incomplete"
+
+        with pytest.raises(ValueError, match="no adapter tensor payload"):
+            save_vlm_checkpoint(
+                target,
+                peft_model=_FilesSaveable(
+                    {"adapter_config.json": '{"peft_type":"LORA"}'}
+                ),
+                processor=_FilesSaveable({"preprocessor_config.json": "processor"}),
+                wrapper=_StubWrapper(),
+            )
+
+        assert not target.exists()
+
+    @pytest.mark.parametrize(
+        "adapter_files",
+        [
+            {
+                "adapter_config.json": '{"peft_type":"LORA"}',
+                "adapter_model-00001-of-00002.safetensors": "partial",
+            },
+            {
+                "adapter_config.json": '{"peft_type":"LORA"}',
+                "adapter_model.safetensors.index.json": json.dumps(
+                    {
+                        "weight_map": {
+                            "a": "adapter_model-00001-of-00002.safetensors",
+                            "b": "adapter_model-00002-of-00002.safetensors",
+                        }
+                    }
+                ),
+                "adapter_model-00001-of-00002.safetensors": "first",
+            },
+            {
+                "adapter_config.json": '{"peft_type":"LORA"}',
+                "adapter_model.safetensors.index.json": json.dumps(
+                    {"weight_map": {"a": []}}
+                ),
+            },
+            {
+                "adapter_config.json": '{"peft_type":"LORA"}',
+                "adapter_model.safetensors.index.json": json.dumps(
+                    {
+                        "weight_map": {
+                            "a": "adapter_model-00001-of-00002.safetensors",
+                            "b": "adapter_model-00002-of-00002.safetensors",
+                        }
+                    }
+                ),
+                "adapter_model-00001-of-00002.safetensors": "first",
+                "adapter_model-00002-of-00002.safetensors": "second",
+            },
+        ],
+        ids=["loose-shard", "incomplete-index", "malformed-index", "complete-index"],
+    )
+    def test_sharded_adapters_are_rejected_before_publication(
+        self, tmp_path, adapter_files
+    ):
+        target = tmp_path / "sharded-adapter"
+
+        with pytest.raises(
+            ValueError, match=r"sharded tensor payload.*PEFT loader cannot load"
+        ):
+            save_vlm_checkpoint(
+                target,
+                peft_model=_FilesSaveable(adapter_files),
+                processor=_FilesSaveable({"preprocessor_config.json": "processor"}),
+                wrapper=_StubWrapper(),
+            )
+
+        assert not target.exists()
+
+    def test_full_model_shard_index_must_be_complete(self, tmp_path):
+        target = tmp_path / "incomplete-full"
+        index = json.dumps(
+            {"weight_map": {"layer.weight": "model-00001-of-00002.safetensors"}}
+        )
+
+        with pytest.raises(ValueError, match="missing or empty shards"):
+            save_vlm_checkpoint(
+                target,
+                peft_model=_FilesSaveable(
+                    {
+                        "config.json": "{}",
+                        "model.safetensors.index.json": index,
+                    }
+                ),
+                processor=_FilesSaveable({"preprocessor_config.json": "processor"}),
+                wrapper=_StubWrapper(),
+            )
+
+        assert not target.exists()
+
+    def test_complete_indexed_full_model_is_publishable(self, tmp_path):
+        target = tmp_path / "indexed-full"
+        index = json.dumps(
+            {
+                "weight_map": {
+                    "a": "model-00001-of-00002.safetensors",
+                    "b": "model-00002-of-00002.safetensors",
+                }
+            }
+        )
+
+        save_vlm_checkpoint(
+            target,
+            peft_model=_FilesSaveable(
+                {
+                    "config.json": "{}",
+                    "model.safetensors.index.json": index,
+                    "model-00001-of-00002.safetensors": "first",
+                    "model-00002-of-00002.safetensors": "second",
+                }
+            ),
+            processor=_FilesSaveable({"preprocessor_config.json": "processor"}),
+            wrapper=_StubWrapper(),
+        )
+
+        assert read_contract(target)["family"] == "qwen3vl"
+        assert (target / "model.safetensors.index.json").is_file()
+
     def test_is_vlm_checkpoint_negative_cases(self, tmp_path):
         assert not is_vlm_checkpoint(tmp_path)  # dir without contract
         assert not is_vlm_checkpoint(tmp_path / "missing")
         assert not is_vlm_checkpoint("qwen3-vl-4b")  # alias string
+
+    @pytest.mark.parametrize(
+        ("first_files", "replacement_files"),
+        [
+            (
+                {"config.json": "{}", "model.safetensors": "full-weights"},
+                {
+                    "adapter_config.json": '{"peft_type":"LORA"}',
+                    "adapter_model.safetensors": "adapter-weights",
+                },
+            ),
+            (
+                {
+                    "adapter_config.json": '{"peft_type":"LORA"}',
+                    "adapter_model.safetensors": "adapter-weights",
+                },
+                {"config.json": "{}", "model.safetensors": "full-weights"},
+            ),
+        ],
+    )
+    def test_save_replaces_existing_checkpoint_without_stale_files(
+        self, tmp_path, first_files, replacement_files
+    ):
+        target = tmp_path / "best"
+        processor = _FilesSaveable({"preprocessor_config.json": "processor"})
+        save_vlm_checkpoint(
+            target,
+            peft_model=_FilesSaveable(first_files),
+            processor=processor,
+            wrapper=_StubWrapper(),
+            metrics={"train/loss": 1.0},
+        )
+
+        save_vlm_checkpoint(
+            target,
+            peft_model=_FilesSaveable(replacement_files),
+            processor=processor,
+            wrapper=_StubWrapper(),
+            metrics={"train/loss": 0.25},
+        )
+
+        assert all(not (target / name).exists() for name in first_files)
+        assert all(
+            (target / name).read_text(encoding="utf-8") == contents
+            for name, contents in replacement_files.items()
+        )
+        assert is_vlm_checkpoint(target)
+        assert read_contract(target)["metrics"] == {"train/loss": 0.25}
+
+    def test_failed_replacement_leaves_existing_checkpoint_intact(self, tmp_path):
+        target = tmp_path / "best"
+        save_vlm_checkpoint(
+            target,
+            peft_model=_FilesSaveable(
+                {"config.json": "{}", "model.safetensors": "full-weights"}
+            ),
+            processor=_FilesSaveable(
+                {"preprocessor_config.json": "original-processor"}
+            ),
+            wrapper=_StubWrapper(),
+            metrics={"train/loss": 1.0},
+        )
+        original = {
+            path.relative_to(target): path.read_bytes()
+            for path in target.rglob("*")
+            if path.is_file()
+        }
+
+        with pytest.raises(RuntimeError, match="injected save failure"):
+            save_vlm_checkpoint(
+                target,
+                peft_model=_FilesSaveable(
+                    {
+                        "adapter_config.json": '{"peft_type":"LORA"}',
+                        "adapter_model.safetensors": "adapter-weights",
+                    }
+                ),
+                processor=_FailingSaveable(),
+                wrapper=_StubWrapper(),
+                metrics={"train/loss": 0.25},
+            )
+
+        current = {
+            path.relative_to(target): path.read_bytes()
+            for path in target.rglob("*")
+            if path.is_file()
+        }
+        assert current == original
+        assert is_vlm_checkpoint(target)
+        assert read_contract(target)["metrics"] == {"train/loss": 1.0}
+
+    def test_publication_failure_rolls_back_existing_checkpoint(
+        self, tmp_path, monkeypatch
+    ):
+        from libreyolo.models.vlm.training import checkpoint as checkpoint_module
+
+        target = tmp_path / "best"
+        save_vlm_checkpoint(
+            target,
+            peft_model=_FilesSaveable(
+                {"config.json": "{}", "model.safetensors": "full-weights"}
+            ),
+            processor=_FilesSaveable(
+                {"preprocessor_config.json": "original-processor"}
+            ),
+            wrapper=_StubWrapper(),
+        )
+        original = {
+            path.relative_to(target): path.read_bytes()
+            for path in target.rglob("*")
+            if path.is_file()
+        }
+        real_replace = checkpoint_module.os.replace
+        calls = 0
+
+        def fail_publication(source, destination):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected publication failure")
+            return real_replace(source, destination)
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", fail_publication)
+
+        with pytest.raises(OSError, match="injected publication failure"):
+            save_vlm_checkpoint(
+                target,
+                peft_model=_StubSaveable(),
+                processor=_FilesSaveable(
+                    {"preprocessor_config.json": "replacement-processor"}
+                ),
+                wrapper=_StubWrapper(),
+            )
+
+        restored = {
+            path.relative_to(target): path.read_bytes()
+            for path in target.rglob("*")
+            if path.is_file()
+        }
+        assert restored == original
+        assert not list(tmp_path.glob(".best.backup-*"))
 
     def test_wrong_schema_rejected(self, tmp_path):
         (tmp_path / CONTRACT_FILENAME).write_text(
@@ -561,6 +866,144 @@ class TestCheckpointContract:
         with pytest.raises(ValueError, match=match):
             LibreQwen3VL(size="2b", checkpoint_dir=str(target), device="cpu")
 
+    def test_direct_constructor_rejects_incomplete_checkpoint_before_base_init(
+        self, tmp_path, monkeypatch
+    ):
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        target = tmp_path / "incomplete"
+        save_vlm_checkpoint(
+            target,
+            peft_model=_StubSaveable(),
+            processor=_StubSaveable(),
+            wrapper=_StubWrapper(),
+        )
+        (target / "adapter_model.safetensors").unlink()
+        monkeypatch.setattr(
+            BaseModel,
+            "__init__",
+            lambda *_args, **_kwargs: pytest.fail("incomplete adapter loaded base"),
+        )
+
+        with pytest.raises(ValueError, match="no adapter tensor payload"):
+            LibreQwen3VL(size="2b", checkpoint_dir=str(target), device="cpu")
+
+    def test_direct_constructor_rejects_indexed_adapter_before_base_init(
+        self, tmp_path, monkeypatch
+    ):
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        target = tmp_path / "indexed-adapter"
+        save_vlm_checkpoint(
+            target,
+            peft_model=_StubSaveable(),
+            processor=_StubSaveable(),
+            wrapper=_StubWrapper(),
+        )
+        (target / "adapter_model.safetensors").unlink()
+        (target / "adapter_model.safetensors.index.json").write_text(
+            json.dumps(
+                {
+                    "weight_map": {
+                        "a": "adapter_model-00001-of-00002.safetensors",
+                        "b": "adapter_model-00002-of-00002.safetensors",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (target / "adapter_model-00001-of-00002.safetensors").write_bytes(b"first")
+        (target / "adapter_model-00002-of-00002.safetensors").write_bytes(b"second")
+        monkeypatch.setattr(
+            BaseModel,
+            "__init__",
+            lambda *_args, **_kwargs: pytest.fail("indexed adapter loaded base"),
+        )
+
+        with pytest.raises(
+            ValueError, match=r"sharded tensor payload.*PEFT loader cannot load"
+        ):
+            LibreQwen3VL(size="2b", checkpoint_dir=str(target), device="cpu")
+
+    def test_direct_adapter_constructor_requires_peft_before_base_init(
+        self, tmp_path, monkeypatch
+    ):
+        import sys
+
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        target = tmp_path / "adapter"
+        save_vlm_checkpoint(
+            target,
+            peft_model=_StubSaveable(),
+            processor=_StubSaveable(),
+            wrapper=_StubWrapper(),
+        )
+        monkeypatch.setitem(sys.modules, "peft", None)
+        monkeypatch.setattr(
+            BaseModel,
+            "__init__",
+            lambda *_args, **_kwargs: pytest.fail("missing PEFT loaded the base"),
+        )
+
+        with pytest.raises(ImportError, match=r"libreyolo\[vlm\]"):
+            LibreQwen3VL(size="2b", checkpoint_dir=str(target), device="cpu")
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("family", "lfm2vl"),
+            ("size", "4b"),
+            ("base_repo", "other/base"),
+            ("base_revision", "a" * 40),
+            ("bbox_key", "legacy_box"),
+            ("coord_divisor", 512.0),
+            ("box_format", "xywh"),
+        ],
+    )
+    def test_resume_contract_must_match_pristine_base(self, tmp_path, field, value):
+        from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
+
+        target = tmp_path / field
+        save_vlm_checkpoint(
+            target,
+            peft_model=_StubSaveable(),
+            processor=_StubSaveable(),
+            wrapper=_StubWrapper(),
+        )
+        contract_path = target / CONTRACT_FILENAME
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract[field] = value
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+
+        trainer = object.__new__(VLMDetectionTrainer)
+        trainer.wrapper = _StubWrapper()
+        with pytest.raises(ValueError, match=field):
+            trainer._validate_resume_contract(target)
+
+    def test_resume_contract_requires_reconstructible_prompt(self, tmp_path):
+        from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
+
+        target = tmp_path / "prompt"
+        save_vlm_checkpoint(
+            target,
+            peft_model=_StubSaveable(),
+            processor=_StubSaveable(),
+            wrapper=_StubWrapper(),
+        )
+        contract_path = target / CONTRACT_FILENAME
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["prompt"] = "A custom learned prompt."
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+
+        trainer = object.__new__(VLMDetectionTrainer)
+        trainer.wrapper = _StubWrapper()
+        with pytest.raises(ValueError, match="exact prompt"):
+            trainer._validate_resume_contract(target)
+
 
 # ---------------------------------------------------------------------------
 # Gating and recipes
@@ -587,6 +1030,15 @@ class TestTrainGating:
 
         with pytest.raises(NotImplementedError, match="size '8b'.*2b, 4b"):
             LibreQwen3VL.train(self._bare(LibreQwen3VL, "8b"), data="unused.yaml")
+
+    def test_loaded_checkpoint_is_rejected_before_trainer_setup(self, tmp_path):
+        from libreyolo.models.vlm import LibreQwen3VL
+
+        model = self._bare(LibreQwen3VL, "2b")
+        model._checkpoint_dir = tmp_path / "merged-adapter"
+
+        with pytest.raises(NotImplementedError, match="already been merged"):
+            LibreQwen3VL.train(model, data="unused.yaml")
 
     @pytest.mark.parametrize(
         "module_name, class_name, match",
@@ -618,3 +1070,245 @@ class TestTrainGating:
     def test_unknown_recipe_raises(self):
         with pytest.raises(NotImplementedError):
             get_recipe("not-a-family")
+
+    def test_download_scripts_are_an_explicit_vlm_train_config_field(self):
+        from libreyolo.models.vlm.training.trainer import VLMTrainConfig
+
+        assert VLMTrainConfig().allow_download_scripts is False
+        assert (
+            VLMTrainConfig(allow_download_scripts=True).allow_download_scripts is True
+        )
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"allow_download_scripts": "false"}, "allow_download_scripts"),
+            ({"lora": 1}, "lora must be a bool"),
+            ({"workers": -1}, "workers"),
+            ({"hflip": 1.1}, "hflip"),
+            ({"lr0": 0.0}, "lr0"),
+            ({"epochs": True}, "epochs"),
+            ({"imgsz": 640}, "Unsupported VLM train.*imgsz"),
+            ({"epoch": 2}, "Unsupported VLM train.*epoch"),
+        ],
+    )
+    def test_vlm_trainer_rejects_invalid_public_config_types(self, kwargs, match):
+        from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
+
+        with pytest.raises(ValueError, match=match):
+            VLMDetectionTrainer(_StubWrapper(), data="unused.yaml", **kwargs)
+
+    def test_vlm_lora_dependency_floor_rejects_prerelease(self, monkeypatch):
+        import sys
+        from types import SimpleNamespace
+
+        from libreyolo.models.vlm.training import trainer as trainer_module
+
+        monkeypatch.setitem(sys.modules, "peft", SimpleNamespace())
+        monkeypatch.setattr(trainer_module, "version", lambda _name: "0.17.0rc1")
+
+        with pytest.raises(ImportError, match="peft>=0.17.0"):
+            trainer_module.require_vlm_lora_dependencies()
+
+    @pytest.mark.parametrize(
+        ("step", "total", "accumulate", "expected"),
+        [
+            (1, 1, 8, 1),
+            (1, 10, 8, 8),
+            (8, 10, 8, 8),
+            (9, 10, 8, 2),
+            (10, 10, 8, 2),
+        ],
+    )
+    def test_accumulation_uses_the_true_final_group_size(
+        self, step, total, accumulate, expected
+    ):
+        from libreyolo.models.vlm.training.trainer import (
+            _accumulation_group_size,
+        )
+
+        assert _accumulation_group_size(step, total, accumulate) == expected
+
+    @pytest.mark.parametrize(
+        ("requested", "expected"),
+        [("cpu", "cpu"), ("0", "cuda:0"), (1, "cuda:1")],
+    )
+    def test_train_device_uses_standard_libreyolo_forms(self, requested, expected):
+        from libreyolo.models.vlm.training.trainer import (
+            VLMDetectionTrainer,
+            VLMTrainConfig,
+        )
+
+        trainer = object.__new__(VLMDetectionTrainer)
+        trainer.config = VLMTrainConfig(device=requested)
+        trainer.wrapper = type("Wrapper", (), {"device": torch.device("cpu")})()
+
+        assert str(trainer._resolve_device()) == expected
+
+    def test_restore_synchronizes_wrapper_device_and_dtype(self):
+        from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
+
+        model = torch.nn.Linear(2, 2).to(dtype=torch.float64)
+        wrapper = type(
+            "Wrapper",
+            (),
+            {
+                "model": model,
+                "device": torch.device("cpu"),
+                "_model_dtype": torch.float32,
+            },
+        )()
+        trainer = object.__new__(VLMDetectionTrainer)
+        trainer.wrapper = wrapper
+
+        trainer._restore_inference_model(model)
+
+        assert wrapper.device == next(model.parameters()).device
+        assert wrapper._model_dtype == torch.float64
+
+    def test_training_dtype_checks_the_requested_cuda_device(self, monkeypatch):
+        from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
+
+        entered = []
+
+        class DeviceContext:
+            def __init__(self, device):
+                entered.append(str(device))
+
+            def __enter__(self):
+                return None
+
+            def __exit__(self, *_args):
+                return False
+
+        monkeypatch.setattr(torch.cuda, "device", DeviceContext)
+        monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
+
+        dtype = VLMDetectionTrainer._training_dtype(torch.device("cuda:2"))
+
+        assert dtype == torch.bfloat16
+        assert entered == ["cuda:2"]
+
+    def test_training_rejects_unscaled_fp16_cuda(self, monkeypatch):
+        from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
+
+        class DeviceContext:
+            def __init__(self, _device):
+                pass
+
+            def __enter__(self):
+                return None
+
+            def __exit__(self, *_args):
+                return False
+
+        monkeypatch.setattr(torch.cuda, "device", DeviceContext)
+        monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
+
+        with pytest.raises(RuntimeError, match="BF16-capable"):
+            VLMDetectionTrainer._training_dtype(torch.device("cuda:0"))
+
+    @pytest.mark.parametrize("failure_stage", ["optimization", "callback"])
+    def test_setup_failure_restores_the_inference_wrapper(
+        self, failure_stage, monkeypatch, tmp_path
+    ):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+
+        from libreyolo.models.vlm.training import trainer as trainer_module
+        from libreyolo.models.vlm.training.trainer import (
+            VLMDetectionTrainer,
+            VLMTrainConfig,
+        )
+
+        wrapper = _StubWrapper()
+        wrapper.device = torch.device("cpu")
+        wrapper._model_dtype = torch.float32
+        wrapper.model = torch.nn.Linear(2, 2)
+
+        def set_classes(names):
+            wrapper.names = dict(enumerate(names))
+
+        wrapper.set_classes = set_classes
+        trainer = object.__new__(VLMDetectionTrainer)
+        trainer.config = VLMTrainConfig(
+            data="unused.yaml", epochs=1, device="cpu", gradient_checkpointing=False
+        )
+        trainer.wrapper = wrapper
+        trainer.recipe = get_recipe("qwen3vl")
+        trainer.save_dir = tmp_path / "run"
+        trainer.save_dir.mkdir()
+        monkeypatch.setattr(
+            trainer_module,
+            "load_data_config",
+            lambda *_args, **_kwargs: {"names": ["cat"], "train": "unused"},
+        )
+        monkeypatch.setattr(
+            trainer,
+            "_build_dataloaders",
+            lambda *_args, **_kwargs: ([{}], None),
+        )
+        monkeypatch.setattr(
+            trainer, "_build_train_model", lambda _resume: wrapper.model
+        )
+        restored = []
+        monkeypatch.setattr(
+            trainer, "_restore_inference_model", lambda model: restored.append(model)
+        )
+
+        if failure_stage == "optimization":
+            monkeypatch.setattr(
+                trainer,
+                "_prepare_optimization",
+                lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("setup")),
+            )
+            trainer.callbacks = SimpleNamespace()
+        else:
+            monkeypatch.setattr(
+                trainer,
+                "_prepare_optimization",
+                lambda *_args, **_kwargs: (
+                    1e-4,
+                    list(wrapper.model.parameters()),
+                    SimpleNamespace(),
+                    SimpleNamespace(),
+                    nullcontext(),
+                ),
+            )
+            trainer.callbacks = SimpleNamespace(
+                on_train_start=lambda _event: (_ for _ in ()).throw(
+                    RuntimeError("callback")
+                )
+            )
+
+        with pytest.raises(
+            RuntimeError, match=failure_stage.replace("optimization", "setup")
+        ):
+            trainer.run()
+
+        assert restored == [wrapper.model]
+
+    def test_validation_loss_must_be_finite(self):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+
+        from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
+
+        class NonFiniteModel(torch.nn.Module):
+            def forward(self, **_batch):
+                return SimpleNamespace(loss=torch.tensor(float("nan")))
+
+        trainer = object.__new__(VLMDetectionTrainer)
+        with pytest.raises(FloatingPointError, match="validation loss"):
+            trainer._eval_loss(
+                NonFiniteModel(), [{}], torch.device("cpu"), nullcontext()
+            )
+
+    def test_nonfinite_gradients_fail_before_optimizer_step(self):
+        from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
+
+        parameter = torch.nn.Parameter(torch.tensor(1.0))
+        parameter.grad = torch.tensor(float("inf"))
+
+        with pytest.raises(RuntimeError, match="non-finite"):
+            VLMDetectionTrainer._clip_gradients([parameter], 1.0)

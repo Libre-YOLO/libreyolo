@@ -5,11 +5,13 @@ Real training is covered in e2e/test_rf1_training.py.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 import typer
 from typer.testing import CliRunner
 
+from libreyolo.cli.commands import train as train_module
 from libreyolo.cli.commands.train import train_cmd
 from libreyolo.cli.parsing import KeyValueCommand
 
@@ -22,6 +24,684 @@ def _make_app() -> typer.Typer:
     app = typer.Typer()
     app.command("train", cls=KeyValueCommand)(train_cmd)
     return app
+
+
+def _write_vlm_checkpoint(directory: Path, *, size: str = "2b") -> Path:
+    from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+    directory.mkdir()
+    contract = {
+        "schema": 1,
+        "family": "qwen3vl",
+        "size": size,
+        "base_repo": f"Qwen/Qwen3-VL-{size.upper()}-Instruct",
+        "base_revision": LibreQwen3VL.HF_REVISIONS[size],
+        "names": ["person"],
+        "bbox_key": "bbox_2d",
+        "coord_divisor": 1000.0,
+        "box_format": "xyxy",
+        "prompt": LibreQwen3VL._format_detection_prompt(None, "person"),
+        "task": "detect",
+    }
+    (directory / "libreyolo_vlm.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
+    (directory / "adapter_config.json").write_text(
+        '{"peft_type":"LORA"}', encoding="utf-8"
+    )
+    (directory / "adapter_model.safetensors").write_bytes(b"adapter")
+    return directory
+
+
+def test_vlm_dry_run_uses_recipe_defaults_without_loading(monkeypatch):
+    monkeypatch.setattr(
+        "libreyolo.LibreVLM",
+        lambda *_args, **_kwargs: pytest.fail("dry-run must not load VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [
+            "data=coco8.yaml",
+            "model=qwen3-vl-2b",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["model_family"] == "qwen3vl"
+    assert data["resolved_config"] == {
+        "model": "qwen3-vl-2b",
+        "data": "coco8.yaml",
+        "family": "qwen3vl",
+        "size": "2b",
+        "task": "detect",
+        "epochs": 10,
+        "batch": 1,
+        "accumulate": 8,
+        "workers": 0,
+        "seed": 0,
+        "device": "auto",
+        "lr0": 1e-4,
+        "lora": True,
+        "gradient_checkpointing": True,
+        "vram_check": True,
+        "hflip": 0.5,
+        "project": "runs/vlm",
+        "name": "train",
+        "exist_ok": True,
+        "resume": None,
+        "allow_download_scripts": False,
+    }
+
+
+def test_vlm_dry_run_honors_compatible_overrides():
+    result = runner.invoke(
+        _make_app(),
+        [
+            "data=coco8.yaml",
+            "model=qwen3-vl-4b",
+            "epochs=2",
+            "batch=2",
+            "workers=1",
+            "seed=9",
+            "lr0=0.00002",
+            "lora=false",
+            "flip_prob=0.25",
+            "project=runs/custom",
+            "name=trial",
+            "exist_ok=false",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    config = json.loads(result.stdout)["resolved_config"]
+    assert config["epochs"] == 2
+    assert config["batch"] == 2
+    assert config["workers"] == 1
+    assert config["seed"] == 9
+    assert config["lr0"] == 2e-5
+    assert config["lora"] is False
+    assert config["hflip"] == 0.25
+    assert config["project"] == "runs/custom"
+    assert config["name"] == "trial"
+    assert config["exist_ok"] is False
+
+
+def test_vlm_dry_run_accepts_required_true_flags_and_full_ft_defaults(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("dry-run must not load VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [
+            "data=coco8.yaml",
+            "model=qwen3-vl-2b",
+            "task=detect",
+            "pretrained=true",
+            "val=true",
+            "epochs=1",
+            "batch=1",
+            "workers=0",
+            "flip_prob=0",
+            "lora=false",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = json.loads(result.stdout)["resolved_config"]
+    assert config["task"] == "detect"
+    assert config["epochs"] == 1
+    assert config["batch"] == 1
+    assert config["accumulate"] == 8
+    assert config["device"] == "auto"
+    assert config["gradient_checkpointing"] is True
+    assert config["vram_check"] is True
+    assert config["workers"] == 0
+    assert config["hflip"] == 0.0
+    assert config["lora"] is False
+    assert config["lr0"] == 2e-5
+
+
+@pytest.mark.parametrize(
+    ("option", "message"),
+    [
+        ("epochs=0", "epochs must be an integer >= 1"),
+        ("batch=0", "batch must be an integer >= 1"),
+        ("workers=-1", "workers must be an integer >= 0"),
+        ("flip_prob=-0.1", "flip_prob must be finite and within [0, 1]"),
+        ("flip_prob=1.1", "flip_prob must be finite and within [0, 1]"),
+        ("lr0=0", "lr0 must be a finite positive number"),
+        ("device=not-a-device", "Invalid VLM training device"),
+    ],
+)
+def test_vlm_dry_run_rejects_invalid_recipe_values_before_loading(
+    option, message, monkeypatch
+):
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("invalid VLM config loaded weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [
+            "data=coco8.yaml",
+            "model=qwen3-vl-2b",
+            option,
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_type_error"
+    assert message in data["message"]
+
+
+def test_vlm_rejects_non_bf16_cuda_before_loading(monkeypatch):
+    import torch
+
+    class DeviceContext:
+        def __init__(self, _device):
+            pass
+
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device", DeviceContext)
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("unsupported GPU loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        ["data=coco8.yaml", "model=qwen3-vl-2b", "device=auto", "--json"],
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["error"] == "config_unsupported"
+    assert "BF16-capable" in payload["message"]
+
+
+@pytest.mark.parametrize("data", ["", "missing-vlm-dataset.yaml"])
+def test_vlm_rejects_invalid_dataset_reference_before_loading(data, monkeypatch):
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("invalid dataset loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={data}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    payload = json.loads(result.stdout)
+    assert result.exit_code in {2, 3}, result.output
+    assert payload["error"] in {
+        "config_type_error",
+        "data_not_found",
+    }
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "expected_error"),
+    [
+        ("names: [cat\ntrain: images/train\n", "config_type_error"),
+        (
+            "path: .\ntrain: images/train\n"
+            "annotations:\n  train: annotations/train.json\n"
+            "names: [cat]\n",
+            "config_unsupported",
+        ),
+        ("path: .\ntrain: missing/images\nnames: [cat]\n", "data_not_found"),
+        (
+            "path: .\ntrain: missing/images\nnames: [cat]\n"
+            "download: |\n  print('not allowed')\n",
+            "data_not_found",
+        ),
+        (
+            "path: .\ntrain: missing/images\nnames: [cat]\ndownload: [bad]\n",
+            "config_type_error",
+        ),
+    ],
+)
+def test_vlm_dataset_contract_errors_are_structured_before_loading(
+    yaml_text, expected_error, monkeypatch, tmp_path
+):
+    dataset = tmp_path / "invalid.yaml"
+    dataset.write_text(yaml_text, encoding="utf-8")
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("invalid dataset loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={dataset}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert json.loads(result.stdout)["error"] == expected_error
+
+
+def test_vlm_missing_val_split_is_rejected_before_loading(monkeypatch, tmp_path):
+    train_images = tmp_path / "images" / "train"
+    train_images.mkdir(parents=True)
+    (train_images / "sample.jpg").write_bytes(b"fixture")
+    dataset = tmp_path / "partial.yaml"
+    dataset.write_text(
+        f"path: {tmp_path.as_posix()}\n"
+        "train: images/train\nval: images/missing\nnames: [cat]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("partial dataset loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={dataset}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert json.loads(result.stdout)["error"] == "data_not_found"
+
+
+@pytest.mark.parametrize("broken_split", ["train", "val"])
+def test_vlm_image_lists_are_checked_before_loading(
+    broken_split, monkeypatch, tmp_path
+):
+    images = tmp_path / "images"
+    images.mkdir()
+    (images / "sample.jpg").write_bytes(b"fixture")
+    valid_list = tmp_path / "valid.txt"
+    valid_list.write_text("images/sample.jpg\n", encoding="utf-8")
+    missing_list = tmp_path / "missing.txt"
+    missing_list.write_text("images/does-not-exist.jpg\n", encoding="utf-8")
+    train_list = missing_list if broken_split == "train" else valid_list
+    val_list = missing_list if broken_split == "val" else valid_list
+    dataset = tmp_path / "listed.yaml"
+    dataset.write_text(
+        f"path: {tmp_path.as_posix()}\n"
+        f"train: {train_list.name}\n"
+        f"val: {val_list.name}\n"
+        "names: [cat]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("broken image list loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [f"data={dataset}", "model=qwen3-vl-2b", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code != 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["error"] == "data_not_found"
+    assert broken_split in payload["message"]
+    assert "does-not-exist.jpg" in payload["message"]
+
+
+def test_vlm_resume_is_preflighted_before_loading(tmp_path, monkeypatch):
+    checkpoint = _write_vlm_checkpoint(tmp_path / "resume")
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("dry-run must not load VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [
+            "data=coco8.yaml",
+            "model=qwen3-vl-2b",
+            f"resume={checkpoint}",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["resolved_config"]["resume"] == str(checkpoint)
+
+
+@pytest.mark.parametrize("resume", ["missing", "wrong-size"])
+def test_vlm_invalid_resume_is_rejected_before_loading(resume, tmp_path, monkeypatch):
+    checkpoint = tmp_path / "missing"
+    if resume == "wrong-size":
+        checkpoint = _write_vlm_checkpoint(tmp_path / "wrong-size", size="4b")
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("invalid resume loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [
+            "data=coco8.yaml",
+            "model=qwen3-vl-2b",
+            f"resume={checkpoint}",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+
+
+def test_vlm_checkpoint_train_is_rejected_before_loading(tmp_path, monkeypatch):
+    checkpoint = _write_vlm_checkpoint(tmp_path / "checkpoint")
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("rejected VLM checkpoint loaded weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [
+            "data=coco8.yaml",
+            f"model={checkpoint}",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert "adapter is merged for inference" in data["message"]
+    assert "resume=<checkpoint directory>" in data["suggestion"]
+
+
+def test_vlm_checkpoint_unverified_size_is_rejected_before_loading(
+    tmp_path, monkeypatch
+):
+    checkpoint = _write_vlm_checkpoint(tmp_path / "checkpoint-8b", size="8b")
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("unsupported VLM must not load"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        ["data=coco8.yaml", f"model={checkpoint}", "--json"],
+    )
+
+    assert result.exit_code == 2, result.output
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert "Verified sizes: 2b, 4b" in data["message"]
+
+
+@pytest.mark.parametrize(
+    ("model", "message"),
+    [
+        ("qwen3-vl-8b", "Verified sizes: 2b, 4b"),
+        ("smolvlm2-500m", "not supported for family 'smolvlm2'"),
+    ],
+)
+def test_vlm_dry_run_rejects_unverified_training_before_loading(
+    model, message, monkeypatch
+):
+    monkeypatch.setattr(
+        "libreyolo.LibreVLM",
+        lambda *_args, **_kwargs: pytest.fail("unsupported VLM must not load"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        ["data=coco8.yaml", f"model={model}", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code != 0
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert message in data["message"]
+
+
+def test_vlm_train_rejects_explicit_detector_only_option():
+    result = runner.invoke(
+        _make_app(),
+        [
+            "data=coco8.yaml",
+            "model=qwen3-vl-2b",
+            "optimizer=adamw",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert "optimizer" in data["message"]
+
+
+@pytest.mark.parametrize(
+    ("option", "message"),
+    [
+        ("pretrained=false", "pretrained=false"),
+        ("val=false", "val=false"),
+        ("task=segment", "task='detect'"),
+    ],
+)
+def test_vlm_train_rejects_unsupported_contract_options_before_loading(
+    option, message, monkeypatch
+):
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("rejected VLM request loaded weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        ["data=coco8.yaml", "model=qwen3-vl-2b", option, "--json"],
+    )
+
+    assert result.exit_code == 2, result.output
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert message in data["message"]
+
+
+def test_vlm_train_routes_only_vlm_kwargs_and_reports_loss_truthfully(
+    monkeypatch, tmp_path
+):
+    captured = {}
+    images = tmp_path / "images" / "train"
+    images.mkdir(parents=True)
+    (images / "sample.jpg").write_bytes(b"fixture")
+    dataset = tmp_path / "dataset.yaml"
+    dataset.write_text(
+        f"path: {tmp_path.as_posix()}\ntrain: images/train\nnames: [cat]\n",
+        encoding="utf-8",
+    )
+
+    class FakeVLM:
+        FAMILY = "qwen3vl"
+        device = "cpu"
+
+        def train(self, *, data, **kwargs):
+            captured["data"] = data
+            captured["kwargs"] = kwargs
+            return {
+                "save_dir": "runs/vlm/train",
+                "best": "runs/vlm/train/weights/best",
+                "last": "runs/vlm/train/weights/last",
+                "epochs": 2,
+                "final_loss": 0.4,
+                "best_metric": 0.35,
+                "best_epoch": 2,
+                "metric_name": "val/loss",
+            }
+
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *args, **kwargs: FakeVLM(),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [
+            f"data={dataset}",
+            "model=qwen3-vl-2b",
+            "epochs=2",
+            "allow_download_scripts=true",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["data"] == str(dataset)
+    assert captured["kwargs"] == {
+        "epochs": 2,
+        "batch": 1,
+        "accumulate": 8,
+        "lr0": None,
+        "lora": True,
+        "project": "runs/vlm",
+        "name": "train",
+        "exist_ok": True,
+        "workers": 0,
+        "seed": 0,
+        "device": "auto",
+        "gradient_checkpointing": True,
+        "vram_check": True,
+        "resume": None,
+        "hflip": 0.5,
+        "allow_download_scripts": True,
+    }
+    data = json.loads(result.stdout)
+    assert data["metric_name"] == "val/loss"
+    assert data["best_metric"] == 0.35
+    assert data["best"] == "runs/vlm/train/weights/best"
+    assert data["last"] == "runs/vlm/train/weights/last"
+    assert "best_metrics" not in data
+
+
+def test_vlm_lora_dependency_failure_precedes_dataset_preparation(monkeypatch):
+    from libreyolo.models.vlm.training import trainer as trainer_module
+
+    events = []
+    monkeypatch.setattr(
+        train_module,
+        "_preflight_vlm_dataset",
+        lambda *_args, prepare, **_kwargs: events.append(f"dataset:{prepare}"),
+    )
+
+    def missing_dependency():
+        events.append("dependency")
+        raise ImportError("PEFT unavailable")
+
+    monkeypatch.setattr(
+        trainer_module, "require_vlm_lora_dependencies", missing_dependency
+    )
+    monkeypatch.setattr(
+        train_module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("dependency failure loaded VLM weights"),
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        ["data=coco8.yaml", "model=qwen3-vl-2b", "--json"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert json.loads(result.stdout)["error"] == "config_unsupported"
+    assert events == ["dataset:False", "dependency"]
+
+
+def test_vlm_download_script_warning_precedes_dataset_preparation(monkeypatch):
+    from libreyolo.cli.output import OutputHandler
+    from libreyolo.models.vlm.training import trainer as trainer_module
+
+    events = []
+    monkeypatch.setattr(
+        train_module,
+        "_preflight_vlm_dataset",
+        lambda *_args, prepare, **_kwargs: events.append(f"dataset:{prepare}"),
+    )
+    monkeypatch.setattr(
+        trainer_module,
+        "require_vlm_lora_dependencies",
+        lambda: events.append("dependency"),
+    )
+    monkeypatch.setattr(
+        OutputHandler,
+        "warning",
+        lambda _self, _message: events.append("warning"),
+    )
+
+    class FakeVLM:
+        device = "cpu"
+
+        def train(self, **_kwargs):
+            events.append("train")
+            return {"epochs": 1, "final_loss": 0.5}
+
+    def load_model(*_args, **_kwargs):
+        events.append("load")
+        return FakeVLM()
+
+    monkeypatch.setattr(train_module, "load_model_or_exit", load_model)
+
+    result = runner.invoke(
+        _make_app(),
+        [
+            "data=coco8.yaml",
+            "model=qwen3-vl-2b",
+            "allow_download_scripts=true",
+            "epochs=1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert events[:5] == [
+        "dataset:False",
+        "dependency",
+        "warning",
+        "dataset:True",
+        "load",
+    ]
 
 
 def test_train_dry_run_uses_rtdetr_defaults():

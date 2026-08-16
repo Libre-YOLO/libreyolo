@@ -2,8 +2,8 @@
 
 [FiftyOne](https://github.com/voxel51/fiftyone) (Apache-2.0) is a dataset
 curation and prediction-analysis tool. `libreyolo.integrations.fiftyone` sends
-LibreYOLO predictions into a FiftyOne dataset and moves datasets in both
-directions between a LibreYOLO dataset yaml and a FiftyOne dataset.
+LibreYOLO and LibreVLM predictions into a FiftyOne dataset and moves datasets
+in both directions between a LibreYOLO dataset yaml and a FiftyOne dataset.
 
 Nothing is vendored and nothing is imported at `import libreyolo` time. The
 module imports `fiftyone` lazily and raises an install hint when it is absent.
@@ -41,10 +41,23 @@ apply_model(dataset, model, label_field="predictions", conf=0.25, batch_size=8)
 session = fo.launch_app(dataset)
 ```
 
-`apply_model` accepts a loaded model or a checkpoint name, forwards `conf`,
-`iou`, `imgsz`, `device`, `classes`, and `max_det` to `model.predict`, and runs
-through FiftyOne's own `apply_model`, so the progress bar, `skip_failures`, and
-batching behave the way FiftyOne users expect. `batch_size` maps onto
+For open-vocabulary VLM prediction, configure the vocabulary on the loaded
+model first:
+
+```python
+from libreyolo import LibreVLM
+
+model = LibreVLM("qwen3-vl-4b")
+model.set_classes(["forklift", "worker"])
+apply_model(dataset, model, label_field="vlm_predictions", batch_size=8)
+```
+
+`apply_model` accepts a loaded model, a detector checkpoint/name, a VLM alias,
+or a VLM checkpoint directory. It forwards `conf`, `iou`, `device`, `classes`,
+and `max_det` to `model.predict`. Detector callers may also override `imgsz`;
+LibreVLM callers must omit it because each VLM's processor owns image resizing.
+The integration runs through FiftyOne's own `apply_model`, so the progress bar
+and `skip_failures` behave the way FiftyOne users expect. `batch_size` maps onto
 LibreYOLO's batched list inference when the model supports it. Generative
 `LibreVLM` adapters currently opt out of batched prediction, so FiftyOne may
 still form chunks but the VLM generates one image at a time; increasing
@@ -54,7 +67,9 @@ still form chunks but the VLM generates one image at a time; increasing
 Generic chat VLMs currently expose an uncalibrated constant confidence of
 `1.0`, so confidence ranking, mistakenness, and threshold-based curation are not
 meaningful for those families until their documented real-data score gate
-passes. Box geometry, labels, filtering, and visualization remain valid.
+passes. The candidate Qwen3-VL token score is internal and is not exposed to
+FiftyOne. Box geometry, labels, numeric class filtering, and visualization
+remain valid.
 
 To use the model with any other FiftyOne API that takes a model, wrap it
 directly:

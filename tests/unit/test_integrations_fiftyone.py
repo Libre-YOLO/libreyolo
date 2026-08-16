@@ -5,6 +5,7 @@ plain dicts keyed by FiftyOne's field names, so the payloads can be checked
 directly. Tests that need the package itself are marked ``fiftyone``.
 """
 
+import json
 import subprocess
 import sys
 import types
@@ -23,8 +24,10 @@ from libreyolo.integrations.fiftyone import (
     _keypoint_payloads,
     _obb_payloads,
     _polyline_payloads,
+    _resolve_model,
     _sample_labels_from_rows,
     _yolo_rows,
+    to_fiftyone_model,
 )
 from libreyolo.utils.results import (
     OBB,
@@ -47,6 +50,172 @@ def _detect_result(orig_shape=(100, 200)):
         torch.tensor([0.0, 1.0]),
     )
     return Results(boxes, orig_shape=orig_shape, names=NAMES)
+
+
+def _write_vlm_contract(directory, **updates):
+    directory.mkdir()
+    contract = {
+        "schema": 1,
+        "family": "qwen3vl",
+        "size": "2b",
+        "base_repo": "Qwen/Qwen3-VL-2B-Instruct",
+        "base_revision": None,
+        "names": ["person"],
+        "bbox_key": "bbox_2d",
+        "coord_divisor": 1000.0,
+        "box_format": "xyxy",
+        "prompt": "Detect person.",
+        "task": "detect",
+    }
+    contract.update(updates)
+    (directory / "libreyolo_vlm.json").write_text(json.dumps(contract))
+    (directory / "adapter_config.json").write_text(json.dumps({"peft_type": "LORA"}))
+    (directory / "adapter_model.safetensors").write_bytes(b"adapter")
+    return directory
+
+
+class TestModelResolution:
+    def test_loaded_model_is_returned_unchanged(self):
+        model = object()
+        assert _resolve_model(model) is model
+
+    def test_vlm_alias_routes_to_librevlm(self, monkeypatch):
+        from libreyolo.models import vlm as vlm_module
+
+        loaded = object()
+        received = []
+
+        def load(reference):
+            received.append(reference)
+            return loaded
+
+        monkeypatch.setattr(vlm_module, "LibreVLM", load)
+
+        assert _resolve_model("qwen3-vl-2b") is loaded
+        assert received == ["qwen3-vl-2b"]
+
+    def test_vlm_reference_honors_constructor_device(self, monkeypatch):
+        from libreyolo.models import vlm as vlm_module
+
+        loaded = object()
+        received = []
+
+        def load(reference, **kwargs):
+            received.append((reference, kwargs))
+            return loaded
+
+        monkeypatch.setattr(vlm_module, "LibreVLM", load)
+
+        assert _resolve_model("qwen3-vl-2b", device="cpu") is loaded
+        assert received == [("qwen3-vl-2b", {"device": "cpu"})]
+
+    def test_vlm_checkpoint_path_routes_to_librevlm(self, tmp_path, monkeypatch):
+        from libreyolo.models import vlm as vlm_module
+
+        checkpoint = _write_vlm_contract(tmp_path / "vlm-checkpoint")
+        loaded = object()
+        received = []
+
+        def load(reference):
+            received.append(reference)
+            return loaded
+
+        monkeypatch.setattr(vlm_module, "LibreVLM", load)
+
+        assert _resolve_model(checkpoint) is loaded
+        assert received == [checkpoint]
+
+    def test_detector_reference_still_routes_to_libreyolo(self, monkeypatch):
+        import libreyolo.models as models_module
+
+        loaded = object()
+        received = []
+
+        def load(reference):
+            received.append(reference)
+            return loaded
+
+        monkeypatch.setattr(models_module, "LibreYOLO", load)
+
+        assert _resolve_model("LibreYOLO9s.pt") is loaded
+        assert received == ["LibreYOLO9s.pt"]
+
+    def test_malformed_vlm_contract_fails_before_detector_fallback(
+        self, tmp_path, monkeypatch
+    ):
+        import libreyolo.models as models_module
+        from libreyolo.models import vlm as vlm_module
+
+        checkpoint = tmp_path / "malformed"
+        checkpoint.mkdir()
+        (checkpoint / "libreyolo_vlm.json").write_text('{"schema": 1}')
+
+        def must_not_load(*_args, **_kwargs):
+            raise AssertionError("malformed VLM reference reached a model factory")
+
+        monkeypatch.setattr(models_module, "LibreYOLO", must_not_load)
+        monkeypatch.setattr(vlm_module, "LibreVLM", must_not_load)
+
+        with pytest.raises(ValueError, match="missing 'family'"):
+            _resolve_model(checkpoint)
+
+    @pytest.mark.parametrize("reference_kind", ["alias", "checkpoint"])
+    def test_vlm_imgsz_override_fails_before_model_loading(
+        self, tmp_path, monkeypatch, reference_kind
+    ):
+        from libreyolo.integrations import fiftyone as fiftyone_integration
+        from libreyolo.models import vlm as vlm_module
+
+        reference = (
+            "qwen3-vl-2b"
+            if reference_kind == "alias"
+            else _write_vlm_contract(tmp_path / "vlm-checkpoint")
+        )
+
+        def must_not_load(*_args, **_kwargs):
+            raise AssertionError("VLM factory ran before imgsz validation")
+
+        monkeypatch.setattr(vlm_module, "LibreVLM", must_not_load)
+        monkeypatch.setattr(fiftyone_integration, "_model_class", must_not_load)
+
+        with pytest.raises(ValueError, match=r"imgsz.*processor owns image resizing"):
+            to_fiftyone_model(reference, imgsz=640)
+
+    def test_loaded_vlm_rejects_imgsz_override(self, monkeypatch):
+        from libreyolo.integrations import fiftyone as fiftyone_integration
+        from libreyolo.models.vlm import LibreQwen3VL
+
+        model = object.__new__(LibreQwen3VL)
+
+        def must_not_wrap(*_args, **_kwargs):
+            raise AssertionError("VLM reached FiftyOne wrapping before validation")
+
+        monkeypatch.setattr(fiftyone_integration, "_model_class", must_not_wrap)
+
+        with pytest.raises(ValueError, match=r"imgsz.*processor owns image resizing"):
+            to_fiftyone_model(model, imgsz=640)
+
+    def test_detector_imgsz_override_is_preserved(self, monkeypatch):
+        import libreyolo.models as models_module
+        from libreyolo.integrations import fiftyone as fiftyone_integration
+
+        loaded = object()
+        monkeypatch.setattr(models_module, "LibreYOLO", lambda _reference: loaded)
+
+        class StubFiftyOneModel:
+            def __init__(self, model, mask_format="mask", **predict_kwargs):
+                self.model = model
+                self.mask_format = mask_format
+                self.predict_kwargs = predict_kwargs
+
+        monkeypatch.setattr(
+            fiftyone_integration, "_model_class", lambda: StubFiftyOneModel
+        )
+
+        wrapped = to_fiftyone_model("LibreYOLO9s.pt", imgsz=640)
+
+        assert wrapped.model is loaded
+        assert wrapped.predict_kwargs["imgsz"] == 640
 
 
 class TestGeometry:

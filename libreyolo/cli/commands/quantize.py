@@ -9,6 +9,7 @@ from ..command_utils import (
     exit_with_error,
     help_json_callback,
     load_model_or_exit,
+    reject_unsupported_vlm_command,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
@@ -66,6 +67,11 @@ def quantize_cmd(
     out_handler = OutputHandler(json_mode=json_output, quiet=quiet)
 
     model_path = resolve_model_or_exit(out_handler, model)
+    reject_unsupported_vlm_command(
+        out_handler,
+        model_path=model_path,
+        command="quantize",
+    )
     loaded_model = load_model_or_exit(
         out_handler, model=model, model_path=model_path, device=device
     )

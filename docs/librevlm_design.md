@@ -120,6 +120,45 @@ Rationale:
 Per-image, free-form queries are served by `chat()`, which is the right place
 for genuinely per-call prompts.
 
+### CLI surface
+
+The CLI recognizes every VLM alias and a checkpoint directory containing a
+valid `libreyolo_vlm.json` contract. Prediction uses the same sticky
+open-vocabulary surface through `--names`:
+
+```bash
+libreyolo predict --model qwen3-vl-4b --source image.jpg \
+  --names '["pink car", "wheel"]'
+```
+
+`--names` must be a non-empty JSON list of unique, non-empty strings and is
+accepted only for VLM references. `--classes` remains the numeric output
+filter. Explicit `--imgsz` is rejected because each family processor owns its
+resize contract. Directory chunks are accepted, but generative VLM inference
+remains serial within each chunk, so increasing `--batch` does not improve
+throughput.
+
+The train command routes verified Qwen3-VL 2B and 4B base aliases to the VLM
+trainer:
+
+```bash
+libreyolo train --model qwen3-vl-2b --data strawberries.yaml
+libreyolo train --model qwen3-vl-2b --data strawberries.yaml \
+  --resume runs/vlm/train/weights/last
+```
+
+It uses the VLM-native defaults, including ten epochs, batch one, LoRA,
+recipe-owned learning rate, gradient accumulation, and `runs/vlm/train`
+output. Best-checkpoint selection is based on validation loss when a validation
+split exists, otherwise training loss. Detector-only training knobs and
+unverified family/size combinations are rejected before model loading.
+Training an inference-loaded checkpoint wrapper is also rejected because its
+adapter is already merged; continuation uses a pristine base alias plus
+`resume=<checkpoint directory>` so the saved adapter remains relative to the
+recorded base.
+Standalone `val`, `export`, and `quantize` also reject VLM aliases and
+checkpoints before loading weights.
+
 ## Decision 3: the output is `Results`, and confidence is honestly soft
 
 The tier returns the standard `Results` (`boxes.xyxy`, `boxes.cls`,
@@ -129,8 +168,10 @@ all work unchanged. No new output type is invented.
 These models emit no calibrated detector score. The generic VLM families retain
 `1.0`. A bounded-memory Qwen3-VL candidate can derive a ranking signal from
 generated label-token and coordinate-token probabilities, but it remains off
-until the real-data quality gate passes. Inspect `model.confidence_method` for
-the configured source. We do not pretend any token-derived score is calibrated:
+until the real-data quality gate passes and is available only to the internal
+validator. Qwen3-VL public prediction, the CLI, and integrations continue to
+receive the constant score. Inspect `model.confidence_method` for the
+configured source. We do not pretend any token-derived score is calibrated:
 
 - On constant-score families, `conf=` filtering is mechanical.
 - `val()` (mAP) remains unsupported until a real Qwen benchmark demonstrates
@@ -304,8 +345,11 @@ These are deliberate v1 scoping choices, called out so behavior matches expectat
   passes its real-data quality gate.
 - **`batch=` does not speed up VLMs.** `predict("folder/")` works, but generation
   runs one image at a time, so a larger `batch=` gives no throughput gain in v1.
-- **Python-API only.** The `libreyolo` CLI does not resolve VLM aliases yet; use
-  `LibreVLM(...)` from Python. `predict`/`track` parity is at the API level.
+- **CLI scope is narrow.** `predict` supports VLM aliases and checkpoint
+  directories, including `--names`. `train` supports only the verified
+  Qwen3-VL 2B/4B cohort. Other model-execution and detector-specific commands
+  fail before loading VLM weights. Use the Python API for tier-specific methods
+  such as `chat()`.
 - **`chat()`** applies to chat-template families only. Florence-2, Kosmos-2,
   and LibreMODUS are task-driven and raise; `prompt=` is ignored by the first
   two and is a one-phrase grounding convenience for LibreMODUS.

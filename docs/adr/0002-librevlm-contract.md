@@ -1,7 +1,7 @@
 # ADR 0002: LibreVLM Contract For Vision-Language Detectors
 
 - Status: Accepted
-- Date: 2026-06-05 (updated 2026-06-06)
+- Date: 2026-06-05 (updated 2026-08-16)
 - Scope: New model tier (vision-language models used as open-vocab detectors)
 
 ## Context
@@ -75,6 +75,26 @@ text = model.chat("image.jpg", "How many cars are pink?")  # raw escape hatch
   from a fixed task / grounding token plus the class list, so `prompt=` is ignored
   for those two.
 
+The supported VLM CLI surface is intentionally smaller than the detector CLI:
+
+```bash
+libreyolo predict --model qwen3-vl-4b --source image.jpg \
+  --names '["pink car", "wheel"]'
+libreyolo train --model qwen3-vl-2b --data dataset.yaml
+```
+
+- `predict` resolves VLM aliases and schema-valid checkpoint directories.
+  `--names` is a VLM-only JSON vocabulary; `--classes` remains a numeric output
+  filter. Explicit `imgsz=` is rejected because the family processor owns image
+  resizing. Directory chunks still generate one image at a time.
+- `train` is verified only for the Qwen3-VL 2B and 4B base aliases. It uses
+  VLM-native defaults rather than detector defaults, and selects `best` by
+  validation loss when a validation split exists, otherwise training loss.
+  Continue an adapter with the base alias plus `resume=<checkpoint directory>`;
+  training an inference-loaded checkpoint wrapper is rejected.
+- Detector-only training options, unsupported families/sizes, and standalone
+  `val`, `export`, or `quantize` requests fail before loading VLM weights.
+
 ## Internal Contract
 
 `LibreVLMModel(BaseModel)` is the shared base. It does NOT define `can_load`, so
@@ -135,8 +155,10 @@ generated label-token and coordinate-token probabilities. It records one
 selected-token log-probability after the configured generation processors per
 step, rather than retaining a vocabulary-sized score tensor for every token.
 The candidate remains disabled until its real-data gate passes, so ordinary
-`predict()` keeps the established constant-score behavior. LibreMODUS separately
-uses the minimum constrained-token probability for each detection.
+`predict()` keeps the established constant-score behavior. Candidate scores are
+available only to the internal validator, not public prediction, the CLI, or
+integrations. LibreMODUS separately uses the minimum constrained-token
+probability for each detection.
 
 `model.confidence_method` reports the configured source (`constant` today for
 Qwen3-VL, and `constrained_token_min` for LibreMODUS).
@@ -183,15 +205,15 @@ executing mutable upstream model-repository code under the same alias.
 
 ## Out Of Scope (v1)
 
-- Training / fine-tuning (`train()` raises; fine-tune upstream). Superseded
-  for Qwen3-VL: LoRA detection fine-tuning shipped later behind the same
-  `train()` surface, with untrainable families keeping documented refusal
-  messages. See `docs/vlm_training.md`.
-- Dataset validation / mAP (`val()` raises; see "Confidence").
-- Export to ONNX/TensorRT/etc. (`export()` raises; generative decode).
-- CLI: the `libreyolo` command does not resolve VLM aliases in v1. The tier is a
-  Python-API surface (`LibreVLM(...)`); `predict`/`track` parity is at the API
-  level, not the CLI.
+- Training outside the verified Qwen3-VL 2B/4B detection cohort. Supported
+  fine-tuning is documented in [`../vlm_training.md`](../vlm_training.md).
+- Dataset validation / mAP (`val()` and the CLI `val` command reject VLMs; see
+  "Confidence").
+- Export to ONNX/TensorRT/etc. and post-training quantization. The CLI `export`
+  and `quantize` commands reject VLM references before loading weights.
+- Broad CLI parity. The documented VLM CLI contract is prediction plus the
+  verified Qwen training cohort; tier-specific methods such as `chat()` remain
+  Python API surfaces.
 
 ## Consequences
 
@@ -215,4 +237,7 @@ executing mutable upstream model-repository code under the same alias.
   SmolVLM2, Gemma 4). Florence-2 and Kosmos-2 use task / grounding tokens.
   Moondream uses native detect/point skills. See the Available-models table in
   [`../librevlm_design.md`](../librevlm_design.md).
+- CLI alias/checkpoint routing for VLM prediction and verified Qwen3-VL 2B/4B
+  training, with pre-load guards for unsupported validation, export, and
+  quantization.
 - Offline parser unit tests plus a `vlm`-marked end-to-end smoke test.

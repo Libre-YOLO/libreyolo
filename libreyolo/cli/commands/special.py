@@ -10,6 +10,7 @@ from ..command_utils import (
     exit_stage_error,
     exit_with_error,
     load_model_or_exit,
+    reject_unsupported_vlm_command,
     resolve_model_or_exit,
 )
 from ..errors import CLIError
@@ -24,7 +25,9 @@ def _get_output(json_output: bool, quiet: bool) -> OutputHandler:
     return OutputHandler(json_mode=json_output, quiet=quiet)
 
 
-def _resolve_embed_face_detector(out: OutputHandler, face_detector: Optional[str], device: str):
+def _resolve_embed_face_detector(
+    out: OutputHandler, face_detector: Optional[str], device: str
+):
     """Resolve a face detector for the two-stage face-embedding task.
 
     Accepts an OpenCV face-detector ``.onnx`` (wrapped as a 5-landmark
@@ -40,6 +43,11 @@ def _resolve_embed_face_detector(out: OutputHandler, face_detector: Optional[str
 
         return OpenCVFaceDetector(face_detector)
     fd_path = resolve_model_or_exit(out, face_detector)
+    reject_unsupported_vlm_command(
+        out,
+        model_path=fd_path,
+        command="face-detector",
+    )
     fd_model = load_model_or_exit(
         out, model=face_detector, model_path=fd_path, device=device
     )
@@ -53,7 +61,9 @@ def compare_cmd(
     source: str = typer.Option(..., help="First image"),
     source2: str = typer.Option(..., help="Second image to compare against"),
     face_detector: Optional[str] = typer.Option(
-        None, "--face-detector", help="Face detector (YuNet .onnx or LibreYOLO detector)"
+        None,
+        "--face-detector",
+        help="Face detector (YuNet .onnx or LibreYOLO detector)",
     ),
     threshold: float = typer.Option(
         0.4, help="Cosine-similarity threshold for the same-identity decision"
@@ -70,8 +80,13 @@ def compare_cmd(
             exit_with_error(out, "source_not_found", f"{label} not found: {src}")
 
     model_path = resolve_model_or_exit(out, model)
+    reject_unsupported_vlm_command(out, model_path=model_path, command="compare")
     loaded = load_model_or_exit(
-        out, model=model, model_path=model_path, device=device, task="facial-recognition"
+        out,
+        model=model,
+        model_path=model_path,
+        device=device,
+        task="facial-recognition",
     )
     if getattr(loaded, "task", None) != "embed":
         exit_with_error(
@@ -110,7 +125,9 @@ def enroll_cmd(
         ..., help="Output gallery file (.npz); extended in place if it exists"
     ),
     face_detector: Optional[str] = typer.Option(
-        None, "--face-detector", help="Face detector (YuNet .onnx or LibreYOLO detector)"
+        None,
+        "--face-detector",
+        help="Face detector (YuNet .onnx or LibreYOLO detector)",
     ),
     device: str = typer.Option("auto", help="Device: 0, cpu, mps, auto"),
     json_output: bool = typer.Option(False, "--json", help="JSON output to stdout"),
@@ -138,8 +155,13 @@ def enroll_cmd(
         )
 
     model_path = resolve_model_or_exit(out, model)
+    reject_unsupported_vlm_command(out, model_path=model_path, command="enroll")
     loaded = load_model_or_exit(
-        out, model=model, model_path=model_path, device=device, task="facial-recognition"
+        out,
+        model=model,
+        model_path=model_path,
+        device=device,
+        task="facial-recognition",
     )
     if getattr(loaded, "task", None) != "embed":
         exit_with_error(
@@ -533,6 +555,7 @@ def info_cmd(
     out = _get_output(json_output, quiet)
 
     model_path = resolve_model_or_exit(out, model)
+    reject_unsupported_vlm_command(out, model_path=model_path, command="info")
     loaded = load_model_or_exit(out, model=model, model_path=model_path, device="cpu")
 
     info_fn = getattr(loaded, "info", None)

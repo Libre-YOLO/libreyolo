@@ -18,6 +18,7 @@ import logging
 import math
 import time
 from dataclasses import asdict, dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -35,7 +36,12 @@ from ....training.callbacks import (
     TrainStartEvent,
 )
 from ....training.loggers import resolve_loggers
-from .checkpoint import is_vlm_checkpoint, save_vlm_checkpoint
+from .checkpoint import (
+    is_vlm_checkpoint,
+    read_contract,
+    save_vlm_checkpoint,
+    validate_lora_artifact,
+)
 from .collate import VLMChatCollator
 from .data import VLMDetectDataset, resolve_split_source
 from .recipes import VLMTrainRecipe, get_recipe
@@ -48,7 +54,13 @@ _INSTALL_HINT = (
     "    pip install 'libreyolo[vlm-train]'"
 )
 
-__all__ = ["VLMDetectionTrainer", "VLMTrainConfig"]
+__all__ = [
+    "VLMDetectionTrainer",
+    "VLMTrainConfig",
+    "require_vlm_lora_dependencies",
+    "resolve_vlm_training_device",
+    "validate_vlm_resume_checkpoint",
+]
 
 
 @dataclass
@@ -71,16 +83,148 @@ class VLMTrainConfig:
     gradient_checkpointing: bool = True
     hflip: float = 0.5
     vram_check: bool = True
+    allow_download_scripts: bool = False
     resume: Any = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
 def _normalize_names(raw) -> Dict[int, str]:
     if isinstance(raw, dict):
-        return {int(k): str(v) for k, v in raw.items()}
-    if isinstance(raw, (list, tuple)):
-        return {i: str(v) for i, v in enumerate(raw)}
-    raise ValueError("Dataset YAML must define names as a list or an id mapping.")
+        names = {int(k): str(v) for k, v in raw.items()}
+    elif isinstance(raw, (list, tuple)):
+        names = {i: str(v) for i, v in enumerate(raw)}
+    else:
+        raise ValueError("Dataset YAML must define names as a list or an id mapping.")
+    if not names or any(not name.strip() for name in names.values()):
+        raise ValueError("Dataset YAML names must contain non-empty labels.")
+    if set(names) != set(range(len(names))):
+        raise ValueError("Dataset YAML names must use contiguous ids starting at 0.")
+    normalized = [name.strip().lower() for name in names.values()]
+    if len(normalized) != len(set(normalized)):
+        raise ValueError("Dataset YAML names must be unique case-insensitively.")
+    return names
+
+
+def _finite_real(value) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        converted = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return converted if math.isfinite(converted) else None
+
+
+def _accumulation_group_size(step: int, total_steps: int, accumulate: int) -> int:
+    """Return the true size of the accumulation group containing ``step``."""
+    group_start = ((step - 1) // accumulate) * accumulate
+    return min(accumulate, total_steps - group_start)
+
+
+def resolve_vlm_training_device(requested, fallback) -> torch.device:
+    """Normalize the standard LibreYOLO device forms for VLM training."""
+    if requested is None:
+        return torch.device(fallback)
+    if isinstance(requested, bool):
+        raise ValueError(
+            f"device must be a device string or integer, got {requested!r}."
+        )
+    if isinstance(requested, int):
+        requested = f"cuda:{requested}"
+    if isinstance(requested, torch.device):
+        return requested
+    if not isinstance(requested, str):
+        raise ValueError(
+            f"device must be a device string or integer, got {requested!r}."
+        )
+    normalized = requested.strip().lower()
+    if normalized in {"", "auto"}:
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    if normalized.isdigit():
+        normalized = f"cuda:{normalized}"
+    try:
+        return torch.device(normalized)
+    except (RuntimeError, TypeError) as exc:
+        raise ValueError(f"Invalid VLM training device {requested!r}.") from exc
+
+
+def require_vlm_lora_dependencies() -> None:
+    """Require the PEFT version used by the VLM adapter contract."""
+    try:
+        import peft  # noqa: F401, PLC0415
+    except ImportError as exc:
+        raise ImportError(_INSTALL_HINT) from exc
+    try:
+        raw_version = version("peft")
+    except PackageNotFoundError as exc:
+        raise ImportError(_INSTALL_HINT) from exc
+    try:
+        from packaging.version import InvalidVersion, Version  # noqa: PLC0415
+    except ImportError as exc:
+        raise ImportError(_INSTALL_HINT) from exc
+    try:
+        supported = Version(raw_version) >= Version("0.17.0")
+    except InvalidVersion:
+        supported = False
+    if not supported:
+        raise ImportError(
+            f"VLM fine-tuning requires peft>=0.17.0, found {raw_version!r}.\n"
+            + _INSTALL_HINT
+        )
+
+
+def validate_vlm_resume_checkpoint(directory, wrapper) -> Path:
+    """Validate a LoRA resume checkpoint against a pristine base wrapper."""
+    directory = Path(directory)
+    if not is_vlm_checkpoint(directory):
+        raise FileNotFoundError(
+            f"resume={str(directory)!r} is not a VLM checkpoint directory "
+            "(missing libreyolo_vlm.json)."
+        )
+    if getattr(wrapper, "_checkpoint_dir", None) is not None:
+        raise ValueError(
+            "resume= requires a pristine base wrapper, not an inference-loaded "
+            "checkpoint wrapper."
+        )
+
+    contract = read_contract(directory)
+    expected = {
+        "family": wrapper.FAMILY,
+        "size": wrapper.size,
+        "base_repo": wrapper.HF_REPOS[wrapper.size],
+        "base_revision": wrapper.HF_REVISIONS.get(wrapper.size),
+        "bbox_key": wrapper.BBOX_KEY,
+        "coord_divisor": float(wrapper.COORD_DIVISOR),
+        "box_format": wrapper.BOX_FORMAT,
+    }
+    mismatches = [key for key, value in expected.items() if contract[key] != value]
+    if mismatches:
+        raise ValueError(
+            f"resume={str(directory)!r} does not match the loaded base model "
+            f"contract fields: {', '.join(mismatches)}."
+        )
+
+    custom_prompt = getattr(wrapper, "_custom_prompt", None)
+    expected_prompt = (
+        custom_prompt
+        if custom_prompt is not None
+        else wrapper._format_detection_prompt(", ".join(contract["names"]))
+    )
+    if contract["prompt"] != expected_prompt:
+        raise ValueError(
+            f"resume={str(directory)!r} uses a prompt that the loaded base "
+            "wrapper cannot reconstruct. Load the base with the checkpoint's "
+            "exact prompt= before resuming."
+        )
+    try:
+        validate_lora_artifact(directory)
+    except ValueError as exc:
+        raise ValueError(f"resume={str(directory)!r} is not loadable: {exc}") from exc
+    return directory
 
 
 class VLMDetectionTrainer:
@@ -96,16 +240,54 @@ class VLMDetectionTrainer:
     ) -> None:
         if not data:
             raise ValueError("train() requires data=<dataset yaml>.")
+        if getattr(wrapper, "_checkpoint_dir", None) is not None:
+            raise ValueError(
+                "VLMDetectionTrainer requires a pristine base wrapper. A wrapper "
+                "loaded from a VLM checkpoint already has its adapter merged; "
+                "construct the corresponding base model and pass resume= instead."
+            )
         known = set(VLMTrainConfig.__dataclass_fields__) - {"data", "extra"}
         config_kwargs = {k: v for k, v in kwargs.items() if k in known}
         extra = {k: v for k, v in kwargs.items() if k not in known}
         if extra:
-            logger.warning("Ignoring unknown train() kwargs: %s", sorted(extra))
+            raise ValueError(
+                "Unsupported VLM train() kwargs: " + ", ".join(sorted(extra)) + "."
+            )
         self.config = VLMTrainConfig(data=data, extra=extra, **config_kwargs)
-        if self.config.epochs < 1:
-            raise ValueError(f"epochs must be >= 1, got {self.config.epochs}")
-        if self.config.batch < 1 or self.config.accumulate < 1:
-            raise ValueError("batch and accumulate must both be >= 1.")
+        for name in (
+            "lora",
+            "exist_ok",
+            "gradient_checkpointing",
+            "vram_check",
+            "allow_download_scripts",
+        ):
+            value = getattr(self.config, name)
+            if type(value) is not bool:
+                raise ValueError(f"{name} must be a bool, got {value!r}.")
+        for name in ("epochs", "batch", "accumulate"):
+            value = getattr(self.config, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be an integer >= 1, got {value!r}.")
+        if (
+            isinstance(self.config.workers, bool)
+            or not isinstance(self.config.workers, int)
+            or self.config.workers < 0
+        ):
+            raise ValueError(
+                f"workers must be an integer >= 0, got {self.config.workers!r}."
+            )
+        hflip = _finite_real(self.config.hflip)
+        if hflip is None or not 0.0 <= hflip <= 1.0:
+            raise ValueError(
+                f"hflip must be finite and within [0, 1], got {self.config.hflip!r}."
+            )
+        lr0 = _finite_real(self.config.lr0) if self.config.lr0 is not None else None
+        if self.config.lr0 is not None and (lr0 is None or lr0 <= 0.0):
+            raise ValueError(
+                f"lr0 must be a finite positive number, got {self.config.lr0!r}."
+            )
+        if isinstance(self.config.seed, bool) or not isinstance(self.config.seed, int):
+            raise ValueError(f"seed must be an integer, got {self.config.seed!r}.")
         self.wrapper = wrapper
         self.recipe: VLMTrainRecipe = get_recipe(wrapper.FAMILY)
         self.callbacks = TrainCallbackList(callbacks)
@@ -133,9 +315,20 @@ class VLMDetectionTrainer:
         return run_dir
 
     def _resolve_device(self) -> torch.device:
-        if self.config.device:
-            return torch.device(self.config.device)
-        return self.wrapper.device
+        return resolve_vlm_training_device(self.config.device, self.wrapper.device)
+
+    @staticmethod
+    def _training_dtype(device: torch.device) -> torch.dtype:
+        if device.type != "cuda":
+            return torch.float32
+        with torch.cuda.device(device):
+            bf16_supported = torch.cuda.is_bf16_supported()
+        if not bf16_supported:
+            raise RuntimeError(
+                "VLM CUDA fine-tuning requires a BF16-capable GPU. Unscaled FP16 "
+                "training is intentionally unsupported; use a newer GPU or CPU."
+            )
+        return torch.bfloat16
 
     def _check_vram_for_full_ft(self, device: torch.device) -> None:
         if self.config.lora:
@@ -169,16 +362,20 @@ class VLMDetectionTrainer:
         candidate = (
             self.save_dir / "weights" / "last" if resume is True else Path(resume)
         )
-        if not is_vlm_checkpoint(candidate):
-            raise FileNotFoundError(
-                f"resume={resume!r} is not a VLM checkpoint directory "
-                "(missing libreyolo_vlm.json)."
+        if not self.config.lora:
+            raise NotImplementedError(
+                "resume= is only supported for LoRA training (lora=True)."
             )
+        self._validate_resume_contract(candidate)
         return candidate
+
+    def _validate_resume_contract(self, directory: Path) -> None:
+        validate_vlm_resume_checkpoint(directory, self.wrapper)
 
     def _build_train_model(self, resume_dir: Optional[Path]):
         """Return the trainable module: a PeftModel (LoRA) or the base model."""
         if self.config.lora:
+            require_vlm_lora_dependencies()
             try:
                 from peft import LoraConfig, PeftModel, get_peft_model
             except ImportError as exc:
@@ -188,8 +385,7 @@ class VLMDetectionTrainer:
                     self.wrapper.model, str(resume_dir), is_trainable=True
                 )
                 logger.warning(
-                    "Resumed adapter weights from %s (optimizer state starts "
-                    "fresh).",
+                    "Resumed adapter weights from %s (optimizer state starts fresh).",
                     resume_dir,
                 )
             else:
@@ -201,35 +397,42 @@ class VLMDetectionTrainer:
                     bias="none",
                 )
                 model = get_peft_model(self.wrapper.model, lora_config)
-            injected = [
-                name
-                for name, module in model.named_modules()
-                if getattr(module, "lora_A", None) is not None
-            ]
-            if not injected:
-                raise RuntimeError(
-                    f"LoRA recipe for {self.wrapper.FAMILY!r} matched no "
-                    "modules; the base model layout changed. This is a "
-                    "LibreYOLO bug."
-                )
-            leaks = [
-                name
-                for name in injected
-                if any(prefix in name for prefix in self.recipe.frozen_prefixes)
-            ]
-            if leaks:
-                raise RuntimeError(
-                    f"LoRA recipe for {self.wrapper.FAMILY!r} leaked adapters "
-                    f"into frozen scope: {leaks[:3]}. This is a LibreYOLO bug."
-                )
+            try:
+                injected = [
+                    name
+                    for name, module in model.named_modules()
+                    if getattr(module, "lora_A", None) is not None
+                ]
+                if not injected:
+                    raise RuntimeError(
+                        f"LoRA recipe for {self.wrapper.FAMILY!r} matched no "
+                        "modules; the base model layout changed. This is a "
+                        "LibreYOLO bug."
+                    )
+                leaks = [
+                    name
+                    for name in injected
+                    if any(prefix in name for prefix in self.recipe.frozen_prefixes)
+                ]
+                if leaks:
+                    raise RuntimeError(
+                        f"LoRA recipe for {self.wrapper.FAMILY!r} leaked adapters "
+                        f"into frozen scope: {leaks[:3]}. This is a LibreYOLO bug."
+                    )
+            except BaseException:
+                unload = getattr(model, "unload", None)
+                if not callable(unload):
+                    raise RuntimeError(
+                        "LoRA setup failed and PEFT cannot unload the injected "
+                        "adapter safely. Reconstruct the base wrapper before retrying."
+                    )
+                self.wrapper.model = unload()
+                self.wrapper.model.eval()
+                raise
             logger.info("Injected LoRA adapters into %d modules.", len(injected))
             return model
 
         # Full fine-tune: freeze the recipe's frozen prefixes, train the rest.
-        if resume_dir is not None:
-            raise NotImplementedError(
-                "resume= is only supported for LoRA training (lora=True)."
-            )
         frozen = 0
         for name, param in self.wrapper.model.named_parameters():
             if any(name.startswith(prefix) for prefix in self.recipe.frozen_prefixes):
@@ -238,7 +441,9 @@ class VLMDetectionTrainer:
         logger.info("Full fine-tune: froze %d frozen-scope parameters.", frozen)
         return self.wrapper.model
 
-    def _build_dataloaders(self, data_cfg: Dict, names: Dict[int, str], fmt: FamilyFormat):
+    def _build_dataloaders(
+        self, data_cfg: Dict, names: Dict[int, str], fmt: FamilyFormat
+    ):
         cfg = self.config
         train_source = resolve_split_source(data_cfg, "train")
         if not train_source:
@@ -281,30 +486,18 @@ class VLMDetectionTrainer:
             )
         return train_loader, val_loader
 
-    # ------------------------------------------------------------------
-    # The loop
-    # ------------------------------------------------------------------
-
-    def run(self) -> Dict[str, Any]:
+    def _prepare_optimization(
+        self,
+        train_model,
+        train_loader,
+        device: torch.device,
+        training_dtype: torch.dtype,
+    ):
+        """Move the live model and build optimizer state before callbacks run."""
         cfg = self.config
-        start_time = time.time()
-        torch.manual_seed(cfg.seed)
-
-        device = self._resolve_device()
-        self._check_vram_for_full_ft(device)
-
-        data_cfg = load_data_config(
-            cfg.data, allow_scripts=bool(cfg.extra.get("allow_download_scripts", False))
-        )
-        names = _normalize_names(data_cfg.get("names"))
-        # Vocabulary comes from the dataset; sticky on the wrapper from here on.
-        self.wrapper.set_classes([names[i] for i in range(len(names))])
-        fmt = FamilyFormat.from_model(self.wrapper)
-        train_loader, val_loader = self._build_dataloaders(data_cfg, names, fmt)
-
-        resume_dir = self._resolve_resume_dir()
-        train_model = self._build_train_model(resume_dir)
-        train_model.to(device)
+        train_model.to(device=device, dtype=training_dtype)
+        self.wrapper.device = device
+        self.wrapper._model_dtype = training_dtype
         train_model.train()
         if cfg.gradient_checkpointing and hasattr(
             train_model, "gradient_checkpointing_enable"
@@ -319,6 +512,8 @@ class VLMDetectionTrainer:
             else (self.recipe.lr0 if cfg.lora else self.recipe.full_ft_lr0)
         )
         trainable = [p for p in train_model.parameters() if p.requires_grad]
+        if not trainable:
+            raise RuntimeError("VLM training produced no trainable parameters.")
         optimizer = torch.optim.AdamW(
             trainable, lr=lr0, weight_decay=self.recipe.weight_decay
         )
@@ -334,10 +529,44 @@ class VLMDetectionTrainer:
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         autocast_ctx = (
-            torch.autocast(device_type="cuda", dtype=self.wrapper._model_dtype)
+            torch.autocast(device_type="cuda", dtype=training_dtype)
             if device.type == "cuda"
             else torch.autocast(device_type="cpu", enabled=False)
         )
+        return lr0, trainable, optimizer, scheduler, autocast_ctx
+
+    # ------------------------------------------------------------------
+    # The loop
+    # ------------------------------------------------------------------
+
+    def run(self) -> Dict[str, Any]:
+        cfg = self.config
+        start_time = time.time()
+        torch.manual_seed(cfg.seed)
+
+        device = self._resolve_device()
+        training_dtype = self._training_dtype(device)
+        self._check_vram_for_full_ft(device)
+
+        resume_dir = self._resolve_resume_dir()
+
+        data_cfg = load_data_config(cfg.data, allow_scripts=cfg.allow_download_scripts)
+        names = _normalize_names(data_cfg.get("names"))
+        # Vocabulary comes from the dataset; sticky on the wrapper from here on.
+        self.wrapper.set_classes([names[i] for i in range(len(names))])
+        fmt = FamilyFormat.from_model(self.wrapper)
+        train_loader, val_loader = self._build_dataloaders(data_cfg, names, fmt)
+
+        train_model = self._build_train_model(resume_dir)
+        try:
+            lr0, trainable, optimizer, scheduler, autocast_ctx = (
+                self._prepare_optimization(
+                    train_model, train_loader, device, training_dtype
+                )
+            )
+        except BaseException:
+            self._restore_inference_model(train_model)
+            raise
 
         weights_dir = self.save_dir / "weights"
         best_metric: Optional[float] = None
@@ -352,17 +581,21 @@ class VLMDetectionTrainer:
         }
         config_dump.pop("extra", None)
 
-        self.callbacks.on_train_start(
-            TrainStartEvent(
-                start_epoch=1,
-                total_epochs=cfg.epochs,
-                model_family=self.wrapper.FAMILY,
-                model_size=self.wrapper.size,
-                task="detect",
-                save_dir=str(self.save_dir),
-                config=config_dump,
+        try:
+            self.callbacks.on_train_start(
+                TrainStartEvent(
+                    start_epoch=1,
+                    total_epochs=cfg.epochs,
+                    model_family=self.wrapper.FAMILY,
+                    model_size=self.wrapper.size,
+                    task="detect",
+                    save_dir=str(self.save_dir),
+                    config=config_dump,
+                )
             )
-        )
+        except BaseException:
+            self._restore_inference_model(train_model)
+            raise
 
         try:
             for epoch in range(1, cfg.epochs + 1):
@@ -379,13 +612,20 @@ class VLMDetectionTrainer:
                     batch = self._to_device(batch, device)
                     with autocast_ctx:
                         loss = train_model(**batch).loss
-                    (loss / cfg.accumulate).backward()
+                    if loss.numel() != 1 or not bool(
+                        torch.isfinite(loss.detach()).item()
+                    ):
+                        raise FloatingPointError(
+                            f"Non-finite scalar training loss at epoch {epoch}, batch {step}."
+                        )
+                    group_size = _accumulation_group_size(
+                        step, len(train_loader), cfg.accumulate
+                    )
+                    (loss / group_size).backward()
                     running += float(loss.detach())
                     seen += 1
                     if step % cfg.accumulate == 0 or step == len(train_loader):
-                        torch.nn.utils.clip_grad_norm_(
-                            trainable, self.recipe.clip_grad_norm
-                        )
+                        self._clip_gradients(trainable, self.recipe.clip_grad_norm)
                         optimizer.step()
                         scheduler.step()
                         optimizer.zero_grad(set_to_none=True)
@@ -502,6 +742,12 @@ class VLMDetectionTrainer:
             for k, v in batch.items()
         }
 
+    @staticmethod
+    def _clip_gradients(parameters, max_norm: float) -> torch.Tensor:
+        return torch.nn.utils.clip_grad_norm_(
+            parameters, max_norm, error_if_nonfinite=True
+        )
+
     def _eval_loss(self, model, loader, device, autocast_ctx) -> float:
         model.eval()
         total, count = 0.0, 0
@@ -509,7 +755,10 @@ class VLMDetectionTrainer:
             for batch in loader:
                 batch = self._to_device(batch, device)
                 with autocast_ctx:
-                    total += float(model(**batch).loss.detach())
+                    loss = model(**batch).loss
+                if loss.numel() != 1 or not bool(torch.isfinite(loss.detach()).item()):
+                    raise FloatingPointError("Non-finite scalar validation loss.")
+                total += float(loss.detach())
                 count += 1
         model.train()
         return total / max(count, 1)
@@ -526,8 +775,14 @@ class VLMDetectionTrainer:
             from peft import PeftModel
         except ImportError:
             self.wrapper.model.eval()
-            return
-        if isinstance(train_model, PeftModel):
-            self.wrapper.model = train_model.merge_and_unload()
-            logger.info("Merged trained LoRA adapters into the loaded model.")
+        else:
+            if isinstance(train_model, PeftModel):
+                self.wrapper.model = train_model.merge_and_unload()
+                logger.info("Merged trained LoRA adapters into the loaded model.")
         self.wrapper.model.eval()
+        try:
+            parameter = next(self.wrapper.model.parameters())
+        except StopIteration:
+            return
+        self.wrapper.device = parameter.device
+        self.wrapper._model_dtype = parameter.dtype

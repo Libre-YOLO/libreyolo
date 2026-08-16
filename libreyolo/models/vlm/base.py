@@ -204,9 +204,22 @@ class LibreVLMModel(BaseModel):
             # A fine-tune is only valid on the exact base it was trained on:
             # shadow the class repo/revision with the contract's record so the
             # adapter never lands on a drifted upstream snapshot.
-            from .training.checkpoint import read_contract
+            from .training.checkpoint import (
+                read_contract,
+                validate_vlm_checkpoint_artifact,
+            )
 
             contract = read_contract(self._checkpoint_dir)
+            representation = validate_vlm_checkpoint_artifact(self._checkpoint_dir)
+            if representation == "adapter":
+                # Fail before resolving or loading the multi-GB base snapshot.
+                try:
+                    from peft import PeftModel as _PeftModel  # noqa: F401, PLC0415
+                except ImportError as exc:
+                    raise ImportError(
+                        "Loading a LoRA fine-tune checkpoint requires PEFT. "
+                        "Install with:\n    pip install 'libreyolo[vlm]'"
+                    ) from exc
             if contract["family"] != self.FAMILY:
                 raise ValueError(
                     f"VLM checkpoint {self._checkpoint_dir} belongs to family "
@@ -310,6 +323,8 @@ class LibreVLMModel(BaseModel):
         if not classes:
             raise ValueError("set_classes() requires a non-empty list of labels.")
         names = [str(c) for c in classes]
+        if any(not name.strip() for name in names):
+            raise ValueError("set_classes() labels must be non-empty strings.")
         keys = [name.strip().lower() for name in names]
         if len(keys) != len(set(keys)):
             raise ValueError("set_classes() labels must be unique case-insensitively.")
@@ -970,6 +985,13 @@ class LibreVLMModel(BaseModel):
             raise NotImplementedError(
                 f"Training is not verified for {type(self).__name__} size "
                 f"{self.size!r}. Verified trainable sizes: {supported}."
+            )
+        if getattr(self, "_checkpoint_dir", None) is not None:
+            raise NotImplementedError(
+                "Training a LibreVLM wrapper loaded from a checkpoint is unsafe: "
+                "its adapter has already been merged for inference. Load the "
+                "original base model alias and pass resume=<checkpoint directory> "
+                "instead."
             )
         if not data:
             raise ValueError(

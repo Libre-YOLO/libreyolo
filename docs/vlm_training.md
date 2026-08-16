@@ -17,6 +17,36 @@ model = LibreVLM(results["best"])       # load the fine-tune
 model.predict("field.jpg")              # vocabulary comes from the dataset
 ```
 
+The same verified path is available from the CLI:
+
+```bash
+libreyolo train --model qwen3-vl-2b --data strawberries.yaml
+libreyolo predict --model runs/vlm/train/weights/best --source field.jpg
+```
+
+Prediction accepts a VLM alias or VLM checkpoint directory. Training starts
+from a verified base alias. To continue a LoRA adapter, keep the base alias and
+pass the checkpoint through `--resume`:
+
+```bash
+libreyolo train --model qwen3-vl-2b --data strawberries.yaml \
+  --resume runs/vlm/train/weights/last
+```
+
+Training an inference-loaded checkpoint is rejected because its adapter is
+already merged. The explicit base-plus-resume form keeps the saved adapter
+relative to the base recorded in its contract. For zero-shot prediction,
+`--names` sets the open vocabulary before inference:
+
+```bash
+libreyolo predict --model qwen3-vl-4b --source field.jpg \
+  --names '["ripe strawberry", "person wearing a helmet"]'
+```
+
+`--names` is VLM-only. `--classes` remains the numeric class-id filter applied
+to model output. Explicit prediction `--imgsz` is rejected because the family
+processor owns image resizing.
+
 Needs the optional extra:
 
 ```
@@ -39,14 +69,32 @@ pip install "libreyolo[vlm-train]"
   preflight.
 - Defaults reflect VLM reality: `batch=1`, `accumulate=8` (effective batch 8),
   gradient checkpointing on, cosine schedule with warmup, bf16 autocast on
-  CUDA. There is no `imgsz`; the family's processor owns resolution.
+  CUDA, `epochs=10`, and output under `runs/vlm/train`. There is no `imgsz`;
+  the family's processor owns resolution. These defaults apply to the CLI too;
+  detector-command defaults are not forwarded into the VLM trainer.
+- CUDA fine-tuning requires a BF16-capable GPU. The trainer rejects unscaled
+  FP16 rather than silently running an unstable optimization path. `device`
+  accepts the standard LibreYOLO forms (`auto`, `cpu`, `mps`, `0`, `cuda:0`),
+  and the wrapper remains on the selected training device afterward.
 - Augmentation is geometric-safe only (`hflip=0.5`), because every geometric
   transform re-renders the target text. Mosaic-style compositing does not
   apply to generative targets.
 - `resume=` continues from a prior adapter checkpoint (weights only; the
-  optimizer state starts fresh, and the log says so).
+  optimizer state starts fresh, and the log says so). Resume validates the
+  adapter payload plus family, size, base revision, prompt, and box convention
+  before loading the base model.
 - `callbacks=` and `loggers=` are the standard training layers; TensorBoard,
   MLflow, and W&B loggers work unchanged.
+
+The CLI accepts the VLM trainer's small option set and rejects explicitly
+requested detector-only optimizer, scheduler, image-size, and augmentation
+options before loading model weights. Use `--dry-run` to inspect the resolved
+VLM configuration without downloading the base model. Training is verified
+only for Qwen3-VL 2B and 4B; other families and Qwen3-VL 8B fail before load.
+The Python `train()` surface also rejects unknown keywords instead of ignoring
+typos or detector-only options. Dataset YAML, class names, local train/val
+sources, resume identity, adapter payloads, and optional dependencies are
+preflighted before base weights are loaded where the reference permits it.
 
 ## Checkpoints
 
@@ -77,12 +125,19 @@ without inventing a newer pin.
 
 Full fine-tunes (`lora=False`) save a self-contained model directory instead;
 the same `LibreVLM(path)` call loads either kind.
+Each `best` or `last` write is staged and replaces the complete prior directory,
+so switching between LoRA and full-model runs cannot leave stale files that
+change how the checkpoint is interpreted.
 
 ## Best/last selection
 
 `best` tracks validation loss when the dataset has a `val` split, else
-training loss. Validation mAP for VLM checkpoints lands together with the
-tier's `val()` support (blocked on real per-box confidence; see the ADR).
+training loss. CLI results report that metric by name together with the
+`best` and `last` checkpoint directories; they do not report detection mAP.
+Only `predict` and verified `train` are VLM CLI execution surfaces. Other
+model-execution commands, including `val`, `export`, `quantize`, `info`,
+`compare`, and face-detector roles, fail before loading weights. Validation mAP
+remains blocked on real per-box confidence; see the ADR.
 
 ## Trainable families
 
