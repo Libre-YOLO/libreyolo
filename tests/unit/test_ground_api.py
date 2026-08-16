@@ -8,7 +8,6 @@ from libreyolo.models.ground import (
     _DEFAULT_MODEL,
     LibreGround,
     LibreGroundFlorence2,
-    LibreGroundMoondream,
     LibreGroundQwen3VL,
     LibreShowUI,
 )
@@ -142,7 +141,6 @@ class TestFactoryResolution:
     def test_known_aliases(self):
         assert _ALIASES["showui"] == (LibreShowUI, "2b")
         assert _ALIASES["florence-2"] == (LibreGroundFlorence2, "base")
-        assert _ALIASES["moondream"] == (LibreGroundMoondream, "2")
         assert _ALIASES["qwen3-vl"] == (LibreGroundQwen3VL, "2b")
         assert _ALIASES["qwen3-vl-2b"] == (LibreGroundQwen3VL, "2b")
         assert "tinyclick" not in _ALIASES
@@ -157,6 +155,10 @@ class TestFactoryResolution:
             LibreGround("holo-7b")
         with pytest.raises(ValueError, match="UI-TARS"):
             LibreGround("ui-tars")
+        with pytest.raises(ValueError, match="center-biased"):
+            LibreGround("moondream")
+        with pytest.raises(ValueError, match="center-biased"):
+            LibreGround("moondream-2")
 
     def test_unknown_alias_raises_before_loading(self):
         with pytest.raises(ValueError, match="Unknown grounding model"):
@@ -181,5 +183,4 @@ class TestContract:
     def test_ground_family_ids_do_not_reuse_vlm_ids(self):
         assert LibreGroundFlorence2.FAMILY == "ground_florence2"
         assert LibreGroundQwen3VL.FAMILY == "ground_qwen3vl"
-        assert LibreGroundMoondream.FAMILY == "ground_moondream"
         assert LibreShowUI.FAMILY == "showui"

@@ -231,8 +231,8 @@ They live in sibling factories with their own contracts:
 - **`LibreVLM`** (`models/vlm/`) — vision-language models.
 - **`LibreGround`** (`models/ground/`) — instruction → click: screenshot +
   referring expression returns `Results.points` on the original canvas.
-  Clone an existing snapshot adapter (`florence.py`, `showui.py`,
-  `qwen3vl.py`, `moondream.py`). Hosted weights are VLM-style snapshot
+  Clone an existing snapshot adapter (`florence.py`, `showui.py`, or
+  `qwen3vl.py`). Hosted weights are VLM-style snapshot
   mirrors under `LibreYOLO/`, not detect-family `.pt` files.
 
 If your port is prompt-driven, clone one of these factories instead of a

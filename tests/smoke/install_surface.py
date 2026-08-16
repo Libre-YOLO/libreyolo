@@ -107,7 +107,6 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
     from libreyolo import (
         LibreGround,
         LibreGroundFlorence2,
-        LibreGroundMoondream,
         LibreGroundQwen3VL,
         LibreShowUI,
     )
@@ -117,7 +116,6 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
     for family in (
         LibreShowUI,
         LibreGroundFlorence2,
-        LibreGroundMoondream,
         LibreGroundQwen3VL,
     ):
         if not isinstance(family, type):
