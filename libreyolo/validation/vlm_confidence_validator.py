@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import platform
 import re
 import sys
@@ -51,6 +52,12 @@ _CONFIDENCE_METHOD = "qwen_generation_policy_label_bbox_geomean_v1"
 _CALIBRATION_BINS = 10
 _BENCHMARK_DATASET_CONTEXT_SCHEMA = "libreyolo.vlm-confidence-benchmark-dataset.v1"
 _BENCHMARK_DATASET_MANIFEST_SCHEMA = "libreyolo.vlm-benchmark-dataset.v1"
+_HF_SNAPSHOT_IDENTITY_SCHEMA = "libreyolo.vlm-hf-snapshot-identity.v1"
+_HF_SNAPSHOT_MARKER = ".libreyolo_snapshot_complete"
+_HF_SNAPSHOT_CONFIG = "config.json"
+_SAFETENSORS_INDEX = "model.safetensors.index.json"
+_SINGLE_SAFETENSORS = "model.safetensors"
+_MAX_SNAPSHOT_JSON_BYTES = 64 * 1024 * 1024
 _MODEL_WEIGHT_SUFFIXES = {
     ".bin",
     ".h5",
@@ -268,7 +275,29 @@ class VLMConfidenceValidator(DetectionValidator):
             )
 
     @staticmethod
-    def _stable_file_identity(path: Path, label: str) -> tuple[str, int, Path]:
+    def _stat_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
+        return (
+            value.st_dev,
+            value.st_ino,
+            value.st_mode,
+            value.st_size,
+            value.st_mtime_ns,
+        )
+
+    @staticmethod
+    def _update_file_digest(stream, digest) -> None:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+
+    @classmethod
+    def _stable_file_identity_with_seal(
+        cls, path: Path, label: str
+    ) -> tuple[
+        str,
+        int,
+        Path,
+        tuple[int, int, int, int, int],
+    ]:
         if path.is_symlink():
             raise RuntimeError(f"{label} must not be a symlink: {path}")
         try:
@@ -281,28 +310,25 @@ class VLMConfidenceValidator(DetectionValidator):
             before = resolved.stat()
             digest = hashlib.sha256()
             with resolved.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
+                opened_before = os.fstat(stream.fileno())
+                cls._update_file_digest(stream, digest)
+                opened_after = os.fstat(stream.fileno())
             after = resolved.stat()
         except OSError as exc:
             raise RuntimeError(f"Could not fingerprint {label}: {resolved}") from exc
-        before_identity = (
-            before.st_dev,
-            before.st_ino,
-            before.st_mode,
-            before.st_size,
-            before.st_mtime_ns,
-        )
-        after_identity = (
-            after.st_dev,
-            after.st_ino,
-            after.st_mode,
-            after.st_size,
-            after.st_mtime_ns,
-        )
-        if before_identity != after_identity:
+        identities = {
+            cls._stat_identity(value)
+            for value in (before, opened_before, opened_after, after)
+        }
+        if len(identities) != 1:
             raise RuntimeError(f"{label} changed while it was fingerprinted.")
-        return digest.hexdigest(), int(after.st_size), resolved
+        seal = cls._stat_identity(after)
+        return digest.hexdigest(), int(after.st_size), resolved, seal
+
+    @classmethod
+    def _stable_file_identity(cls, path: Path, label: str) -> tuple[str, int, Path]:
+        digest, size, resolved, _seal = cls._stable_file_identity_with_seal(path, label)
+        return digest, size, resolved
 
     @classmethod
     def _require_file_identity(
@@ -946,6 +972,403 @@ class VLMConfidenceValidator(DetectionValidator):
             "runtime_modules": runtime_module_state,
         }
 
+    @staticmethod
+    def _json_object_without_duplicates(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    @classmethod
+    def _stable_json_file_identity(
+        cls,
+        path: Path,
+        label: str,
+    ) -> tuple[
+        Any,
+        str,
+        int,
+        Path,
+        tuple[int, int, int, int, int],
+    ]:
+        if path.is_symlink():
+            raise RuntimeError(f"{label} must not be a symlink: {path}")
+        try:
+            resolved = path.resolve(strict=True)
+        except (FileNotFoundError, OSError) as exc:
+            raise FileNotFoundError(f"{label} does not exist: {path}") from exc
+        if not resolved.is_file():
+            raise FileNotFoundError(f"{label} is not a regular file: {resolved}")
+
+        try:
+            before = resolved.stat()
+            if before.st_size > _MAX_SNAPSHOT_JSON_BYTES:
+                raise RuntimeError(
+                    f"{label} exceeds the {_MAX_SNAPSHOT_JSON_BYTES}-byte limit: "
+                    f"{resolved}"
+                )
+            with resolved.open("rb") as stream:
+                opened_before = os.fstat(stream.fileno())
+                raw = stream.read(_MAX_SNAPSHOT_JSON_BYTES + 1)
+                opened_after = os.fstat(stream.fileno())
+            after = resolved.stat()
+        except OSError as exc:
+            raise RuntimeError(f"Could not read {label}: {resolved}") from exc
+        identities = {
+            cls._stat_identity(value)
+            for value in (before, opened_before, opened_after, after)
+        }
+        if len(identities) != 1:
+            raise RuntimeError(f"{label} changed while it was fingerprinted.")
+        if len(raw) > _MAX_SNAPSHOT_JSON_BYTES:
+            raise RuntimeError(
+                f"{label} exceeds the {_MAX_SNAPSHOT_JSON_BYTES}-byte limit: {resolved}"
+            )
+
+        def reject_nonstandard_constant(value):
+            raise ValueError(f"non-standard JSON constant {value!r}")
+
+        try:
+            payload = json.loads(
+                raw.decode("utf-8"),
+                object_pairs_hook=cls._json_object_without_duplicates,
+                parse_constant=reject_nonstandard_constant,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                f"{label} contains malformed or duplicate JSON: {resolved}"
+            ) from exc
+        seal = cls._stat_identity(after)
+        return (
+            payload,
+            hashlib.sha256(raw).hexdigest(),
+            int(after.st_size),
+            resolved,
+            seal,
+        )
+
+    def _base_snapshot_root(self) -> Path:
+        processor = getattr(self.model, "processor", None)
+        loaded_model = getattr(self.model, "model", None)
+        candidates: list[Path] = []
+        for owner in (
+            processor,
+            getattr(processor, "tokenizer", None),
+            getattr(loaded_model, "config", None),
+        ):
+            for field in ("name_or_path", "_name_or_path"):
+                raw = getattr(owner, field, None)
+                if isinstance(raw, str) and raw.strip():
+                    candidates.append(Path(raw).expanduser())
+
+        prefix = getattr(self.model, "FILENAME_PREFIX", "")
+        size = getattr(self.model, "size", "")
+        if prefix and size:
+            candidates.append(Path("weights") / f"{prefix}{size}")
+
+        snapshot_roots: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in candidates:
+            if candidate.is_symlink():
+                raise RuntimeError(
+                    f"The local base snapshot must not be a symlink: {candidate}"
+                )
+            try:
+                resolved = candidate.resolve(strict=True)
+            except (FileNotFoundError, OSError):
+                continue
+            if resolved in seen or not resolved.is_dir():
+                continue
+            seen.add(resolved)
+            marker = resolved / _HF_SNAPSHOT_MARKER
+            if marker.exists() or marker.is_symlink():
+                snapshot_roots.append(resolved)
+
+        if not snapshot_roots:
+            raise RuntimeError(
+                "Could not locate a complete local base snapshot. The confidence "
+                f"gate requires {_HF_SNAPSHOT_MARKER!r} beside the pinned weights."
+            )
+        if len(snapshot_roots) != 1:
+            rendered = ", ".join(str(root) for root in snapshot_roots)
+            raise RuntimeError(
+                "Multiple local base snapshots are eligible for fingerprinting: "
+                f"{rendered}"
+            )
+        return snapshot_roots[0]
+
+    @staticmethod
+    def _snapshot_files(root: Path) -> dict[str, Path]:
+        files: dict[str, Path] = {}
+        directories = [root]
+        while directories:
+            directory = directories.pop()
+            try:
+                entries = sorted(directory.iterdir(), key=lambda path: path.name)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not inspect local base snapshot directory: {directory}"
+                ) from exc
+            for path in entries:
+                relative = path.relative_to(root)
+                if ".cache" in relative.parts:
+                    continue
+                if path.is_symlink():
+                    raise RuntimeError(
+                        "Local base snapshot content must not be a symlink: "
+                        f"{relative.as_posix()}"
+                    )
+                if path.is_dir():
+                    directories.append(path)
+                    continue
+                if not path.is_file():
+                    raise RuntimeError(
+                        "Local base snapshot contains a non-regular entry: "
+                        f"{relative.as_posix()}"
+                    )
+                files[relative.as_posix()] = path
+        return files
+
+    @staticmethod
+    def _safe_safetensors_shard_name(value: Any) -> str:
+        if not isinstance(value, str) or not value:
+            raise RuntimeError(
+                "Safetensors index weight_map values must be non-empty strings."
+            )
+        if (
+            value in {".", ".."}
+            or "/" in value
+            or "\\" in value
+            or ":" in value
+            or any(ord(character) < 32 for character in value)
+            or not value.endswith(".safetensors")
+        ):
+            raise RuntimeError(
+                f"Safetensors index contains an unsafe shard path: {value!r}"
+            )
+        return value
+
+    @classmethod
+    def _validate_snapshot_file_seals(
+        cls,
+        sealed_files: Sequence[tuple[Path, tuple[int, int, int, int, int], str]],
+    ) -> None:
+        for path, expected, label in sealed_files:
+            if path.is_symlink():
+                raise RuntimeError(f"{label} changed while it was fingerprinted.")
+            try:
+                actual = cls._stat_identity(path.stat())
+            except OSError as exc:
+                raise RuntimeError(
+                    f"{label} changed while it was fingerprinted."
+                ) from exc
+            if actual != expected:
+                raise RuntimeError(f"{label} changed while it was fingerprinted.")
+
+    def _base_snapshot_identity(
+        self, base_repo: str, base_revision: str
+    ) -> dict[str, Any]:
+        root = self._base_snapshot_root()
+        initial_files = self._snapshot_files(root)
+
+        marker_path = root / _HF_SNAPSHOT_MARKER
+        marker, _marker_digest, _marker_size, _marker_resolved, marker_seal = (
+            self._stable_json_file_identity(marker_path, "Base snapshot marker")
+        )
+        if not isinstance(marker, dict) or set(marker) != {"repo", "revision"}:
+            raise RuntimeError(
+                "Base snapshot marker must contain exactly 'repo' and 'revision'."
+            )
+        if marker["repo"] != base_repo or marker["revision"] != base_revision:
+            raise RuntimeError(
+                "Base snapshot marker does not match the pinned repository and "
+                "revision."
+            )
+
+        config_path = root / _HF_SNAPSHOT_CONFIG
+        config, config_digest, config_size, config_resolved, config_seal = (
+            self._stable_json_file_identity(config_path, "Base snapshot config")
+        )
+        if not isinstance(config, dict):
+            raise RuntimeError("Base snapshot config must be a JSON object.")
+
+        weight_names = sorted(
+            name for name in initial_files if name.lower().endswith(".safetensors")
+        )
+        index_names = sorted(
+            name
+            for name in initial_files
+            if name.lower().endswith(".safetensors.index.json")
+        )
+        incompatible_payloads = sorted(
+            name
+            for name in initial_files
+            if Path(name).suffix.lower() in _MODEL_WEIGHT_SUFFIXES
+            and not name.lower().endswith(".safetensors")
+        )
+        incompatible_indexes = sorted(
+            name for name in initial_files if name.lower().endswith(".bin.index.json")
+        )
+        if incompatible_payloads or incompatible_indexes:
+            rendered = ", ".join(incompatible_payloads + incompatible_indexes)
+            raise RuntimeError(
+                "Local base snapshot contains ambiguous non-safetensors payloads: "
+                f"{rendered}"
+            )
+        if len({name.casefold() for name in weight_names}) != len(weight_names):
+            raise RuntimeError(
+                "Local base snapshot contains case-ambiguous safetensors payloads."
+            )
+
+        index_record = None
+        index_seal = None
+        if index_names:
+            if index_names != [_SAFETENSORS_INDEX]:
+                rendered = ", ".join(index_names)
+                raise RuntimeError(
+                    "Local base snapshot has an ambiguous safetensors index layout: "
+                    f"{rendered}"
+                )
+            index_path = root / _SAFETENSORS_INDEX
+            index, index_digest, index_size, _index_resolved, index_seal = (
+                self._stable_json_file_identity(
+                    index_path, "Base snapshot safetensors index"
+                )
+            )
+            if not isinstance(index, dict) or set(index) != {"metadata", "weight_map"}:
+                raise RuntimeError(
+                    "Safetensors index must contain exactly 'metadata' and "
+                    "'weight_map'."
+                )
+            if not isinstance(index["metadata"], dict):
+                raise RuntimeError("Safetensors index metadata must be a JSON object.")
+            weight_map = index["weight_map"]
+            if not isinstance(weight_map, dict) or not weight_map:
+                raise RuntimeError(
+                    "Safetensors index weight_map must be a non-empty JSON object."
+                )
+            if any(not isinstance(name, str) or not name for name in weight_map):
+                raise RuntimeError(
+                    "Safetensors index weight_map keys must be non-empty strings."
+                )
+            referenced = sorted(
+                {
+                    self._safe_safetensors_shard_name(value)
+                    for value in weight_map.values()
+                }
+            )
+            if len({name.casefold() for name in referenced}) != len(referenced):
+                raise RuntimeError(
+                    "Safetensors index contains case-ambiguous shard paths."
+                )
+            missing = sorted(set(referenced) - set(weight_names))
+            unreferenced = sorted(set(weight_names) - set(referenced))
+            if missing or unreferenced:
+                details = []
+                if missing:
+                    details.append("missing: " + ", ".join(missing))
+                if unreferenced:
+                    details.append("unreferenced: " + ", ".join(unreferenced))
+                raise RuntimeError(
+                    "Safetensors index does not exactly bind the snapshot shards "
+                    f"({'; '.join(details)})."
+                )
+            if _SINGLE_SAFETENSORS in referenced:
+                raise RuntimeError(
+                    "An indexed snapshot must use an unambiguous sharded "
+                    "safetensors layout."
+                )
+            weight_names = referenced
+            snapshot_format = "safetensors_sharded"
+            index_record = {
+                "path": _SAFETENSORS_INDEX,
+                "size_bytes": index_size,
+                "sha256": index_digest,
+            }
+        else:
+            if weight_names != [_SINGLE_SAFETENSORS]:
+                rendered = ", ".join(weight_names) if weight_names else "none"
+                raise RuntimeError(
+                    "An unindexed base snapshot must contain exactly "
+                    f"{_SINGLE_SAFETENSORS!r}; found {rendered}."
+                )
+            snapshot_format = "safetensors_single"
+
+        artifacts = [
+            {
+                "path": _HF_SNAPSHOT_CONFIG,
+                "size_bytes": config_size,
+                "sha256": config_digest,
+            }
+        ]
+        sealed_files = [
+            (marker_path, marker_seal, "Base snapshot marker"),
+            (config_resolved, config_seal, "Base snapshot config"),
+        ]
+        if index_record is not None and index_seal is not None:
+            artifacts.append(index_record)
+            sealed_files.append(
+                (
+                    root / _SAFETENSORS_INDEX,
+                    index_seal,
+                    "Base snapshot safetensors index",
+                )
+            )
+
+        for name in weight_names:
+            digest, size, resolved, seal = self._stable_file_identity_with_seal(
+                root / name, f"Base snapshot weight {name!r}"
+            )
+            if size == 0:
+                raise RuntimeError(f"Base snapshot weight {name!r} must not be empty.")
+            artifacts.append({"path": name, "size_bytes": size, "sha256": digest})
+            sealed_files.append((resolved, seal, f"Base snapshot weight {name!r}"))
+
+        final_files = self._snapshot_files(root)
+        final_weight_names = sorted(
+            name for name in final_files if name.lower().endswith(".safetensors")
+        )
+        final_index_names = sorted(
+            name
+            for name in final_files
+            if name.lower().endswith(".safetensors.index.json")
+        )
+        if (
+            set(final_files) != set(initial_files)
+            or final_weight_names != sorted(weight_names)
+            or final_index_names != index_names
+        ):
+            raise RuntimeError(
+                "Base snapshot weight layout changed while it was fingerprinted."
+            )
+        self._validate_snapshot_file_seals(sealed_files)
+
+        artifacts.sort(key=lambda item: item["path"])
+        payload = {
+            "schema": _HF_SNAPSHOT_IDENTITY_SCHEMA,
+            "source": base_repo,
+            "revision": base_revision,
+            "format": snapshot_format,
+            "artifacts": artifacts,
+        }
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return {
+            "kind": "pinned_hf_snapshot",
+            **payload,
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+            "files": len(artifacts),
+            "size_bytes": sum(item["size_bytes"] for item in artifacts),
+            "weight_files": list(weight_names),
+        }
+
     def _checkpoint_identity(
         self,
         target: torch.nn.Module,
@@ -978,17 +1401,41 @@ class VLMConfidenceValidator(DetectionValidator):
 
         checkpoint_dir = getattr(self.model, "_checkpoint_dir", None)
         if checkpoint_dir is None:
-            return None
+            return self._base_snapshot_identity(base_repo, base_revision)
         root = Path(checkpoint_dir).expanduser()
         if not root.is_dir():
             raise FileNotFoundError(
                 f"Configured VLM checkpoint directory does not exist: {root}"
             )
         digest, file_count = self._directory_sha256(root)
-        return {
+        checkpoint = {
             "kind": "checkpoint_directory",
             "sha256": digest,
             "files": file_count,
+        }
+        adapter_marker = (root / "adapter_config.json").exists()
+        full_marker = (root / _HF_SNAPSHOT_CONFIG).exists()
+        if adapter_marker and full_marker:
+            raise RuntimeError(
+                "Configured VLM checkpoint has ambiguous adapter and full-model "
+                "representations."
+            )
+        if not adapter_marker:
+            return checkpoint
+
+        base = self._base_snapshot_identity(base_repo, base_revision)
+        payload = {"adapter": checkpoint, "base": base}
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return {
+            "kind": "adapter_checkpoint_with_base_snapshot",
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+            **payload,
         }
 
     def _processor_identity(self, base_repo: str, base_revision: str) -> dict[str, Any]:

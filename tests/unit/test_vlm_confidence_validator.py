@@ -177,12 +177,44 @@ class _StubVLM:
         return self.variants[output]
 
 
-def _stub_model(tmp_path, paths, variants):
-    processor_dir = tmp_path / "processor"
-    processor_dir.mkdir(exist_ok=True)
-    (processor_dir / "preprocessor_config.json").write_text(
+def _write_base_snapshot(
+    root,
+    *,
+    repo="stub/base",
+    revision="a" * 40,
+    weights=None,
+    weight_map=None,
+):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / ".libreyolo_snapshot_complete").write_text(
+        json.dumps({"repo": repo, "revision": revision}) + "\n",
+        encoding="utf-8",
+    )
+    (root / "config.json").write_text(
+        '{"architectures":["OfflineStub"]}\n', encoding="utf-8"
+    )
+    if weights is None:
+        weights = {"model.safetensors": b"offline-stub-weights"}
+    for name, payload in weights.items():
+        (root / name).write_bytes(payload)
+    if weight_map is not None:
+        (root / "model.safetensors.index.json").write_text(
+            json.dumps(
+                {"metadata": {"total_size": 1}, "weight_map": weight_map},
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    (root / "preprocessor_config.json").write_text(
         '{"processor_class":"OfflineStub"}\n', encoding="utf-8"
     )
+    return root
+
+
+def _stub_model(tmp_path, paths, variants):
+    processor_dir = tmp_path / "processor"
+    _write_base_snapshot(processor_dir)
     return _StubVLM(paths, variants, processor_dir)
 
 
@@ -1351,6 +1383,257 @@ def test_processor_fingerprint_ignores_hf_cache_metadata(tmp_path):
     )
 
     assert first_hash == second_hash
+
+
+def _base_checkpoint_identity(tmp_path, model):
+    validator = VLMConfidenceValidator(model, _config(tmp_path))
+    return validator._checkpoint_identity(
+        model.model,
+        model.HF_REPOS[model.size],
+        model.HF_REVISIONS[model.size],
+    )
+
+
+def test_base_snapshot_checkpoint_binds_weight_bytes_and_ignores_cache(tmp_path):
+    model = _stub_model(tmp_path, [], [])
+    snapshot = Path(model.processor.name_or_path)
+
+    first = _base_checkpoint_identity(tmp_path, model)
+    cache = snapshot / ".cache" / "huggingface" / "download"
+    cache.mkdir(parents=True)
+    (cache / "model.safetensors.metadata").write_text("mutable", encoding="utf-8")
+    after_cache_change = _base_checkpoint_identity(tmp_path, model)
+
+    assert first == after_cache_change
+    assert first["kind"] == "pinned_hf_snapshot"
+    assert first["source"] == "stub/base"
+    assert first["revision"] == "a" * 40
+    assert first["weight_files"] == ["model.safetensors"]
+    assert len(first["sha256"]) == 64
+    assert first["artifacts"][-1]["path"] == "model.safetensors"
+
+    (snapshot / "model.safetensors").write_bytes(b"changed-weight-bytes")
+    mutated = _base_checkpoint_identity(tmp_path, model)
+
+    assert mutated["sha256"] != first["sha256"]
+    assert mutated["artifacts"][-1]["sha256"] != first["artifacts"][-1]["sha256"]
+
+
+def test_base_snapshot_accepts_exact_sharded_safetensors_index(tmp_path):
+    snapshot = _write_base_snapshot(
+        tmp_path / "sharded",
+        weights={
+            "model-00001-of-00002.safetensors": b"first-shard",
+            "model-00002-of-00002.safetensors": b"second-shard",
+        },
+        weight_map={
+            "model.embed_tokens.weight": "model-00001-of-00002.safetensors",
+            "model.layers.0.weight": "model-00001-of-00002.safetensors",
+            "lm_head.weight": "model-00002-of-00002.safetensors",
+        },
+    )
+    model = _StubVLM([], [], snapshot)
+
+    identity = _base_checkpoint_identity(tmp_path, model)
+
+    assert identity["format"] == "safetensors_sharded"
+    assert identity["weight_files"] == [
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+    ]
+    assert [artifact["path"] for artifact in identity["artifacts"]] == [
+        "config.json",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+        "model.safetensors.index.json",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("repo", "revision"),
+    [("wrong/base", "a" * 40), ("stub/base", "b" * 40)],
+)
+def test_base_snapshot_rejects_marker_mismatch(tmp_path, repo, revision):
+    snapshot = _write_base_snapshot(tmp_path / "snapshot", repo=repo, revision=revision)
+    model = _StubVLM([], [], snapshot)
+
+    with pytest.raises(RuntimeError, match="marker does not match"):
+        _base_checkpoint_identity(tmp_path, model)
+
+
+@pytest.mark.parametrize("failure", ["missing", "unreferenced"])
+def test_base_snapshot_index_must_bind_exact_shard_set(tmp_path, failure):
+    weights = {
+        "model-00001-of-00002.safetensors": b"first-shard",
+        "model-00002-of-00002.safetensors": b"second-shard",
+    }
+    weight_map = {
+        "model.layers.0.weight": "model-00001-of-00002.safetensors",
+        "model.layers.1.weight": "model-00002-of-00002.safetensors",
+    }
+    if failure == "missing":
+        del weights["model-00002-of-00002.safetensors"]
+    else:
+        weights["model-00003-of-00003.safetensors"] = b"unreferenced"
+    snapshot = _write_base_snapshot(
+        tmp_path / "snapshot", weights=weights, weight_map=weight_map
+    )
+    model = _StubVLM([], [], snapshot)
+
+    with pytest.raises(RuntimeError, match="does not exactly bind"):
+        _base_checkpoint_identity(tmp_path, model)
+
+
+@pytest.mark.parametrize(
+    "unsafe_name",
+    [
+        "../outside.safetensors",
+        "nested/shard.safetensors",
+        "nested\\shard.safetensors",
+        "C:escape.safetensors",
+    ],
+)
+def test_base_snapshot_rejects_unsafe_index_paths(tmp_path, unsafe_name):
+    snapshot = _write_base_snapshot(
+        tmp_path / "snapshot",
+        weights={"model-00001-of-00001.safetensors": b"only-shard"},
+        weight_map={"model.weight": unsafe_name},
+    )
+    model = _StubVLM([], [], snapshot)
+
+    with pytest.raises(RuntimeError, match="unsafe shard path"):
+        _base_checkpoint_identity(tmp_path, model)
+
+
+@pytest.mark.parametrize(
+    "index_payload",
+    [
+        "{",
+        (
+            '{"metadata":{},"weight_map":'
+            '{"model.weight":"model-00001-of-00001.safetensors",'
+            '"model.weight":"model-00001-of-00001.safetensors"}}'
+        ),
+    ],
+)
+def test_base_snapshot_rejects_malformed_or_duplicate_index_json(
+    tmp_path, index_payload
+):
+    snapshot = _write_base_snapshot(
+        tmp_path / "snapshot",
+        weights={"model-00001-of-00001.safetensors": b"only-shard"},
+        weight_map={"model.weight": "model-00001-of-00001.safetensors"},
+    )
+    (snapshot / "model.safetensors.index.json").write_text(
+        index_payload, encoding="utf-8"
+    )
+    model = _StubVLM([], [], snapshot)
+
+    with pytest.raises(RuntimeError, match="malformed or duplicate JSON"):
+        _base_checkpoint_identity(tmp_path, model)
+
+
+def test_base_snapshot_rejects_symlinked_weight(tmp_path):
+    snapshot = _write_base_snapshot(tmp_path / "snapshot")
+    weight = snapshot / "model.safetensors"
+    external = tmp_path / "external.safetensors"
+    external.write_bytes(weight.read_bytes())
+    weight.unlink()
+    try:
+        weight.symlink_to(external)
+    except OSError as exc:
+        pytest.skip(f"Symlinks are unavailable in this test environment: {exc}")
+    model = _StubVLM([], [], snapshot)
+
+    with pytest.raises(RuntimeError, match="must not be a symlink"):
+        _base_checkpoint_identity(tmp_path, model)
+
+
+@pytest.mark.parametrize("extra_name", ["pytorch_model.bin", "other.safetensors"])
+def test_base_snapshot_rejects_ambiguous_weight_payloads(tmp_path, extra_name):
+    snapshot = _write_base_snapshot(tmp_path / "snapshot")
+    (snapshot / extra_name).write_bytes(b"ambiguous")
+    model = _StubVLM([], [], snapshot)
+
+    with pytest.raises(RuntimeError, match="ambiguous|exactly"):
+        _base_checkpoint_identity(tmp_path, model)
+
+
+@pytest.mark.parametrize("sharded", [False, True])
+def test_base_snapshot_rejects_empty_weight_payloads(tmp_path, sharded):
+    if sharded:
+        weights = {"model-00001-of-00001.safetensors": b""}
+        weight_map = {"model.weight": "model-00001-of-00001.safetensors"}
+    else:
+        weights = {"model.safetensors": b""}
+        weight_map = None
+    snapshot = _write_base_snapshot(
+        tmp_path / "snapshot", weights=weights, weight_map=weight_map
+    )
+    model = _StubVLM([], [], snapshot)
+
+    with pytest.raises(RuntimeError, match="must not be empty"):
+        _base_checkpoint_identity(tmp_path, model)
+
+
+def test_base_snapshot_rejects_weight_mutation_during_hashing(tmp_path, monkeypatch):
+    model = _stub_model(tmp_path, [], [])
+    weight = Path(model.processor.name_or_path) / "model.safetensors"
+
+    def mutate_while_hashing(stream, digest):
+        digest.update(stream.read(4))
+        with weight.open("ab") as writer:
+            writer.write(b"!")
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+
+    monkeypatch.setattr(
+        VLMConfidenceValidator,
+        "_update_file_digest",
+        staticmethod(mutate_while_hashing),
+    )
+
+    with pytest.raises(RuntimeError, match="changed while it was fingerprinted"):
+        _base_checkpoint_identity(tmp_path, model)
+
+
+def test_loaded_adapter_checkpoint_identity_also_binds_base_snapshot(tmp_path):
+    model = _stub_model(tmp_path, [], [])
+    snapshot = Path(model.processor.name_or_path)
+    checkpoint = tmp_path / "adapter-checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "adapter_config.json").write_text(
+        '{"peft_type":"LORA"}\n', encoding="utf-8"
+    )
+    (checkpoint / "adapter_model.safetensors").write_bytes(b"adapter")
+    (checkpoint / "preprocessor_config.json").write_text("{}\n", encoding="utf-8")
+    model._checkpoint_dir = checkpoint
+    model.processor.name_or_path = str(checkpoint)
+    model.model.config = SimpleNamespace(_name_or_path=str(snapshot))
+
+    first = _base_checkpoint_identity(tmp_path, model)
+    (snapshot / "model.safetensors").write_bytes(b"different-base")
+    second = _base_checkpoint_identity(tmp_path, model)
+
+    assert first["kind"] == "adapter_checkpoint_with_base_snapshot"
+    assert first["adapter"] == second["adapter"]
+    assert first["base"]["sha256"] != second["base"]["sha256"]
+    assert first["sha256"] != second["sha256"]
+
+
+def test_full_checkpoint_directory_identity_remains_self_contained(tmp_path):
+    model = _stub_model(tmp_path, [], [])
+    checkpoint = tmp_path / "full-checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "config.json").write_text("{}\n", encoding="utf-8")
+    (checkpoint / "model.safetensors").write_bytes(b"full-checkpoint")
+    model._checkpoint_dir = checkpoint
+
+    identity = _base_checkpoint_identity(tmp_path, model)
+
+    assert identity["kind"] == "checkpoint_directory"
+    assert identity["files"] == 2
+    assert len(identity["sha256"]) == 64
 
 
 def test_peft_config_changes_live_checkpoint_identity(tmp_path):
