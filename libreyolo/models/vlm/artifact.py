@@ -27,11 +27,12 @@ import sys
 import tempfile
 import unicodedata
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import Any
+from typing import Any, BinaryIO, Iterator
 from urllib.parse import unquote_to_bytes, urlsplit
 
 VLM_ARTIFACT_SCHEMA = "libreyolo.vlm-artifact.v1"
@@ -103,6 +104,98 @@ _PUBLICATION_DEPENDENCY_PINS = {
     "peft": "0.19.1",
     "transformers": "5.12.1",
 }
+_CONFIDENCE_REPORT_SCHEMA = "libreyolo.vlm-confidence-report.v2"
+_CONFIDENCE_CONTEXT_SCHEMA = "libreyolo.vlm-confidence-benchmark-context.v3"
+_CONFIDENCE_CHECKPOINT_SCHEMA = "libreyolo.vlm-confidence-checkpoint-identity.v1"
+_CONFIDENCE_DATASET_SCHEMA = "libreyolo.vlm-confidence-benchmark-dataset.v1"
+_CONFIDENCE_PARTITION_NAME = "holdout100"
+_CONFIDENCE_PARTITION_ROLE = "fine_tune_validation"
+_CONFIDENCE_PARTITION_START = 0
+_CONFIDENCE_PARTITION_STOP = 100
+_CONFIDENCE_PARTITION_IMAGE_COUNT = 100
+_CONFIDENCE_PARTITION_ARTIFACT = "annotations/instances_val2017_holdout100.json"
+_CONFIDENCE_BENCHMARK_ID = ":".join(
+    (
+        _CONFIDENCE_REPORT_SCHEMA,
+        _CONFIDENCE_CONTEXT_SCHEMA,
+        _CONFIDENCE_PARTITION_NAME,
+        _CONFIDENCE_PARTITION_ROLE,
+    )
+)
+_EVALUATION_CLAIM_SCHEMA = "libreyolo.vlm-publication-evaluation-claim.v1"
+_CONFIDENCE_CONTEXT_KEYS = {
+    "schema",
+    "git",
+    "runtime",
+    "determinism",
+    "dataset",
+    "checkpoint",
+}
+_CONFIDENCE_DATASET_KEYS = {
+    "schema",
+    "manifest",
+    "source",
+    "partition",
+    "classes",
+    "review",
+}
+_CONFIDENCE_PARTITION_KEYS = {
+    "name",
+    "role",
+    "start",
+    "stop",
+    "image_count",
+    "annotation_artifact",
+    "annotation_size_bytes",
+    "annotation_sha256",
+}
+_CONFIDENCE_CHECKPOINT_KEYS = {
+    "schema",
+    "kind",
+    "family",
+    "size",
+    "task",
+    "base_repo",
+    "base_revision",
+    "aggregate_sha256",
+    "adapter_weights_sha256",
+    "adapter_config_sha256",
+    "checkpoint_contract_sha256",
+    "processor_sha256",
+    "files",
+}
+_CONFIDENCE_VALIDATION_METRICS = {
+    "metrics/vlm_confidence/auroc",
+    "metrics/vlm_confidence/candidate_mAP50",
+    "metrics/vlm_confidence/candidate_mAP50-95",
+    "metrics/vlm_confidence/constant_mAP50",
+    "metrics/vlm_confidence/constant_mAP50-95",
+    "metrics/vlm_confidence/default_conf_fp_retention",
+    "metrics/vlm_confidence/default_conf_prediction_retention",
+    "metrics/vlm_confidence/default_conf_tp_retention",
+    "metrics/vlm_confidence/delta_mAP50",
+    "metrics/vlm_confidence/delta_mAP50-95",
+    "metrics/vlm_confidence/detection_score_coverage",
+    "metrics/vlm_confidence/prediction_score_coverage",
+    "metrics/vlm_confidence/ranking_ap",
+    "metrics/vlm_confidence/response_score_coverage",
+    "metrics/vlm_confidence/scored_prediction_brier",
+    "metrics/vlm_confidence/scored_prediction_ece",
+    "metrics/vlm_confidence/scored_prediction_mce",
+}
+_CONFIDENCE_DELTA_METRICS = {
+    "metrics/vlm_confidence/delta_mAP50": (
+        "metrics/vlm_confidence/candidate_mAP50",
+        "metrics/vlm_confidence/constant_mAP50",
+    ),
+    "metrics/vlm_confidence/delta_mAP50-95": (
+        "metrics/vlm_confidence/candidate_mAP50-95",
+        "metrics/vlm_confidence/constant_mAP50-95",
+    ),
+}
+_CONFIDENCE_PROBABILITY_METRICS = _CONFIDENCE_VALIDATION_METRICS - set(
+    _CONFIDENCE_DELTA_METRICS
+)
 
 # Exact file metadata at the immutable upstream revisions above. Small-file
 # SHA-256 values are hashes of the downloaded bytes; safetensors hashes are the
@@ -390,6 +483,7 @@ _TRAINING_DATA_KEYS = {
 _EVALUATION_KEYS = {
     "benchmark",
     "report_sha256",
+    "envelope_sha256",
     "checkpoint_sha256",
     "metrics",
     "passed",
@@ -397,16 +491,18 @@ _EVALUATION_KEYS = {
 _CODE_KEYS = {"repository", "revision", "clean", "recipe", "dependencies"}
 _RECIPE_KEYS = {"id", "sha256"}
 _TEMPLATE_TRAINING_DATA_KEYS = _TRAINING_DATA_KEYS - {"redistribution_decision"}
-_TEMPLATE_EVALUATION_KEYS = _EVALUATION_KEYS - {"checkpoint_sha256", "passed"}
 _TEMPLATE_CODE_KEYS = {"revision", "clean", "dependencies"}
 _REVIEW_KEYS = {"approved", "reviewer", "reviewed_at", "bindings", "gates"}
 _BINDING_KEYS = {
     "base_snapshot_sha256",
     "training_data_manifest_sha256",
     "evaluation_report_sha256",
+    "evaluation_envelope_sha256",
+    "evaluation_claim_sha256",
     "code_revision",
     "recipe_sha256",
     "adapter_weights_sha256",
+    "adapter_config_sha256",
     "checkpoint_contract_sha256",
     "processor_sha256",
 }
@@ -666,19 +762,73 @@ def _same_file_identity(before: os.stat_result, after: os.stat_result) -> bool:
     )
 
 
-def _read_bounded(path: Path, *, max_bytes: int, label: str) -> bytes:
+@contextmanager
+def _open_stable_regular_file(
+    path: Path,
+    label: str,
+    *,
+    max_bytes: int | None = None,
+) -> Iterator[tuple[BinaryIO, os.stat_result]]:
+    """Open one unlinked regular file and bind the handle to its path identity."""
+
     before = _assert_regular_unlinked_file(path, label)
-    if before.st_size > max_bytes:
+    if max_bytes is not None and before.st_size > max_bytes:
         raise VLMArtifactError(f"{label} exceeds the {max_bytes}-byte safety limit")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor: int | None = None
     try:
-        with path.open("rb") as stream:
+        descriptor = os.open(path, flags)
+        opened_before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened_before.st_mode)
+            or getattr(opened_before, "st_nlink", 1) != 1
+            or not _same_file_identity(before, opened_before)
+        ):
+            raise VLMArtifactError(f"{label} changed before it was opened")
+        stream = os.fdopen(descriptor, "rb")
+        descriptor = None
+    except OSError as exc:
+        raise VLMArtifactError(f"Could not open {label}: {path}") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+    try:
+        yield stream, opened_before
+    finally:
+        try:
+            opened_after = os.fstat(stream.fileno())
+        except OSError as exc:
+            raise VLMArtifactError(f"Could not recheck {label}: {path}") from exc
+        finally:
+            stream.close()
+        after = _assert_regular_unlinked_file(path, label)
+        if not _same_file_identity(
+            opened_before, opened_after
+        ) or not _same_file_identity(opened_before, after):
+            raise VLMArtifactError(f"{label} changed while it was being read")
+
+
+def _read_bounded(path: Path, *, max_bytes: int, label: str) -> bytes:
+    try:
+        with _open_stable_regular_file(path, label, max_bytes=max_bytes) as (
+            stream,
+            opened,
+        ):
             payload = stream.read(max_bytes + 1)
+            stream.seek(0)
+            verified_payload = stream.read(max_bytes + 1)
+    except VLMArtifactError:
+        raise
     except OSError as exc:
         raise VLMArtifactError(f"Could not read {label}: {path}") from exc
-    after = _assert_regular_unlinked_file(path, label)
     if len(payload) > max_bytes:
         raise VLMArtifactError(f"{label} exceeds the {max_bytes}-byte safety limit")
-    if len(payload) != before.st_size or not _same_file_identity(before, after):
+    if len(payload) != opened.st_size:
+        raise VLMArtifactError(f"{label} changed while it was being read")
+    if verified_payload != payload:
         raise VLMArtifactError(f"{label} changed while it was being read")
     return payload
 
@@ -1127,9 +1277,8 @@ def _plain_json_object(value: Any, label: str) -> dict[str, Any]:
 
 def _validate_template_context(
     training_data_value: Any,
-    evaluation_value: Any,
     code_value: Any,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     training_data = _require_exact_keys(
         _plain_json_object(training_data_value, "training_data"),
         _TEMPLATE_TRAINING_DATA_KEYS,
@@ -1144,15 +1293,6 @@ def _validate_template_context(
         "training_data.license_evidence_url",
     )
     _require_sha256(training_data["manifest_sha256"], "training_data.manifest_sha256")
-
-    evaluation = _require_exact_keys(
-        _plain_json_object(evaluation_value, "evaluation"),
-        _TEMPLATE_EVALUATION_KEYS,
-        "evaluation",
-    )
-    _require_token(evaluation["benchmark"], "evaluation.benchmark")
-    _require_sha256(evaluation["report_sha256"], "evaluation.report_sha256")
-    _require_finite_metrics(evaluation["metrics"], "evaluation.metrics")
 
     code = _require_exact_keys(
         _plain_json_object(code_value, "code"),
@@ -1176,7 +1316,233 @@ def _validate_template_context(
             raise VLMArtifactError(
                 f"code.dependencies.{name} must be {expected!r} for publication v1"
             )
-    return training_data, evaluation, code
+    return training_data, code
+
+
+def _read_confidence_benchmark_identity(path: str | os.PathLike[str]) -> Any:
+    """Read one strict report/envelope pair without an eager validation import."""
+
+    try:
+        from libreyolo.validation.vlm_confidence_benchmark import (
+            VLMConfidenceReportError,
+            read_benchmark_run_identity,
+        )
+    except ImportError as exc:  # pragma: no cover - package integrity guard
+        raise VLMArtifactError(
+            "confidence benchmark validation is unavailable in this LibreYOLO runtime"
+        ) from exc
+    try:
+        return read_benchmark_run_identity(path, label="publication_evaluation")
+    except (OSError, TypeError, VLMConfidenceReportError) as exc:
+        raise VLMArtifactError(f"invalid confidence benchmark run: {exc}") from exc
+
+
+def _validate_confidence_validation_metrics(
+    value: Any, label: str
+) -> dict[str, float | int]:
+    metrics = _require_exact_keys(value, _CONFIDENCE_VALIDATION_METRICS, label)
+    _require_finite_metrics(metrics, label)
+    for key in sorted(_CONFIDENCE_PROBABILITY_METRICS):
+        metric = float(metrics[key])
+        if metric < 0.0 or metric > 1.0:
+            raise VLMArtifactError(f"{label}.{key} must be between 0 and 1")
+    for delta_key, (candidate_key, constant_key) in _CONFIDENCE_DELTA_METRICS.items():
+        delta = float(metrics[delta_key])
+        if delta < -1.0 or delta > 1.0:
+            raise VLMArtifactError(f"{label}.{delta_key} must be between -1 and 1")
+        expected_delta = float(metrics[candidate_key]) - float(metrics[constant_key])
+        if delta != expected_delta:
+            raise VLMArtifactError(
+                f"{label}.{delta_key} must equal {candidate_key} minus {constant_key}"
+            )
+    return metrics
+
+
+def _evaluation_claim_sha256(evaluation: Mapping[str, Any]) -> str:
+    """Hash the machine-derived evaluation claim, excluding human approval."""
+
+    claim = {
+        "schema": _EVALUATION_CLAIM_SCHEMA,
+        "benchmark": evaluation["benchmark"],
+        "report_sha256": evaluation["report_sha256"],
+        "envelope_sha256": evaluation["envelope_sha256"],
+        "checkpoint_sha256": evaluation["checkpoint_sha256"],
+        "metrics": evaluation["metrics"],
+    }
+    return _sha256_bytes(_canonical_json(claim))
+
+
+def _inspect_checkpoint_identity(path: Path) -> Any:
+    """Inspect one strict checkpoint without adding an eager training import."""
+
+    try:
+        from libreyolo.models.vlm.training.checkpoint import (
+            inspect_vlm_checkpoint_identity,
+        )
+    except ImportError as exc:  # pragma: no cover - package integrity guard
+        raise VLMArtifactError(
+            "VLM checkpoint identity inspection is unavailable in this runtime"
+        ) from exc
+    return inspect_vlm_checkpoint_identity(path)
+
+
+def _checkpoint_report_context(identity: Any) -> dict[str, Any]:
+    """Return the exact path-free identity expected in a v3 confidence report."""
+
+    files = [
+        {
+            "path": record.path,
+            "role": record.role,
+            "size": record.size,
+            "sha256": record.sha256,
+        }
+        for record in identity.files
+    ]
+    return {
+        "schema": _CONFIDENCE_CHECKPOINT_SCHEMA,
+        "kind": "qwen3vl_lora_checkpoint",
+        "family": identity.family,
+        "size": identity.size,
+        "task": identity.task,
+        "base_repo": identity.base_repo,
+        "base_revision": identity.base_revision,
+        "aggregate_sha256": identity.aggregate_sha256,
+        "adapter_weights_sha256": identity.adapter_weights_sha256,
+        "adapter_config_sha256": identity.adapter_config_sha256,
+        "checkpoint_contract_sha256": identity.checkpoint_contract_sha256,
+        "processor_sha256": identity.processor_sha256,
+        "files": files,
+    }
+
+
+def _confidence_run_identity_bytes(identity: Any) -> bytes:
+    """Return an exact path-free snapshot of the public strict run identity."""
+
+    return _canonical_json(
+        {
+            "run_id": identity.run_id,
+            "process_id": identity.process_id,
+            "report_sha256": identity.report_sha256,
+            "envelope_sha256": identity.envelope_sha256,
+            "execution_context": identity.execution_context,
+            "benchmark_config": identity.benchmark_config,
+            "metrics": identity.metrics,
+            "nonfinite_metrics": list(identity.nonfinite_metrics),
+        }
+    )
+
+
+def _evaluation_from_confidence_report(
+    report_path: str | os.PathLike[str], checkpoint_identity: Any
+) -> tuple[dict[str, Any], bytes]:
+    """Derive publication evaluation claims from a bound strict gate report."""
+
+    run_identity = _read_confidence_benchmark_identity(report_path)
+    report_sha = _require_sha256(
+        run_identity.report_sha256, "confidence report SHA-256"
+    )
+    envelope_sha = _require_sha256(
+        run_identity.envelope_sha256, "confidence run envelope SHA-256"
+    )
+    benchmark_config = _plain_json_object(
+        run_identity.benchmark_config, "confidence report benchmark_config"
+    )
+    context = _require_exact_keys(
+        run_identity.execution_context,
+        _CONFIDENCE_CONTEXT_KEYS,
+        "confidence run execution_context",
+    )
+    if _canonical_json(benchmark_config.get("benchmark_run")) != _canonical_json(
+        context
+    ):
+        raise VLMArtifactError(
+            "confidence report benchmark_run does not match the run envelope context"
+        )
+    if context["schema"] != _CONFIDENCE_CONTEXT_SCHEMA:
+        raise VLMArtifactError(
+            "confidence run execution_context schema must be "
+            f"{_CONFIDENCE_CONTEXT_SCHEMA!r}"
+        )
+    dataset = _require_exact_keys(
+        context["dataset"],
+        _CONFIDENCE_DATASET_KEYS,
+        "confidence run execution_context.dataset",
+    )
+    if dataset["schema"] != _CONFIDENCE_DATASET_SCHEMA:
+        raise VLMArtifactError(
+            "confidence report benchmark dataset schema must be "
+            f"{_CONFIDENCE_DATASET_SCHEMA!r}"
+        )
+    partition = _require_exact_keys(
+        dataset["partition"],
+        _CONFIDENCE_PARTITION_KEYS,
+        "confidence run execution_context.dataset.partition",
+    )
+    expected_partition = {
+        "name": _CONFIDENCE_PARTITION_NAME,
+        "role": _CONFIDENCE_PARTITION_ROLE,
+        "start": _CONFIDENCE_PARTITION_START,
+        "stop": _CONFIDENCE_PARTITION_STOP,
+        "image_count": _CONFIDENCE_PARTITION_IMAGE_COUNT,
+        "annotation_artifact": _CONFIDENCE_PARTITION_ARTIFACT,
+    }
+    if any(partition[key] != expected for key, expected in expected_partition.items()):
+        raise VLMArtifactError(
+            "confidence report must use the exact holdout100 "
+            "fine_tune_validation partition"
+        )
+
+    expected_checkpoint = _checkpoint_report_context(checkpoint_identity)
+    report_checkpoint = _require_exact_keys(
+        context["checkpoint"],
+        _CONFIDENCE_CHECKPOINT_KEYS,
+        "confidence report benchmark_run.checkpoint",
+    )
+    if _canonical_json(report_checkpoint) != _canonical_json(expected_checkpoint):
+        raise VLMArtifactError(
+            "confidence report checkpoint identity does not match the checkpoint"
+        )
+    expected_duplicates = {
+        "family": checkpoint_identity.family,
+        "size": checkpoint_identity.size,
+        "base_repo": checkpoint_identity.base_repo,
+        "base_revision": checkpoint_identity.base_revision,
+    }
+    for field, expected in expected_duplicates.items():
+        if benchmark_config.get(field) != expected:
+            raise VLMArtifactError(
+                f"confidence report benchmark_config.{field} does not match "
+                "the checkpoint"
+            )
+
+    metrics_value = run_identity.metrics
+    if type(metrics_value) is not dict:
+        raise VLMArtifactError("confidence report metrics must be a JSON object")
+    missing_required = sorted(
+        key
+        for key in _CONFIDENCE_VALIDATION_METRICS
+        if key not in metrics_value or metrics_value[key] is None
+    )
+    if missing_required:
+        raise VLMArtifactError(
+            "confidence report has null or missing validation metrics: "
+            + ", ".join(missing_required)
+        )
+    metrics = {
+        key: metrics_value[key] for key in sorted(_CONFIDENCE_VALIDATION_METRICS)
+    }
+    _validate_confidence_validation_metrics(
+        metrics, "confidence report validation metrics"
+    )
+    return (
+        {
+            "benchmark": _CONFIDENCE_BENCHMARK_ID,
+            "report_sha256": report_sha,
+            "envelope_sha256": envelope_sha,
+            "metrics": metrics,
+        },
+        _confidence_run_identity_bytes(run_identity),
+    )
 
 
 def _validate_publication_evidence(
@@ -1251,15 +1617,22 @@ def _validate_publication_evidence(
     evaluation = _require_exact_keys(
         evidence["evaluation"], _EVALUATION_KEYS, "evaluation"
     )
-    _require_token(evaluation["benchmark"], "evaluation.benchmark")
+    if evaluation["benchmark"] != _CONFIDENCE_BENCHMARK_ID:
+        raise VLMArtifactError(
+            f"evaluation.benchmark must be {_CONFIDENCE_BENCHMARK_ID!r}"
+        )
     report_sha = _require_sha256(
         evaluation["report_sha256"], "evaluation.report_sha256"
+    )
+    envelope_sha = _require_sha256(
+        evaluation["envelope_sha256"], "evaluation.envelope_sha256"
     )
     evaluation_checkpoint_sha = _require_sha256(
         evaluation["checkpoint_sha256"], "evaluation.checkpoint_sha256"
     )
-    _require_finite_metrics(evaluation["metrics"], "evaluation.metrics")
+    _validate_confidence_validation_metrics(evaluation["metrics"], "evaluation.metrics")
     _require_true(evaluation["passed"], "evaluation.passed")
+    evaluation_claim_sha = _evaluation_claim_sha256(evaluation)
 
     code = _require_exact_keys(evidence["code"], _CODE_KEYS, "code")
     if code["repository"] != "https://github.com/LibreYOLO/libreyolo":
@@ -1305,6 +1678,10 @@ def _validate_publication_evidence(
         bindings["adapter_weights_sha256"],
         "review.bindings.adapter_weights_sha256",
     )
+    adapter_config_sha = _require_sha256(
+        bindings["adapter_config_sha256"],
+        "review.bindings.adapter_config_sha256",
+    )
     checkpoint_contract_sha = _require_sha256(
         bindings["checkpoint_contract_sha256"],
         "review.bindings.checkpoint_contract_sha256",
@@ -1320,9 +1697,12 @@ def _validate_publication_evidence(
         "base_snapshot_sha256": snapshot_sha,
         "training_data_manifest_sha256": data_sha,
         "evaluation_report_sha256": report_sha,
+        "evaluation_envelope_sha256": envelope_sha,
+        "evaluation_claim_sha256": evaluation_claim_sha,
         "code_revision": code_revision,
         "recipe_sha256": recipe_sha,
         "adapter_weights_sha256": adapter_weights_sha,
+        "adapter_config_sha256": adapter_config_sha,
         "checkpoint_contract_sha256": checkpoint_contract_sha,
         "processor_sha256": processor_sha,
     }
@@ -1504,12 +1884,14 @@ def _expected_lora_shapes(size: str, module: str) -> tuple[list[int], list[int]]
     return [16, input_width], [output_width, 16]
 
 
-def _validate_safetensors(path: Path, size: str) -> None:
-    before = _assert_regular_unlinked_file(path, "adapter safetensors")
-    if before.st_size < 9:
-        raise VLMArtifactError("adapter_model.safetensors is too small")
+def _validate_safetensors(path: Path, size: str) -> str:
     try:
-        with path.open("rb") as stream:
+        with _open_stable_regular_file(path, "adapter safetensors") as (
+            stream,
+            opened,
+        ):
+            if opened.st_size < 9:
+                raise VLMArtifactError("adapter_model.safetensors is too small")
             prefix = stream.read(8)
             if len(prefix) != 8:
                 raise VLMArtifactError(
@@ -1520,19 +1902,45 @@ def _validate_safetensors(path: Path, size: str) -> None:
                 header_size < 2
                 or header_size > _MAX_SAFETENSORS_HEADER_BYTES
                 or header_size % 8 != 0
-                or 8 + header_size > before.st_size
+                or 8 + header_size > opened.st_size
             ):
                 raise VLMArtifactError(
                     "adapter_model.safetensors has an invalid header length"
                 )
             header_bytes = stream.read(header_size)
+            stream.seek(0)
+            verified_header = stream.read(8 + header_size)
+            if verified_header != prefix + header_bytes:
+                raise VLMArtifactError(
+                    "adapter_model.safetensors changed while its header was read"
+                )
+            stream.seek(0)
+            bound_header = stream.read(8 + header_size)
+            if bound_header != verified_header:
+                raise VLMArtifactError(
+                    "adapter_model.safetensors changed before it was fingerprinted"
+                )
+            payload_hasher = hashlib.sha256(bound_header)
+            payload_size = len(bound_header)
+            while True:
+                chunk = stream.read(
+                    min(_COPY_CHUNK_BYTES, opened.st_size - payload_size + 1)
+                )
+                if not chunk:
+                    break
+                payload_hasher.update(chunk)
+                payload_size += len(chunk)
+                if payload_size > opened.st_size:
+                    raise VLMArtifactError(
+                        "adapter_model.safetensors changed while fingerprinted"
+                    )
+            if payload_size != opened.st_size:
+                raise VLMArtifactError(
+                    "adapter_model.safetensors changed while fingerprinted"
+                )
+            payload_sha256 = payload_hasher.hexdigest()
     except OSError as exc:
         raise VLMArtifactError("Could not read adapter_model.safetensors") from exc
-    after = _assert_regular_unlinked_file(path, "adapter safetensors")
-    if not _same_file_identity(before, after):
-        raise VLMArtifactError(
-            "adapter_model.safetensors changed while it was inspected"
-        )
     header = _decode_json(header_bytes, "adapter safetensors header")
     if not isinstance(header, dict):
         raise VLMArtifactError("adapter safetensors header must contain an object")
@@ -1613,7 +2021,7 @@ def _validate_safetensors(path: Path, size: str) -> None:
         if start != cursor:
             raise VLMArtifactError(f"safetensors tensor {name!r} has a gap or overlap")
         cursor = end
-    if cursor != before.st_size - 8 - header_size:
+    if cursor != opened.st_size - 8 - header_size:
         raise VLMArtifactError(
             "adapter_model.safetensors has trailing or missing tensor data"
         )
@@ -1657,6 +2065,7 @@ def _validate_safetensors(path: Path, size: str) -> None:
         raise VLMArtifactError(
             "adapter safetensors tensors must use one uniform BF16 or F32 dtype"
         )
+    return payload_sha256
 
 
 def _scan_flat_directory(root: Path, label: str) -> dict[str, Path]:
@@ -1769,21 +2178,79 @@ def _validate_processor_files(root: Path, files: set[str], size: str) -> None:
 
 def _copy_file_stable(source: Path, destination: Path) -> None:
     before = _assert_regular_unlinked_file(source, f"source file {source.name}")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor: int | None = None
     hasher = hashlib.sha256()
     copied = 0
     try:
-        with source.open("rb") as src, destination.open("xb") as dst:
+        descriptor = os.open(source, flags)
+        opened_before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened_before.st_mode)
+            or getattr(opened_before, "st_nlink", 1) != 1
+            or not _same_file_identity(before, opened_before)
+        ):
+            raise VLMArtifactError(
+                f"checkpoint file changed before it was opened: {source.name}"
+            )
+        source_stream = os.fdopen(descriptor, "rb")
+        descriptor = None
+        with source_stream as src, destination.open("xb") as dst:
             while True:
-                chunk = src.read(_COPY_CHUNK_BYTES)
+                chunk = src.read(
+                    min(_COPY_CHUNK_BYTES, opened_before.st_size - copied + 1)
+                )
                 if not chunk:
                     break
                 dst.write(chunk)
                 hasher.update(chunk)
                 copied += len(chunk)
+                if copied > opened_before.st_size:
+                    raise VLMArtifactError(
+                        f"checkpoint file changed while copied: {source.name}"
+                    )
             dst.flush()
             os.fsync(dst.fileno())
+            opened_mid = os.fstat(src.fileno())
+            if not _same_file_identity(opened_before, opened_mid):
+                raise VLMArtifactError(
+                    f"checkpoint file changed while copied: {source.name}"
+                )
+
+            src.seek(0)
+            verified = hashlib.sha256()
+            verified_size = 0
+            while True:
+                chunk = src.read(
+                    min(
+                        _COPY_CHUNK_BYTES,
+                        opened_before.st_size - verified_size + 1,
+                    )
+                )
+                if not chunk:
+                    break
+                verified.update(chunk)
+                verified_size += len(chunk)
+                if verified_size > opened_before.st_size:
+                    raise VLMArtifactError(
+                        f"checkpoint file changed while copied: {source.name}"
+                    )
+            opened_after = os.fstat(src.fileno())
+            if (
+                verified_size != copied
+                or verified.digest() != hasher.digest()
+                or not _same_file_identity(opened_before, opened_after)
+            ):
+                raise VLMArtifactError(
+                    f"checkpoint file changed while copied: {source.name}"
+                )
     except OSError as exc:
         raise VLMArtifactError(f"Could not copy checkpoint file {source.name}") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     after = _assert_regular_unlinked_file(source, f"source file {source.name}")
     if copied != before.st_size or not _same_file_identity(before, after):
         raise VLMArtifactError(f"checkpoint file changed while copied: {source.name}")
@@ -2091,23 +2558,28 @@ def _role_for(path: str) -> str:
 
 
 def _fingerprint_file(path: Path, relative: str) -> dict[str, Any]:
-    before = _assert_regular_unlinked_file(path, f"artifact file {relative}")
     hasher = hashlib.sha256()
     read = 0
     try:
-        with path.open("rb") as stream:
+        with _open_stable_regular_file(path, f"artifact file {relative}") as (
+            stream,
+            opened,
+        ):
             while True:
-                chunk = stream.read(_COPY_CHUNK_BYTES)
+                chunk = stream.read(min(_COPY_CHUNK_BYTES, opened.st_size - read + 1))
                 if not chunk:
                     break
                 hasher.update(chunk)
                 read += len(chunk)
+                if read > opened.st_size:
+                    raise VLMArtifactError(
+                        f"artifact file changed while fingerprinted: {relative}"
+                    )
     except OSError as exc:
         raise VLMArtifactError(
             f"Could not fingerprint artifact file {relative}"
         ) from exc
-    after = _assert_regular_unlinked_file(path, f"artifact file {relative}")
-    if read != before.st_size or not _same_file_identity(before, after):
+    if read != opened.st_size:
         raise VLMArtifactError(f"artifact file changed while fingerprinted: {relative}")
     return {
         "path": relative,
@@ -2160,8 +2632,14 @@ def _validate_reviewed_artifact_bindings(
 ) -> None:
     identity = manifest["identity"]
     bindings = evidence["review"]["bindings"]
+    adapter_config_sha = next(
+        entry["sha256"]
+        for entry in manifest["files"]
+        if entry["role"] == "adapter_config"
+    )
     expected = {
         "adapter_weights_sha256": identity["weights_sha256"],
+        "adapter_config_sha256": adapter_config_sha,
         "checkpoint_contract_sha256": identity["checkpoint_contract_sha256"],
         "processor_sha256": identity["processor_sha256"],
     }
@@ -2592,16 +3070,18 @@ def create_vlm_publication_evidence_template(
     output_path: str | os.PathLike[str],
     *,
     training_data: Mapping[str, Any],
-    evaluation: Mapping[str, Any],
     code: Mapping[str, Any],
+    confidence_report: str | os.PathLike[str],
 ) -> Path:
     """Create an exact, deliberately unapproved publication-evidence template.
 
-    The checkpoint, pinned base snapshot, and all byte-derived review bindings
-    are validated before a complete canonical JSON file is published. Legal,
-    privacy, evaluation, and provenance approvals remain false or unreviewed;
-    the returned file therefore cannot authorize :func:`build_vlm_artifact`
-    until a human reviews and edits those fields outside this helper.
+    The checkpoint, pinned base snapshot, strict confidence report, and all
+    byte-derived review bindings are validated before a complete canonical JSON
+    file is published. Evaluation claims come only from the report bound to the
+    exact checkpoint identity. Legal, privacy, evaluation, and provenance
+    approvals remain false or unreviewed; the returned file therefore cannot
+    authorize :func:`build_vlm_artifact` until a human reviews and edits those
+    fields outside this helper.
     """
 
     source = _required_directory(checkpoint_dir, "VLM checkpoint")
@@ -2618,22 +3098,38 @@ def create_vlm_publication_evidence_template(
                 "publication evidence template must remain outside the " + label
             )
 
+    checkpoint_identity = _inspect_checkpoint_identity(source)
     source_files = _validate_checkpoint_inventory(source)
     contract = _validate_contract(
         _load_json(source_files[_CONTRACT_FILENAME], "VLM checkpoint contract")
     )
+    if (
+        _sha256_bytes(_json_file_bytes(contract))
+        != checkpoint_identity.checkpoint_contract_sha256
+    ):
+        raise VLMArtifactError(
+            "VLM checkpoint contract changed after identity inspection"
+        )
     adapter = _canonical_adapter_config(
         _load_json(source_files[_ADAPTER_CONFIG_FILENAME], "adapter_config.json"),
         contract,
     )
+    if (
+        _sha256_bytes(_json_file_bytes(adapter))
+        != checkpoint_identity.adapter_config_sha256
+    ):
+        raise VLMArtifactError(
+            "adapter_config.json changed after checkpoint identity inspection"
+        )
     _validate_safetensors(source_files[_ADAPTER_WEIGHTS_FILENAME], contract["size"])
     processor_paths = set(source_files) & _PROCESSOR_FILES
     _validate_processor_files(source, processor_paths, contract["size"])
 
     base_identity = _canonical_base_snapshot(contract["size"])
     validate_vlm_base_snapshot(base_root, base_identity)
-    training_record, evaluation_record, code_record = _validate_template_context(
-        training_data, evaluation, code
+    training_record, code_record = _validate_template_context(training_data, code)
+    derived_evaluation_record, confidence_run_identity = (
+        _evaluation_from_confidence_report(confidence_report, checkpoint_identity)
     )
     dependencies = code_record["dependencies"]
     if dependencies["libreyolo"] != contract["libreyolo_version"]:
@@ -2645,20 +3141,22 @@ def create_vlm_publication_evidence_template(
             "code.dependencies.peft does not match adapter_config.json"
         )
 
-    weights_sha = _fingerprint_file(
-        source_files[_ADAPTER_WEIGHTS_FILENAME], _ADAPTER_WEIGHTS_FILENAME
-    )["sha256"]
-    contract_sha = _sha256_bytes(_json_file_bytes(contract))
-    processor_identity = [
-        _snapshot_file_record(source_files[path], path)
-        for path in sorted(processor_paths, key=str.casefold)
-    ]
-    processor_sha = _aggregate_entries(processor_identity)
+    weights_sha = checkpoint_identity.adapter_weights_sha256
+    adapter_config_sha = checkpoint_identity.adapter_config_sha256
+    contract_sha = checkpoint_identity.checkpoint_contract_sha256
+    processor_sha = checkpoint_identity.processor_sha256
     recipe_sha = _recipe_sha256()
     repo, revision = _SUPPORTED_BASES[contract["size"]]
     training_manifest_sha = training_record["manifest_sha256"]
-    evaluation_report_sha = evaluation_record["report_sha256"]
+    evaluation_report_sha = derived_evaluation_record["report_sha256"]
+    evaluation_envelope_sha = derived_evaluation_record["envelope_sha256"]
     code_revision = code_record["revision"]
+    evaluation_record = {
+        **derived_evaluation_record,
+        "checkpoint_sha256": weights_sha,
+        "passed": False,
+    }
+    evaluation_claim_sha = _evaluation_claim_sha256(evaluation_record)
 
     template = {
         "schema": PUBLICATION_EVIDENCE_SCHEMA,
@@ -2681,11 +3179,7 @@ def create_vlm_publication_evidence_template(
             **training_record,
             "redistribution_decision": "unreviewed",
         },
-        "evaluation": {
-            **evaluation_record,
-            "checkpoint_sha256": weights_sha,
-            "passed": False,
-        },
+        "evaluation": evaluation_record,
         "code": {
             "repository": "https://github.com/LibreYOLO/libreyolo",
             "revision": code_revision,
@@ -2701,9 +3195,12 @@ def create_vlm_publication_evidence_template(
                 "base_snapshot_sha256": base_identity["sha256"],
                 "training_data_manifest_sha256": training_manifest_sha,
                 "evaluation_report_sha256": evaluation_report_sha,
+                "evaluation_envelope_sha256": evaluation_envelope_sha,
+                "evaluation_claim_sha256": evaluation_claim_sha,
                 "code_revision": code_revision,
                 "recipe_sha256": recipe_sha,
                 "adapter_weights_sha256": weights_sha,
+                "adapter_config_sha256": adapter_config_sha,
                 "checkpoint_contract_sha256": contract_sha,
                 "processor_sha256": processor_sha,
             },
@@ -2713,6 +3210,20 @@ def create_vlm_publication_evidence_template(
     payload = _json_file_bytes(template)
     if len(payload) > _ARTIFACT_FILE_LIMITS[PUBLICATION_EVIDENCE_FILENAME]:
         raise VLMArtifactError("publication evidence template exceeds its safety limit")
+    if _inspect_checkpoint_identity(source) != checkpoint_identity:
+        raise VLMArtifactError(
+            "VLM checkpoint changed while publication evidence was prepared"
+        )
+    rechecked_evaluation, rechecked_run_identity = _evaluation_from_confidence_report(
+        confidence_report, checkpoint_identity
+    )
+    if (
+        rechecked_evaluation != derived_evaluation_record
+        or rechecked_run_identity != confidence_run_identity
+    ):
+        raise VLMArtifactError(
+            "confidence benchmark run changed while publication evidence was prepared"
+        )
     _write_bytes_atomic_create_only(
         destination,
         payload,

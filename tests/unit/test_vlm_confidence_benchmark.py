@@ -8,7 +8,7 @@ import math
 import os
 import random
 import socket
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,9 +35,12 @@ _REVIEW_CHECKS = {
 }
 
 
-def _verified_inputs(tmp_path: Path):
+def _verified_inputs(
+    tmp_path: Path, *, required_role: str = benchmark._BASE_PARTITION_ROLE
+):
+    partition = benchmark._PARTITION_REQUIREMENTS[required_role]
     bundle = tmp_path / "bundle"
-    annotation = bundle / "annotations" / "instances_val2017_promotion500.json"
+    annotation = bundle / partition["annotation_artifact"]
     annotation.parent.mkdir(parents=True)
     annotation.write_text("{}\n", encoding="utf-8")
     manifest = bundle / "manifest.json"
@@ -58,10 +61,10 @@ def _verified_inputs(tmp_path: Path):
         source_file_size_bytes=source.stat().st_size,
         images_dir=images.resolve(),
         selected_image_identity_sha256="3" * 64,
-        partition_name="promotion500",
-        partition_role="zero_shot_confidence_promotion",
-        partition_start=0,
-        partition_stop=500,
+        partition_name=partition["name"],
+        partition_role=required_role,
+        partition_start=partition["start"],
+        partition_stop=partition["stop"],
         annotation_path=annotation.resolve(),
         annotation_sha256="4" * 64,
         annotation_size_bytes=annotation.stat().st_size,
@@ -76,13 +79,204 @@ def _verified_inputs(tmp_path: Path):
         review_attestation={
             "schema": "libreyolo.vlm-benchmark-dataset-review.v1",
             "manifest_sha256": manifest_sha256,
-            "partition_role": "zero_shot_confidence_promotion",
+            "partition_role": required_role,
             "status": "approved",
             "reviewer": "Offline test reviewer",
             "reviewed_at": "2026-08-16T10:30:00Z",
             "checks": dict(_REVIEW_CHECKS),
         },
     )
+
+
+def _strict_checkpoint_identity(tmp_path: Path, *, size: str = "4b", token: str = "a"):
+    root = tmp_path / f"checkpoint-{size}"
+    root.mkdir(exist_ok=True)
+    repo, revision = benchmark._QWEN_BASE_PINS[size]
+    weights_sha256 = "b" * 64
+    files = (
+        SimpleNamespace(
+            path="adapter_config.json",
+            role="adapter_config",
+            size=101,
+            sha256=token * 64,
+        ),
+        SimpleNamespace(
+            path="adapter_model.safetensors",
+            role="adapter_weights",
+            size=102,
+            sha256=weights_sha256,
+        ),
+        SimpleNamespace(
+            path="libreyolo_vlm.json",
+            role="checkpoint_contract",
+            size=103,
+            sha256="2" * 64,
+        ),
+        SimpleNamespace(
+            path="processor_config.json",
+            role="processor",
+            size=104,
+            sha256="3" * 64,
+        ),
+    )
+    for entry in files:
+        artifact = root / entry.path
+        if not artifact.exists():
+            artifact.write_bytes(f"offline-{entry.path}\n".encode())
+    serialized_files = [
+        {
+            "path": entry.path,
+            "role": entry.role,
+            "size": entry.size,
+            "sha256": entry.sha256,
+        }
+        for entry in files
+    ]
+    processor_sha256 = benchmark._checkpoint_processor_sha256(serialized_files)
+    identity_values = {
+        "family": "qwen3vl",
+        "size": size,
+        "task": "detect",
+        "base_repo": repo,
+        "base_revision": revision,
+        "adapter_weights_sha256": weights_sha256,
+        "adapter_config_sha256": "c" * 64,
+        "checkpoint_contract_sha256": "d" * 64,
+        "processor_sha256": processor_sha256,
+    }
+    return SimpleNamespace(
+        root=root.resolve(),
+        files=files,
+        **identity_values,
+        aggregate_sha256=benchmark._checkpoint_aggregate_sha256(
+            identity_values, serialized_files
+        ),
+    )
+
+
+def _verified_inputs_for_role(verified, required_role: str):
+    if verified.partition_role == required_role:
+        return verified
+    partition = benchmark._PARTITION_REQUIREMENTS[required_role]
+    annotation = verified.manifest_path.parent / partition["annotation_artifact"]
+    annotation.parent.mkdir(parents=True, exist_ok=True)
+    annotation.write_text("{}\n", encoding="utf-8")
+    values = vars(verified).copy()
+    review = dict(verified.review_attestation)
+    review["partition_role"] = required_role
+    values.update(
+        partition_name=partition["name"],
+        partition_role=required_role,
+        partition_start=partition["start"],
+        partition_stop=partition["stop"],
+        annotation_path=annotation.resolve(),
+        annotation_size_bytes=annotation.stat().st_size,
+        review_attestation=review,
+    )
+    return SimpleNamespace(**values)
+
+
+def _checkpoint_identity_at(identity, root: Path):
+    values = vars(identity).copy()
+    values["root"] = Path(root).resolve()
+    return SimpleNamespace(**values)
+
+
+def _matching_checkpoint_inspector(identity, inspected=None):
+    def inspect(path):
+        root = Path(path).resolve()
+        if inspected is not None:
+            inspected.append(root)
+        return _checkpoint_identity_at(identity, root)
+
+    return inspect
+
+
+def _install_checkpoint_cleanup_failure(monkeypatch):
+    real_temporary_directory = benchmark.tempfile.TemporaryDirectory
+    isolated_roots = []
+
+    class FailingCleanup:
+        def __init__(self, *args, **kwargs):
+            self._temporary = real_temporary_directory(*args, **kwargs)
+            self.name = self._temporary.name
+            isolated_roots.append(Path(self.name).resolve() / "checkpoint")
+
+        def cleanup(self):
+            self._temporary.cleanup()
+            raise OSError("injected isolated checkpoint cleanup failure")
+
+    def temporary_directory(*args, **kwargs):
+        if kwargs.get("prefix") == benchmark._CHECKPOINT_TEMP_PREFIX:
+            return FailingCleanup(*args, **kwargs)
+        return real_temporary_directory(*args, **kwargs)
+
+    monkeypatch.setattr(benchmark.tempfile, "TemporaryDirectory", temporary_directory)
+    return isolated_roots
+
+
+def _install_base_cleanup_failure(monkeypatch):
+    real_temporary_directory = benchmark.tempfile.TemporaryDirectory
+    isolated_roots = []
+
+    class FailingCleanup:
+        def __init__(self, *args, **kwargs):
+            self._temporary = real_temporary_directory(*args, **kwargs)
+            self.name = self._temporary.name
+            isolated_roots.append(Path(self.name).resolve() / "snapshot")
+
+        def cleanup(self):
+            self._temporary.cleanup()
+            raise OSError("injected isolated base cleanup failure")
+
+    def temporary_directory(*args, **kwargs):
+        if kwargs.get("prefix") == benchmark._BASE_SNAPSHOT_TEMP_PREFIX:
+            return FailingCleanup(*args, **kwargs)
+        return real_temporary_directory(*args, **kwargs)
+
+    monkeypatch.setattr(benchmark.tempfile, "TemporaryDirectory", temporary_directory)
+    return isolated_roots
+
+
+def _compact_base_snapshot(tmp_path, monkeypatch):
+    source = (tmp_path / "compact-base").resolve()
+    source.mkdir()
+    (source / ".libreyolo_snapshot_complete").write_text(
+        json.dumps(
+            {
+                "repo": benchmark._QWEN_2B_REPO,
+                "revision": benchmark._QWEN_2B_REVISION,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (source / "config.json").write_text("{}\n", encoding="utf-8")
+    (source / "model.safetensors").write_bytes(b"base-A")
+    (source / "preprocessor_config.json").write_text("{}\n", encoding="utf-8")
+    snapshot = {
+        "kind": "pinned_hf_snapshot",
+        "artifacts": [
+            {"path": "config.json"},
+            {"path": "model.safetensors"},
+        ],
+        "sha256": "a" * 64,
+    }
+    processor = {"files": 2, "sha256": "b" * 64}
+    changed_snapshot = {**snapshot, "sha256": "c" * 64}
+
+    def inspect(size="2b", *, expected_repo=None, expected_revision=None, root=None):
+        del size, expected_repo, expected_revision
+        actual_root = Path(root)
+        selected = (
+            snapshot
+            if (actual_root / "model.safetensors").read_bytes() == b"base-A"
+            else changed_snapshot
+        )
+        return actual_root, selected, processor
+
+    monkeypatch.setattr(benchmark, "_snapshot_evidence", inspect)
+    return source, snapshot, processor
 
 
 def _run(verified, output, **kwargs):
@@ -131,10 +325,17 @@ def _cli_preflight_args(verified, output):
     return _cli_request_args("preflight", verified, output)
 
 
-def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=None):
+def _install_run_fakes(
+    monkeypatch,
+    events,
+    verified,
+    *,
+    metrics=None,
+    failure=None,
+    model_hook=None,
+):
     metrics = {"metric/finite": 0.5} if metrics is None else metrics
     report_identities = {}
-    snapshot_root = verified.images_dir.parent / "weights" / "LibreQwen3VL2b"
     snapshot_identity = {
         "kind": "pinned_hf_snapshot",
         "sha256": "7" * 64,
@@ -161,8 +362,8 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
         }
 
     class FakeModel:
-        def __init__(self, *, size, device):
-            events.append(("model", size, device))
+        def __init__(self, *, size, device, checkpoint_dir=None):
+            events.append(("model", size, device, checkpoint_dir))
             assert [event[0] for event in events[:10]] == [
                 "determinism",
                 "offline",
@@ -175,7 +376,13 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
                 "snapshot",
                 "verify",
             ]
+            if model_hook is not None:
+                model_hook(checkpoint_dir)
             self.device = torch.device("cpu" if device == "auto" else device)
+            self.size = size
+            self._checkpoint_dir = (
+                None if checkpoint_dir is None else Path(checkpoint_dir)
+            )
 
     class FakeValidator:
         _strict_local_directory_root = staticmethod(
@@ -196,10 +403,39 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
             if failure is not None:
                 raise failure
             normalized, _ = benchmark._normalized_metrics(metrics)
+            checkpoint_context = self.kwargs["benchmark_context"]["checkpoint"]
+            processor = (
+                {
+                    "source": benchmark._QWEN_BASE_PINS[self.model.size][0],
+                    "revision": benchmark._QWEN_BASE_PINS[self.model.size][1],
+                    "sha256": "9" * 64,
+                    "files": 4,
+                    "class": "offline",
+                }
+                if checkpoint_context is None
+                else {
+                    "source": "checkpoint",
+                    "revision": None,
+                    "sha256": checkpoint_context["processor_sha256"],
+                    "files": sum(
+                        entry["role"] == "processor"
+                        for entry in checkpoint_context["files"]
+                    ),
+                    "class": "offline",
+                }
+            )
             report_identities[report.resolve()] = {
                 "benchmark_config": {
                     "family": "qwen3vl",
-                    "size": "2b",
+                    "size": self.model.size,
+                    "base_repo": benchmark._QWEN_BASE_PINS[self.model.size][0],
+                    "base_revision": benchmark._QWEN_BASE_PINS[self.model.size][1],
+                    "checkpoint": (
+                        {"kind": "pinned_hf_snapshot"}
+                        if self.model._checkpoint_dir is None
+                        else json.loads(json.dumps(checkpoint_context))
+                    ),
+                    "processor": processor,
                     "seed": self.seed,
                     "device": str(self.model.device),
                     "class_names": list(verified.class_names),
@@ -277,23 +513,21 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
             }
         ),
     )
-    monkeypatch.setattr(
-        benchmark,
-        "verify_benchmark_run_inputs",
-        lambda manifest, annotations, images_dir, review_attestation, **kwargs: (
-            events.append(
-                (
-                    "verify",
-                    manifest,
-                    annotations,
-                    images_dir,
-                    review_attestation,
-                    kwargs,
-                )
+
+    def fake_verify(manifest, annotations, images_dir, review_attestation, **kwargs):
+        events.append(
+            (
+                "verify",
+                manifest,
+                annotations,
+                images_dir,
+                review_attestation,
+                kwargs,
             )
-            or verified
-        ),
-    )
+        )
+        return _verified_inputs_for_role(verified, kwargs["required_role"])
+
+    monkeypatch.setattr(benchmark, "verify_benchmark_run_inputs", fake_verify)
     monkeypatch.setattr(
         benchmark,
         "_require_pycocotools",
@@ -331,21 +565,57 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
         lambda actual: (
             events.append(("native_dataset", actual))
             or {
-                "image_count": 500,
+                "image_count": actual.partition_stop - actual.partition_start,
                 "batch_size": 1,
                 "num_workers": 0,
                 "faster_coco_eval": False,
             }
         ),
     )
-    monkeypatch.setattr(
-        benchmark,
-        "_snapshot_evidence",
-        lambda: (
-            events.append(("snapshot",))
-            or (snapshot_root, dict(snapshot_identity), dict(processor_identity))
-        ),
-    )
+
+    def fake_snapshot(
+        size="2b", *, expected_repo=None, expected_revision=None, root=None
+    ):
+        if root is None:
+            events.append(("snapshot", size, expected_repo, expected_revision))
+            root = verified.images_dir.parent / "weights" / f"LibreQwen3VL{size}"
+        else:
+            root = Path(root)
+        weights = dict(snapshot_identity)
+        weights.update(
+            source=benchmark._QWEN_BASE_PINS[size][0],
+            revision=benchmark._QWEN_BASE_PINS[size][1],
+        )
+        processor = dict(processor_identity)
+        processor.update(
+            source=benchmark._QWEN_BASE_PINS[size][0],
+            revision=benchmark._QWEN_BASE_PINS[size][1],
+        )
+        return root, weights, processor
+
+    monkeypatch.setattr(benchmark, "_snapshot_evidence", fake_snapshot)
+
+    @contextmanager
+    def fake_isolated_base(
+        source_root,
+        model_size,
+        snapshot_identity,
+        processor_identity,
+        *,
+        enabled,
+    ):
+        del source_root, model_size, snapshot_identity, processor_identity
+        if not enabled:
+            yield None
+            return
+        isolated = verified.images_dir.parent / ".fake-isolated-base"
+        isolated.mkdir()
+        try:
+            yield isolated.resolve()
+        finally:
+            isolated.rmdir()
+
+    monkeypatch.setattr(benchmark, "_isolated_base_snapshot", fake_isolated_base)
     monkeypatch.setattr(benchmark, "LibreQwen3VL", FakeModel)
     monkeypatch.setattr(benchmark, "VLMConfidenceValidator", FakeValidator)
     monkeypatch.setattr(benchmark, "compare_confidence_reports", fake_compare)
@@ -438,6 +708,89 @@ def test_preflight_runs_shared_checks_without_model_network_or_output(
     assert not list(tmp_path.glob(".libreyolo-vlm-output-probe-*"))
 
 
+def test_checkpoint_preflight_derives_4b_base_and_persists_path_free_identity(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b")
+    inspected = []
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        _matching_checkpoint_inspector(identity, inspected),
+    )
+
+    result = _preflight(
+        verified,
+        tmp_path / "preflight-checkpoint",
+        checkpoint_dir=identity.root,
+    )
+
+    assert result.model_size == "4b"
+    assert result.checkpoint_root == identity.root
+    assert result.checkpoint_identity["aggregate_sha256"] == identity.aggregate_sha256
+    assert result.checkpoint_identity["adapter_weights_sha256"] == "b" * 64
+    observed_partition = result.dataset_context["identity"]["partition"]
+    for key, value in benchmark._PARTITION_REQUIREMENTS[
+        benchmark._CHECKPOINT_PARTITION_ROLE
+    ].items():
+        assert observed_partition[key] == value
+    assert observed_partition["annotation_size_bytes"] > 0
+    assert observed_partition["annotation_sha256"] == "4" * 64
+    assert result.dataset_context["native"]["image_count"] == 100
+    assert {event[5]["required_role"] for event in events if event[0] == "verify"} == {
+        benchmark._CHECKPOINT_PARTITION_ROLE
+    }
+    assert "root" not in result.checkpoint_identity
+    assert str(identity.root) not in benchmark._json_text(result.checkpoint_identity)
+    assert inspected[0] == identity.root
+    assert inspected.count(identity.root) == 3
+    isolated_roots = {path for path in inspected if path != identity.root}
+    assert len(isolated_roots) == 1
+    assert not next(iter(isolated_roots)).exists()
+    snapshot_event = next(event for event in events if event[0] == "snapshot")
+    assert snapshot_event[1:] == (
+        "4b",
+        benchmark._QWEN_4B_REPO,
+        benchmark._QWEN_4B_REVISION,
+    )
+    assert "model" not in [event[0] for event in events]
+
+
+def test_checkpoint_preflight_rejects_mismatched_isolated_copy_and_cleans_it(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b", token="a")
+    changed = _strict_checkpoint_identity(tmp_path, size="4b", token="f")
+    isolated_roots = []
+
+    def inspect(path):
+        root = Path(path).resolve()
+        if root == identity.root:
+            return _checkpoint_identity_at(identity, root)
+        isolated_roots.append(root)
+        return _checkpoint_identity_at(changed, root)
+
+    monkeypatch.setattr(benchmark, "_inspect_checkpoint_identity", inspect)
+    output = tmp_path / "mismatched-isolated-copy"
+
+    with pytest.raises(
+        benchmark.BenchmarkInputError,
+        match="isolated checkpoint identity does not match",
+    ):
+        _preflight(verified, output, checkpoint_dir=identity.root)
+
+    assert len(isolated_roots) == 1
+    assert not isolated_roots[0].exists()
+    assert "model" not in [event[0] for event in events]
+    assert not output.exists()
+
+
 def test_preflight_cli_emits_ready_evidence_without_persisting_it(
     tmp_path, monkeypatch, capsys
 ):
@@ -457,10 +810,11 @@ def test_preflight_cli_emits_ready_evidence_without_persisting_it(
     assert status["mode"] == "preflight"
     assert status["code"] == benchmark.EXIT_OK
     evidence = status["preflight"]
-    assert evidence["schema"] == "libreyolo.vlm-confidence-benchmark-preflight.v1"
+    assert evidence["schema"] == "libreyolo.vlm-confidence-benchmark-preflight.v2"
     assert evidence["request"] == {
         "model_family": "qwen3vl",
         "model_size": "2b",
+        "checkpoint_dir": None,
         "seed": 19,
         "device": "cuda:0",
         "resolved_device": "cuda:0",
@@ -468,6 +822,7 @@ def test_preflight_cli_emits_ready_evidence_without_persisting_it(
     }
     assert evidence["snapshot"]["weights"]["sha256"] == "7" * 64
     assert evidence["snapshot"]["processor_content"]["sha256"] == "9" * 64
+    assert evidence["checkpoint"] is None
     assert evidence["dataset"]["identity"]["review"]["status"] == "approved"
     assert evidence["offline"] == {
         "do_not_track": "1",
@@ -480,6 +835,36 @@ def test_preflight_cli_emits_ready_evidence_without_persisting_it(
     }
     assert not output.exists()
     assert not (tmp_path / ".preflight-output.lock").exists()
+
+
+def test_preflight_cli_exposes_checkpoint_path_only_in_request(
+    tmp_path, monkeypatch, capsys
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b")
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        _matching_checkpoint_inspector(identity),
+    )
+
+    code = benchmark.main(
+        _cli_preflight_args(verified, tmp_path / "checkpoint-preflight")
+        + ["--checkpoint-dir", str(identity.root)]
+    )
+
+    assert code == benchmark.EXIT_OK
+    evidence = _status(capsys)["preflight"]
+    assert evidence["request"]["model_size"] == "4b"
+    assert evidence["request"]["checkpoint_dir"] == str(identity.root)
+    assert evidence["checkpoint"]["aggregate_sha256"] == identity.aggregate_sha256
+    assert evidence["dataset"]["identity"]["partition"]["name"] == "holdout100"
+    assert evidence["dataset"]["identity"]["partition"]["role"] == (
+        benchmark._CHECKPOINT_PARTITION_ROLE
+    )
+    assert str(identity.root) not in benchmark._json_text(evidence["checkpoint"])
 
 
 def test_run_benchmark_stages_complete_artifacts_and_records_context(
@@ -511,7 +896,7 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     ]
     assert not list(tmp_path.glob(".run-a.tmp-*"))
     assert not (tmp_path / ".run-a.lock").exists()
-    assert [event[0] for event in events[:14]] == [
+    assert [event[0] for event in events[:13]] == [
         "determinism",
         "offline",
         "dependencies",
@@ -523,7 +908,6 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
         "snapshot",
         "verify",
         "model",
-        "snapshot",
         "validator",
         "run",
     ]
@@ -544,7 +928,7 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
         "nc": 80,
         "names": list(verified.class_names),
     }
-    config = events[12][2]
+    config = events[11][2]
     assert Path(config.data).name == "verified_dataset.yaml"
     assert not Path(config.data).exists()
     assert config.batch_size == 1
@@ -554,12 +938,13 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     assert config.save_json is True
     assert config.save_plots is True
     assert config.faster_coco_eval is False
-    assert events[12][3]["default_conf"] == 0.25
-    assert events[12][3]["confidence_iou"] == 0.5
-    assert events[12][3]["verified_dataset"] is verified
-    assert events[12][3]["expected_snapshot_identity"]["sha256"] == "7" * 64
-    assert events[12][3]["expected_processor_content_identity"]["sha256"] == "9" * 64
-    assert events[12][3]["benchmark_context"]["git"] == {
+    assert events[11][3]["default_conf"] == 0.25
+    assert events[11][3]["confidence_iou"] == 0.5
+    assert events[11][3]["verified_dataset"] is verified
+    assert events[11][3]["expected_snapshot_identity"]["sha256"] == "7" * 64
+    assert events[11][3]["expected_processor_content_identity"]["sha256"] == "9" * 64
+    assert Path(events[11][3]["expected_snapshot_root"]).name == (".fake-isolated-base")
+    assert events[11][3]["benchmark_context"]["git"] == {
         "commit": "a" * 40,
         "dirty": False,
     }
@@ -568,7 +953,7 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     assert "NaN" not in raw_envelope
     assert "Infinity" not in raw_envelope
     envelope = json.loads(raw_envelope)
-    assert envelope["schema"] == "libreyolo.vlm-confidence-benchmark-run.v2"
+    assert envelope["schema"] == "libreyolo.vlm-confidence-benchmark-run.v3"
     assert benchmark._RUN_IDENTIFIER.fullmatch(envelope["run_id"])
     assert benchmark._RUN_IDENTIFIER.fullmatch(envelope["process_id"])
     assert envelope["request"] == {
@@ -579,6 +964,7 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
         "seed": 17,
         "model_family": "qwen3vl",
         "model_size": "2b",
+        "checkpoint_dir": None,
         "device": "cuda:0",
         "imgsz": 1024,
         "default_conf": 0.25,
@@ -590,8 +976,9 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     }
     assert (
         envelope["execution_context"]["schema"]
-        == "libreyolo.vlm-confidence-benchmark-context.v2"
+        == "libreyolo.vlm-confidence-benchmark-context.v3"
     )
+    assert envelope["execution_context"]["checkpoint"] is None
     dataset_context = envelope["execution_context"]["dataset"]
     assert dataset_context["manifest"] == {
         "schema": "libreyolo.vlm-benchmark-dataset.v1",
@@ -648,23 +1035,36 @@ def test_runner_envelope_binds_companion_report_context(tmp_path, monkeypatch):
     artifacts = _run(verified, tmp_path / "run-a")
     envelope = json.loads(artifacts.envelope_path.read_text(encoding="utf-8"))
 
-    validated = benchmark._load_runner_envelope(artifacts.report_path, "run")
+    validated = benchmark.read_benchmark_run_identity(
+        artifacts.report_path, label="run"
+    )
 
     assert validated.run_id == envelope["run_id"]
     assert validated.process_id == envelope["process_id"]
     assert validated.report_sha256 == envelope["report"]["sha256"]
+    assert (
+        validated.envelope_sha256
+        == hashlib.sha256(artifacts.envelope_path.read_bytes()).hexdigest()
+    )
+    assert validated.execution_context == envelope["execution_context"]
+    assert (
+        validated.benchmark_config
+        == next(iter(report_identities.values()))["benchmark_config"]
+    )
+    assert validated.metrics == envelope["metrics"]
+    assert validated.nonfinite_metrics == tuple(envelope["nonfinite_metrics"])
 
     tampered = json.loads(json.dumps(envelope))
     tampered["execution_context"]["determinism"]["cudnn_benchmark"] = True
     benchmark._write_json_atomic(artifacts.envelope_path, tampered)
     with pytest.raises(VLMConfidenceReportError, match="cudnn_benchmark"):
-        benchmark._load_runner_envelope(artifacts.report_path, "run")
+        benchmark.read_benchmark_run_identity(artifacts.report_path, label="run")
 
     tampered = json.loads(json.dumps(envelope))
     tampered["report"]["sha256"] = "0" * 64
     benchmark._write_json_atomic(artifacts.envelope_path, tampered)
     with pytest.raises(VLMConfidenceReportError, match="companion report bytes"):
-        benchmark._load_runner_envelope(artifacts.report_path, "run")
+        benchmark.read_benchmark_run_identity(artifacts.report_path, label="run")
 
     for mutate, expected_error in (
         (
@@ -744,7 +1144,7 @@ def test_runner_envelope_binds_companion_report_context(tmp_path, monkeypatch):
         mutate(tampered)
         benchmark._write_json_atomic(artifacts.envelope_path, tampered)
         with pytest.raises(VLMConfidenceReportError, match=expected_error):
-            benchmark._load_runner_envelope(artifacts.report_path, "run")
+            benchmark.read_benchmark_run_identity(artifacts.report_path, label="run")
 
     identity = report_identities[artifacts.report_path.resolve()]
     original_config = json.loads(json.dumps(identity["benchmark_config"]))
@@ -810,7 +1210,15 @@ def test_runner_envelope_binds_companion_report_context(tmp_path, monkeypatch):
         identity["benchmark_config"] = json.loads(json.dumps(original_config))
         mutate(identity["benchmark_config"])
         with pytest.raises(VLMConfidenceReportError, match=expected_error):
-            benchmark._load_runner_envelope(artifacts.report_path, "run")
+            benchmark.read_benchmark_run_identity(artifacts.report_path, label="run")
+
+
+def test_public_run_identity_requires_sibling_envelope(tmp_path):
+    report = tmp_path / "vlm_confidence_report.json"
+    report.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(VLMConfidenceReportError, match="missing companion"):
+        benchmark.read_benchmark_run_identity(report)
 
 
 def test_compare_requires_runner_companion_envelopes(tmp_path):
@@ -894,23 +1302,16 @@ def test_run_rejects_snapshot_drift_immediately_after_model_construction(
     events = []
     verified = _verified_inputs(tmp_path)
     _install_run_fakes(monkeypatch, events, verified)
-    snapshot_root = tmp_path / "weights" / "LibreQwen3VL2b"
-    identities = iter(
-        [
-            {"kind": "pinned_hf_snapshot", "sha256": "1" * 64},
-            {"kind": "pinned_hf_snapshot", "sha256": "2" * 64},
-        ]
-    )
+    stable = benchmark._require_snapshot_stable
 
-    def drifting_snapshot():
-        events.append(("snapshot",))
-        return (
-            snapshot_root,
-            next(identities),
-            {"source": "repo", "revision": "pin", "sha256": "3" * 64},
-        )
+    def drifting_snapshot(*args, phase, **kwargs):
+        if phase == "during model construction":
+            raise RuntimeError(
+                "VLM base snapshot identity changed during model construction"
+            )
+        return stable(*args, phase=phase, **kwargs)
 
-    monkeypatch.setattr(benchmark, "_snapshot_evidence", drifting_snapshot)
+    monkeypatch.setattr(benchmark, "_require_snapshot_stable", drifting_snapshot)
     output = tmp_path / "snapshot-drift"
 
     with pytest.raises(RuntimeError, match="changed during model construction"):
@@ -919,6 +1320,69 @@ def test_run_rejects_snapshot_drift_immediately_after_model_construction(
     assert "validator" not in [event[0] for event in events]
     assert not output.exists()
     assert not (tmp_path / ".snapshot-drift.lock").exists()
+
+
+def test_run_rejects_checkpoint_drift_immediately_after_model_construction(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    expected = _strict_checkpoint_identity(tmp_path, size="4b", token="a")
+    changed = _strict_checkpoint_identity(tmp_path, size="4b", token="f")
+    source_inspections = 0
+
+    def inspect(path):
+        nonlocal source_inspections
+        root = Path(path).resolve()
+        if root == expected.root:
+            source_inspections += 1
+        identity = (
+            changed if source_inspections == 5 and root == expected.root else expected
+        )
+        return _checkpoint_identity_at(identity, root)
+
+    monkeypatch.setattr(benchmark, "_inspect_checkpoint_identity", inspect)
+    output = tmp_path / "checkpoint-construction-drift"
+
+    with pytest.raises(RuntimeError, match="during model construction"):
+        _run(verified, output, checkpoint_dir=expected.root)
+
+    assert "model" in [event[0] for event in events]
+    assert "validator" not in [event[0] for event in events]
+    assert not output.exists()
+    assert not (tmp_path / ".checkpoint-construction-drift.lock").exists()
+
+
+def test_run_rejects_checkpoint_drift_after_generation_without_publishing(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    expected = _strict_checkpoint_identity(tmp_path, size="4b", token="a")
+    changed = _strict_checkpoint_identity(tmp_path, size="4b", token="f")
+    source_inspections = 0
+
+    def inspect(path):
+        nonlocal source_inspections
+        root = Path(path).resolve()
+        if root == expected.root:
+            source_inspections += 1
+        identity = (
+            changed if source_inspections == 6 and root == expected.root else expected
+        )
+        return _checkpoint_identity_at(identity, root)
+
+    monkeypatch.setattr(benchmark, "_inspect_checkpoint_identity", inspect)
+    output = tmp_path / "checkpoint-generation-drift"
+
+    with pytest.raises(RuntimeError, match="during generation"):
+        _run(verified, output, checkpoint_dir=expected.root)
+
+    assert "run" in [event[0] for event in events]
+    assert not output.exists()
+    assert not (tmp_path / ".checkpoint-generation-drift.lock").exists()
 
 
 def test_run_rejects_model_device_drift_before_second_snapshot(tmp_path, monkeypatch):
@@ -1003,6 +1467,37 @@ def test_run_benchmark_refuses_overwrite_before_git_or_model(tmp_path, monkeypat
     assert marker.read_text(encoding="utf-8") == "preserve"
 
 
+def test_checkpoint_rejection_stops_before_git_or_model_construction(
+    tmp_path, monkeypatch
+):
+    verified = _verified_inputs(tmp_path)
+    checkpoint = tmp_path / "invalid-checkpoint"
+    checkpoint.mkdir()
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        lambda path: (_ for _ in ()).throw(
+            benchmark.BenchmarkInputError("invalid local VLM checkpoint: bad contract")
+        ),
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_git_context",
+        lambda: pytest.fail("git inspection must not start"),
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "LibreQwen3VL",
+        lambda **kwargs: pytest.fail("model construction must not start"),
+    )
+    output = tmp_path / "rejected-checkpoint"
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="bad contract"):
+        _run(verified, output, checkpoint_dir=checkpoint)
+
+    assert not output.exists()
+
+
 def test_run_benchmark_refuses_broken_output_symlink(tmp_path, monkeypatch):
     verified = _verified_inputs(tmp_path)
     target = tmp_path / "missing-target"
@@ -1061,6 +1556,444 @@ def test_preflight_rejects_regular_file_output_parent_without_side_effects(
     assert parent_file.read_text(encoding="utf-8") == "preserve\n"
     assert not output.exists()
     assert not list(tmp_path.glob(".libreyolo-vlm-output-probe-*"))
+
+
+def test_run_uses_validated_checkpoint_identity_for_construction_and_report(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    report_identities = _install_run_fakes(monkeypatch, events, verified)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b")
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        _matching_checkpoint_inspector(identity),
+    )
+
+    artifacts = _run(
+        verified,
+        tmp_path / "checkpoint-run",
+        checkpoint_dir=identity.root,
+    )
+
+    model_event = next(event for event in events if event[0] == "model")
+    checkpoint_load_root = Path(model_event[3])
+    assert model_event[1:3] == ("4b", "auto")
+    assert checkpoint_load_root != identity.root
+    assert checkpoint_load_root.is_absolute()
+    assert not checkpoint_load_root.exists()
+    validator_event = next(event for event in events if event[0] == "validator")
+    expectations = validator_event[3]
+    isolated_identity = expectations["expected_checkpoint_identity"]
+    assert isolated_identity.root == checkpoint_load_root
+    assert isolated_identity is not identity
+    assert benchmark._checkpoint_context(isolated_identity) == (
+        benchmark._checkpoint_context(identity)
+    )
+    assert expectations["expected_snapshot_identity"]["source"] == (
+        benchmark._QWEN_4B_REPO
+    )
+    assert expectations["expected_processor_content_identity"]["source"] == (
+        benchmark._QWEN_4B_REPO
+    )
+    envelope = json.loads(artifacts.envelope_path.read_text(encoding="utf-8"))
+    context_identity = envelope["execution_context"]["checkpoint"]
+    assert envelope["request"]["checkpoint_dir"] == str(identity.root)
+    assert envelope["request"]["model_size"] == "4b"
+    assert context_identity["aggregate_sha256"] == identity.aggregate_sha256
+    assert envelope["execution_context"]["dataset"]["partition"]["name"] == (
+        "holdout100"
+    )
+    assert envelope["execution_context"]["dataset"]["partition"]["role"] == (
+        benchmark._CHECKPOINT_PARTITION_ROLE
+    )
+    assert str(identity.root) not in benchmark._json_text(context_identity)
+    report_identity = next(iter(report_identities.values()))
+    assert (
+        report_identity["benchmark_config"]["benchmark_run"]["checkpoint"]
+        == context_identity
+    )
+
+
+def test_public_run_identity_rejects_promotion_context_for_checkpoint(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    report_identities = _install_run_fakes(monkeypatch, events, verified)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b")
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        _matching_checkpoint_inspector(identity),
+    )
+    artifacts = _run(
+        verified,
+        tmp_path / "wrong-checkpoint-partition",
+        checkpoint_dir=identity.root,
+    )
+    envelope = json.loads(artifacts.envelope_path.read_text(encoding="utf-8"))
+    fake_dataset = envelope["execution_context"]["dataset"]
+    fake_dataset["partition"].update(
+        benchmark._PARTITION_REQUIREMENTS[benchmark._BASE_PARTITION_ROLE]
+    )
+    fake_dataset["review"]["partition_role"] = benchmark._BASE_PARTITION_ROLE
+    report_identity = next(iter(report_identities.values()))
+    report_identity["benchmark_config"]["benchmark_run"]["dataset"] = json.loads(
+        json.dumps(fake_dataset)
+    )
+    benchmark._write_json_atomic(artifacts.envelope_path, envelope)
+
+    with pytest.raises(VLMConfidenceReportError, match="partition.name"):
+        benchmark.read_benchmark_run_identity(artifacts.report_path)
+
+
+def test_public_run_identity_rejects_forged_native_checkpoint_mapping(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    report_identities = _install_run_fakes(monkeypatch, events, verified)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b")
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        _matching_checkpoint_inspector(identity),
+    )
+    artifacts = _run(
+        verified,
+        tmp_path / "forged-native-checkpoint",
+        checkpoint_dir=identity.root,
+    )
+    report_identity = next(iter(report_identities.values()))
+    forged = json.loads(json.dumps(report_identity["benchmark_config"]["checkpoint"]))
+    forged["aggregate_sha256"] = "0" * 64
+    report_identity["benchmark_config"]["checkpoint"] = forged
+
+    with pytest.raises(
+        VLMConfidenceReportError,
+        match="does not match benchmark_config.checkpoint",
+    ):
+        benchmark.read_benchmark_run_identity(artifacts.report_path)
+
+
+def test_run_isolates_model_load_from_transient_requested_checkpoint_swap(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b", token="a")
+    changed = _strict_checkpoint_identity(tmp_path, size="4b", token="f")
+    source_file = identity.root / "adapter_config.json"
+    source_payload = b'{"checkpoint":"A"}\n'
+    source_file.write_bytes(source_payload)
+    source_state = "a"
+    isolated_roots = []
+
+    def inspect(path):
+        root = Path(path).resolve()
+        selected = (
+            changed if root == identity.root and source_state == "b" else identity
+        )
+        return _checkpoint_identity_at(selected, root)
+
+    def transient_swap(checkpoint_dir):
+        nonlocal source_state
+        isolated_root = Path(checkpoint_dir).resolve()
+        isolated_roots.append(isolated_root)
+        assert isolated_root != identity.root
+        source_state = "b"
+        source_file.write_bytes(b'{"checkpoint":"B"}\n')
+        try:
+            assert (isolated_root / source_file.name).read_bytes() == source_payload
+        finally:
+            source_file.write_bytes(source_payload)
+            source_state = "a"
+
+    report_identities = _install_run_fakes(
+        monkeypatch,
+        events,
+        verified,
+        model_hook=transient_swap,
+    )
+    monkeypatch.setattr(benchmark, "_inspect_checkpoint_identity", inspect)
+
+    artifacts = _run(
+        verified,
+        tmp_path / "transient-swap-run",
+        checkpoint_dir=identity.root,
+    )
+
+    assert len(isolated_roots) == 1
+    assert not isolated_roots[0].exists()
+    assert source_file.read_bytes() == source_payload
+    envelope = json.loads(artifacts.envelope_path.read_text(encoding="utf-8"))
+    assert envelope["request"]["checkpoint_dir"] == str(identity.root)
+    assert (
+        envelope["execution_context"]["checkpoint"]["aggregate_sha256"]
+        == identity.aggregate_sha256
+    )
+    report_identity = next(iter(report_identities.values()))
+    assert (
+        report_identity["benchmark_config"]["benchmark_run"]["checkpoint"]
+        == (envelope["execution_context"]["checkpoint"])
+    )
+
+
+def test_isolated_checkpoint_is_cleaned_when_model_construction_fails(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b")
+    isolated_roots = []
+    cleanup_roots = _install_checkpoint_cleanup_failure(monkeypatch)
+
+    def fail_construction(checkpoint_dir):
+        isolated_roots.append(Path(checkpoint_dir).resolve())
+        raise ValueError("offline model construction failed")
+
+    _install_run_fakes(
+        monkeypatch,
+        events,
+        verified,
+        model_hook=fail_construction,
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        _matching_checkpoint_inspector(identity),
+    )
+    output = tmp_path / "failed-isolated-run"
+
+    with pytest.raises(ValueError, match="model construction failed"):
+        _run(verified, output, checkpoint_dir=identity.root)
+
+    assert len(isolated_roots) == 1
+    assert cleanup_roots == isolated_roots
+    assert not isolated_roots[0].exists()
+    assert not output.exists()
+    assert not (tmp_path / ".failed-isolated-run.lock").exists()
+
+
+def test_isolated_checkpoint_cleanup_failure_prevents_output_publication(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b")
+    _install_run_fakes(monkeypatch, events, verified)
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        _matching_checkpoint_inspector(identity),
+    )
+    isolated_roots = _install_checkpoint_cleanup_failure(monkeypatch)
+    output = tmp_path / "cleanup-failed-run"
+
+    with pytest.raises(
+        benchmark.BenchmarkInputError,
+        match="could not remove the isolated checkpoint copy",
+    ):
+        _run(verified, output, checkpoint_dir=identity.root)
+
+    assert len(isolated_roots) == 1
+    assert not isolated_roots[0].exists()
+    assert not output.exists()
+    assert not (tmp_path / ".cleanup-failed-run.lock").exists()
+
+
+def test_isolated_base_snapshot_binds_model_load_during_transient_source_swap(
+    tmp_path, monkeypatch
+):
+    source, snapshot, processor = _compact_base_snapshot(tmp_path, monkeypatch)
+    isolated_roots = []
+
+    class FakeQwen:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            source_file = source / "model.safetensors"
+            source_file.write_bytes(b"base-B")
+            load_root = Path(self._ensure_weights()).resolve()
+            isolated_roots.append(load_root)
+            self.loaded = (load_root / "model.safetensors").read_bytes()
+            source_file.write_bytes(b"base-A")
+
+    monkeypatch.setattr(benchmark, "LibreQwen3VL", FakeQwen)
+    with benchmark._isolated_base_snapshot(
+        source,
+        "2b",
+        snapshot,
+        processor,
+        enabled=True,
+    ) as isolated:
+        model = benchmark._construct_benchmark_model(
+            model_size="2b",
+            requested_device="cpu",
+            snapshot_load_root=isolated,
+            checkpoint_load_root=None,
+        )
+        assert model.loaded == b"base-A"
+        assert isolated_roots == [isolated]
+        assert (isolated / "model.safetensors").read_bytes() == b"base-A"
+
+    assert (source / "model.safetensors").read_bytes() == b"base-A"
+    assert not isolated_roots[0].exists()
+
+
+def test_isolated_base_snapshot_mutation_is_rejected(tmp_path, monkeypatch):
+    source, snapshot, processor = _compact_base_snapshot(tmp_path, monkeypatch)
+
+    with benchmark._isolated_base_snapshot(
+        source,
+        "2b",
+        snapshot,
+        processor,
+        enabled=True,
+    ) as isolated:
+        (isolated / "model.safetensors").write_bytes(b"base-B")
+        with pytest.raises(RuntimeError, match="isolated copy"):
+            benchmark._require_snapshot_stable(
+                isolated,
+                "2b",
+                snapshot,
+                processor,
+                phase="during generation from the isolated copy",
+                input_error=False,
+            )
+
+
+def test_isolated_base_cleanup_failure_is_reported_after_success(tmp_path, monkeypatch):
+    source, snapshot, processor = _compact_base_snapshot(tmp_path, monkeypatch)
+    isolated_roots = _install_base_cleanup_failure(monkeypatch)
+
+    with (
+        pytest.raises(
+            benchmark.BenchmarkInputError,
+            match="could not remove the isolated base snapshot",
+        ),
+        benchmark._isolated_base_snapshot(
+            source,
+            "2b",
+            snapshot,
+            processor,
+            enabled=True,
+        ),
+    ):
+        pass
+
+    assert len(isolated_roots) == 1
+    assert not isolated_roots[0].exists()
+
+
+def test_isolated_base_cleanup_failure_preserves_primary_exception(
+    tmp_path, monkeypatch
+):
+    source, snapshot, processor = _compact_base_snapshot(tmp_path, monkeypatch)
+    isolated_roots = _install_base_cleanup_failure(monkeypatch)
+
+    with (
+        pytest.raises(ValueError, match="primary model failure"),
+        benchmark._isolated_base_snapshot(
+            source,
+            "2b",
+            snapshot,
+            processor,
+            enabled=True,
+        ),
+    ):
+        raise ValueError("primary model failure")
+
+    assert len(isolated_roots) == 1
+    assert not isolated_roots[0].exists()
+
+
+def test_checkpoint_envelope_rejects_component_digest_tampering(tmp_path, monkeypatch):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b")
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        _matching_checkpoint_inspector(identity),
+    )
+    artifacts = _run(
+        verified,
+        tmp_path / "checkpoint-run",
+        checkpoint_dir=identity.root,
+    )
+    envelope = json.loads(artifacts.envelope_path.read_text(encoding="utf-8"))
+    envelope["execution_context"]["checkpoint"]["adapter_weights_sha256"] = "0" * 64
+    artifacts.envelope_path.write_text(
+        json.dumps(envelope, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        VLMConfidenceReportError, match="adapter_weights_sha256.*file record"
+    ):
+        benchmark._load_runner_envelope(artifacts.report_path, "run")
+
+
+def test_checkpoint_envelope_rejects_aggregate_digest_tampering(tmp_path, monkeypatch):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b")
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        _matching_checkpoint_inspector(identity),
+    )
+    artifacts = _run(
+        verified,
+        tmp_path / "checkpoint-run",
+        checkpoint_dir=identity.root,
+    )
+    envelope = json.loads(artifacts.envelope_path.read_text(encoding="utf-8"))
+    envelope["execution_context"]["checkpoint"]["aggregate_sha256"] = "0" * 64
+    artifacts.envelope_path.write_text(
+        json.dumps(envelope, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(VLMConfidenceReportError, match="aggregate_sha256.*payload"):
+        benchmark._load_runner_envelope(artifacts.report_path, "run")
+
+
+def test_checkpoint_envelope_rejects_processor_record_tampering(tmp_path, monkeypatch):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    identity = _strict_checkpoint_identity(tmp_path, size="4b")
+    monkeypatch.setattr(
+        benchmark,
+        "_inspect_checkpoint_identity",
+        _matching_checkpoint_inspector(identity),
+    )
+    artifacts = _run(
+        verified,
+        tmp_path / "checkpoint-run",
+        checkpoint_dir=identity.root,
+    )
+    envelope = json.loads(artifacts.envelope_path.read_text(encoding="utf-8"))
+    processor_file = next(
+        entry
+        for entry in envelope["execution_context"]["checkpoint"]["files"]
+        if entry["role"] == "processor"
+    )
+    processor_file["sha256"] = "0" * 64
+    artifacts.envelope_path.write_text(
+        json.dumps(envelope, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        VLMConfidenceReportError, match="processor_sha256.*processor file records"
+    ):
+        benchmark._load_runner_envelope(artifacts.report_path, "run")
 
 
 def test_output_preflight_accepts_existing_writable_parent_without_side_effects(
@@ -1422,6 +2355,64 @@ def test_snapshot_evidence_uses_only_the_fixed_local_qwen_snapshot(
     ]
     assert snapshot == benchmark._QWEN_2B_SNAPSHOT_IDENTITY
     assert processor_content == benchmark._QWEN_2B_PROCESSOR_CONTENT_IDENTITY
+
+
+def test_runner_qwen_base_pins_match_publication_contract():
+    from libreyolo.models.vlm import artifact as artifact_module
+
+    assert benchmark._QWEN_BASE_PINS == artifact_module._SUPPORTED_BASES
+
+
+def test_snapshot_evidence_accepts_only_the_audited_4b_sharded_snapshot(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "weights" / "LibreQwen3VL4b"
+    root.mkdir(parents=True)
+    calls = []
+
+    def weights(cls, actual_root, repo, revision):
+        calls.append(("weights", actual_root, repo, revision))
+        return json.loads(json.dumps(benchmark._QWEN_4B_SNAPSHOT_IDENTITY))
+
+    def processor(cls, actual_root, repo, revision):
+        calls.append(("processor", actual_root, repo, revision))
+        return dict(benchmark._QWEN_4B_PROCESSOR_CONTENT_IDENTITY)
+
+    monkeypatch.setattr(
+        benchmark.VLMConfidenceValidator,
+        "_base_snapshot_identity_from_root",
+        classmethod(weights),
+    )
+    monkeypatch.setattr(
+        benchmark.VLMConfidenceValidator,
+        "_processor_content_identity_from_root",
+        classmethod(processor),
+    )
+
+    actual_root, snapshot, processor_content = benchmark._snapshot_evidence(
+        "4b",
+        expected_repo=benchmark._QWEN_4B_REPO,
+        expected_revision=benchmark._QWEN_4B_REVISION,
+    )
+
+    assert actual_root == root.resolve()
+    assert calls == [
+        (
+            "weights",
+            root.resolve(),
+            benchmark._QWEN_4B_REPO,
+            benchmark._QWEN_4B_REVISION,
+        ),
+        (
+            "processor",
+            root.resolve(),
+            benchmark._QWEN_4B_REPO,
+            benchmark._QWEN_4B_REVISION,
+        ),
+    ]
+    assert snapshot == benchmark._QWEN_4B_SNAPSHOT_IDENTITY
+    assert processor_content == benchmark._QWEN_4B_PROCESSOR_CONTENT_IDENTITY
 
 
 @pytest.mark.parametrize("link_position", ["leaf", "ancestor"])
@@ -1832,6 +2823,8 @@ def test_parse_cli_args_covers_run_and_compare_contracts():
             "review.json",
             "--output-root",
             "run-a",
+            "--checkpoint-dir",
+            "checkpoint/best",
             "--seed",
             "19",
             "--device",
@@ -1844,6 +2837,7 @@ def test_parse_cli_args_covers_run_and_compare_contracts():
     assert run.images_dir == Path("val2017")
     assert run.review_attestation == Path("review.json")
     assert run.output_root == Path("run-a")
+    assert run.checkpoint_dir == Path("checkpoint/best")
     assert run.seed == 19
     assert run.device == "cuda:1"
 
@@ -1860,6 +2854,8 @@ def test_parse_cli_args_covers_run_and_compare_contracts():
             "review.json",
             "--output-root",
             "run-a",
+            "--checkpoint-dir",
+            "checkpoint/best",
             "--seed",
             "19",
             "--device",
@@ -1876,6 +2872,7 @@ def test_parse_cli_args_covers_run_and_compare_contracts():
             "output_root",
             "seed",
             "device",
+            "checkpoint_dir",
         )
     } == {
         key: getattr(run, key)
@@ -1887,6 +2884,7 @@ def test_parse_cli_args_covers_run_and_compare_contracts():
             "output_root",
             "seed",
             "device",
+            "checkpoint_dir",
         )
     }
 
@@ -2232,6 +3230,11 @@ def test_direct_compare_delegates_to_strict_persisted_comparator(monkeypatch):
             run_id="1" * 32 if label == "first_run" else "2" * 32,
             process_id="3" * 32 if label == "first_run" else "4" * 32,
             report_sha256="a" * 64 if label == "first_run" else "b" * 64,
+            envelope_sha256="c" * 64,
+            execution_context={},
+            benchmark_config={},
+            metrics={},
+            nonfinite_metrics=(),
         ),
     )
 
@@ -2274,6 +3277,11 @@ def test_direct_compare_requires_distinct_processes(monkeypatch):
             run_id="1" * 32 if label == "first_run" else "2" * 32,
             process_id="3" * 32,
             report_sha256="a" * 64,
+            envelope_sha256="c" * 64,
+            execution_context={},
+            benchmark_config={},
+            metrics={},
+            nonfinite_metrics=(),
         ),
     )
 

@@ -270,6 +270,34 @@ class TestManifestAndRepeats:
         with pytest.raises(ValueError, match="missing required fields"):
             benchmark_manifest_hash("prompt", {}, {})
 
+    def test_manifest_accepts_strict_checkpoint_aggregate_digest(self):
+        digest = benchmark_manifest_hash(
+            "prompt",
+            {},
+            benchmark_config(checkpoint={"aggregate_sha256": "a" * 64}),
+        )
+
+        assert len(digest) == 64
+
+    @pytest.mark.parametrize(
+        "checkpoint",
+        [
+            {},
+            {"sha256": "a" * 64, "aggregate_sha256": "b" * 64},
+            {"aggregate_sha256": "A" * 64},
+            {"aggregate_sha256": "a" * 63},
+            {"aggregate_sha256": 1},
+            {"sha256": "A" * 64},
+        ],
+    )
+    def test_manifest_rejects_ambiguous_or_noncanonical_checkpoint_digest(
+        self, checkpoint
+    ):
+        with pytest.raises(ValueError, match="checkpoint"):
+            benchmark_manifest_hash(
+                "prompt", {}, benchmark_config(checkpoint=checkpoint)
+            )
+
     @pytest.mark.parametrize(
         ("override", "match"),
         [

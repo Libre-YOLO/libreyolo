@@ -9,6 +9,7 @@ import os
 import shutil
 import struct
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,9 @@ from libreyolo.models.vlm.artifact import (
     validate_vlm_artifact,
     validate_vlm_base_snapshot,
 )
+from libreyolo.models.vlm.training.checkpoint import inspect_vlm_checkpoint_identity
+from libreyolo.validation.vlm_confidence import VLMDetection, build_confidence_run
+from libreyolo.validation import vlm_confidence_report as confidence_report_module
 
 pytestmark = pytest.mark.unit
 
@@ -237,16 +241,51 @@ def _processor_sha() -> str:
     return _sha(_canonical(entries).rstrip(b"\n"))
 
 
+def _publication_metrics() -> dict[str, float]:
+    return {
+        "metrics/vlm_confidence/auroc": 0.75,
+        "metrics/vlm_confidence/candidate_mAP50": 0.75,
+        "metrics/vlm_confidence/candidate_mAP50-95": 0.625,
+        "metrics/vlm_confidence/constant_mAP50": 0.5,
+        "metrics/vlm_confidence/constant_mAP50-95": 0.5,
+        "metrics/vlm_confidence/default_conf_fp_retention": 0.5,
+        "metrics/vlm_confidence/default_conf_prediction_retention": 0.625,
+        "metrics/vlm_confidence/default_conf_tp_retention": 0.75,
+        "metrics/vlm_confidence/delta_mAP50": 0.25,
+        "metrics/vlm_confidence/delta_mAP50-95": 0.125,
+        "metrics/vlm_confidence/detection_score_coverage": 0.75,
+        "metrics/vlm_confidence/prediction_score_coverage": 0.75,
+        "metrics/vlm_confidence/ranking_ap": 0.75,
+        "metrics/vlm_confidence/response_score_coverage": 0.875,
+        "metrics/vlm_confidence/scored_prediction_brier": 0.125,
+        "metrics/vlm_confidence/scored_prediction_ece": 0.125,
+        "metrics/vlm_confidence/scored_prediction_mce": 0.25,
+    }
+
+
 def _evidence(size: str = "2b") -> dict:
     repo, revision = _BASES[size]
     snapshot = _base_snapshot(size)
     data_sha = "d" * 64
     report_sha = "e" * 64
+    envelope_sha = "f" * 64
     code_revision = "c" * 40
     adapter_sha = _sha(_safetensor(size))
+    canonical_adapter = artifact_module._canonical_adapter_config(
+        _adapter_config(size), _contract(size)
+    )
+    adapter_config_sha = _sha(_canonical(canonical_adapter))
     contract_sha = _sha(_canonical(_contract(size)))
     processor_sha = _processor_sha()
-    return {
+    evaluation = {
+        "benchmark": artifact_module._CONFIDENCE_BENCHMARK_ID,
+        "report_sha256": report_sha,
+        "envelope_sha256": envelope_sha,
+        "checkpoint_sha256": adapter_sha,
+        "metrics": _publication_metrics(),
+        "passed": True,
+    }
+    evidence = {
         "schema": PUBLICATION_EVIDENCE_SCHEMA,
         "artifact_license": {
             "spdx": "Apache-2.0",
@@ -272,13 +311,7 @@ def _evidence(size: str = "2b") -> dict:
             "manifest_sha256": data_sha,
             "redistribution_decision": "approved-for-derived-weights",
         },
-        "evaluation": {
-            "benchmark": "strawberries-holdout-v1",
-            "report_sha256": report_sha,
-            "checkpoint_sha256": adapter_sha,
-            "metrics": {"metrics/mAP50": 0.8, "metrics/mAP50-95": 0.6},
-            "passed": True,
-        },
+        "evaluation": evaluation,
         "code": {
             "repository": "https://github.com/LibreYOLO/libreyolo",
             "revision": code_revision,
@@ -302,9 +335,14 @@ def _evidence(size: str = "2b") -> dict:
                 "base_snapshot_sha256": snapshot["sha256"],
                 "training_data_manifest_sha256": data_sha,
                 "evaluation_report_sha256": report_sha,
+                "evaluation_envelope_sha256": envelope_sha,
+                "evaluation_claim_sha256": artifact_module._evaluation_claim_sha256(
+                    evaluation
+                ),
                 "code_revision": code_revision,
                 "recipe_sha256": artifact_module._recipe_sha256(),
                 "adapter_weights_sha256": adapter_sha,
+                "adapter_config_sha256": adapter_config_sha,
                 "checkpoint_contract_sha256": contract_sha,
                 "processor_sha256": processor_sha,
             },
@@ -318,26 +356,446 @@ def _evidence(size: str = "2b") -> dict:
             },
         },
     }
+    return evidence
 
 
-def _template_context(size: str = "2b") -> tuple[dict, dict, dict]:
+def _template_context(size: str = "2b") -> tuple[dict, dict]:
     evidence = _evidence(size)
     training_data = {
         key: value
         for key, value in evidence["training_data"].items()
         if key != "redistribution_decision"
     }
-    evaluation = {
-        key: value
-        for key, value in evidence["evaluation"].items()
-        if key not in {"checkpoint_sha256", "passed"}
-    }
     code = {
         "revision": evidence["code"]["revision"],
         "clean": evidence["code"]["clean"],
         "dependencies": evidence["code"]["dependencies"],
     }
-    return training_data, evaluation, code
+    return training_data, code
+
+
+def _confidence_metrics() -> dict[str, float | None]:
+    metrics: dict[str, float | None] = _publication_metrics()
+    metrics.update(
+        {
+            "metrics/vlm_confidence/responses": 100.0,
+            "speed/images_seen": 100.0,
+            "speed/total_ms": 12.5,
+            "test/optional_null": None,
+        }
+    )
+    return metrics
+
+
+def _bind_confidence_report(
+    monkeypatch,
+    checkpoint: Path,
+    *,
+    metrics: dict[str, float | None] | None = None,
+    mutate_context=None,
+    mutate_benchmark=None,
+    report_sha: str = "e" * 64,
+    envelope_sha: str = "f" * 64,
+) -> Path:
+    identity = inspect_vlm_checkpoint_identity(checkpoint)
+    checkpoint_context = {
+        "schema": "libreyolo.vlm-confidence-checkpoint-identity.v1",
+        "kind": "qwen3vl_lora_checkpoint",
+        "family": identity.family,
+        "size": identity.size,
+        "task": identity.task,
+        "base_repo": identity.base_repo,
+        "base_revision": identity.base_revision,
+        "aggregate_sha256": identity.aggregate_sha256,
+        "adapter_weights_sha256": identity.adapter_weights_sha256,
+        "adapter_config_sha256": identity.adapter_config_sha256,
+        "checkpoint_contract_sha256": identity.checkpoint_contract_sha256,
+        "processor_sha256": identity.processor_sha256,
+        "files": [
+            {
+                "path": record.path,
+                "role": record.role,
+                "size": record.size,
+                "sha256": record.sha256,
+            }
+            for record in identity.files
+        ],
+    }
+    context = {
+        "schema": "libreyolo.vlm-confidence-benchmark-context.v3",
+        "git": {},
+        "runtime": {},
+        "determinism": {},
+        "dataset": {
+            "schema": "libreyolo.vlm-confidence-benchmark-dataset.v1",
+            "manifest": {},
+            "source": {},
+            "partition": {
+                "name": "holdout100",
+                "role": "fine_tune_validation",
+                "start": 0,
+                "stop": 100,
+                "image_count": 100,
+                "annotation_artifact": (
+                    "annotations/instances_val2017_holdout100.json"
+                ),
+                "annotation_size_bytes": 1,
+                "annotation_sha256": "a" * 64,
+            },
+            "classes": {},
+            "review": {},
+        },
+        "checkpoint": checkpoint_context,
+    }
+    if mutate_context is not None:
+        mutate_context(context)
+    benchmark = {
+        "family": identity.family,
+        "size": identity.size,
+        "base_repo": identity.base_repo,
+        "base_revision": identity.base_revision,
+        "benchmark_run": context,
+    }
+    if mutate_benchmark is not None:
+        mutate_benchmark(benchmark)
+    report = checkpoint.parent / "vlm_confidence_report.json"
+    report.write_bytes(b"strict report bytes")
+    identity_metrics = _confidence_metrics() if metrics is None else metrics
+    monkeypatch.setattr(
+        artifact_module,
+        "_read_confidence_benchmark_identity",
+        lambda path: SimpleNamespace(
+            run_id="1" * 32,
+            process_id="2" * 32,
+            report_sha256=report_sha,
+            envelope_sha256=envelope_sha,
+            execution_context=context,
+            benchmark_config=benchmark,
+            metrics=identity_metrics,
+            nonfinite_metrics=tuple(
+                sorted(key for key, value in identity_metrics.items() if value is None)
+            ),
+        ),
+    )
+    return report
+
+
+def _write_strict_confidence_run(root: Path, checkpoint: Path) -> Path:
+    """Write a real report/envelope pair accepted by the public strict reader."""
+
+    root.mkdir()
+    identity = inspect_vlm_checkpoint_identity(checkpoint)
+    class_names = [f"class-{index}" for index in range(80)]
+    category_ids = list(range(1, 81))
+    review_checks = {
+        "canonical_source": True,
+        "image_attribution_sufficiency": True,
+        "annotation_license_and_redistribution": True,
+        "privacy_and_pii": True,
+        "visual_quality": True,
+        "selection_salt_freeze": True,
+        "benchmark_suitability": True,
+        "publication_upload_authorization": True,
+    }
+    checkpoint_context = artifact_module._checkpoint_report_context(identity)
+    dataset_context = {
+        "schema": "libreyolo.vlm-confidence-benchmark-dataset.v1",
+        "manifest": {
+            "schema": "libreyolo.vlm-benchmark-dataset.v1",
+            "sha256": "1" * 64,
+        },
+        "source": {
+            "canonical_annotation_sha256": "2" * 64,
+            "file_sha256": "3" * 64,
+            "file_size_bytes": 1,
+            "selected_image_identity_sha256": "4" * 64,
+        },
+        "partition": {
+            "name": "holdout100",
+            "role": "fine_tune_validation",
+            "start": 0,
+            "stop": 100,
+            "image_count": 100,
+            "annotation_artifact": ("annotations/instances_val2017_holdout100.json"),
+            "annotation_size_bytes": 1,
+            "annotation_sha256": "5" * 64,
+        },
+        "classes": {
+            "count": 80,
+            "names": class_names,
+            "category_ids": category_ids,
+        },
+        "review": {
+            "schema": "libreyolo.vlm-benchmark-dataset-review.v1",
+            "sha256": "6" * 64,
+            "manifest_sha256": "1" * 64,
+            "partition_role": "fine_tune_validation",
+            "status": "approved",
+            "reviewer": "Offline test reviewer",
+            "reviewed_at": "2026-08-16T10:30:00Z",
+            "checks": review_checks,
+        },
+    }
+    execution_context = {
+        "schema": "libreyolo.vlm-confidence-benchmark-context.v3",
+        "git": {"commit": "a" * 40, "dirty": False},
+        "runtime": {
+            "python": "3.12.0",
+            "implementation": "CPython",
+            "platform": "offline-test",
+            "torch": "2.8.0",
+            "numpy": "2.0.0",
+            "pillow": "11.0.0",
+            "opencv": "4.10.0",
+            "packages": {
+                "transformers": "5.12.1",
+                "huggingface_hub": "0.36.0",
+                "tokenizers": "0.22.0",
+                "safetensors": "0.6.0",
+                "pycocotools": "2.0.10",
+            },
+            "cuda_runtime": None,
+            "cudnn": None,
+            "nvidia_driver": None,
+            "cuda_available": False,
+            "requested_device": "cpu",
+            "resolved_device": "cpu",
+            "attention_backends": {"model": "sdpa"},
+        },
+        "determinism": {
+            "seed": 0,
+            "python_hash_seed": "0",
+            "python_hash_randomization": False,
+            "cublas_workspace_config": ":4096:8",
+            "torch_deterministic_algorithms": True,
+            "cudnn_benchmark": False,
+            "cudnn_deterministic": True,
+            "cuda_matmul_allow_tf32": False,
+            "cudnn_allow_tf32": False,
+        },
+        "dataset": dataset_context,
+        "checkpoint": checkpoint_context,
+    }
+    processor_files = sum(record.role == "processor" for record in identity.files)
+    benchmark = {
+        "family": identity.family,
+        "size": identity.size,
+        "base_repo": identity.base_repo,
+        "base_revision": identity.base_revision,
+        "checkpoint": json.loads(json.dumps(checkpoint_context)),
+        "processor": {
+            "source": "checkpoint",
+            "revision": None,
+            "sha256": identity.processor_sha256,
+            "files": processor_files,
+            "class": "offline",
+        },
+        "class_names": class_names,
+        "generation_kwargs": {
+            "do_sample": False,
+            "max_new_tokens": 128,
+            "num_beams": 1,
+            "repetition_penalty": 1.1,
+        },
+        "confidence_method": "qwen_generation_policy_label_bbox_geomean_v1",
+        "confidence_evaluation": {
+            "iou_threshold": 0.5,
+            "default_conf": 0.25,
+            "fallback_score": 1.0,
+            "calibration_bins": 10,
+            "binning": "uniform_left_closed_v1",
+            "population": "scored_postprocessed_predictions",
+            "matching": "class_aware_max_cardinality_iou_v1",
+        },
+        "evaluation": {
+            "max_det": 100,
+            "faster_coco_eval": False,
+            "imgsz": [1024, 1024],
+            "label_to_category_id": {
+                str(index): category_id
+                for index, category_id in enumerate(category_ids)
+            },
+            "backend": "pycocotools 2.0.10",
+        },
+        "seed": 0,
+        "backend": "transformers.Qwen3VLForConditionalGeneration",
+        "device": "cpu",
+        "dtype": "torch.bfloat16",
+        "hardware": {"type": "cpu", "name": "offline-test"},
+        "software": {
+            "python": "3.12.0",
+            "libreyolo": "1.6.0",
+            "torch": "2.8.0",
+            "transformers": "5.12.1",
+            "pycocotools": "2.0.10",
+        },
+        "benchmark_run": execution_context,
+    }
+    target_box = (10.0, 10.0, 30.0, 30.0)
+    wrong_box = (50.0, 50.0, 70.0, 70.0)
+    predictions = []
+    ground_truth = []
+    images = []
+    evaluator_images = []
+    annotations = []
+    ground_truth_rows = []
+    generations = []
+    for image_number in range(1, 101):
+        image_id = str(image_number)
+        class_id = (image_number - 1) % len(class_names)
+        category_id = category_ids[class_id]
+        predictions.extend(
+            (
+                VLMDetection(image_id, class_id, target_box, 0.75),
+                VLMDetection(image_id, class_id, wrong_box, 0.125),
+            )
+        )
+        ground_truth.append(VLMDetection(image_id, class_id, target_box))
+        images.append(
+            {
+                "image_id": image_id,
+                "file_name": f"{image_number:012d}.jpg",
+                "sha256": f"{image_number:064x}",
+                "width": 100,
+                "height": 100,
+            }
+        )
+        evaluator_images.append({"id": image_number, "width": 100, "height": 100})
+        annotations.append(
+            {
+                "id": image_number,
+                "image_id": image_number,
+                "category_id": category_id,
+                "bbox": [10.0, 10.0, 20.0, 20.0],
+                "area": 400.0,
+                "iscrowd": 0,
+                "ignore": 0,
+            }
+        )
+        ground_truth_rows.append(
+            {"image_id": image_id, "class_id": class_id, "xyxy": list(target_box)}
+        )
+        generations.append(
+            {
+                "image_id": image_id,
+                "sha256": f"{image_number + 100:064x}",
+                "parsed_items": 2,
+                "fallback_reason": None,
+            }
+        )
+    dataset = {
+        "split": "val",
+        "class_names": class_names,
+        "images": images,
+        "evaluator_ground_truth": {
+            "api": "offline.StubCOCO",
+            "images": evaluator_images,
+            "categories": [
+                {"id": category_id, "name": class_name}
+                for category_id, class_name in zip(category_ids, class_names)
+            ],
+            "annotations": annotations,
+        },
+        "ground_truth": ground_truth_rows,
+    }
+    evaluator = {
+        "candidate_mAP50-95": 0.625,
+        "constant_mAP50-95": 0.5,
+        "candidate_mAP50": 0.75,
+        "constant_mAP50": 0.5,
+    }
+    run = build_confidence_run(
+        predictions,
+        ground_truth,
+        prompt="detect all COCO classes",
+        dataset_manifest=dataset,
+        benchmark_config=benchmark,
+        generation_manifest=generations,
+        evaluator_metrics=evaluator,
+        iou_threshold=0.5,
+        default_conf=0.25,
+        fallback_score=1.0,
+    )
+    metrics = confidence_report_module._semantic_metrics(run, (100, 100, 200, 200))
+    metrics.update(
+        {
+            "speed/preprocess_ms": 1.0,
+            "speed/inference_ms": 2.0,
+            "speed/postprocess_ms": 1.0,
+            "speed/total_ms": 10.0,
+            "speed/total_s": 1.0,
+            "speed/images_seen": 100.0,
+        }
+    )
+    report_payload = {
+        "schema": "libreyolo.vlm-confidence-report.v2",
+        "prompt": "detect all COCO classes",
+        "benchmark_config": benchmark,
+        "dataset_manifest": dataset,
+        "generation_manifest": generations,
+        "hashes": {
+            "manifest": run.manifest_hash,
+            "configuration": run.configuration_hash,
+            "generation": run.generation_hash,
+            "prediction_structure": run.prediction_structure_hash,
+        },
+        "confidence": {
+            "iou_threshold": run.iou_threshold,
+            "default_conf": run.default_conf,
+            "fallback_score": run.fallback_score,
+        },
+        "diagnostics": confidence_report_module._diagnostics_surface(run),
+        "calibration": confidence_report_module._calibration_surface(run),
+        "evaluator_metrics": evaluator,
+        "fallback_reasons": {},
+        "predictions": [
+            {
+                "image_id": prediction.image_id,
+                "class_id": prediction.class_id,
+                "xyxy": list(prediction.xyxy),
+                "candidate_score": prediction.score,
+                "effective_score": prediction.score,
+                "matched": matched,
+            }
+            for prediction, matched in zip(predictions, run.matches)
+        ],
+        "metrics": metrics,
+        "artifacts": {"reliability_plot": None},
+    }
+    report_path = root / "vlm_confidence_report.json"
+    report_path.write_bytes(_canonical(report_payload))
+
+    def absolute(name: str) -> str:
+        return str((root / name).resolve())
+
+    envelope = {
+        "schema": "libreyolo.vlm-confidence-benchmark-run.v3",
+        "run_id": "9" * 32,
+        "process_id": "a" * 32,
+        "request": {
+            "manifest": absolute("manifest.json"),
+            "annotations": absolute("instances_val2017.json"),
+            "images_dir": absolute("val2017"),
+            "review_attestation": absolute("review.json"),
+            "seed": 0,
+            "model_family": "qwen3vl",
+            "model_size": identity.size,
+            "checkpoint_dir": str(checkpoint.resolve()),
+            "device": "cpu",
+            "imgsz": 1024,
+            "default_conf": 0.25,
+            "confidence_iou": 0.5,
+        },
+        "execution_context": execution_context,
+        "report": {
+            "path": "vlm_confidence_report.json",
+            "sha256": _sha(report_path.read_bytes()),
+        },
+        "metrics": metrics,
+        "nonfinite_metrics": [],
+    }
+    (root / "vlm_confidence_run.json").write_bytes(_canonical(envelope))
+    return report_path
 
 
 def _write_checkpoint(root: Path, size: str = "2b") -> Path:
@@ -387,6 +845,131 @@ def test_production_qwen_lora_layout_is_exact():
             "intermediate": 9728,
         },
     }
+
+
+def test_safetensors_validation_returns_the_validated_payload_digest(tmp_path):
+    payload = _safetensor()
+    path = tmp_path / "adapter_model.safetensors"
+    path.write_bytes(payload)
+    assert artifact_module._validate_safetensors(path, "2b") == _sha(payload)
+
+
+def test_publication_validation_metrics_match_strict_report_evaluation_surface():
+    retention_and_coverage = {
+        "metrics/vlm_confidence/default_conf_tp_retention",
+        "metrics/vlm_confidence/default_conf_fp_retention",
+        "metrics/vlm_confidence/default_conf_prediction_retention",
+        "metrics/vlm_confidence/response_score_coverage",
+        "metrics/vlm_confidence/detection_score_coverage",
+        "metrics/vlm_confidence/prediction_score_coverage",
+    }
+    assert artifact_module._CONFIDENCE_VALIDATION_METRICS == (
+        confidence_report_module._MAP_METRICS
+        | confidence_report_module._QUALITY_METRICS
+        | retention_and_coverage
+    )
+    assert artifact_module._CONFIDENCE_VALIDATION_METRICS <= (
+        confidence_report_module._SEMANTIC_METRICS
+    )
+    assert artifact_module._CONFIDENCE_VALIDATION_METRICS.isdisjoint(
+        confidence_report_module._SPEED_METRICS
+    )
+
+
+def test_publication_rejects_nonvalidation_benchmark_identity(tmp_path):
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    evidence_value = _evidence()
+    evidence_value["evaluation"]["benchmark"] = "arbitrary-benchmark"
+    evidence = _write_evidence(tmp_path / "publication.json", value=evidence_value)
+
+    with pytest.raises(VLMArtifactError, match="evaluation.benchmark must be"):
+        build_vlm_artifact(
+            checkpoint, tmp_path / "artifact", publication_evidence=evidence
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation, message",
+    [
+        (
+            lambda metrics: metrics.pop("metrics/vlm_confidence/auroc"),
+            "invalid keys",
+        ),
+        (lambda metrics: metrics.__setitem__("unknown", 0.5), "invalid keys"),
+        (
+            lambda metrics: metrics.__setitem__("metrics/vlm_confidence/auroc", -0.01),
+            "between 0 and 1",
+        ),
+        (
+            lambda metrics: metrics.__setitem__(
+                "metrics/vlm_confidence/response_score_coverage", 1.01
+            ),
+            "between 0 and 1",
+        ),
+        (
+            lambda metrics: metrics.__setitem__(
+                "metrics/vlm_confidence/delta_mAP50", 1.01
+            ),
+            "between -1 and 1",
+        ),
+        (
+            lambda metrics: metrics.__setitem__(
+                "metrics/vlm_confidence/delta_mAP50", 0.2
+            ),
+            "must equal",
+        ),
+    ],
+)
+def test_publication_rejects_invalid_validation_metric_contract(
+    tmp_path, mutation, message
+):
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    evidence_value = _evidence()
+    mutation(evidence_value["evaluation"]["metrics"])
+    evidence = _write_evidence(tmp_path / "publication.json", value=evidence_value)
+
+    with pytest.raises(VLMArtifactError, match=message):
+        build_vlm_artifact(
+            checkpoint, tmp_path / "artifact", publication_evidence=evidence
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda evidence: evidence["evaluation"]["metrics"].__setitem__(
+            "metrics/vlm_confidence/auroc", 0.5
+        ),
+        lambda evidence: evidence["evaluation"].__setitem__(
+            "envelope_sha256", "0" * 64
+        ),
+    ],
+)
+def test_publication_rejects_evaluation_edit_with_stale_claim_binding(
+    tmp_path, mutation
+):
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    evidence_value = _evidence()
+    mutation(evidence_value)
+    evidence = _write_evidence(tmp_path / "publication.json", value=evidence_value)
+
+    with pytest.raises(VLMArtifactError, match="review.bindings do not match"):
+        build_vlm_artifact(
+            checkpoint, tmp_path / "artifact", publication_evidence=evidence
+        )
+
+
+def test_publication_review_must_bind_built_adapter_config(tmp_path):
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    evidence_value = _evidence()
+    evidence_value["review"]["bindings"]["adapter_config_sha256"] = "0" * 64
+    evidence = _write_evidence(tmp_path / "publication.json", value=evidence_value)
+
+    with pytest.raises(VLMArtifactError, match="adapter_config_sha256"):
+        build_vlm_artifact(
+            checkpoint, tmp_path / "artifact", publication_evidence=evidence
+        )
+    assert not (tmp_path / "artifact").exists()
 
 
 def test_official_base_snapshot_identities_are_exact():
@@ -976,6 +1559,44 @@ def test_builder_never_unlinks_a_replaced_lock_inode(tmp_path, monkeypatch):
     assert lock.read_text() == "replacement"
 
 
+def test_stable_copy_binds_the_opened_source_descriptor(tmp_path, monkeypatch):
+    source = tmp_path / "source.bin"
+    alternate = tmp_path / "alternate.bin"
+    destination = tmp_path / "copied.bin"
+    source.write_bytes(b"trusted-source")
+    alternate.write_bytes(b"forged-source!")
+    assert source.stat().st_size == alternate.stat().st_size
+    real_open = artifact_module.os.open
+
+    def redirected_open(path, flags, *args, **kwargs):
+        if Path(path) == source:
+            return real_open(alternate, flags, *args, **kwargs)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(artifact_module.os, "open", redirected_open)
+    with pytest.raises(VLMArtifactError, match="changed before it was opened"):
+        artifact_module._copy_file_stable(source, destination)
+    assert not destination.exists()
+
+
+def test_bounded_read_binds_the_opened_source_descriptor(tmp_path, monkeypatch):
+    source = tmp_path / "source.json"
+    alternate = tmp_path / "alternate.json"
+    source.write_bytes(b'{"trusted":1}')
+    alternate.write_bytes(b'{"forged!":1}')
+    assert source.stat().st_size == alternate.stat().st_size
+    real_open = artifact_module.os.open
+
+    def redirected_open(path, flags, *args, **kwargs):
+        if Path(path) == source:
+            return real_open(alternate, flags, *args, **kwargs)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(artifact_module.os, "open", redirected_open)
+    with pytest.raises(VLMArtifactError, match="changed before it was opened"):
+        artifact_module._read_bounded(source, max_bytes=1024, label="source JSON")
+
+
 def test_cleanup_preserves_replaced_staging_directory(tmp_path, monkeypatch):
     checkpoint = _write_checkpoint(tmp_path / "checkpoint")
     evidence = _write_evidence(tmp_path / "publication.json")
@@ -1176,17 +1797,105 @@ def _create_template_fixture(tmp_path: Path, monkeypatch):
     checkpoint = _write_checkpoint(tmp_path / "checkpoint")
     base = tmp_path / "base"
     _materialize_base_snapshot(base, identity)
-    training_data, evaluation, code = _template_context()
+    training_data, code = _template_context()
+    confidence_report = _bind_confidence_report(monkeypatch, checkpoint)
     output = tmp_path / "publication-template.json"
     result = create_vlm_publication_evidence_template(
         checkpoint,
         base,
         output,
         training_data=training_data,
-        evaluation=evaluation,
         code=code,
+        confidence_report=confidence_report,
     )
     return checkpoint, base, result
+
+
+def _strict_template_inputs(tmp_path: Path, monkeypatch):
+    identity = _tiny_base_identity(monkeypatch)
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    base = tmp_path / "base"
+    _materialize_base_snapshot(base, identity)
+    report = _write_strict_confidence_run(tmp_path / "confidence-run", checkpoint)
+    training_data, code = _template_context()
+    return checkpoint, base, report, training_data, code
+
+
+def test_publication_template_reads_real_strict_report_and_envelope(
+    tmp_path, monkeypatch
+):
+    checkpoint, base, report, training_data, code = _strict_template_inputs(
+        tmp_path, monkeypatch
+    )
+    output = tmp_path / "publication-template.json"
+
+    create_vlm_publication_evidence_template(
+        checkpoint,
+        base,
+        output,
+        training_data=training_data,
+        code=code,
+        confidence_report=report,
+    )
+
+    evidence = json.loads(output.read_text(encoding="utf-8"))
+    envelope = report.with_name("vlm_confidence_run.json")
+    assert evidence["evaluation"]["report_sha256"] == _sha(report.read_bytes())
+    assert evidence["evaluation"]["envelope_sha256"] == _sha(envelope.read_bytes())
+    assert evidence["evaluation"]["benchmark"] == (
+        artifact_module._CONFIDENCE_BENCHMARK_ID
+    )
+    assert set(evidence["evaluation"]["metrics"]) == (
+        artifact_module._CONFIDENCE_VALIDATION_METRICS
+    )
+    assert evidence["review"]["bindings"]["evaluation_claim_sha256"] == (
+        artifact_module._evaluation_claim_sha256(evidence["evaluation"])
+    )
+
+
+def test_publication_template_rejects_missing_envelope_without_output(
+    tmp_path, monkeypatch
+):
+    checkpoint, base, report, training_data, code = _strict_template_inputs(
+        tmp_path, monkeypatch
+    )
+    report.with_name("vlm_confidence_run.json").unlink()
+    output = tmp_path / "publication-template.json"
+
+    with pytest.raises(VLMArtifactError, match="missing companion"):
+        create_vlm_publication_evidence_template(
+            checkpoint,
+            base,
+            output,
+            training_data=training_data,
+            code=code,
+            confidence_report=report,
+        )
+    assert not output.exists()
+
+
+def test_publication_template_rejects_tampered_envelope_without_output(
+    tmp_path, monkeypatch
+):
+    checkpoint, base, report, training_data, code = _strict_template_inputs(
+        tmp_path, monkeypatch
+    )
+    envelope_path = report.with_name("vlm_confidence_run.json")
+    envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+    envelope["report"]["sha256"] = "0" * 64
+    envelope_path.write_bytes(_canonical(envelope))
+    output = tmp_path / "publication-template.json"
+
+    with pytest.raises(VLMArtifactError, match="companion report bytes"):
+        create_vlm_publication_evidence_template(
+            checkpoint,
+            base,
+            output,
+            training_data=training_data,
+            code=code,
+            confidence_report=report,
+        )
+    assert not output.exists()
 
 
 def test_publication_template_derives_bindings_and_remains_unapproved(
@@ -1200,15 +1909,30 @@ def test_publication_template_derives_bindings_and_remains_unapproved(
     assert template["base_model"]["processor_redistribution_decision"] == "unreviewed"
     assert template["training_data"]["redistribution_decision"] == "unreviewed"
     assert template["evaluation"]["passed"] is False
+    assert template["evaluation"]["benchmark"] == (
+        artifact_module._CONFIDENCE_BENCHMARK_ID
+    )
+    assert set(template["evaluation"]["metrics"]) == (
+        artifact_module._CONFIDENCE_VALIDATION_METRICS
+    )
+    assert "speed/total_ms" not in template["evaluation"]["metrics"]
+    assert "metrics/vlm_confidence/responses" not in template["evaluation"]["metrics"]
     assert template["review"]["approved"] is False
     assert template["review"]["reviewer"] == ""
     assert template["review"]["reviewed_at"] == ""
     assert set(template["review"]["gates"].values()) == {False}
     assert template["review"]["bindings"] == {
+        "adapter_config_sha256": inspect_vlm_checkpoint_identity(
+            checkpoint
+        ).adapter_config_sha256,
         "adapter_weights_sha256": _sha(_safetensor()),
         "base_snapshot_sha256": template["base_model"]["snapshot"]["sha256"],
         "checkpoint_contract_sha256": _sha(_canonical(_contract())),
         "code_revision": "c" * 40,
+        "evaluation_claim_sha256": artifact_module._evaluation_claim_sha256(
+            template["evaluation"]
+        ),
+        "evaluation_envelope_sha256": "f" * 64,
         "evaluation_report_sha256": "e" * 64,
         "processor_sha256": _processor_sha(),
         "recipe_sha256": artifact_module._recipe_sha256(),
@@ -1221,6 +1945,185 @@ def test_publication_template_derives_bindings_and_remains_unapproved(
             tmp_path / "unapproved-artifact",
             publication_evidence=output,
         )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda context: context["checkpoint"].__setitem__(
+            "adapter_weights_sha256", "0" * 64
+        ),
+        lambda context: context["checkpoint"].__setitem__("base_revision", "0" * 40),
+        lambda context: context["checkpoint"].__setitem__("processor_sha256", "0" * 64),
+        lambda context: context["checkpoint"]["files"][0].__setitem__(
+            "sha256", "0" * 64
+        ),
+    ],
+)
+def test_publication_template_rejects_report_checkpoint_identity_mismatch(
+    tmp_path, monkeypatch, mutation
+):
+    identity = _tiny_base_identity(monkeypatch)
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    base = tmp_path / "base"
+    _materialize_base_snapshot(base, identity)
+    training_data, code = _template_context()
+    confidence_report = _bind_confidence_report(
+        monkeypatch, checkpoint, mutate_context=mutation
+    )
+    output = tmp_path / "publication-template.json"
+
+    with pytest.raises(VLMArtifactError, match="checkpoint identity"):
+        create_vlm_publication_evidence_template(
+            checkpoint,
+            base,
+            output,
+            training_data=training_data,
+            code=code,
+            confidence_report=confidence_report,
+        )
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "mutation, message",
+    [
+        (
+            lambda context: context.__setitem__("schema", "context.v2"),
+            "execution_context schema",
+        ),
+        (
+            lambda context: context["dataset"]["partition"].__setitem__(
+                "role", "training"
+            ),
+            "holdout100",
+        ),
+    ],
+)
+def test_publication_template_rejects_nonvalidation_report_context(
+    tmp_path, monkeypatch, mutation, message
+):
+    identity = _tiny_base_identity(monkeypatch)
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    base = tmp_path / "base"
+    _materialize_base_snapshot(base, identity)
+    training_data, code = _template_context()
+    confidence_report = _bind_confidence_report(
+        monkeypatch, checkpoint, mutate_context=mutation
+    )
+
+    with pytest.raises(VLMArtifactError, match=message):
+        create_vlm_publication_evidence_template(
+            checkpoint,
+            base,
+            tmp_path / "publication-template.json",
+            training_data=training_data,
+            code=code,
+            confidence_report=confidence_report,
+        )
+
+
+@pytest.mark.parametrize("metric_value", [None, float("nan"), float("inf")])
+def test_publication_template_rejects_unusable_validation_metric(
+    tmp_path, monkeypatch, metric_value
+):
+    identity = _tiny_base_identity(monkeypatch)
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    base = tmp_path / "base"
+    _materialize_base_snapshot(base, identity)
+    training_data, code = _template_context()
+    metrics = _confidence_metrics()
+    metrics["metrics/vlm_confidence/ranking_ap"] = metric_value
+    confidence_report = _bind_confidence_report(
+        monkeypatch, checkpoint, metrics=metrics
+    )
+    output = tmp_path / "publication-template.json"
+
+    with pytest.raises(VLMArtifactError, match="validation metrics|finite"):
+        create_vlm_publication_evidence_template(
+            checkpoint,
+            base,
+            output,
+            training_data=training_data,
+            code=code,
+            confidence_report=confidence_report,
+        )
+    assert not output.exists()
+
+
+def test_publication_template_rejects_checkpoint_mutation_during_report_read(
+    tmp_path, monkeypatch
+):
+    identity = _tiny_base_identity(monkeypatch)
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    base = tmp_path / "base"
+    _materialize_base_snapshot(base, identity)
+    training_data, code = _template_context()
+    confidence_report = _bind_confidence_report(monkeypatch, checkpoint)
+    read_identity = artifact_module._read_confidence_benchmark_identity
+
+    def mutate_during_read(path):
+        result = read_identity(path)
+        contract_path = checkpoint / "libreyolo_vlm.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["metrics"]["epoch"] = 1
+        contract_path.write_text(json.dumps(contract, indent=2), encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(
+        artifact_module, "_read_confidence_benchmark_identity", mutate_during_read
+    )
+    output = tmp_path / "publication-template.json"
+    with pytest.raises(VLMArtifactError, match="changed"):
+        create_vlm_publication_evidence_template(
+            checkpoint,
+            base,
+            output,
+            training_data=training_data,
+            code=code,
+            confidence_report=confidence_report,
+        )
+    assert not output.exists()
+
+
+def test_publication_template_rechecks_run_identity_before_creating_output(
+    tmp_path, monkeypatch
+):
+    checkpoint, base, confidence_report, training_data, code = _strict_template_inputs(
+        tmp_path, monkeypatch
+    )
+    read_identity = artifact_module._read_confidence_benchmark_identity
+    calls = 0
+
+    def mutate_after_first_read(path):
+        nonlocal calls
+        calls += 1
+        result = read_identity(path)
+        if calls == 1:
+            envelope_path = confidence_report.with_name("vlm_confidence_run.json")
+            envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+            envelope["run_id"] = "b" * 32
+            envelope_path.write_bytes(_canonical(envelope))
+        return result
+
+    monkeypatch.setattr(
+        artifact_module,
+        "_read_confidence_benchmark_identity",
+        mutate_after_first_read,
+    )
+    output = tmp_path / "publication-template.json"
+
+    with pytest.raises(VLMArtifactError, match="benchmark run changed"):
+        create_vlm_publication_evidence_template(
+            checkpoint,
+            base,
+            output,
+            training_data=training_data,
+            code=code,
+            confidence_report=confidence_report,
+        )
+    assert calls == 2
+    assert not output.exists()
 
 
 def test_human_approved_template_builds_without_rederiving_bindings(
@@ -1255,7 +2158,8 @@ def test_publication_template_is_create_only_and_rejects_internal_output(
     checkpoint = _write_checkpoint(tmp_path / "checkpoint")
     base = tmp_path / "base"
     _materialize_base_snapshot(base, identity)
-    training_data, evaluation, code = _template_context()
+    training_data, code = _template_context()
+    confidence_report = _bind_confidence_report(monkeypatch, checkpoint)
     existing = tmp_path / "publication-template.json"
     existing.write_text("racer", encoding="utf-8")
 
@@ -1265,8 +2169,8 @@ def test_publication_template_is_create_only_and_rejects_internal_output(
             base,
             existing,
             training_data=training_data,
-            evaluation=evaluation,
             code=code,
+            confidence_report=confidence_report,
         )
     assert existing.read_text(encoding="utf-8") == "racer"
 
@@ -1276,8 +2180,8 @@ def test_publication_template_is_create_only_and_rejects_internal_output(
             base,
             checkpoint / "publication-template.json",
             training_data=training_data,
-            evaluation=evaluation,
             code=code,
+            confidence_report=confidence_report,
         )
 
 
@@ -1287,7 +2191,8 @@ def test_publication_template_rejects_symlinked_output_parent(tmp_path, monkeypa
     checkpoint = _write_checkpoint(tmp_path / "checkpoint")
     base = tmp_path / "base"
     _materialize_base_snapshot(base, identity)
-    training_data, evaluation, code = _template_context()
+    training_data, code = _template_context()
+    confidence_report = _bind_confidence_report(monkeypatch, checkpoint)
     real_parent = tmp_path / "real-output"
     real_parent.mkdir()
     linked_parent = tmp_path / "linked-output"
@@ -1302,8 +2207,8 @@ def test_publication_template_rejects_symlinked_output_parent(tmp_path, monkeypa
             base,
             linked_parent / "publication-template.json",
             training_data=training_data,
-            evaluation=evaluation,
             code=code,
+            confidence_report=confidence_report,
         )
 
 
@@ -1312,7 +2217,8 @@ def test_publication_template_preserves_racing_destination(tmp_path, monkeypatch
     checkpoint = _write_checkpoint(tmp_path / "checkpoint")
     base = tmp_path / "base"
     _materialize_base_snapshot(base, identity)
-    training_data, evaluation, code = _template_context()
+    training_data, code = _template_context()
+    confidence_report = _bind_confidence_report(monkeypatch, checkpoint)
     output = tmp_path / "publication-template.json"
     original = artifact_module._link_create_only
 
@@ -1327,8 +2233,8 @@ def test_publication_template_preserves_racing_destination(tmp_path, monkeypatch
             base,
             output,
             training_data=training_data,
-            evaluation=evaluation,
             code=code,
+            confidence_report=confidence_report,
         )
     assert output.read_bytes() == b"racer"
     assert not list(tmp_path.glob(".publication-template.json.staging-*.tmp"))
@@ -1341,7 +2247,8 @@ def test_publication_template_rejects_non_plain_or_unknown_context(
     checkpoint = _write_checkpoint(tmp_path / "checkpoint")
     base = tmp_path / "base"
     _materialize_base_snapshot(base, identity)
-    training_data, evaluation, code = _template_context()
+    training_data, code = _template_context()
+    confidence_report = _bind_confidence_report(monkeypatch, checkpoint)
     training_data["unknown"] = True
     with pytest.raises(VLMArtifactError, match="invalid keys"):
         create_vlm_publication_evidence_template(
@@ -1349,8 +2256,8 @@ def test_publication_template_rejects_non_plain_or_unknown_context(
             base,
             tmp_path / "publication-template.json",
             training_data=training_data,
-            evaluation=evaluation,
             code=code,
+            confidence_report=confidence_report,
         )
 
 
@@ -1421,7 +2328,7 @@ def test_publication_accepts_canonical_percent_encoded_url(tmp_path):
     )
 
 
-def test_model_card_uses_safe_code_spans_for_dynamic_labels_and_metrics(tmp_path):
+def test_model_card_uses_safe_code_spans_for_dynamic_labels(tmp_path):
     checkpoint = _write_checkpoint(tmp_path / "checkpoint")
     malicious = "worker`](https://evil.example)"
     contract = _contract()
@@ -1431,7 +2338,6 @@ def test_model_card_uses_safe_code_spans_for_dynamic_labels_and_metrics(tmp_path
         json.dumps(contract), encoding="utf-8"
     )
     evidence_value = _evidence()
-    evidence_value["evaluation"]["metrics"] = {malicious: 0.8}
     evidence_value["review"]["bindings"]["checkpoint_contract_sha256"] = _sha(
         _canonical(contract)
     )
@@ -1441,25 +2347,32 @@ def test_model_card_uses_safe_code_spans_for_dynamic_labels_and_metrics(tmp_path
         checkpoint, tmp_path / "artifact", publication_evidence=evidence
     )
     card = (info.root / "README.md").read_text(encoding="utf-8")
-    assert card.count("`` worker`](https://evil.example) ``") == 2
+    assert card.count("`` worker`](https://evil.example) ``") == 1
 
 
-@pytest.mark.parametrize("surface", ["label", "metric"])
-def test_publication_rejects_unicode_bidi_controls(tmp_path, surface):
+def test_publication_rejects_unicode_bidi_controls_in_label(tmp_path):
     checkpoint = _write_checkpoint(tmp_path / "checkpoint")
     evidence_value = _evidence()
     unsafe = "worker\u202eevil"
-    if surface == "label":
-        contract = _contract()
-        contract["names"] = [unsafe]
-        contract["prompt"] = _prompt(contract["names"])
-        (checkpoint / "libreyolo_vlm.json").write_text(
-            json.dumps(contract), encoding="utf-8"
-        )
-    else:
-        evidence_value["evaluation"]["metrics"] = {unsafe: 0.8}
+    contract = _contract()
+    contract["names"] = [unsafe]
+    contract["prompt"] = _prompt(contract["names"])
+    (checkpoint / "libreyolo_vlm.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
     evidence = _write_evidence(tmp_path / "publication.json", value=evidence_value)
     with pytest.raises(VLMArtifactError, match="safe|normalized"):
+        build_vlm_artifact(
+            checkpoint, tmp_path / "artifact", publication_evidence=evidence
+        )
+
+
+def test_publication_rejects_unknown_metric_key(tmp_path):
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint")
+    evidence_value = _evidence()
+    evidence_value["evaluation"]["metrics"] = {"unknown": 0.8}
+    evidence = _write_evidence(tmp_path / "publication.json", value=evidence_value)
+    with pytest.raises(VLMArtifactError, match="evaluation.metrics has invalid keys"):
         build_vlm_artifact(
             checkpoint, tmp_path / "artifact", publication_evidence=evidence
         )

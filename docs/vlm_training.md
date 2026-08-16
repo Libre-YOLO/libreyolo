@@ -153,7 +153,10 @@ A local `best` or `last` directory is not automatically publishable. For a
 Qwen3-VL 2B/4B LoRA checkpoint, the strict publication workflow is:
 
 1. Generate a create-only, unapproved evidence template with
-   `create_vlm_publication_evidence_template()`.
+   `create_vlm_publication_evidence_template()`, passing the strict confidence
+   report produced against that exact checkpoint on `holdout100` as
+   `confidence_report=`. Its strict sibling run envelope is required and bound
+   automatically.
 2. Have a human review the bound data, license, privacy, evaluation, code, base,
    adapter, contract, and processor evidence. The library never creates an
    approval.
@@ -210,7 +213,8 @@ python -m libreyolo.validation.vlm_benchmark_dataset review-template \
   --manifest /data/libreyolo-vlm-benchmark/manifest.json \
   --annotations /data/coco/annotations/instances_val2017.json \
   --images-dir /data/coco/val2017 \
-  --output /data/reviews/vlm-promotion500-review.json
+  --partition-role fine_tune_validation \
+  --output /data/reviews/vlm-holdout100-review.json
 ```
 
 The command re-verifies the bundle and selected image bytes, then writes a
@@ -225,28 +229,32 @@ holdout100 and promotion500 represent 79 of 80 COCO categories (raw category
 (raw categories 21, 38, 87, and 89 are absent). Train400 must therefore not be
 described as full 80-class supervised coverage.
 
-The confidence runner accepts only the verified `promotion500` bundle. It does
-not accept an arbitrary dataset YAML. Before any model construction it requires
-the manifest, original pinned annotations, local image root, and a separate
-human review attestation:
+The confidence runner does not accept an arbitrary dataset YAML. A base-model
+experiment without `--checkpoint-dir` requires `promotion500` with role
+`zero_shot_confidence_promotion`. A checkpoint-backed run requires
+`holdout100` with role `fine_tune_validation`; using `promotion500` would mix
+the `train400` fine-tuning examples into checkpoint evaluation. Before any
+model construction the runner requires the manifest, original pinned
+annotations, local image root, and a separate human review attestation:
 
 ```text
 PYTHONHASHSEED=0 python -m libreyolo.validation.vlm_confidence_benchmark run \
   --manifest /data/libreyolo-vlm-benchmark/manifest.json \
   --annotations /data/coco/annotations/instances_val2017.json \
   --images-dir /data/coco/val2017 \
-  --review-attestation /data/reviews/vlm-promotion500-review.json \
+  --review-attestation /data/reviews/vlm-holdout100-review.json \
   --output-root /data/runs/qwen-confidence-1 \
+  --checkpoint-dir runs/vlm/train/weights/best \
   --device cuda
 ```
 
 The external attestation uses schema
 `libreyolo.vlm-benchmark-dataset-review.v1`, binds the manifest SHA256 and
-`zero_shot_confidence_promotion` role, names the reviewer and UTC review time,
-and must explicitly approve every manual gate listed by the manifest. The
-library records the attestation digest and checks the COCO artifact, category
-mapping, image order, dimensions, and selected image bytes again before
-generation.
+`fine_tune_validation` role for the checkpoint-backed command above, names the
+reviewer and UTC review time, and must explicitly approve every manual gate
+listed by the manifest. The library records the attestation digest and checks
+the COCO artifact, category mapping, image order, dimensions, and selected
+image bytes again before generation.
 
 Before renting or starting the full run, use the same evidence with
 `preflight`:
@@ -256,22 +264,39 @@ PYTHONHASHSEED=0 python -m libreyolo.validation.vlm_confidence_benchmark preflig
   --manifest /data/libreyolo-vlm-benchmark/manifest.json \
   --annotations /data/coco/annotations/instances_val2017.json \
   --images-dir /data/coco/val2017 \
-  --review-attestation /data/reviews/vlm-promotion500-review.json \
+  --review-attestation /data/reviews/vlm-holdout100-review.json \
   --output-root /data/runs/qwen-confidence-1 \
+  --checkpoint-dir runs/vlm/train/weights/best \
   --device cuda
 ```
 
 Preflight creates no run directory, lock, model, or network request. It checks
 the clean code revision, process-start determinism, offline dependency state,
 target device, native COCO loading and metric backend, all verified dataset
-evidence, and the exact official Qwen3-VL-2B config, safetensors, and processor
-bytes already present under `weights/LibreQwen3VL2b`. The output directory must
-not exist and must be outside the worktree. `run` repeats these checks and does
-not trust a saved preflight result.
+evidence, the strict local Qwen3-VL 2B/4B LoRA checkpoint identity, and the
+matching pinned base and processor bytes. The output directory must not exist
+and must be outside the worktree. `run` repeats these checks and does not trust
+a saved preflight result.
+
+`run` retains a private full copy of the pinned base for the model-loading
+lifetime, so temporary storage needs about 4.3 GB for 2B or 8.9 GB for 4B in
+addition to the checkpoint, run output, small support files, and copy overhead.
+The copy must be cleaned up before the run output is published. `preflight`
+does not create or reserve this copy and therefore does not prove that the
+later run has enough temporary space.
+
+Omitting `--checkpoint-dir` remains a base-model confidence experiment. Its
+report has no adapter checkpoint context and therefore cannot be used to create
+publication evidence for a trained adapter. It requires a separate approved
+`zero_shot_confidence_promotion` attestation for `promotion500`. Publication
+requires the checkpoint-backed `holdout100` report and sibling envelope; the
+template helper binds their raw bytes, the full path-free checkpoint context,
+the adapter configuration, and a canonical hash of the exact evaluation claim
+rather than accepting caller-written evaluation metrics.
 
 A ready preflight is a point-in-time local readiness result. It does not prove
 that the model will fit in memory, that a human attestation is truthful, or
-that confidence quality meets the promotion thresholds.
+that confidence quality meets the publication thresholds.
 
 Run twice in fresh processes and compare the persisted reports:
 
@@ -284,6 +309,10 @@ python -m libreyolo.validation.vlm_confidence_benchmark compare \
 This runner remains an internal promotion gate. A reproducible result does not
 activate public Qwen confidence or `val()` by itself; ranking, mAP, coverage,
 default-threshold retention, and calibration still require maintainer review.
+The publication template binds one `holdout100` validation run, not an
+untouched test set. The second fresh-process run and strict comparison remain a
+human gate; publication evidence v1 does not bind the comparison receipt or
+make a machine claim of repeatability.
 
 ## Trainable families
 

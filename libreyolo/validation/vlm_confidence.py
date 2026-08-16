@@ -45,6 +45,7 @@ _REQUIRED_CONFIGURATION_FIELDS = (
 )
 _COMMIT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
+_LOWER_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REQUIRED_GENERATION_FIELDS = (
     "max_new_tokens",
     "do_sample",
@@ -672,10 +673,18 @@ def _validated_benchmark_config(benchmark_config: Any) -> dict[str, Any]:
                 "benchmark_config.checkpoint must be null or a mapping with a "
                 "content sha256."
             )
-        digest = checkpoint.get("sha256")
-        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+        digest_keys = {"sha256", "aggregate_sha256"} & set(checkpoint)
+        if len(digest_keys) != 1:
             raise ValueError(
-                "benchmark_config.checkpoint.sha256 must be a 64-character digest."
+                "benchmark_config.checkpoint must contain exactly one of sha256 or "
+                "aggregate_sha256."
+            )
+        digest_key = next(iter(digest_keys))
+        digest = checkpoint[digest_key]
+        if not isinstance(digest, str) or not _LOWER_SHA256.fullmatch(digest):
+            raise ValueError(
+                f"benchmark_config.checkpoint.{digest_key} must be a "
+                "64-character lowercase digest."
             )
 
     processor = benchmark_config["processor"]

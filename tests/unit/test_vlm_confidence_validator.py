@@ -166,7 +166,11 @@ class _StubVLM:
         assert color_format == "auto"
         assert input_size == (100, 100)
         self.preprocessed.append(path)
-        index = self.paths.index(path)
+        index = (
+            len(self.preprocessed) - 1
+            if isinstance(path, bytes)
+            else self.paths.index(path)
+        )
         return {"input_ids": torch.tensor([[index]])}, None, (100, 100), 1.0
 
     def _forward_for_confidence_gate(self, inputs, *, model=None):
@@ -218,6 +222,48 @@ def _stub_model(tmp_path, paths, variants):
     processor_dir = tmp_path / "processor"
     _write_base_snapshot(processor_dir)
     return _StubVLM(paths, variants, processor_dir)
+
+
+def _strict_checkpoint_expectation(root: Path, token: str):
+    return SimpleNamespace(
+        root=root.resolve(),
+        family="qwen3vl",
+        size="stub",
+        task="detect",
+        base_repo="stub/base",
+        base_revision="a" * 40,
+        aggregate_sha256=token * 64,
+        adapter_weights_sha256="d" * 64,
+        adapter_config_sha256="e" * 64,
+        checkpoint_contract_sha256="f" * 64,
+        processor_sha256="c" * 64,
+        files=(
+            SimpleNamespace(
+                path="adapter_config.json",
+                role="adapter_config",
+                size=1,
+                sha256="e" * 64,
+            ),
+            SimpleNamespace(
+                path="adapter_model.safetensors",
+                role="adapter_weights",
+                size=1,
+                sha256="d" * 64,
+            ),
+            SimpleNamespace(
+                path="checkpoint.json",
+                role="checkpoint_contract",
+                size=1,
+                sha256="f" * 64,
+            ),
+            SimpleNamespace(
+                path="preprocessor_config.json",
+                role="processor",
+                size=1,
+                sha256="c" * 64,
+            ),
+        ),
+    )
 
 
 class _Dataset:
@@ -655,6 +701,78 @@ def test_verified_decoded_dimensions_fail_before_first_forward(tmp_path):
     model._preprocess = wrong_size
 
     with pytest.raises(RuntimeError, match="Decoded image dimensions"):
+        validator.run()
+
+    assert model.forward_count == 0
+
+
+def test_verified_preprocess_receives_descriptor_bound_bytes_during_transient_swap(
+    tmp_path,
+):
+    validator, model, verified, paths = _bound_validator(tmp_path)
+    original = model._preprocess
+    expected_payload = paths[0].read_bytes()
+
+    def transient_swap(source, *args, **kwargs):
+        if not model.preprocessed:
+            assert isinstance(source, bytes)
+            assert source == expected_payload
+            paths[0].write_bytes(b"changed")
+            paths[0].write_bytes(expected_payload)
+        return original(source, *args, **kwargs)
+
+    model._preprocess = transient_swap
+
+    validator.run()
+
+    assert model.forward_count == 2
+    assert isinstance(model.preprocessed[0], bytes)
+    assert (
+        hashlib.sha256(model.preprocessed[0]).hexdigest()
+        == (verified.expected_images[0]["sha256"])
+    )
+    assert (
+        validator.dataset_manifest["images"][0]["sha256"]
+        == (verified.expected_images[0]["sha256"])
+    )
+
+
+def test_verified_path_replacement_between_lstat_and_open_fails_before_forward(
+    tmp_path, monkeypatch
+):
+    validator, model, _, paths = _bound_validator(tmp_path)
+    replacement = tmp_path / "replacement.jpg"
+    replacement.write_bytes(b"changed")
+    real_open = os.open
+
+    def redirect_open(path, flags, *args, **kwargs):
+        if Path(path) == paths[0]:
+            return real_open(replacement, flags, *args, **kwargs)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", redirect_open)
+
+    with pytest.raises(RuntimeError, match="snapshotted|verified benchmark data"):
+        validator.run()
+
+    assert model.forward_count == 0
+    assert model.preprocessed == []
+
+
+def test_verified_persistent_replacement_during_preprocess_fails_before_forward(
+    tmp_path,
+):
+    validator, model, _, paths = _bound_validator(tmp_path)
+    original = model._preprocess
+
+    def replace_path(source, *args, **kwargs):
+        result = original(source, *args, **kwargs)
+        paths[0].write_bytes(b"changed")
+        return result
+
+    model._preprocess = replace_path
+
+    with pytest.raises(RuntimeError, match="changed during preprocessing"):
         validator.run()
 
     assert model.forward_count == 0
@@ -1606,6 +1724,345 @@ def test_expected_loaded_identity_rejects_a_to_b_disk_mutation_before_forward(
         validator.run()
 
     assert model.forward_count == 0
+
+
+def test_expected_snapshot_root_binds_loaded_base_sources(tmp_path):
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"offline")
+    model = _stub_model(tmp_path, [image], [_variants([], [])])
+    snapshot = Path(model.processor.name_or_path)
+    model.model.config = SimpleNamespace(_name_or_path=str(snapshot))
+    expected_snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    expected_processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    validator = _Harness(
+        model,
+        _config(tmp_path),
+        [image],
+        torch.zeros((1, 1, 5)),
+        expected_snapshot_identity=expected_snapshot,
+        expected_processor_content_identity=expected_processor,
+        expected_snapshot_root=snapshot,
+    )
+
+    validator.run()
+
+    assert model.forward_count == 1
+    assert validator.benchmark_config["checkpoint"] == expected_snapshot
+
+
+def test_expected_snapshot_root_rejects_mixed_loaded_base_sources_before_forward(
+    tmp_path,
+):
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"offline")
+    model = _stub_model(tmp_path, [image], [_variants([], [])])
+    snapshot = Path(model.processor.name_or_path)
+    other = _write_base_snapshot(tmp_path / "other-snapshot")
+    model.model.config = SimpleNamespace(_name_or_path=str(other))
+    expected_snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    expected_processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    validator = _Harness(
+        model,
+        _config(tmp_path),
+        [image],
+        torch.zeros((1, 1, 5)),
+        expected_snapshot_identity=expected_snapshot,
+        expected_processor_content_identity=expected_processor,
+        expected_snapshot_root=snapshot,
+    )
+
+    with pytest.raises(RuntimeError, match="config source"):
+        validator.run()
+
+    assert model.forward_count == 0
+
+
+def test_strict_checkpoint_mismatch_stops_before_first_forward(tmp_path, monkeypatch):
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"offline")
+    model = _stub_model(tmp_path, [image], [_variants([], [])])
+    snapshot = Path(model.processor.name_or_path)
+    expected_snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    expected_processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "identity.bin").write_bytes(b"checkpoint")
+    model._checkpoint_dir = checkpoint
+    expected = _strict_checkpoint_expectation(checkpoint, "a")
+    changed = _strict_checkpoint_expectation(checkpoint, "b")
+    monkeypatch.setattr(
+        "libreyolo.validation.vlm_confidence_validator._inspect_strict_checkpoint_identity",
+        lambda path: changed,
+    )
+    save_dir = tmp_path / "pre-forward-mismatch"
+    validator = _Harness(
+        model,
+        _config(tmp_path, save_dir=save_dir),
+        [image],
+        torch.zeros((1, 1, 5)),
+        expected_checkpoint_identity=expected,
+        expected_snapshot_identity=expected_snapshot,
+        expected_processor_content_identity=expected_processor,
+        expected_snapshot_root=snapshot,
+    )
+
+    with pytest.raises(RuntimeError, match="before the first generation"):
+        validator.run()
+
+    assert model.forward_count == 0
+    assert not (save_dir / "vlm_confidence_report.json").exists()
+
+
+def test_strict_checkpoint_mutation_after_generation_prevents_final_report(
+    tmp_path, monkeypatch
+):
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"offline")
+    model = _stub_model(tmp_path, [image], [_variants([], [])])
+    snapshot = Path(model.processor.name_or_path)
+    expected_snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    expected_processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "identity.bin").write_bytes(b"checkpoint")
+    model._checkpoint_dir = checkpoint
+    model.model.config = SimpleNamespace(_name_or_path=str(snapshot))
+    model.processor.name_or_path = str(checkpoint)
+    expected = _strict_checkpoint_expectation(checkpoint, "a")
+    changed = _strict_checkpoint_expectation(checkpoint, "b")
+    identities = iter((expected, changed))
+    monkeypatch.setattr(
+        "libreyolo.validation.vlm_confidence_validator._inspect_strict_checkpoint_identity",
+        lambda path: next(identities),
+    )
+    save_dir = tmp_path / "post-generation-mismatch"
+    validator = _Harness(
+        model,
+        _config(tmp_path, save_dir=save_dir),
+        [image],
+        torch.zeros((1, 1, 5)),
+        expected_checkpoint_identity=expected,
+        expected_snapshot_identity=expected_snapshot,
+        expected_processor_content_identity=expected_processor,
+        expected_snapshot_root=snapshot,
+    )
+
+    with pytest.raises(RuntimeError, match="during generation"):
+        validator.run()
+
+    assert model.forward_count == 1
+    assert validator.benchmark_config["processor"] == {
+        "source": "checkpoint",
+        "revision": None,
+        "sha256": "c" * 64,
+        "files": 1,
+        "class": "types.SimpleNamespace",
+    }
+    assert validator.benchmark_config["checkpoint"] == {
+        "schema": "libreyolo.vlm-confidence-checkpoint-identity.v1",
+        "kind": "qwen3vl_lora_checkpoint",
+        "family": expected.family,
+        "size": expected.size,
+        "task": expected.task,
+        "base_repo": expected.base_repo,
+        "base_revision": expected.base_revision,
+        "aggregate_sha256": expected.aggregate_sha256,
+        "adapter_weights_sha256": expected.adapter_weights_sha256,
+        "adapter_config_sha256": expected.adapter_config_sha256,
+        "checkpoint_contract_sha256": expected.checkpoint_contract_sha256,
+        "processor_sha256": expected.processor_sha256,
+        "files": [vars(record) for record in expected.files],
+    }
+    assert not (save_dir / "vlm_confidence_report.json").exists()
+
+
+def test_checkpoint_mode_rejects_wrong_loaded_processor_source_before_forward(
+    tmp_path, monkeypatch
+):
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"offline")
+    model = _stub_model(tmp_path, [image], [_variants([], [])])
+    snapshot = Path(model.processor.name_or_path)
+    expected_snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    expected_processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "identity.bin").write_bytes(b"checkpoint")
+    model._checkpoint_dir = checkpoint
+    model.model.config = SimpleNamespace(_name_or_path=str(snapshot))
+    expected = _strict_checkpoint_expectation(checkpoint, "a")
+    monkeypatch.setattr(
+        "libreyolo.validation.vlm_confidence_validator._inspect_strict_checkpoint_identity",
+        lambda path: expected,
+    )
+    save_dir = tmp_path / "wrong-processor-source"
+    validator = _Harness(
+        model,
+        _config(tmp_path, save_dir=save_dir),
+        [image],
+        torch.zeros((1, 1, 5)),
+        expected_checkpoint_identity=expected,
+        expected_snapshot_identity=expected_snapshot,
+        expected_processor_content_identity=expected_processor,
+        expected_snapshot_root=snapshot,
+    )
+
+    with pytest.raises(RuntimeError, match="processor source"):
+        validator.run()
+
+    assert model.forward_count == 0
+    assert not (save_dir / "vlm_confidence_report.json").exists()
+
+
+def test_checkpoint_mode_rejects_unresolvable_processor_source_before_forward(
+    tmp_path, monkeypatch
+):
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"offline")
+    model = _stub_model(tmp_path, [image], [_variants([], [])])
+    snapshot = Path(model.processor.name_or_path)
+    expected_snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    expected_processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "identity.bin").write_bytes(b"checkpoint")
+    model._checkpoint_dir = checkpoint
+    model.model.config = SimpleNamespace(_name_or_path=str(snapshot))
+    model.processor.name_or_path = "unresolvable-processor-source"
+    expected = _strict_checkpoint_expectation(checkpoint, "a")
+    monkeypatch.setattr(
+        "libreyolo.validation.vlm_confidence_validator._inspect_strict_checkpoint_identity",
+        lambda path: expected,
+    )
+    save_dir = tmp_path / "unresolvable-processor-source"
+    validator = _Harness(
+        model,
+        _config(tmp_path, save_dir=save_dir),
+        [image],
+        torch.zeros((1, 1, 5)),
+        expected_checkpoint_identity=expected,
+        expected_snapshot_identity=expected_snapshot,
+        expected_processor_content_identity=expected_processor,
+        expected_snapshot_root=snapshot,
+    )
+
+    with pytest.raises(RuntimeError, match="no resolvable local source"):
+        validator.run()
+
+    assert model.forward_count == 0
+    assert not (save_dir / "vlm_confidence_report.json").exists()
+
+
+def test_checkpoint_mode_rejects_mixed_processor_and_tokenizer_sources(
+    tmp_path, monkeypatch
+):
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"offline")
+    model = _stub_model(tmp_path, [image], [_variants([], [])])
+    snapshot = Path(model.processor.name_or_path)
+    expected_snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    expected_processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "identity.bin").write_bytes(b"checkpoint")
+    model._checkpoint_dir = checkpoint
+    model.model.config = SimpleNamespace(_name_or_path=str(snapshot))
+    model.processor.name_or_path = str(checkpoint)
+    model.processor.tokenizer = SimpleNamespace(name_or_path=str(snapshot))
+    expected = _strict_checkpoint_expectation(checkpoint, "a")
+    monkeypatch.setattr(
+        "libreyolo.validation.vlm_confidence_validator._inspect_strict_checkpoint_identity",
+        lambda path: expected,
+    )
+    save_dir = tmp_path / "mixed-processor-source"
+    validator = _Harness(
+        model,
+        _config(tmp_path, save_dir=save_dir),
+        [image],
+        torch.zeros((1, 1, 5)),
+        expected_checkpoint_identity=expected,
+        expected_snapshot_identity=expected_snapshot,
+        expected_processor_content_identity=expected_processor,
+        expected_snapshot_root=snapshot,
+    )
+
+    with pytest.raises(RuntimeError, match="processor source"):
+        validator.run()
+
+    assert model.forward_count == 0
+    assert not (save_dir / "vlm_confidence_report.json").exists()
+
+
+def test_checkpoint_mode_rejects_base_snapshot_mutation_before_forward(
+    tmp_path, monkeypatch
+):
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"offline")
+    model = _stub_model(tmp_path, [image], [_variants([], [])])
+    snapshot = Path(model.processor.name_or_path)
+    expected_snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    expected_processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "identity.bin").write_bytes(b"checkpoint")
+    model._checkpoint_dir = checkpoint
+    model.model.config = SimpleNamespace(_name_or_path=str(snapshot))
+    model.processor.name_or_path = str(checkpoint)
+    expected = _strict_checkpoint_expectation(checkpoint, "a")
+    monkeypatch.setattr(
+        "libreyolo.validation.vlm_confidence_validator._inspect_strict_checkpoint_identity",
+        lambda path: expected,
+    )
+    (snapshot / "model.safetensors").write_bytes(b"mutated-after-model-load")
+    save_dir = tmp_path / "base-mismatch"
+    validator = _Harness(
+        model,
+        _config(tmp_path, save_dir=save_dir),
+        [image],
+        torch.zeros((1, 1, 5)),
+        expected_checkpoint_identity=expected,
+        expected_snapshot_identity=expected_snapshot,
+        expected_processor_content_identity=expected_processor,
+        expected_snapshot_root=snapshot,
+    )
+
+    with pytest.raises(RuntimeError, match="Base snapshot identity changed"):
+        validator.run()
+
+    assert model.forward_count == 0
+    assert not (save_dir / "vlm_confidence_report.json").exists()
 
 
 def test_base_snapshot_checkpoint_binds_weight_bytes_and_ignores_cache(tmp_path):

@@ -57,11 +57,14 @@ _REVIEW_CHECKS = (
 )
 
 
-def _review_payload(manifest_sha256: str) -> dict:
+def _review_payload(
+    manifest_sha256: str,
+    partition_role: str = "zero_shot_confidence_promotion",
+) -> dict:
     return {
         "schema": "libreyolo.vlm-benchmark-dataset-review.v1",
         "manifest_sha256": manifest_sha256,
-        "partition_role": "zero_shot_confidence_promotion",
+        "partition_role": partition_role,
         "status": "approved",
         "reviewer": "Local test reviewer",
         "reviewed_at": "2026-08-16T10:30:00Z",
@@ -644,6 +647,77 @@ def test_verify_benchmark_run_inputs_binds_bundle_partition_and_review(
         verified.expected_annotations[0]["bbox"][0] = 999
 
 
+def test_verify_benchmark_run_inputs_binds_fine_tune_validation_to_holdout100(
+    tmp_path, pinned_local_source
+):
+    source = pinned_local_source
+    artifacts = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    review_path = tmp_path / "holdout-review.json"
+    review_bytes = _write_review(
+        review_path,
+        _review_payload(artifacts.manifest_sha256, "fine_tune_validation"),
+    )
+
+    verified = dataset_manifest.verify_benchmark_run_inputs(
+        artifacts.manifest_path,
+        source.source,
+        source.images,
+        review_path,
+        required_role="fine_tune_validation",
+    )
+
+    manifest = _json(artifacts.manifest_path)
+    holdout = _json(
+        artifacts.output_dir / "annotations/instances_val2017_holdout100.json"
+    )
+    assert (
+        verified.partition_name,
+        verified.partition_role,
+        verified.partition_start,
+        verified.partition_stop,
+    ) == ("holdout100", "fine_tune_validation", 0, 100)
+    assert (
+        verified.annotation_path
+        == (
+            artifacts.output_dir / "annotations/instances_val2017_holdout100.json"
+        ).resolve()
+    )
+    assert verified.annotation_sha256 == manifest["artifacts"]["holdout100"]["sha256"]
+    assert (
+        verified.annotation_size_bytes
+        == manifest["artifacts"]["holdout100"]["size_bytes"]
+    )
+    assert [row["image_id"] for row in verified.expected_images] == [
+        row["id"] for row in holdout["images"]
+    ]
+    assert len(verified.expected_images) == 100
+    assert [row["id"] for row in verified.expected_annotations] == [
+        row["id"] for row in holdout["annotations"]
+    ]
+    assert (
+        verified.review_attestation_sha256 == hashlib.sha256(review_bytes).hexdigest()
+    )
+    assert verified.review_attestation["partition_role"] == "fine_tune_validation"
+
+    promotion_review = tmp_path / "promotion-review.json"
+    _write_review(
+        promotion_review,
+        _review_payload(artifacts.manifest_sha256),
+    )
+    with pytest.raises(
+        dataset_manifest.BenchmarkDatasetError, match="required partition role"
+    ):
+        dataset_manifest.verify_benchmark_run_inputs(
+            artifacts.manifest_path,
+            source.source,
+            source.images,
+            promotion_review,
+            required_role="fine_tune_validation",
+        )
+
+
 @pytest.mark.parametrize(
     "mutation,match",
     [
@@ -820,6 +894,27 @@ def test_verify_benchmark_run_inputs_rejects_review_symlink_and_wrong_role(
         )
 
 
+def test_verify_benchmark_run_inputs_rejects_roles_outside_review_allowlist(
+    tmp_path, pinned_local_source
+):
+    source = pinned_local_source
+    artifacts = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    review_path = tmp_path / "review.json"
+    _write_review(review_path, _review_payload(artifacts.manifest_sha256))
+
+    for required_role in ("fine_tune_training", "confidence_smoke", "arbitrary_role"):
+        with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="one of"):
+            dataset_manifest.verify_benchmark_run_inputs(
+                artifacts.manifest_path,
+                source.source,
+                source.images,
+                review_path,
+                required_role=required_role,
+            )
+
+
 def test_build_review_template_is_exactly_unapproved_and_rejected_for_run(
     tmp_path, pinned_local_source
 ):
@@ -861,6 +956,68 @@ def test_build_review_template_is_exactly_unapproved_and_rejected_for_run(
             source.images,
             output,
         )
+
+
+def test_build_review_template_selects_fine_tune_validation_holdout_role(
+    tmp_path, pinned_local_source
+):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    output = tmp_path / "holdout100-review.json"
+
+    result = dataset_manifest.build_unapproved_review_template(
+        bundle.manifest_path,
+        source.source,
+        source.images,
+        output,
+        partition_role="fine_tune_validation",
+    )
+
+    assert result.partition_role == "fine_tune_validation"
+    assert _json(output) == {
+        "schema": "libreyolo.vlm-benchmark-dataset-review.v1",
+        "manifest_sha256": bundle.manifest_sha256,
+        "partition_role": "fine_tune_validation",
+        "status": "unapproved",
+        "reviewer": "",
+        "reviewed_at": None,
+        "checks": {check: False for check in _REVIEW_CHECKS},
+    }
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="not approved"):
+        dataset_manifest.verify_benchmark_run_inputs(
+            bundle.manifest_path,
+            source.source,
+            source.images,
+            output,
+            required_role="fine_tune_validation",
+        )
+
+
+def test_build_review_template_rejects_roles_outside_review_allowlist(
+    tmp_path, pinned_local_source
+):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    output = tmp_path / "review.json"
+
+    for partition_role in (
+        "fine_tune_training",
+        "confidence_smoke",
+        "arbitrary_role",
+    ):
+        with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="one of"):
+            dataset_manifest.build_unapproved_review_template(
+                bundle.manifest_path,
+                source.source,
+                source.images,
+                output,
+                partition_role=partition_role,
+            )
+        assert not output.exists()
 
 
 def test_build_review_template_verifies_bundle_before_writing(
@@ -1095,3 +1252,55 @@ def test_review_template_cli_reports_unapproved_and_has_no_approval_fields(
             dataset_manifest.build_parser().parse_args(
                 [*arguments, forbidden, "approved"]
             )
+
+
+def test_review_template_cli_selects_fine_tune_validation_role(
+    tmp_path, pinned_local_source, capsys
+):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    output = tmp_path / "holdout-review.json"
+
+    code = dataset_manifest.main(
+        [
+            "review-template",
+            "--manifest",
+            str(bundle.manifest_path),
+            "--annotations",
+            str(source.source),
+            "--images-dir",
+            str(source.images),
+            "--output",
+            str(output),
+            "--partition-role",
+            "fine_tune_validation",
+        ]
+    )
+
+    assert code == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["partition_role"] == "fine_tune_validation"
+    assert status["approved"] is False
+    assert _json(output)["partition_role"] == "fine_tune_validation"
+
+
+@pytest.mark.parametrize("role", ["fine_tune_training", "arbitrary_role"])
+def test_review_template_cli_rejects_roles_outside_review_allowlist(role):
+    with pytest.raises(SystemExit):
+        dataset_manifest.build_parser().parse_args(
+            [
+                "review-template",
+                "--manifest",
+                "manifest.json",
+                "--annotations",
+                "instances_val2017.json",
+                "--images-dir",
+                "val2017",
+                "--output",
+                "review.json",
+                "--partition-role",
+                role,
+            ]
+        )

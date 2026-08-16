@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from enum import Enum
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import numpy as np
 import torch
@@ -53,12 +53,14 @@ _CONFIDENCE_METHOD = "qwen_generation_policy_label_bbox_geomean_v1"
 _CALIBRATION_BINS = 10
 _BENCHMARK_DATASET_CONTEXT_SCHEMA = "libreyolo.vlm-confidence-benchmark-dataset.v1"
 _BENCHMARK_DATASET_MANIFEST_SCHEMA = "libreyolo.vlm-benchmark-dataset.v1"
+_STRICT_CHECKPOINT_CONTEXT_SCHEMA = "libreyolo.vlm-confidence-checkpoint-identity.v1"
 _HF_SNAPSHOT_IDENTITY_SCHEMA = "libreyolo.vlm-hf-snapshot-identity.v1"
 _HF_SNAPSHOT_MARKER = ".libreyolo_snapshot_complete"
 _HF_SNAPSHOT_CONFIG = "config.json"
 _SAFETENSORS_INDEX = "model.safetensors.index.json"
 _SINGLE_SAFETENSORS = "model.safetensors"
 _MAX_SNAPSHOT_JSON_BYTES = 64 * 1024 * 1024
+_MAX_VERIFIED_IMAGE_BYTES = 64 * 1024 * 1024
 _MODEL_WEIGHT_SUFFIXES = {
     ".bin",
     ".h5",
@@ -102,6 +104,16 @@ def _to_numpy(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
+def _inspect_strict_checkpoint_identity(path: Path) -> Any:
+    """Import the checkpoint inspector only for explicitly bound benchmark runs."""
+
+    from libreyolo.models.vlm.training.checkpoint import (
+        inspect_vlm_checkpoint_identity,
+    )
+
+    return inspect_vlm_checkpoint_identity(path)
+
+
 class VLMConfidenceValidator(DetectionValidator):
     """Internal confidence gate over a fixed VLM generation per source image."""
 
@@ -118,6 +130,8 @@ class VLMConfidenceValidator(DetectionValidator):
         verified_dataset: Optional[VerifiedBenchmarkRunInputs] = None,
         expected_snapshot_identity: Optional[Mapping[str, Any]] = None,
         expected_processor_content_identity: Optional[Mapping[str, Any]] = None,
+        expected_snapshot_root: str | os.PathLike[str] | None = None,
+        expected_checkpoint_identity: Any | None = None,
         **kwargs,
     ) -> None:
         self.generation_model = generation_model
@@ -146,6 +160,19 @@ class VLMConfidenceValidator(DetectionValidator):
             raise ValueError(
                 "expected snapshot and processor identities must be supplied together"
             )
+        if (
+            expected_checkpoint_identity is not None
+            and expected_snapshot_identity is None
+        ):
+            raise ValueError(
+                "expected checkpoint identity requires pinned base snapshot and "
+                "processor expectations"
+            )
+        if expected_snapshot_root is not None and expected_snapshot_identity is None:
+            raise ValueError(
+                "expected snapshot root requires pinned snapshot and processor "
+                "expectations"
+            )
         for value, label in (
             (expected_snapshot_identity, "expected_snapshot_identity"),
             (
@@ -170,6 +197,16 @@ class VLMConfidenceValidator(DetectionValidator):
                 "expected_processor_content_identity",
             )
         )
+        if expected_snapshot_root is None:
+            self._expected_snapshot_root = None
+        else:
+            _lexical_snapshot_root, resolved_snapshot_root = (
+                self._strict_local_directory_root(
+                    expected_snapshot_root, "Expected base snapshot directory"
+                )
+            )
+            self._expected_snapshot_root = resolved_snapshot_root
+        self._expected_checkpoint_identity = expected_checkpoint_identity
         if verified_dataset is not None and not isinstance(
             verified_dataset, VerifiedBenchmarkRunInputs
         ):
@@ -180,6 +217,114 @@ class VLMConfidenceValidator(DetectionValidator):
         self._verified_image_paths: tuple[Path, ...] = ()
         super().__init__(model, config, **kwargs)
         self._validate_gate_contract()
+
+    def _revalidate_expected_checkpoint_identity(self, phase: str) -> None:
+        expected = self._expected_checkpoint_identity
+        if expected is None:
+            return
+        checkpoint_dir = getattr(self.model, "_checkpoint_dir", None)
+        if checkpoint_dir is None:
+            raise RuntimeError(
+                "A strict checkpoint identity was supplied for a model without a "
+                "checkpoint directory."
+            )
+        try:
+            configured_root = Path(checkpoint_dir).expanduser().resolve(strict=True)
+            actual = _inspect_strict_checkpoint_identity(Path(checkpoint_dir))
+        except (OSError, TypeError, ValueError) as exc:
+            raise RuntimeError(f"VLM checkpoint became invalid {phase}.") from exc
+        if configured_root != getattr(expected, "root", None) or actual != expected:
+            raise RuntimeError(f"VLM checkpoint identity changed {phase}.")
+
+    def _strict_checkpoint_report_identity(self) -> dict[str, Any]:
+        """Return the exact path-free checkpoint identity bound by the runner."""
+
+        expected = self._expected_checkpoint_identity
+        if expected is None:
+            raise RuntimeError("Strict checkpoint identity is unavailable.")
+        scalar_fields = (
+            "family",
+            "size",
+            "task",
+            "base_repo",
+            "base_revision",
+            "aggregate_sha256",
+            "adapter_weights_sha256",
+            "adapter_config_sha256",
+            "checkpoint_contract_sha256",
+            "processor_sha256",
+        )
+        values = {field: getattr(expected, field, None) for field in scalar_fields}
+        files = getattr(expected, "files", None)
+        if not isinstance(files, tuple) or not files:
+            raise TypeError("Strict checkpoint identity has no frozen file inventory.")
+        return {
+            "schema": _STRICT_CHECKPOINT_CONTEXT_SCHEMA,
+            "kind": "qwen3vl_lora_checkpoint",
+            **values,
+            "files": [
+                {
+                    "path": getattr(record, "path", None),
+                    "role": getattr(record, "role", None),
+                    "size": getattr(record, "size", None),
+                    "sha256": getattr(record, "sha256", None),
+                }
+                for record in files
+            ],
+        }
+
+    def _strict_checkpoint_processor_identity(self) -> dict[str, Any]:
+        expected = self._expected_checkpoint_identity
+        if expected is None:
+            raise RuntimeError("Strict checkpoint processor identity is unavailable.")
+        checkpoint_root = getattr(expected, "root", None)
+        if not isinstance(checkpoint_root, Path):
+            raise TypeError("Strict checkpoint identity has no canonical root.")
+
+        processor = getattr(self.model, "processor", None)
+        local_sources: set[Path] = set()
+        for owner in (processor, getattr(processor, "tokenizer", None)):
+            raw = getattr(owner, "name_or_path", None)
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            try:
+                candidate = Path(raw).expanduser().resolve(strict=True)
+            except (FileNotFoundError, OSError, RuntimeError):
+                continue
+            if candidate.is_dir():
+                local_sources.add(candidate)
+        if not local_sources:
+            raise RuntimeError(
+                "Loaded checkpoint processor exposes no resolvable local source."
+            )
+        if local_sources != {checkpoint_root}:
+            raise RuntimeError(
+                "Loaded checkpoint processor source does not resolve to the strict "
+                "checkpoint root."
+            )
+
+        files = getattr(expected, "files", ())
+        processor_files = sum(
+            getattr(record, "role", None) == "processor" for record in files
+        )
+        digest = getattr(expected, "processor_sha256", None)
+        if (
+            processor_files < 1
+            or not isinstance(digest, str)
+            or not _SHA256_RE.fullmatch(digest)
+        ):
+            raise RuntimeError("Strict checkpoint processor identity is malformed.")
+        return {
+            "source": "checkpoint",
+            "revision": None,
+            "sha256": digest.lower(),
+            "files": processor_files,
+            "class": (
+                f"{type(processor).__module__}.{type(processor).__qualname__}"
+                if processor is not None
+                else "unknown"
+            ),
+        }
 
     def _validate_gate_contract(self) -> None:
         family = getattr(self.model, "FAMILY", None)
@@ -362,6 +507,71 @@ class VLMConfidenceValidator(DetectionValidator):
     def _stable_file_identity(cls, path: Path, label: str) -> tuple[str, int, Path]:
         digest, size, resolved, _seal = cls._stable_file_identity_with_seal(path, label)
         return digest, size, resolved
+
+    @classmethod
+    def _stable_verified_image_bytes(
+        cls,
+        path: Path,
+        *,
+        expected_sha256: str,
+        expected_size: int,
+        label: str,
+    ) -> tuple[bytes, Path]:
+        """Read the exact verified image once from a descriptor-bound snapshot."""
+
+        if (
+            isinstance(expected_size, bool)
+            or not isinstance(expected_size, int)
+            or not 0 < expected_size <= _MAX_VERIFIED_IMAGE_BYTES
+        ):
+            raise RuntimeError(f"{label} has an invalid verified byte size.")
+        if not isinstance(expected_sha256, str) or not _SHA256_RE.fullmatch(
+            expected_sha256
+        ):
+            raise RuntimeError(f"{label} has an invalid verified SHA-256 digest.")
+        if path.is_symlink():
+            raise RuntimeError(f"{label} must not be a symlink: {path}")
+        try:
+            resolved = path.resolve(strict=True)
+            before = os.lstat(resolved)
+        except (FileNotFoundError, OSError) as exc:
+            raise FileNotFoundError(f"{label} does not exist: {path}") from exc
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = None
+        try:
+            descriptor = os.open(resolved, flags)
+            opened_before = os.fstat(descriptor)
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                payload = stream.read(expected_size + 1)
+            opened_after = os.fstat(descriptor)
+            after = os.lstat(resolved)
+        except OSError as exc:
+            raise RuntimeError(f"Could not snapshot {label}: {resolved}") from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        identities = {
+            cls._stat_identity(value)
+            for value in (before, opened_before, opened_after, after)
+        }
+        if len(identities) != 1:
+            raise RuntimeError(f"{label} changed while its bytes were snapshotted.")
+        if not stat.S_ISREG(opened_before.st_mode):
+            raise RuntimeError(f"{label} is not a regular file: {resolved}")
+        if len(payload) != expected_size or hashlib.sha256(payload).hexdigest() != (
+            expected_sha256.lower()
+        ):
+            raise RuntimeError(f"{label} does not match the verified benchmark data.")
+        try:
+            final_resolved = path.resolve(strict=True)
+        except (FileNotFoundError, OSError) as exc:
+            raise RuntimeError(
+                f"{label} changed while its bytes were snapshotted."
+            ) from exc
+        if path.is_symlink() or final_resolved != resolved:
+            raise RuntimeError(f"{label} changed while its bytes were snapshotted.")
+        return payload, resolved
 
     @classmethod
     def _require_file_identity(
@@ -701,9 +911,9 @@ class VLMConfidenceValidator(DetectionValidator):
         return digest.hexdigest()
 
     @classmethod
-    def _directory_sha256(
+    def _directory_identity_files(
         cls, root: Path, *, processor_artifacts: bool = False
-    ) -> tuple[str, int]:
+    ) -> tuple[Path, ...]:
         files: list[Path] = []
         directories = [root]
         kind = "processor" if processor_artifacts else "checkpoint"
@@ -749,6 +959,15 @@ class VLMConfidenceValidator(DetectionValidator):
             raise RuntimeError(
                 f"Could not fingerprint an empty {kind} directory: {root}"
             )
+        return tuple(files)
+
+    @classmethod
+    def _directory_sha256(
+        cls, root: Path, *, processor_artifacts: bool = False
+    ) -> tuple[str, int]:
+        files = cls._directory_identity_files(
+            root, processor_artifacts=processor_artifacts
+        )
 
         digest = hashlib.sha256()
         for path in files:
@@ -1191,6 +1410,81 @@ class VLMConfidenceValidator(DetectionValidator):
                 f"{rendered}"
             )
         return snapshot_roots[0][0]
+
+    @classmethod
+    def _resolvable_local_roots(cls, owners: Sequence[Any], label: str) -> set[Path]:
+        roots: set[Path] = set()
+        for owner in owners:
+            for field in ("name_or_path", "_name_or_path"):
+                raw = getattr(owner, field, None)
+                if not isinstance(raw, str) or not raw.strip():
+                    continue
+                try:
+                    _lexical, resolved = cls._strict_local_directory_root(raw, label)
+                except FileNotFoundError:
+                    continue
+                roots.add(resolved)
+        return roots
+
+    def _bound_base_snapshot_root(self) -> Path:
+        expected = self._expected_snapshot_root
+        if expected is None:
+            return self._base_snapshot_root()
+
+        loaded_model = getattr(self.model, "model", None)
+        config_roots = self._resolvable_local_roots(
+            (getattr(loaded_model, "config", None),),
+            "Loaded base-model config source",
+        )
+        if config_roots != {expected}:
+            raise RuntimeError(
+                "Loaded base-model config source does not resolve exclusively to "
+                "the expected isolated snapshot root."
+            )
+
+        if self._expected_checkpoint_identity is None:
+            processor = getattr(self.model, "processor", None)
+            processor_roots = self._resolvable_local_roots(
+                (processor, getattr(processor, "tokenizer", None)),
+                "Loaded base processor source",
+            )
+            if processor_roots != {expected}:
+                raise RuntimeError(
+                    "Loaded base processor source does not resolve exclusively to "
+                    "the expected isolated snapshot root."
+                )
+        return expected
+
+    def _revalidate_expected_base_snapshot(self, phase: str) -> None:
+        expected_snapshot = self._expected_snapshot_identity
+        expected_processor = self._expected_processor_content_identity
+        if expected_snapshot is None or expected_processor is None:
+            return
+        root = self._bound_base_snapshot_root()
+        family = getattr(self.model, "size", None)
+        repos = getattr(self.model, "HF_REPOS", None)
+        revisions = getattr(self.model, "HF_REVISIONS", None)
+        if (
+            not isinstance(family, str)
+            or not isinstance(repos, Mapping)
+            or not isinstance(revisions, Mapping)
+            or family not in repos
+            or family not in revisions
+        ):
+            raise RuntimeError("Cannot revalidate the pinned base snapshot identity.")
+        try:
+            snapshot = self._base_snapshot_identity_from_root(
+                root, str(repos[family]), str(revisions[family])
+            )
+            processor = self._processor_content_identity_from_root(
+                root, str(repos[family]), str(revisions[family])
+            )
+        except (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise RuntimeError(f"Base snapshot became invalid {phase}.") from exc
+        if snapshot != expected_snapshot:
+            raise RuntimeError(f"Base snapshot identity changed {phase}.")
+        if processor != expected_processor:
+            raise RuntimeError(f"Processor content identity changed {phase}.")
 
     @classmethod
     def _snapshot_files(cls, root: Path) -> dict[str, Path]:
@@ -1668,6 +1962,8 @@ class VLMConfidenceValidator(DetectionValidator):
         return identity
 
     def _build_benchmark_config(self) -> dict[str, Any]:
+        self._revalidate_expected_checkpoint_identity("before the first generation")
+        self._revalidate_expected_base_snapshot("before the first generation")
         target = self._generation_target()
         device, dtype = self._target_device_and_dtype(target)
         self._generation_device = device
@@ -1690,21 +1986,60 @@ class VLMConfidenceValidator(DetectionValidator):
         fallback_score = _probability(
             getattr(self.model, "DEFAULT_SCORE", 1.0), "model.DEFAULT_SCORE"
         )
-        checkpoint_identity = self._checkpoint_identity(
-            target, base_repo, base_revision
+        strict_checkpoint = self._expected_checkpoint_identity is not None
+        base_snapshot_identity = (
+            None
+            if self._expected_snapshot_identity is None
+            else dict(self._expected_snapshot_identity)
         )
-        processor_identity = self._processor_identity(base_repo, base_revision)
+        if strict_checkpoint:
+            checkpoint_identity = self._strict_checkpoint_report_identity()
+        elif (
+            base_snapshot_identity is not None
+            and self.generation_model is None
+            and getattr(self.model, "_checkpoint_dir", None) is None
+        ):
+            checkpoint_identity = base_snapshot_identity
+        else:
+            checkpoint_identity = self._checkpoint_identity(
+                target, base_repo, base_revision
+            )
+        if strict_checkpoint:
+            processor_identity = self._strict_checkpoint_processor_identity()
+        elif self._expected_processor_content_identity is not None:
+            processor = getattr(self.model, "processor", None)
+            processor_identity = {
+                **dict(self._expected_processor_content_identity),
+                "class": (
+                    f"{type(processor).__module__}.{type(processor).__qualname__}"
+                    if processor is not None
+                    else "unknown"
+                ),
+            }
+        else:
+            processor_identity = self._processor_identity(base_repo, base_revision)
+        compared_snapshot_identity = (
+            base_snapshot_identity
+            if base_snapshot_identity is not None
+            else checkpoint_identity
+        )
         if (
             self._expected_snapshot_identity is not None
-            and checkpoint_identity != self._expected_snapshot_identity
+            and compared_snapshot_identity != self._expected_snapshot_identity
         ):
             raise RuntimeError(
                 "Base snapshot identity changed after model construction and before "
                 "the first generation."
             )
-        processor_content_identity = {
-            key: value for key, value in processor_identity.items() if key != "class"
-        }
+        processor_content_identity = (
+            dict(self._expected_processor_content_identity)
+            if self._expected_processor_content_identity is not None
+            else {
+                key: value
+                for key, value in processor_identity.items()
+                if key != "class"
+            }
+        )
         if (
             self._expected_processor_content_identity is not None
             and processor_content_identity != self._expected_processor_content_identity
@@ -2025,25 +2360,53 @@ class VLMConfidenceValidator(DetectionValidator):
                     )
                     if verified_image is None:
                         image_hash = self._file_sha256(path)
+                        preprocess_source: Any = str(path)
                     else:
                         expected_path = self._verified_image_paths[global_index]
                         if path.resolve(strict=True) != expected_path:
                             raise RuntimeError(
                                 f"Validation image path changed for {evaluator_image_id}."
                             )
-                        self._require_file_identity(
-                            path,
-                            expected_sha256=str(verified_image["sha256"]),
-                            expected_size=int(verified_image["size_bytes"]),
-                            label=f"Benchmark image {evaluator_image_id} before generation",
+                        preprocess_source, snapshot_path = (
+                            self._stable_verified_image_bytes(
+                                path,
+                                expected_sha256=str(verified_image["sha256"]),
+                                expected_size=int(verified_image["size_bytes"]),
+                                label=(
+                                    f"Benchmark image {evaluator_image_id} before "
+                                    "preprocessing"
+                                ),
+                            )
                         )
+                        if snapshot_path != expected_path:
+                            raise RuntimeError(
+                                f"Validation image path changed for "
+                                f"{evaluator_image_id}."
+                            )
                         image_hash = str(verified_image["sha256"])
 
                     started = time.time()
                     inputs, _, original_size, _ = self.model._preprocess(
-                        str(path), color_format="auto", input_size=self._actual_imgsz
+                        preprocess_source,
+                        color_format="auto",
+                        input_size=self._actual_imgsz,
                     )
                     if verified_image is not None:
+                        try:
+                            self._require_file_identity(
+                                path,
+                                expected_sha256=image_hash,
+                                expected_size=int(verified_image["size_bytes"]),
+                                label=(
+                                    f"Benchmark image {evaluator_image_id} after "
+                                    "preprocessing"
+                                ),
+                            )
+                        except (FileNotFoundError, RuntimeError) as exc:
+                            raise RuntimeError(
+                                f"Validation image {evaluator_image_id} changed during "
+                                "preprocessing; refusing a mismatched manifest."
+                            ) from exc
                         exact_size = (
                             isinstance(original_size, Sequence)
                             and not isinstance(original_size, (str, bytes, bytearray))
@@ -2541,6 +2904,8 @@ class VLMConfidenceValidator(DetectionValidator):
         return metrics
 
     def _compute_metrics(self) -> Dict[str, float]:
+        self._revalidate_expected_checkpoint_identity("during generation")
+        self._revalidate_expected_base_snapshot("during generation")
         evaluator_ground_truth = self._evaluator_ground_truth_manifest()
         if self._ordering_ground_truth_manifest is None:
             raise RuntimeError(

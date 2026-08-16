@@ -46,6 +46,14 @@ _SCHEMA = "libreyolo.vlm-benchmark-dataset.v1"
 _STATUS_SCHEMA = "libreyolo.vlm-benchmark-dataset-status.v1"
 _REVIEW_SCHEMA = "libreyolo.vlm-benchmark-dataset-review.v1"
 _PROMOTION_ROLE = "zero_shot_confidence_promotion"
+_FINE_TUNE_VALIDATION_ROLE = "fine_tune_validation"
+_REVIEWED_ROLE_TO_PARTITION = MappingProxyType(
+    {
+        _PROMOTION_ROLE: "promotion500",
+        _FINE_TUNE_VALIDATION_ROLE: "holdout100",
+    }
+)
+_REVIEWED_PARTITION_ROLES = tuple(_REVIEWED_ROLE_TO_PARTITION)
 _REVIEW_STATUS = "approved"
 _REVIEW_TEMPLATE_STATUS = "unapproved"
 _SOURCE_CANONICALIZATION = "coco-arrays-by-id-json-v1"
@@ -1647,20 +1655,21 @@ def _verified_review_attestation(
 def _review_requirements(
     derived_manifest: Mapping[str, Any], required_role: str
 ) -> tuple[Mapping[str, Any], tuple[str, ...]]:
-    """Return the one fixed partition and its externally reviewed checks."""
+    """Return one allowlisted partition and its externally reviewed checks."""
 
-    if required_role != _PROMOTION_ROLE:
-        raise BenchmarkDatasetError(
-            f"benchmark partition role must be {_PROMOTION_ROLE!r}"
-        )
+    expected_partition_name = _reviewed_partition_name(required_role)
     matching_partitions = [
         partition
         for partition in derived_manifest["partitions"]
         if required_role in partition["roles"]
     ]
-    if len(matching_partitions) != 1:  # pragma: no cover - derived fixed contract
+    if (
+        len(matching_partitions) != 1
+        or matching_partitions[0]["name"] != expected_partition_name
+    ):  # pragma: no cover - derived fixed contract
         raise BenchmarkDatasetError(
-            "benchmark manifest must contain exactly one required partition role"
+            "benchmark manifest does not map the required partition role to "
+            f"{expected_partition_name!r} exactly once"
         )
     manual_review = _exact_fields(
         derived_manifest["manual_review"],
@@ -1680,6 +1689,18 @@ def _review_requirements(
     if len(set(expected_checks)) != len(expected_checks):
         raise BenchmarkDatasetError("benchmark manifest review checks are not unique")
     return matching_partitions[0], expected_checks
+
+
+def _reviewed_partition_name(partition_role: str) -> str:
+    if (
+        not isinstance(partition_role, str)
+        or partition_role not in _REVIEWED_ROLE_TO_PARTITION
+    ):
+        allowed = ", ".join(repr(role) for role in _REVIEWED_PARTITION_ROLES)
+        raise BenchmarkDatasetError(
+            f"benchmark partition role must be one of: {allowed}"
+        )
+    return _REVIEWED_ROLE_TO_PARTITION[partition_role]
 
 
 def _freeze_json(value: Any) -> Any:
@@ -1710,16 +1731,15 @@ def verify_benchmark_run_inputs(
     *,
     required_role: str = _PROMOTION_ROLE,
 ) -> VerifiedBenchmarkRunInputs:
-    """Verify the fixed promotion dataset and its external human-review assertion.
+    """Verify an allowlisted evaluation partition and its human-review assertion.
 
     The attestation records a human declaration; it does not authenticate the
     reviewer's identity. No network access or source-tree mutation is performed.
+    ``fine_tune_validation`` selects validation evidence, not an untouched test
+    set. Omitting ``required_role`` preserves the zero-shot promotion default.
     """
 
-    if required_role != _PROMOTION_ROLE:
-        raise BenchmarkDatasetError(
-            f"benchmark partition role must be {_PROMOTION_ROLE!r}"
-        )
+    _reviewed_partition_name(required_role)
     attestation_path = _required_file(
         review_attestation, "benchmark review attestation"
     )
@@ -1800,6 +1820,8 @@ def build_unapproved_review_template(
     source_annotations: str | os.PathLike[str],
     images_dir: str | os.PathLike[str],
     output_path: str | os.PathLike[str],
+    *,
+    partition_role: str = _PROMOTION_ROLE,
 ) -> BenchmarkReviewTemplateArtifacts:
     """Write a manifest-bound template that cannot itself authorize a run.
 
@@ -1808,9 +1830,10 @@ def build_unapproved_review_template(
     and every manual check remain deliberately unset.
     """
 
+    _reviewed_partition_name(partition_role)
     evidence = _verify_bundle_evidence(manifest, source_annotations, images_dir)
     _partition, expected_checks = _review_requirements(
-        evidence.derived.manifest, _PROMOTION_ROLE
+        evidence.derived.manifest, partition_role
     )
     destination = _new_regular_file_destination(
         output_path, "benchmark review template output"
@@ -1826,7 +1849,7 @@ def build_unapproved_review_template(
         {
             "schema": _REVIEW_SCHEMA,
             "manifest_sha256": evidence.manifest_sha256,
-            "partition_role": _PROMOTION_ROLE,
+            "partition_role": partition_role,
             "status": _REVIEW_TEMPLATE_STATUS,
             "reviewer": "",
             "reviewed_at": None,
@@ -1841,7 +1864,7 @@ def build_unapproved_review_template(
     return BenchmarkReviewTemplateArtifacts(
         output_path=destination,
         manifest_sha256=evidence.manifest_sha256,
-        partition_role=_PROMOTION_ROLE,
+        partition_role=partition_role,
     )
 
 
@@ -1899,6 +1922,12 @@ def build_parser() -> argparse.ArgumentParser:
     review_template.add_argument("--annotations", required=True, type=Path)
     review_template.add_argument("--images-dir", required=True, type=Path)
     review_template.add_argument("--output", required=True, type=Path)
+    review_template.add_argument(
+        "--partition-role",
+        choices=_REVIEWED_PARTITION_ROLES,
+        default=_PROMOTION_ROLE,
+        help="reviewed benchmark role (default: zero-shot promotion)",
+    )
     return parser
 
 
@@ -1953,6 +1982,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.annotations,
                 args.images_dir,
                 args.output,
+                partition_role=args.partition_role,
             )
             _status(
                 {

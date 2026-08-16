@@ -66,26 +66,54 @@ template = create_vlm_publication_evidence_template(
     "weights/LibreQwen3VL2b",
     "reviews/strawberry-vlm.unapproved.json",
     training_data=training_data_record,
-    evaluation=evaluation_record,
     code=code_record,
+    confidence_report="runs/vlm/confidence/vlm_confidence_report.json",
 )
 ```
 
-The three plain JSON input records contain:
+The two plain JSON input records contain:
 
 - `training_data`: `source`, `version`, `split`, `license_spdx`,
   `license_evidence_url`, and `manifest_sha256`.
-- `evaluation`: `benchmark`, `report_sha256`, and finite `metrics`.
 - `code`: a clean 40-character `revision`, boolean `clean`, and exact
   `libreyolo`, `peft`, `torch`, and `transformers` dependency versions.
 
+`confidence_report` must name a strict
+`libreyolo.vlm-confidence-report.v2` report produced by the v3 confidence
+runner against that exact checkpoint. Its sibling
+`vlm_confidence_run.json` envelope is mandatory. Checkpoint-backed publication
+uses only `holdout100` with role `fine_tune_validation`; `promotion500` is not
+valid publication evidence because it includes the `train400` fine-tuning
+partition. The helper derives and binds the raw report and envelope SHA-256
+digests, the exact benchmark identity
+`libreyolo.vlm-confidence-report.v2:libreyolo.vlm-confidence-benchmark-context.v3:holdout100:fine_tune_validation`,
+and exactly 17 finite mAP, ranking, calibration, coverage, and
+threshold-retention metrics. Probability metrics must be in `[0, 1]`, mAP
+deltas must be in `[-1, 1]`, and each delta must equal the candidate metric
+minus its constant-score counterpart. Timing and internal counter metrics are
+not publication evaluation claims.
+
+The report and envelope must agree on the complete execution context. The
+helper rejects any difference in the full path-free checkpoint identity,
+including its pinned base, adapter weights, adapter configuration, checkpoint
+contract, processor, and exact file records. It also binds a canonical hash of
+the evaluation claim itself so a reviewer cannot edit its benchmark, report,
+envelope, checkpoint, or metric fields without invalidating the review.
+
 The helper validates the checkpoint and complete pinned base snapshot, derives
-the recipe, adapter, contract, processor, data, evaluation, code, and base
-bindings, and writes canonical JSON outside both input directories. It sets
-legal and redistribution decisions to `unreviewed`, evaluation and review
-approval to `false`, reviewer fields to blank, and every human gate to `false`.
-It never creates an approval, and the artifact builder rejects the untouched
-template.
+the recipe, adapter, contract, processor, evaluation, and base bindings,
+validates the declared training-data and code record shapes, rechecks the
+checkpoint and benchmark run, and writes canonical JSON outside both input
+directories. The training-data and code claims still require human review. The
+template sets legal and redistribution decisions to `unreviewed`, evaluation
+and review approval to `false`, reviewer fields to blank, and every human gate
+to `false`. It never creates an approval, and the artifact builder rejects the
+untouched template.
+
+One template binds one validation run. `holdout100` is fine-tune validation
+evidence, not an untouched test set. A second fresh-process run and the strict
+comparison result remain a human publication gate; publication v1 does not
+embed that comparison or make a machine claim of repeatability.
 
 A human reviewer must verify the underlying data, license, privacy,
 evaluation, and code-provenance evidence. The reviewed file must retain its
@@ -100,7 +128,7 @@ derived bindings and explicitly record:
 
 SHA-256 values make accidental or substituted byte changes detectable. They
 are integrity and consistency records, not signatures, proof that a report is
-truthful, reviewer authentication, or legal advice.
+truthful, proof of repeatability, reviewer authentication, or legal advice.
 
 ## Build, validate, and upload
 
