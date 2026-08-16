@@ -24,7 +24,8 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass
-from importlib import metadata
+from datetime import datetime, timezone
+from importlib import import_module, metadata
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -34,8 +35,14 @@ import cv2
 import PIL
 
 from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+from libreyolo.data import load_data_config
 
 from .config import ValidationConfig
+from .vlm_benchmark_dataset import (
+    BenchmarkDatasetError,
+    VerifiedBenchmarkRunInputs,
+    verify_benchmark_run_inputs,
+)
 from .vlm_confidence_report import (
     PersistedRepeatComparison,
     VLMConfidenceReportError,
@@ -51,9 +58,30 @@ _DEFAULT_CONF = 0.25
 _CONFIDENCE_IOU = 0.5
 _REPORT_NAME = "vlm_confidence_report.json"
 _ENVELOPE_NAME = "vlm_confidence_run.json"
-_RUN_SCHEMA = "libreyolo.vlm-confidence-benchmark-run.v1"
+_RUN_SCHEMA = "libreyolo.vlm-confidence-benchmark-run.v2"
 _STATUS_SCHEMA = "libreyolo.vlm-confidence-benchmark-status.v1"
-_CONTEXT_SCHEMA = "libreyolo.vlm-confidence-benchmark-context.v1"
+_CONTEXT_SCHEMA = "libreyolo.vlm-confidence-benchmark-context.v2"
+_DATASET_CONTEXT_SCHEMA = "libreyolo.vlm-confidence-benchmark-dataset.v1"
+_DATASET_MANIFEST_SCHEMA = "libreyolo.vlm-benchmark-dataset.v1"
+_REVIEW_SCHEMA = "libreyolo.vlm-benchmark-dataset-review.v1"
+_REQUIRED_PARTITION_NAME = "promotion500"
+_REQUIRED_PARTITION_ROLE = "zero_shot_confidence_promotion"
+_REQUIRED_PARTITION_START = 0
+_REQUIRED_PARTITION_STOP = 500
+_REQUIRED_ANNOTATION_ARTIFACT = "annotations/instances_val2017_promotion500.json"
+_REQUIRED_CLASS_COUNT = 80
+_REVIEW_CHECKS = {
+    "canonical_source",
+    "image_attribution_sufficiency",
+    "annotation_license_and_redistribution",
+    "privacy_and_pii",
+    "visual_quality",
+    "selection_salt_freeze",
+    "benchmark_suitability",
+    "publication_upload_authorization",
+}
+_UTC_RFC3339 = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
+_MAX_SAFE_INTEGER = (1 << 53) - 1
 _MAX_ENVELOPE_BYTES = 16 * 1024 * 1024
 _HEX_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
@@ -448,8 +476,191 @@ def _staged_output(destination: Path) -> Iterator[Path]:
         lock.unlink(missing_ok=True)
 
 
+def _require_pycocotools() -> None:
+    """Import the fixed evaluator before any model construction or download."""
+
+    try:
+        import_module("pycocotools.coco")
+    except ImportError as exc:
+        raise BenchmarkInputError(
+            "pycocotools is required for the VLM confidence benchmark"
+        ) from exc
+
+
+def _portable_dataset_context(
+    verified: VerifiedBenchmarkRunInputs,
+) -> dict[str, Any]:
+    """Build the path-free dataset identity embedded in the benchmark report."""
+
+    try:
+        annotation_artifact = verified.annotation_path.relative_to(
+            verified.manifest_path.parent
+        ).as_posix()
+    except ValueError as exc:
+        raise BenchmarkInputError(
+            "verified benchmark annotation artifact must be inside the manifest bundle"
+        ) from exc
+
+    review = dict(verified.review_attestation)
+    context = {
+        "schema": _DATASET_CONTEXT_SCHEMA,
+        "manifest": {
+            "schema": _DATASET_MANIFEST_SCHEMA,
+            "sha256": verified.manifest_sha256,
+        },
+        "source": {
+            "canonical_annotation_sha256": verified.source_canonical_sha256,
+            "file_sha256": verified.source_file_sha256,
+            "file_size_bytes": verified.source_file_size_bytes,
+            "selected_image_identity_sha256": (verified.selected_image_identity_sha256),
+        },
+        "partition": {
+            "name": verified.partition_name,
+            "role": verified.partition_role,
+            "start": verified.partition_start,
+            "stop": verified.partition_stop,
+            "image_count": verified.partition_stop - verified.partition_start,
+            "annotation_artifact": annotation_artifact,
+            "annotation_size_bytes": verified.annotation_size_bytes,
+            "annotation_sha256": verified.annotation_sha256,
+        },
+        "classes": {
+            "count": len(verified.class_names),
+            "names": list(verified.class_names),
+            "category_ids": [
+                int(category["id"]) for category in verified.expected_categories
+            ],
+        },
+        "review": {
+            "schema": review.get("schema"),
+            "sha256": verified.review_attestation_sha256,
+            "manifest_sha256": review.get("manifest_sha256"),
+            "partition_role": review.get("partition_role"),
+            "status": review.get("status"),
+            "reviewer": review.get("reviewer"),
+            "reviewed_at": review.get("reviewed_at"),
+            "checks": review.get("checks"),
+        },
+    }
+    try:
+        return _validate_dataset_context(
+            context, "verified_inputs", "$.execution_context.dataset"
+        )
+    except VLMConfidenceReportError as exc:
+        raise BenchmarkInputError(
+            f"verified benchmark inputs violate the runner contract: {exc}"
+        ) from exc
+
+
+def _resolved_existing_path(value: Any, label: str, *, directory: bool) -> Path:
+    if not isinstance(value, str) or not value:
+        raise BenchmarkInputError(f"resolved benchmark {label} must be a path string")
+    path = Path(value).expanduser()
+    try:
+        resolved = path.resolve(strict=True)
+    except (FileNotFoundError, OSError) as exc:
+        raise BenchmarkInputError(
+            f"resolved benchmark {label} does not exist: {path}"
+        ) from exc
+    valid = resolved.is_dir() if directory else resolved.is_file()
+    if not valid:
+        kind = "directory" if directory else "file"
+        raise BenchmarkInputError(
+            f"resolved benchmark {label} must be an existing {kind}: {resolved}"
+        )
+    return resolved
+
+
+@contextmanager
+def _temporary_verified_dataset_yaml(
+    verified: VerifiedBenchmarkRunInputs,
+) -> Iterator[Path]:
+    """Create and preflight the only dataset config the runner may execute."""
+
+    payload = {
+        "path": str(verified.images_dir),
+        "val": str(verified.images_dir),
+        "annotations": {"val": str(verified.annotation_path)},
+        "nc": len(verified.class_names),
+        "names": list(verified.class_names),
+    }
+    with tempfile.TemporaryDirectory(
+        prefix="libreyolo-vlm-confidence-dataset-"
+    ) as temporary_root:
+        dataset_yaml = Path(temporary_root) / "verified_dataset.yaml"
+        _write_json_atomic(dataset_yaml, payload)
+        try:
+            resolved = load_data_config(
+                str(dataset_yaml), autodownload=False, allow_scripts=False
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            raise BenchmarkInputError(
+                f"verified benchmark dataset config could not be resolved: {exc}"
+            ) from exc
+
+        if not isinstance(resolved, Mapping):
+            raise BenchmarkInputError(
+                "generated benchmark dataset config did not resolve to a mapping"
+            )
+        if "download" in resolved:
+            raise BenchmarkInputError(
+                "generated benchmark dataset config must not define a download"
+            )
+        annotations = resolved.get("annotations")
+        if not isinstance(annotations, Mapping) or set(annotations) != {"val"}:
+            raise BenchmarkInputError(
+                "generated benchmark dataset config must define only annotations.val"
+            )
+        image_root = _resolved_existing_path(
+            resolved.get("val"), "validation image root", directory=True
+        )
+        annotation = _resolved_existing_path(
+            resolved.get("val_annotation_file"),
+            "validation annotation artifact",
+            directory=False,
+        )
+        expected_image_root = verified.images_dir.resolve(strict=True)
+        expected_annotation = verified.annotation_path.resolve(strict=True)
+        root = _resolved_existing_path(
+            resolved.get("root"), "dataset root", directory=True
+        )
+        configured_annotation = _resolved_existing_path(
+            annotations["val"], "configured annotation artifact", directory=False
+        )
+        if root != expected_image_root:
+            raise BenchmarkInputError(
+                "resolved dataset root does not match the verified image root"
+            )
+        if image_root != expected_image_root:
+            raise BenchmarkInputError(
+                "resolved validation image root does not match the verified input"
+            )
+        if annotation != expected_annotation:
+            raise BenchmarkInputError(
+                "resolved validation annotation does not match the verified artifact"
+            )
+        if configured_annotation != expected_annotation:
+            raise BenchmarkInputError(
+                "configured validation annotation does not match the verified artifact"
+            )
+        if type(resolved.get("nc")) is not int or resolved["nc"] != len(
+            verified.class_names
+        ):
+            raise BenchmarkInputError(
+                "resolved benchmark class count does not match the verified input"
+            )
+        if resolved.get("names") != list(verified.class_names):
+            raise BenchmarkInputError(
+                "resolved benchmark class names do not match the verified input"
+            )
+        yield dataset_yaml
+
+
 def run_benchmark(
-    dataset_yaml: str | os.PathLike[str],
+    manifest: str | os.PathLike[str],
+    source_annotations: str | os.PathLike[str],
+    images_dir: str | os.PathLike[str],
+    review_attestation: str | os.PathLike[str],
     output_root: str | os.PathLike[str],
     *,
     seed: int = 0,
@@ -470,9 +681,6 @@ def run_benchmark(
         raise BenchmarkInputError(
             f"{_FASTER_COCO_ENV} must not enable faster-coco-eval for this benchmark"
         )
-    dataset = Path(dataset_yaml).expanduser().resolve(strict=False)
-    if dataset.suffix.lower() not in {".yaml", ".yml"} or not dataset.is_file():
-        raise BenchmarkInputError(f"dataset must be an existing YAML file: {dataset}")
     requested_destination = Path(output_root).expanduser()
     if _path_exists(requested_destination):
         raise BenchmarkOutputExistsError(
@@ -496,91 +704,110 @@ def run_benchmark(
             "immutable"
         )
 
+    try:
+        verified = verify_benchmark_run_inputs(
+            manifest,
+            source_annotations,
+            images_dir,
+            review_attestation,
+            required_role=_REQUIRED_PARTITION_ROLE,
+        )
+    except BenchmarkDatasetError as exc:
+        raise BenchmarkInputError(f"invalid benchmark dataset evidence: {exc}") from exc
+    dataset_context = _portable_dataset_context(verified)
+    _require_pycocotools()
+
     normalized_metrics: dict[str, float | None]
     nonfinite_metrics: tuple[str, ...]
-    with _staged_output(destination) as stage:
-        determinism = configure_determinism(seed)
-        model = LibreQwen3VL(size=_MODEL_SIZE, device=device)
-        resolved_device = _resolved_model_device(model)
-        runtime_context = _runtime_context(
-            requested_device=device, resolved_device=resolved_device
-        )
-        runtime_context["attention_backends"] = _attention_backends(model)
-        execution_context = {
-            "schema": _CONTEXT_SCHEMA,
-            "git": git_context,
-            "runtime": runtime_context,
-            "determinism": determinism,
-        }
-        config = ValidationConfig(
-            data=str(dataset),
-            split="val",
-            batch_size=1,
-            imgsz=_IMAGE_SIZE,
-            device=device,
-            save_dir=str(stage),
-            num_workers=0,
-            allow_download_scripts=False,
-            save_json=True,
-            save_plots=True,
-            faster_coco_eval=False,
-        )
-        validator = VLMConfidenceValidator(
-            model,
-            config,
-            seed=seed,
-            default_conf=_DEFAULT_CONF,
-            confidence_iou=_CONFIDENCE_IOU,
-            benchmark_context=execution_context,
-        )
-        metrics = validator.run()
-        if not isinstance(metrics, Mapping):
-            raise TypeError("VLM confidence validator must return a metric mapping")
-        normalized_metrics, nonfinite_metrics = _normalized_metrics(metrics)
-        if _git_context() != git_context:
-            raise RuntimeError(
-                "the benchmark git revision or worktree changed during execution"
+    with _temporary_verified_dataset_yaml(verified) as dataset_yaml:
+        with _staged_output(destination) as stage:
+            determinism = configure_determinism(seed)
+            model = LibreQwen3VL(size=_MODEL_SIZE, device=device)
+            resolved_device = _resolved_model_device(model)
+            runtime_context = _runtime_context(
+                requested_device=device, resolved_device=resolved_device
             )
+            runtime_context["attention_backends"] = _attention_backends(model)
+            execution_context = {
+                "schema": _CONTEXT_SCHEMA,
+                "git": git_context,
+                "runtime": runtime_context,
+                "determinism": determinism,
+                "dataset": dataset_context,
+            }
+            config = ValidationConfig(
+                data=str(dataset_yaml),
+                split="val",
+                batch_size=1,
+                imgsz=_IMAGE_SIZE,
+                device=device,
+                save_dir=str(stage),
+                num_workers=0,
+                allow_download_scripts=False,
+                save_json=True,
+                save_plots=True,
+                faster_coco_eval=False,
+            )
+            validator = VLMConfidenceValidator(
+                model,
+                config,
+                seed=seed,
+                default_conf=_DEFAULT_CONF,
+                confidence_iou=_CONFIDENCE_IOU,
+                benchmark_context=execution_context,
+                verified_dataset=verified,
+            )
+            metrics = validator.run()
+            if not isinstance(metrics, Mapping):
+                raise TypeError("VLM confidence validator must return a metric mapping")
+            normalized_metrics, nonfinite_metrics = _normalized_metrics(metrics)
+            if _git_context() != git_context:
+                raise RuntimeError(
+                    "the benchmark git revision or worktree changed during execution"
+                )
 
-        report = stage / _REPORT_NAME
-        self_comparison = compare_confidence_reports(report, report)
-        if not self_comparison.reproducible:
-            raise RuntimeError("persisted benchmark report failed self-comparison")
-        envelope = {
-            "schema": _RUN_SCHEMA,
-            "run_id": secrets.token_hex(16),
-            "process_id": _PROCESS_IDENTIFIER,
-            "request": {
-                "dataset_yaml": str(dataset),
-                "seed": seed,
-                "model_family": _MODEL_FAMILY,
-                "model_size": _MODEL_SIZE,
-                "device": device,
-                "imgsz": _IMAGE_SIZE,
-                "default_conf": _DEFAULT_CONF,
-                "confidence_iou": _CONFIDENCE_IOU,
-            },
-            # The same context is also embedded in benchmark_config so the
-            # strict report comparator treats code/runtime drift as a different
-            # configuration instead of merely recording it here.
-            "execution_context": execution_context,
-            "report": {
-                "path": _REPORT_NAME,
-                "sha256": _file_sha256(report),
-            },
-            "metrics": normalized_metrics,
-            "nonfinite_metrics": list(nonfinite_metrics),
-        }
-        _write_json_atomic(stage / _ENVELOPE_NAME, envelope)
-        staged_envelope = _load_runner_envelope(report, "staged_run")
-        if (
-            staged_envelope.run_id != envelope["run_id"]
-            or staged_envelope.process_id != envelope["process_id"]
-            or staged_envelope.report_sha256 != envelope["report"]["sha256"]
-        ):
-            raise RuntimeError(
-                "persisted benchmark envelope failed its writer-reader round trip"
-            )
+            report = stage / _REPORT_NAME
+            self_comparison = compare_confidence_reports(report, report)
+            if not self_comparison.reproducible:
+                raise RuntimeError("persisted benchmark report failed self-comparison")
+            envelope = {
+                "schema": _RUN_SCHEMA,
+                "run_id": secrets.token_hex(16),
+                "process_id": _PROCESS_IDENTIFIER,
+                "request": {
+                    "manifest": str(verified.manifest_path),
+                    "annotations": str(verified.source_annotations),
+                    "images_dir": str(verified.images_dir),
+                    "review_attestation": str(verified.review_attestation_path),
+                    "seed": seed,
+                    "model_family": _MODEL_FAMILY,
+                    "model_size": _MODEL_SIZE,
+                    "device": device,
+                    "imgsz": _IMAGE_SIZE,
+                    "default_conf": _DEFAULT_CONF,
+                    "confidence_iou": _CONFIDENCE_IOU,
+                },
+                # The same context is also embedded in benchmark_config so the
+                # strict report comparator treats code/runtime/dataset drift as
+                # a different configuration instead of merely recording it here.
+                "execution_context": execution_context,
+                "report": {
+                    "path": _REPORT_NAME,
+                    "sha256": _file_sha256(report),
+                },
+                "metrics": normalized_metrics,
+                "nonfinite_metrics": list(nonfinite_metrics),
+            }
+            _write_json_atomic(stage / _ENVELOPE_NAME, envelope)
+            staged_envelope = _load_runner_envelope(report, "staged_run")
+            if (
+                staged_envelope.run_id != envelope["run_id"]
+                or staged_envelope.process_id != envelope["process_id"]
+                or staged_envelope.report_sha256 != envelope["report"]["sha256"]
+            ):
+                raise RuntimeError(
+                    "persisted benchmark envelope failed its writer-reader round trip"
+                )
 
     return BenchmarkArtifacts(
         output_dir=destination,
@@ -670,12 +897,241 @@ def _finite_number(value: Any, label: str, path: str) -> float:
     return result
 
 
+def _validate_dataset_context(value: Any, label: str, path: str) -> dict[str, Any]:
+    dataset = _exact_object(
+        value,
+        {"schema", "manifest", "source", "partition", "classes", "review"},
+        label,
+        path,
+    )
+    if dataset["schema"] != _DATASET_CONTEXT_SCHEMA:
+        raise _envelope_error(
+            label,
+            f"{path}.schema",
+            f"must equal {_DATASET_CONTEXT_SCHEMA!r}",
+        )
+
+    def digest(raw: Any, field_path: str) -> str:
+        if not isinstance(raw, str) or not _HEX_DIGEST.fullmatch(raw):
+            raise _envelope_error(
+                label, field_path, "must be a lowercase SHA256 digest"
+            )
+        return raw
+
+    manifest = _exact_object(
+        dataset["manifest"], {"schema", "sha256"}, label, f"{path}.manifest"
+    )
+    if manifest["schema"] != _DATASET_MANIFEST_SCHEMA:
+        raise _envelope_error(
+            label,
+            f"{path}.manifest.schema",
+            f"must equal {_DATASET_MANIFEST_SCHEMA!r}",
+        )
+    manifest_sha256 = digest(manifest["sha256"], f"{path}.manifest.sha256")
+
+    source = _exact_object(
+        dataset["source"],
+        {
+            "canonical_annotation_sha256",
+            "file_sha256",
+            "file_size_bytes",
+            "selected_image_identity_sha256",
+        },
+        label,
+        f"{path}.source",
+    )
+    digest(
+        source["canonical_annotation_sha256"],
+        f"{path}.source.canonical_annotation_sha256",
+    )
+    digest(source["file_sha256"], f"{path}.source.file_sha256")
+    if (
+        type(source["file_size_bytes"]) is not int
+        or source["file_size_bytes"] <= 0
+        or source["file_size_bytes"] > _MAX_SAFE_INTEGER
+    ):
+        raise _envelope_error(
+            label,
+            f"{path}.source.file_size_bytes",
+            "must be a positive exact JSON integer",
+        )
+    digest(
+        source["selected_image_identity_sha256"],
+        f"{path}.source.selected_image_identity_sha256",
+    )
+
+    partition = _exact_object(
+        dataset["partition"],
+        {
+            "name",
+            "role",
+            "start",
+            "stop",
+            "image_count",
+            "annotation_artifact",
+            "annotation_size_bytes",
+            "annotation_sha256",
+        },
+        label,
+        f"{path}.partition",
+    )
+    expected_partition = {
+        "name": _REQUIRED_PARTITION_NAME,
+        "role": _REQUIRED_PARTITION_ROLE,
+        "start": _REQUIRED_PARTITION_START,
+        "stop": _REQUIRED_PARTITION_STOP,
+        "image_count": _REQUIRED_PARTITION_STOP - _REQUIRED_PARTITION_START,
+        "annotation_artifact": _REQUIRED_ANNOTATION_ARTIFACT,
+    }
+    for field, expected in expected_partition.items():
+        actual = partition[field]
+        if type(actual) is not type(expected) or actual != expected:
+            raise _envelope_error(
+                label,
+                f"{path}.partition.{field}",
+                f"must equal {expected!r}",
+            )
+    if (
+        type(partition["annotation_size_bytes"]) is not int
+        or partition["annotation_size_bytes"] <= 0
+        or partition["annotation_size_bytes"] > _MAX_SAFE_INTEGER
+    ):
+        raise _envelope_error(
+            label,
+            f"{path}.partition.annotation_size_bytes",
+            "must be a positive exact JSON integer",
+        )
+    digest(partition["annotation_sha256"], f"{path}.partition.annotation_sha256")
+
+    classes = _exact_object(
+        dataset["classes"],
+        {"count", "names", "category_ids"},
+        label,
+        f"{path}.classes",
+    )
+    names = classes["names"]
+    if type(classes["count"]) is not int or classes["count"] != _REQUIRED_CLASS_COUNT:
+        raise _envelope_error(
+            label,
+            f"{path}.classes.count",
+            f"must equal {_REQUIRED_CLASS_COUNT}",
+        )
+    if (
+        not isinstance(names, list)
+        or len(names) != _REQUIRED_CLASS_COUNT
+        or len(set(names)) != len(names)
+        or any(
+            not isinstance(name, str) or not name or name != name.strip()
+            for name in names
+        )
+    ):
+        raise _envelope_error(
+            label,
+            f"{path}.classes.names",
+            "must contain 80 unique normalized non-empty class names",
+        )
+    category_ids = classes["category_ids"]
+    if (
+        not isinstance(category_ids, list)
+        or len(category_ids) != _REQUIRED_CLASS_COUNT
+        or any(
+            type(category_id) is not int or not 0 <= category_id <= _MAX_SAFE_INTEGER
+            for category_id in category_ids
+        )
+        or category_ids != sorted(set(category_ids))
+    ):
+        raise _envelope_error(
+            label,
+            f"{path}.classes.category_ids",
+            "must contain 80 unique increasing non-negative exact JSON integers",
+        )
+
+    review = _exact_object(
+        dataset["review"],
+        {
+            "schema",
+            "sha256",
+            "manifest_sha256",
+            "partition_role",
+            "status",
+            "reviewer",
+            "reviewed_at",
+            "checks",
+        },
+        label,
+        f"{path}.review",
+    )
+    if review["schema"] != _REVIEW_SCHEMA:
+        raise _envelope_error(
+            label,
+            f"{path}.review.schema",
+            f"must equal {_REVIEW_SCHEMA!r}",
+        )
+    digest(review["sha256"], f"{path}.review.sha256")
+    if (
+        digest(review["manifest_sha256"], f"{path}.review.manifest_sha256")
+        != manifest_sha256
+    ):
+        raise _envelope_error(
+            label,
+            f"{path}.review.manifest_sha256",
+            "must match the verified manifest digest",
+        )
+    if review["partition_role"] != _REQUIRED_PARTITION_ROLE:
+        raise _envelope_error(
+            label,
+            f"{path}.review.partition_role",
+            f"must equal {_REQUIRED_PARTITION_ROLE!r}",
+        )
+    if review["status"] != "approved":
+        raise _envelope_error(label, f"{path}.review.status", "must equal 'approved'")
+    reviewer = review["reviewer"]
+    if (
+        not isinstance(reviewer, str)
+        or not reviewer
+        or reviewer != reviewer.strip()
+        or len(reviewer) > 256
+    ):
+        raise _envelope_error(
+            label,
+            f"{path}.review.reviewer",
+            "must be a normalized non-empty string of at most 256 characters",
+        )
+    reviewed_at = review["reviewed_at"]
+    if not isinstance(reviewed_at, str) or not _UTC_RFC3339.fullmatch(reviewed_at):
+        raise _envelope_error(
+            label,
+            f"{path}.review.reviewed_at",
+            "must be a UTC RFC3339 timestamp ending in Z",
+        )
+    try:
+        parsed_reviewed_at = datetime.fromisoformat(
+            reviewed_at.removesuffix("Z") + "+00:00"
+        )
+    except ValueError as exc:
+        raise _envelope_error(
+            label, f"{path}.review.reviewed_at", "is not a valid timestamp"
+        ) from exc
+    if parsed_reviewed_at.utcoffset() != timezone.utc.utcoffset(parsed_reviewed_at):
+        raise _envelope_error(label, f"{path}.review.reviewed_at", "must use UTC")
+    checks = _exact_object(
+        review["checks"], _REVIEW_CHECKS, label, f"{path}.review.checks"
+    )
+    if any(value is not True for value in checks.values()):
+        raise _envelope_error(
+            label,
+            f"{path}.review.checks",
+            "every required manual-review check must be true",
+        )
+    return dict(dataset)
+
+
 def _validate_execution_context(
     value: Any, request: Mapping[str, Any], label: str
 ) -> dict[str, Any]:
     context = _exact_object(
         value,
-        {"schema", "git", "runtime", "determinism"},
+        {"schema", "git", "runtime", "determinism", "dataset"},
         label,
         "$.execution_context",
     )
@@ -683,6 +1139,7 @@ def _validate_execution_context(
         raise _envelope_error(
             label, "$.execution_context.schema", f"must equal {_CONTEXT_SCHEMA!r}"
         )
+    _validate_dataset_context(context["dataset"], label, "$.execution_context.dataset")
     git = _exact_object(
         context["git"], {"commit", "dirty"}, label, "$.execution_context.git"
     )
@@ -882,7 +1339,10 @@ def _load_runner_envelope(report_value: Any, label: str) -> _ValidatedEnvelope:
     request = _exact_object(
         root["request"],
         {
-            "dataset_yaml",
+            "manifest",
+            "annotations",
+            "images_dir",
+            "review_attestation",
             "seed",
             "model_family",
             "model_size",
@@ -894,9 +1354,20 @@ def _load_runner_envelope(report_value: Any, label: str) -> _ValidatedEnvelope:
         label,
         "$.request",
     )
-    for field in ("dataset_yaml", "device"):
+    for field in (
+        "manifest",
+        "annotations",
+        "images_dir",
+        "review_attestation",
+        "device",
+    ):
         if not isinstance(request[field], str) or not request[field]:
             raise _envelope_error(label, f"$.request.{field}", "must be non-empty")
+    for field in ("manifest", "annotations", "images_dir", "review_attestation"):
+        if not Path(request[field]).is_absolute():
+            raise _envelope_error(
+                label, f"$.request.{field}", "must be an absolute operational path"
+            )
     if request["model_family"] != _MODEL_FAMILY or request["model_size"] != _MODEL_SIZE:
         raise _envelope_error(
             label, "$.request", "must identify the fixed Qwen3-VL-2B benchmark"
@@ -985,11 +1456,38 @@ def _load_runner_envelope(report_value: Any, label: str) -> _ValidatedEnvelope:
             "$.request",
             "does not match the model identity in the report",
         )
+    report_class_names = benchmark_config.get("class_names")
+    expected_class_names = execution_context["dataset"]["classes"]["names"]
+    if not isinstance(report_class_names, (list, tuple)) or list(
+        report_class_names
+    ) != list(expected_class_names):
+        raise _envelope_error(
+            label,
+            "$.execution_context.dataset.classes.names",
+            "does not match benchmark_config.class_names in the report",
+        )
     if benchmark_config.get("seed") != request["seed"]:
         raise _envelope_error(
             label, "$.request.seed", "does not match the report configuration"
         )
     evaluation = benchmark_config.get("evaluation")
+    expected_category_map = {
+        str(index): category_id
+        for index, category_id in enumerate(
+            execution_context["dataset"]["classes"]["category_ids"]
+        )
+    }
+    actual_category_map = (
+        evaluation.get("label_to_category_id")
+        if isinstance(evaluation, Mapping)
+        else None
+    )
+    if actual_category_map != expected_category_map:
+        raise _envelope_error(
+            label,
+            "$.execution_context.dataset.classes.category_ids",
+            "does not match benchmark_config.evaluation.label_to_category_id in the report",
+        )
     report_imgsz = evaluation.get("imgsz") if isinstance(evaluation, Mapping) else None
     scalar_imgsz_matches = type(report_imgsz) is int and report_imgsz == _IMAGE_SIZE
     pair_imgsz_matches = (
@@ -1117,7 +1615,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser(
         "run", help="run one fresh Qwen3-VL-2B benchmark process"
     )
-    run_parser.add_argument("--data", required=True, type=Path)
+    run_parser.add_argument("--manifest", required=True, type=Path)
+    run_parser.add_argument("--annotations", required=True, type=Path)
+    run_parser.add_argument("--images-dir", required=True, type=Path)
+    run_parser.add_argument("--review-attestation", required=True, type=Path)
     run_parser.add_argument("--output-root", required=True, type=Path)
     run_parser.add_argument("--seed", type=_arg_seed, default=0)
     run_parser.add_argument("--device", default="auto")
@@ -1172,7 +1673,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.mode == "run":
             with redirect_stdout(sys.stderr):
                 artifacts = run_benchmark(
-                    args.data,
+                    args.manifest,
+                    args.annotations,
+                    args.images_dir,
+                    args.review_attestation,
                     args.output_root,
                     seed=args.seed,
                     device=args.device,

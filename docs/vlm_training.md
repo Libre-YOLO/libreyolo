@@ -177,6 +177,41 @@ holdout100 and promotion500 represent 79 of 80 COCO categories (raw category
 (raw categories 21, 38, 87, and 89 are absent). Train400 must therefore not be
 described as full 80-class supervised coverage.
 
+The confidence runner accepts only the verified `promotion500` bundle. It does
+not accept an arbitrary dataset YAML. Before any model construction it requires
+the manifest, original pinned annotations, local image root, and a separate
+human review attestation:
+
+```text
+PYTHONHASHSEED=0 python -m libreyolo.validation.vlm_confidence_benchmark run \
+  --manifest /data/libreyolo-vlm-benchmark/manifest.json \
+  --annotations /data/coco/annotations/instances_val2017.json \
+  --images-dir /data/coco/val2017 \
+  --review-attestation /data/reviews/vlm-promotion500-review.json \
+  --output-root /data/runs/qwen-confidence-1 \
+  --device cuda
+```
+
+The external attestation uses schema
+`libreyolo.vlm-benchmark-dataset-review.v1`, binds the manifest SHA256 and
+`zero_shot_confidence_promotion` role, names the reviewer and UTC review time,
+and must explicitly approve every manual gate listed by the manifest. The
+library never creates or approves this assertion. It records the attestation
+digest and checks the COCO artifact, category mapping, image order, dimensions,
+and selected image bytes again before generation.
+
+Run twice in fresh processes and compare the persisted reports:
+
+```text
+python -m libreyolo.validation.vlm_confidence_benchmark compare \
+  /data/runs/qwen-confidence-1/vlm_confidence_report.json \
+  /data/runs/qwen-confidence-2/vlm_confidence_report.json
+```
+
+This runner remains an internal promotion gate. A reproducible result does not
+activate public Qwen confidence or `val()` by itself; ranking, mAP, coverage,
+default-threshold retention, and calibration still require maintainer review.
+
 ## Trainable families
 
 | Family | train() | Why |

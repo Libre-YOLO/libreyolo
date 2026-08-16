@@ -24,6 +24,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -31,7 +32,9 @@ import warnings
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Iterator
 from urllib.parse import urlsplit
 
@@ -39,6 +42,9 @@ from PIL import Image, UnidentifiedImageError
 
 _SCHEMA = "libreyolo.vlm-benchmark-dataset.v1"
 _STATUS_SCHEMA = "libreyolo.vlm-benchmark-dataset-status.v1"
+_REVIEW_SCHEMA = "libreyolo.vlm-benchmark-dataset-review.v1"
+_PROMOTION_ROLE = "zero_shot_confidence_promotion"
+_REVIEW_STATUS = "approved"
 _SOURCE_CANONICALIZATION = "coco-arrays-by-id-json-v1"
 _SELECTION_ALGORITHM = "category-coverage-then-sha256-rank-v1"
 _SELECTION_SALT = "libreyolo:coco-val2017:license-4:v1"
@@ -49,10 +55,12 @@ _ANNOTATION_NOTICE_PATH = "ANNOTATION_NOTICE.txt"
 _HOLDOUT_COUNT = 100
 _SELECTED_COUNT = 500
 _MAX_JSON_BYTES = 64 * 1024 * 1024
+_MAX_REVIEW_ATTESTATION_BYTES = 64 * 1024
 _MAX_IMAGE_BYTES = 64 * 1024 * 1024
 _MAX_JSON_DEPTH = 64
 _MAX_JSON_NODES = 10_000_000
 _MAX_SAFE_INTEGER = (1 << 53) - 1
+_UTC_RFC3339 = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 _JSON_ARRAY_FIELDS = ("licenses", "images", "annotations", "categories")
 _SOURCE_FIELDS = {"info", *_JSON_ARRAY_FIELDS}
 _LICENSE_ID = 4
@@ -161,8 +169,38 @@ class VerifiedBenchmarkDataset:
 
 
 @dataclass(frozen=True)
+class VerifiedBenchmarkRunInputs:
+    """Strictly verified local inputs for one fixed benchmark partition."""
+
+    manifest_path: Path
+    manifest_sha256: str
+    source_annotations: Path
+    source_canonical_sha256: str
+    source_file_sha256: str
+    source_file_size_bytes: int
+    images_dir: Path
+    selected_image_identity_sha256: str
+    partition_name: str
+    partition_role: str
+    partition_start: int
+    partition_stop: int
+    annotation_path: Path
+    annotation_sha256: str
+    annotation_size_bytes: int
+    class_names: tuple[str, ...]
+    expected_images: tuple[Mapping[str, Any], ...]
+    expected_categories: tuple[Mapping[str, Any], ...]
+    expected_annotations: tuple[Mapping[str, Any], ...]
+    review_attestation_path: Path
+    review_attestation_sha256: str
+    review_attestation: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
 class _SourceData:
     root: dict[str, Any]
+    file_sha256: str
+    file_size_bytes: int
     canonical_sha256: str
     canonical_size_bytes: int
     license: dict[str, Any]
@@ -179,6 +217,18 @@ class _SourceData:
 class _DerivedBundle:
     manifest: dict[str, Any]
     files: dict[str, bytes]
+    source_file_sha256: str
+    source_file_size_bytes: int
+
+
+@dataclass(frozen=True)
+class _VerifiedBundleEvidence:
+    manifest_path: Path
+    bundle_root: Path
+    source_annotations: Path
+    images_dir: Path
+    manifest_sha256: str
+    derived: _DerivedBundle
 
 
 def _path_exists(path: Path) -> bool:
@@ -435,6 +485,23 @@ def _nonempty_string(value: Any, label: str) -> str:
     return value
 
 
+def _utc_rfc3339(value: Any, label: str) -> str:
+    rendered = _nonempty_string(value, label)
+    if _UTC_RFC3339.fullmatch(rendered) is None:
+        raise BenchmarkDatasetError(
+            f"{label} must be a strict UTC RFC3339 timestamp ending in 'Z'"
+        )
+    try:
+        parsed = datetime.fromisoformat(rendered[:-1] + "+00:00")
+    except ValueError as exc:
+        raise BenchmarkDatasetError(
+            f"{label} must be a valid UTC RFC3339 timestamp"
+        ) from exc
+    if parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise BenchmarkDatasetError(f"{label} must use the UTC timezone")
+    return rendered
+
+
 def _http_url(value: Any, label: str) -> str:
     rendered = _nonempty_string(value, label)
     parts = urlsplit(rendered)
@@ -483,7 +550,12 @@ def _load_source(source_annotations: Path) -> _SourceData:
         raise BenchmarkDatasetError(
             f"source annotation filename must be {_SOURCE_FILE_NAME!r}"
         )
-    raw_root = _load_json(source_annotations, "source annotations")
+    source_payload = _read_bounded(
+        source_annotations,
+        max_bytes=_MAX_JSON_BYTES,
+        label="source annotations",
+    )
+    raw_root = _decode_json(source_payload, "source annotations")
     root = _exact_fields(raw_root, _SOURCE_FIELDS, "source")
     info = root["info"]
     if not isinstance(info, Mapping):
@@ -637,6 +709,8 @@ def _load_source(source_annotations: Path) -> _SourceData:
 
     return _SourceData(
         root=root,
+        file_sha256=_sha256(source_payload),
+        file_size_bytes=len(source_payload),
         canonical_sha256=canonical_digest,
         canonical_size_bytes=len(canonical),
         license=dict(license_record),
@@ -1079,7 +1153,12 @@ def _derive_bundle(source_annotations: Path, images_dir: Path) -> _DerivedBundle
     }
     files = dict(artifact_payloads)
     files[_MANIFEST_NAME] = _json_file_bytes(manifest)
-    return _DerivedBundle(manifest=manifest, files=files)
+    return _DerivedBundle(
+        manifest=manifest,
+        files=files,
+        source_file_sha256=source.file_sha256,
+        source_file_size_bytes=source.file_size_bytes,
+    )
 
 
 def _safe_relative(root: Path, relative: str) -> Path:
@@ -1168,17 +1247,11 @@ def _verify_tree(root: Path, expected_files: set[str]) -> None:
         )
 
 
-def verify_benchmark_dataset(
+def _verify_bundle_evidence(
     manifest: str | os.PathLike[str],
     source_annotations: str | os.PathLike[str],
     images_dir: str | os.PathLike[str],
-) -> VerifiedBenchmarkDataset:
-    """Rebuild all expected metadata and verify an immutable local bundle.
-
-    Paths are operational inputs and are never stored in the manifest.  All
-    selected image bytes are hashed and decoded in place, without writes.
-    """
-
+) -> _VerifiedBundleEvidence:
     manifest_path = _required_file(manifest, "manifest")
     if manifest_path.name != _MANIFEST_NAME:
         raise BenchmarkDatasetError(f"manifest filename must be {_MANIFEST_NAME!r}")
@@ -1194,6 +1267,7 @@ def verify_benchmark_dataset(
         )
     expected_files = set(derived.files)
     _verify_tree(bundle_root, expected_files)
+    manifest_payload: bytes | None = None
     for relative, expected in derived.files.items():
         path = _safe_relative(bundle_root, relative)
         if path.is_symlink() or not path.is_file():
@@ -1205,12 +1279,259 @@ def verify_benchmark_dataset(
         )
         if actual != expected:
             raise BenchmarkDatasetError(f"metadata artifact was modified: {relative}")
-    manifest_bytes = derived.files[_MANIFEST_NAME]
-    return VerifiedBenchmarkDataset(
-        output_dir=bundle_root,
+        if relative == _MANIFEST_NAME:
+            manifest_payload = actual
+    if manifest_payload is None:  # pragma: no cover - fixed internal artifact contract
+        raise RuntimeError("derived benchmark bundle omitted its manifest")
+    return _VerifiedBundleEvidence(
         manifest_path=manifest_path,
-        manifest_sha256=_sha256(manifest_bytes),
-        selected_image_count=len(derived.manifest["images"]),
+        bundle_root=bundle_root,
+        source_annotations=source_path,
+        images_dir=image_root,
+        manifest_sha256=_sha256(manifest_payload),
+        derived=derived,
+    )
+
+
+def verify_benchmark_dataset(
+    manifest: str | os.PathLike[str],
+    source_annotations: str | os.PathLike[str],
+    images_dir: str | os.PathLike[str],
+) -> VerifiedBenchmarkDataset:
+    """Rebuild all expected metadata and verify an immutable local bundle.
+
+    Paths are operational inputs and are never stored in the manifest.  All
+    selected image bytes are hashed and decoded in place, without writes.
+    """
+
+    evidence = _verify_bundle_evidence(manifest, source_annotations, images_dir)
+    return VerifiedBenchmarkDataset(
+        output_dir=evidence.bundle_root,
+        manifest_path=evidence.manifest_path,
+        manifest_sha256=evidence.manifest_sha256,
+        selected_image_count=len(evidence.derived.manifest["images"]),
+    )
+
+
+def _verified_review_attestation(
+    path: Path,
+    *,
+    manifest_sha256: str,
+    partition_role: str,
+    expected_checks: Sequence[str],
+) -> tuple[str, Mapping[str, Any]]:
+    payload = _read_bounded(
+        path,
+        max_bytes=_MAX_REVIEW_ATTESTATION_BYTES,
+        label="benchmark review attestation",
+    )
+    root = _exact_fields(
+        _decode_json(payload, "benchmark review attestation"),
+        {
+            "schema",
+            "manifest_sha256",
+            "partition_role",
+            "status",
+            "reviewer",
+            "reviewed_at",
+            "checks",
+        },
+        "benchmark review attestation",
+    )
+    if root["schema"] != _REVIEW_SCHEMA:
+        raise BenchmarkDatasetError(
+            "benchmark review attestation schema is unsupported"
+        )
+    claimed_manifest = root["manifest_sha256"]
+    if (
+        not isinstance(claimed_manifest, str)
+        or len(claimed_manifest) != 64
+        or any(character not in "0123456789abcdef" for character in claimed_manifest)
+    ):
+        raise BenchmarkDatasetError(
+            "benchmark review attestation manifest_sha256 must be lowercase SHA-256"
+        )
+    if claimed_manifest != manifest_sha256:
+        raise BenchmarkDatasetError(
+            "benchmark review attestation does not bind the verified manifest"
+        )
+    if root["partition_role"] != partition_role:
+        raise BenchmarkDatasetError(
+            "benchmark review attestation does not approve the required partition role"
+        )
+    if root["status"] != _REVIEW_STATUS:
+        raise BenchmarkDatasetError("benchmark review attestation is not approved")
+    reviewer = _nonempty_string(
+        root["reviewer"], "benchmark review attestation reviewer"
+    ).strip()
+    if len(reviewer) > 256:
+        raise BenchmarkDatasetError(
+            "benchmark review attestation reviewer exceeds 256 characters"
+        )
+    reviewed_at = _utc_rfc3339(
+        root["reviewed_at"], "benchmark review attestation reviewed_at"
+    )
+    checks = _exact_fields(
+        root["checks"],
+        set(expected_checks),
+        "benchmark review attestation checks",
+    )
+    for check in expected_checks:
+        if type(checks[check]) is not bool or checks[check] is not True:
+            raise BenchmarkDatasetError(
+                f"benchmark review attestation check {check!r} must be true"
+            )
+    normalized_checks = MappingProxyType({check: True for check in expected_checks})
+    normalized = MappingProxyType(
+        {
+            "schema": _REVIEW_SCHEMA,
+            "manifest_sha256": manifest_sha256,
+            "partition_role": partition_role,
+            "status": _REVIEW_STATUS,
+            "reviewer": reviewer,
+            "reviewed_at": reviewed_at,
+            "checks": normalized_checks,
+        }
+    )
+    return _sha256(payload), normalized
+
+
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
+def _immutable_rows(value: Any, label: str) -> tuple[Mapping[str, Any], ...]:
+    rows = _sequence(value, label)
+    immutable = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):  # pragma: no cover - derived internally
+            raise RuntimeError(f"{label}[{index}] is not an object")
+        immutable.append(_freeze_json(row))
+    return tuple(immutable)
+
+
+def verify_benchmark_run_inputs(
+    manifest: str | os.PathLike[str],
+    source_annotations: str | os.PathLike[str],
+    images_dir: str | os.PathLike[str],
+    review_attestation: str | os.PathLike[str],
+    *,
+    required_role: str = _PROMOTION_ROLE,
+) -> VerifiedBenchmarkRunInputs:
+    """Verify the fixed promotion dataset and its external human-review assertion.
+
+    The attestation records a human declaration; it does not authenticate the
+    reviewer's identity. No network access or source-tree mutation is performed.
+    """
+
+    if required_role != _PROMOTION_ROLE:
+        raise BenchmarkDatasetError(
+            f"benchmark partition role must be {_PROMOTION_ROLE!r}"
+        )
+    attestation_path = _required_file(
+        review_attestation, "benchmark review attestation"
+    )
+    manifest_candidate = _required_file(manifest, "manifest")
+    bundle_candidate = manifest_candidate.parent
+    if (
+        attestation_path == bundle_candidate
+        or bundle_candidate in attestation_path.parents
+    ):
+        raise BenchmarkDatasetError(
+            "benchmark review attestation must remain outside the metadata bundle"
+        )
+    evidence = _verify_bundle_evidence(
+        manifest_candidate, source_annotations, images_dir
+    )
+    derived_manifest = evidence.derived.manifest
+    matching_partitions = [
+        partition
+        for partition in derived_manifest["partitions"]
+        if required_role in partition["roles"]
+    ]
+    if len(matching_partitions) != 1:  # pragma: no cover - derived fixed contract
+        raise BenchmarkDatasetError(
+            "benchmark manifest must contain exactly one required partition role"
+        )
+    partition = matching_partitions[0]
+    artifact_name = str(partition["annotation_artifact"])
+    artifact = derived_manifest["artifacts"][artifact_name]
+    relative_annotation_path = str(artifact["path"])
+    annotation_path = _safe_relative(evidence.bundle_root, relative_annotation_path)
+    annotation_payload = evidence.derived.files[relative_annotation_path]
+    annotation_root = _exact_fields(
+        _decode_json(annotation_payload, f"benchmark artifact {artifact_name}"),
+        set(_SOURCE_FIELDS),
+        f"benchmark artifact {artifact_name}",
+    )
+    expected_categories = _immutable_rows(
+        annotation_root["categories"], "benchmark expected categories"
+    )
+    class_names = tuple(
+        _nonempty_string(category["name"], "benchmark category name")
+        for category in expected_categories
+    )
+    manual_review = _exact_fields(
+        derived_manifest["manual_review"],
+        {"status", "checks"},
+        "benchmark manifest manual_review",
+    )
+    if manual_review["status"] != "required-outside-manifest":
+        raise BenchmarkDatasetError(
+            "benchmark manifest does not require an external review attestation"
+        )
+    expected_checks = tuple(
+        _nonempty_string(check, "benchmark manifest manual review check")
+        for check in _sequence(
+            manual_review["checks"], "benchmark manifest manual_review.checks"
+        )
+    )
+    if len(set(expected_checks)) != len(expected_checks):
+        raise BenchmarkDatasetError("benchmark manifest review checks are not unique")
+    review_sha256, normalized_review = _verified_review_attestation(
+        attestation_path,
+        manifest_sha256=evidence.manifest_sha256,
+        partition_role=required_role,
+        expected_checks=expected_checks,
+    )
+    partition_start = int(partition["start"])
+    partition_stop = int(partition["stop"])
+    return VerifiedBenchmarkRunInputs(
+        manifest_path=evidence.manifest_path,
+        manifest_sha256=evidence.manifest_sha256,
+        source_annotations=evidence.source_annotations,
+        source_canonical_sha256=str(derived_manifest["source"]["annotation"]["sha256"]),
+        source_file_sha256=evidence.derived.source_file_sha256,
+        source_file_size_bytes=evidence.derived.source_file_size_bytes,
+        images_dir=evidence.images_dir,
+        selected_image_identity_sha256=str(
+            derived_manifest["source"]["selected_image_identity"]["sha256"]
+        ),
+        partition_name=str(partition["name"]),
+        partition_role=required_role,
+        partition_start=partition_start,
+        partition_stop=partition_stop,
+        annotation_path=annotation_path,
+        annotation_sha256=str(artifact["sha256"]),
+        annotation_size_bytes=int(artifact["size_bytes"]),
+        class_names=class_names,
+        expected_images=_immutable_rows(
+            derived_manifest["images"][partition_start:partition_stop],
+            "benchmark expected images",
+        ),
+        expected_categories=expected_categories,
+        expected_annotations=_immutable_rows(
+            annotation_root["annotations"], "benchmark expected annotations"
+        ),
+        review_attestation_path=attestation_path,
+        review_attestation_sha256=review_sha256,
+        review_attestation=normalized_review,
     )
 
 

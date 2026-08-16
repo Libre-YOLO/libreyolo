@@ -43,6 +43,41 @@ def _write_source(path: Path, source: dict) -> None:
     )
 
 
+_REVIEW_CHECKS = (
+    "canonical_source",
+    "image_attribution_sufficiency",
+    "annotation_license_and_redistribution",
+    "privacy_and_pii",
+    "visual_quality",
+    "selection_salt_freeze",
+    "benchmark_suitability",
+    "publication_upload_authorization",
+)
+
+
+def _review_payload(manifest_sha256: str) -> dict:
+    return {
+        "schema": "libreyolo.vlm-benchmark-dataset-review.v1",
+        "manifest_sha256": manifest_sha256,
+        "partition_role": "zero_shot_confidence_promotion",
+        "status": "approved",
+        "reviewer": "Local test reviewer",
+        "reviewed_at": "2026-08-16T10:30:00Z",
+        "checks": {check: True for check in _REVIEW_CHECKS},
+    }
+
+
+def _write_review(path: Path, payload: dict) -> bytes:
+    encoded = (
+        json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        + b"\n"
+    )
+    path.write_bytes(encoded)
+    return encoded
+
+
 def test_production_source_contract_pins_official_selected_image_bytes():
     contract = dataset_manifest._SOURCE_CONTRACT
     assert contract.image_archive_sha256 == (
@@ -524,3 +559,260 @@ def test_build_enforces_selected_image_archive_member_pin(
     finally:
         selected_path.write_bytes(original)
     assert not output.exists()
+
+
+def test_verify_benchmark_run_inputs_binds_bundle_partition_and_review(
+    tmp_path, pinned_local_source
+):
+    source = pinned_local_source
+    artifacts = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    review_path = tmp_path / "review.json"
+    review_payload = _review_payload(artifacts.manifest_sha256)
+    review_payload["reviewer"] = "  Local test reviewer  "
+    review_bytes = _write_review(review_path, review_payload)
+
+    verified = dataset_manifest.verify_benchmark_run_inputs(
+        artifacts.manifest_path,
+        source.source,
+        source.images,
+        review_path,
+    )
+
+    manifest = _json(artifacts.manifest_path)
+    promotion = _json(
+        artifacts.output_dir / "annotations/instances_val2017_promotion500.json"
+    )
+    assert verified.manifest_path == artifacts.manifest_path.resolve()
+    assert verified.manifest_sha256 == artifacts.manifest_sha256
+    assert verified.source_annotations == source.source.resolve()
+    assert verified.source_canonical_sha256 == source.contract.canonical_sha256
+    assert (
+        verified.source_file_sha256
+        == hashlib.sha256(source.source.read_bytes()).hexdigest()
+    )
+    assert verified.source_file_size_bytes == source.source.stat().st_size
+    assert verified.images_dir == source.images.resolve()
+    assert (
+        verified.selected_image_identity_sha256
+        == (manifest["source"]["selected_image_identity"]["sha256"])
+    )
+    assert (
+        verified.partition_name,
+        verified.partition_role,
+        verified.partition_start,
+        verified.partition_stop,
+    ) == ("promotion500", "zero_shot_confidence_promotion", 0, 500)
+    assert (
+        verified.annotation_path
+        == (
+            artifacts.output_dir / "annotations/instances_val2017_promotion500.json"
+        ).resolve()
+    )
+    assert verified.annotation_sha256 == manifest["artifacts"]["promotion500"]["sha256"]
+    assert (
+        verified.annotation_size_bytes
+        == manifest["artifacts"]["promotion500"]["size_bytes"]
+    )
+    assert verified.class_names == ("class-1", "class-2", "class-3")
+    assert [row["image_id"] for row in verified.expected_images] == [
+        row["id"] for row in promotion["images"]
+    ]
+    assert all(
+        "sha256" in row and "size_bytes" in row for row in verified.expected_images
+    )
+    assert [row["id"] for row in verified.expected_categories] == [1, 2, 3]
+    assert [row["id"] for row in verified.expected_annotations] == [
+        row["id"] for row in promotion["annotations"]
+    ]
+    assert verified.review_attestation_path == review_path.resolve()
+    assert (
+        verified.review_attestation_sha256 == hashlib.sha256(review_bytes).hexdigest()
+    )
+    assert verified.review_attestation["reviewer"] == "Local test reviewer"
+    assert dict(verified.review_attestation["checks"]) == {
+        check: True for check in _REVIEW_CHECKS
+    }
+    with pytest.raises(TypeError):
+        verified.expected_images[0]["image_id"] = 999
+    with pytest.raises(TypeError):
+        verified.expected_images[0]["annotation_ids"][0] = 999
+    with pytest.raises(TypeError):
+        verified.expected_annotations[0]["bbox"][0] = 999
+
+
+@pytest.mark.parametrize(
+    "mutation,match",
+    [
+        (("schema", "other.v1"), "schema is unsupported"),
+        (("manifest_sha256", "0" * 64), "does not bind"),
+        (("partition_role", "fine_tune_training"), "required partition role"),
+        (("status", "pending"), "not approved"),
+        (("reviewer", " \t"), "non-empty string"),
+        (("reviewer", "r" * 257), "exceeds 256"),
+        (("reviewed_at", "2026-08-16T10:30:00+00:00"), "ending in 'Z'"),
+        (("reviewed_at", "2026-02-30T10:30:00Z"), "valid UTC"),
+    ],
+)
+def test_verify_benchmark_run_inputs_rejects_invalid_review_fields(
+    tmp_path, pinned_local_source, mutation, match
+):
+    source = pinned_local_source
+    artifacts = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    payload = _review_payload(artifacts.manifest_sha256)
+    key, value = mutation
+    payload[key] = value
+    review_path = tmp_path / "review.json"
+    _write_review(review_path, payload)
+
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match=match):
+        dataset_manifest.verify_benchmark_run_inputs(
+            artifacts.manifest_path,
+            source.source,
+            source.images,
+            review_path,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate,match",
+    [
+        (lambda value: value["checks"].pop("visual_quality"), "missing visual_quality"),
+        (
+            lambda value: value["checks"].__setitem__("unexpected", True),
+            "unsupported unexpected",
+        ),
+        (
+            lambda value: value["checks"].__setitem__("visual_quality", 1),
+            "visual_quality.*must be true",
+        ),
+        (
+            lambda value: value["checks"].__setitem__("visual_quality", False),
+            "visual_quality.*must be true",
+        ),
+        (lambda value: value.__setitem__("comment", "extra"), "unsupported comment"),
+    ],
+)
+def test_verify_benchmark_run_inputs_requires_exact_all_true_checks(
+    tmp_path, pinned_local_source, mutate, match
+):
+    source = pinned_local_source
+    artifacts = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    payload = _review_payload(artifacts.manifest_sha256)
+    mutate(payload)
+    review_path = tmp_path / "review.json"
+    _write_review(review_path, payload)
+
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match=match):
+        dataset_manifest.verify_benchmark_run_inputs(
+            artifacts.manifest_path,
+            source.source,
+            source.images,
+            review_path,
+        )
+
+
+@pytest.mark.parametrize(
+    "raw,match",
+    [
+        (
+            b'{"schema":"a","schema":"b"}',
+            "duplicate key",
+        ),
+        (b'{"reviewer":NaN}', "not permitted"),
+    ],
+)
+def test_verify_benchmark_run_inputs_rejects_non_strict_review_json(
+    tmp_path, pinned_local_source, raw, match
+):
+    source = pinned_local_source
+    artifacts = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    review_path = tmp_path / "review.json"
+    review_path.write_bytes(raw)
+
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match=match):
+        dataset_manifest.verify_benchmark_run_inputs(
+            artifacts.manifest_path,
+            source.source,
+            source.images,
+            review_path,
+        )
+
+
+def test_verify_benchmark_run_inputs_bounds_and_externalizes_review(
+    tmp_path, pinned_local_source, monkeypatch
+):
+    source = pinned_local_source
+    artifacts = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    payload = _review_payload(artifacts.manifest_sha256)
+    external = tmp_path / "review.json"
+    encoded = _write_review(external, payload)
+    monkeypatch.setattr(
+        dataset_manifest, "_MAX_REVIEW_ATTESTATION_BYTES", len(encoded) - 1
+    )
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="safety limit"):
+        dataset_manifest.verify_benchmark_run_inputs(
+            artifacts.manifest_path,
+            source.source,
+            source.images,
+            external,
+        )
+
+    monkeypatch.setattr(dataset_manifest, "_MAX_REVIEW_ATTESTATION_BYTES", len(encoded))
+    inside = artifacts.output_dir / "review.json"
+    inside.write_bytes(encoded)
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="outside"):
+        dataset_manifest.verify_benchmark_run_inputs(
+            artifacts.manifest_path,
+            source.source,
+            source.images,
+            inside,
+        )
+
+
+def test_verify_benchmark_run_inputs_rejects_review_symlink_and_wrong_role(
+    tmp_path, pinned_local_source
+):
+    source = pinned_local_source
+    artifacts = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    review_path = tmp_path / "review.json"
+    _write_review(review_path, _review_payload(artifacts.manifest_sha256))
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="existing file"):
+        dataset_manifest.verify_benchmark_run_inputs(
+            artifacts.manifest_path,
+            source.source,
+            source.images,
+            tmp_path,
+        )
+    review_link = tmp_path / "review-link.json"
+    try:
+        review_link.symlink_to(review_path)
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this platform")
+
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="symlink"):
+        dataset_manifest.verify_benchmark_run_inputs(
+            artifacts.manifest_path,
+            source.source,
+            source.images,
+            review_link,
+        )
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="partition role"):
+        dataset_manifest.verify_benchmark_run_inputs(
+            artifacts.manifest_path,
+            source.source,
+            source.images,
+            review_path,
+            required_role="fine_tune_training",
+        )

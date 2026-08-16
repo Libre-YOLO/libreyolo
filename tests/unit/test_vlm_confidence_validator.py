@@ -3,6 +3,7 @@
 import hashlib
 import json
 import math
+from dataclasses import replace
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,7 +20,9 @@ torch = pytest.importorskip("torch")
 from libreyolo.validation.config import ValidationConfig  # noqa: E402
 from libreyolo.validation.detection_validator import DetectionValidator  # noqa: E402
 from libreyolo.validation.preprocessors import StandardValPreprocessor  # noqa: E402
-from libreyolo.validation import vlm_confidence_benchmark as benchmark  # noqa: E402
+from libreyolo.validation.vlm_benchmark_dataset import (  # noqa: E402
+    VerifiedBenchmarkRunInputs,
+)
 from libreyolo.validation.vlm_confidence import compare_repeats  # noqa: E402
 from libreyolo.validation.vlm_confidence_report import (  # noqa: E402
     compare_confidence_reports,
@@ -276,6 +279,194 @@ class _Harness(VLMConfidenceValidator):
         self._reset_confidence_records()
 
 
+class _BoundHarness(_Harness):
+    def __init__(self, *args, binding_mutation=None, **kwargs):
+        self._binding_mutation = binding_mutation
+        super().__init__(*args, **kwargs)
+
+    def _setup_dataloader(self):
+        loader = super()._setup_dataloader()
+        verified = self._verified_dataset
+        assert verified is not None
+        loader.dataset.ids = [
+            int(image["image_id"]) for image in verified.expected_images
+        ]
+        loader.dataset.coco = SimpleNamespace(
+            imgs={
+                int(image["image_id"]): {
+                    "id": int(image["image_id"]),
+                    "file_name": str(image["file_name"]),
+                    "width": int(image["width"]),
+                    "height": int(image["height"]),
+                }
+                for image in verified.expected_images
+            }
+        )
+        if self._binding_mutation == "order":
+            loader.dataset.ids.reverse()
+        elif self._binding_mutation == "name":
+            loader.dataset.coco.imgs[loader.dataset.ids[0]]["file_name"] = "wrong.jpg"
+        elif self._binding_mutation == "path":
+            wrong = verified.images_dir / "wrong.jpg"
+            wrong.write_bytes(Path(loader.dataset.img_files[0]).read_bytes())
+            loader.dataset.img_files[0] = wrong
+        elif self._binding_mutation == "dimensions":
+            loader.dataset.coco.imgs[loader.dataset.ids[0]]["width"] += 1
+        elif self._binding_mutation == "short_batch":
+            images, targets, sizes, image_ids = loader[0]
+            loader[0] = (
+                images[:1],
+                targets[:1],
+                sizes[:1],
+                image_ids[:1],
+            )
+        return loader
+
+    def _init_metrics(self):
+        super()._init_metrics()
+        verified = self._verified_dataset
+        assert verified is not None
+        self._coco_annotation_file = verified.annotation_path
+        self._coco_label_to_category_id = {
+            label: int(category["id"])
+            for label, category in enumerate(verified.expected_categories)
+        }
+        if self._binding_mutation == "ground_truth":
+            self._gt_coco_api.anns[1]["bbox"][0] += 1
+        elif self._binding_mutation == "category":
+            self._gt_coco_api.cats[0]["name"] = "dog"
+        elif self._binding_mutation == "annotation_path":
+            wrong = verified.annotation_path.parent / "same-bytes-wrong-path.json"
+            wrong.write_bytes(verified.annotation_path.read_bytes())
+            self._coco_annotation_file = wrong
+
+
+def _file_sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _verified_inputs(tmp_path, paths, targets):
+    bundle = tmp_path / "bundle"
+    annotation_dir = bundle / "annotations"
+    annotation_dir.mkdir(parents=True)
+    manifest = bundle / "manifest.json"
+    manifest.write_text('{"verified":true}\n', encoding="utf-8")
+    annotation = annotation_dir / "promotion.json"
+    annotation.write_text('{"verified":true}\n', encoding="utf-8")
+    source = tmp_path / "source.json"
+    source.write_text('{"source":true}\n', encoding="utf-8")
+    review = tmp_path / "review.json"
+    review.write_text('{"approved":true}\n', encoding="utf-8")
+
+    expected_annotations = []
+    annotation_id = 1
+    for image_index, image_targets in enumerate(targets):
+        for target in image_targets:
+            x1, y1, x2, y2, class_id = target.tolist()
+            if x2 <= x1 or y2 <= y1:
+                continue
+            expected_annotations.append(
+                {
+                    "id": annotation_id,
+                    "image_id": image_index + 1,
+                    "category_id": int(class_id),
+                    "bbox": [x1, y1, x2 - x1, y2 - y1],
+                    "area": (x2 - x1) * (y2 - y1),
+                    "iscrowd": 0,
+                }
+            )
+            annotation_id += 1
+    expected_images = tuple(
+        {
+            "image_id": index + 1,
+            "file_name": Path(path).name,
+            "width": 100,
+            "height": 100,
+            "size_bytes": Path(path).stat().st_size,
+            "sha256": _file_sha256(path),
+        }
+        for index, path in enumerate(paths)
+    )
+    review_payload = {
+        "schema": "libreyolo.vlm-benchmark-dataset-review.v1",
+        "manifest_sha256": _file_sha256(manifest),
+        "partition_role": "zero_shot_confidence_promotion",
+        "status": "approved",
+        "reviewer": "Offline Reviewer",
+        "reviewed_at": "2026-08-16T12:00:00Z",
+        "checks": {},
+    }
+    return VerifiedBenchmarkRunInputs(
+        manifest_path=manifest.resolve(),
+        manifest_sha256=_file_sha256(manifest),
+        source_annotations=source.resolve(),
+        source_canonical_sha256="1" * 64,
+        source_file_sha256=_file_sha256(source),
+        source_file_size_bytes=source.stat().st_size,
+        images_dir=Path(paths[0]).parent.resolve(),
+        selected_image_identity_sha256="2" * 64,
+        partition_name="promotion-test",
+        partition_role="zero_shot_confidence_promotion",
+        partition_start=0,
+        partition_stop=len(paths),
+        annotation_path=annotation.resolve(),
+        annotation_sha256=_file_sha256(annotation),
+        annotation_size_bytes=annotation.stat().st_size,
+        class_names=("cat",),
+        expected_images=expected_images,
+        expected_categories=({"id": 0, "name": "cat"},),
+        expected_annotations=tuple(expected_annotations),
+        review_attestation_path=review.resolve(),
+        review_attestation_sha256=_file_sha256(review),
+        review_attestation=review_payload,
+    )
+
+
+def _verified_context(verified):
+    review = verified.review_attestation
+    return {
+        "schema": "libreyolo.vlm-confidence-benchmark-context.test",
+        "dataset": {
+            "schema": "libreyolo.vlm-confidence-benchmark-dataset.v1",
+            "manifest": {
+                "schema": "libreyolo.vlm-benchmark-dataset.v1",
+                "sha256": verified.manifest_sha256,
+            },
+            "source": {
+                "canonical_annotation_sha256": verified.source_canonical_sha256,
+                "file_sha256": verified.source_file_sha256,
+                "file_size_bytes": verified.source_file_size_bytes,
+                "selected_image_identity_sha256": (
+                    verified.selected_image_identity_sha256
+                ),
+            },
+            "partition": {
+                "name": verified.partition_name,
+                "role": verified.partition_role,
+                "start": verified.partition_start,
+                "stop": verified.partition_stop,
+                "image_count": verified.partition_stop - verified.partition_start,
+                "annotation_artifact": verified.annotation_path.relative_to(
+                    verified.manifest_path.parent
+                ).as_posix(),
+                "annotation_size_bytes": verified.annotation_size_bytes,
+                "annotation_sha256": verified.annotation_sha256,
+            },
+            "classes": {"count": 1, "names": ["cat"], "category_ids": [0]},
+            "review": {
+                "schema": review["schema"],
+                "sha256": verified.review_attestation_sha256,
+                "manifest_sha256": review["manifest_sha256"],
+                "partition_role": review["partition_role"],
+                "status": review["status"],
+                "reviewer": review["reviewer"],
+                "reviewed_at": review["reviewed_at"],
+                "checks": review["checks"],
+            },
+        },
+    }
+
+
 def _config(tmp_path, **kwargs):
     save_dir = kwargs.pop("save_dir", tmp_path / "results")
     return ValidationConfig(
@@ -296,8 +487,203 @@ def _targets():
     return targets
 
 
-def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path, monkeypatch):
-    monkeypatch.setattr(benchmark, "_IMAGE_SIZE", 100)
+def _bound_validator(tmp_path, *, binding_mutation=None):
+    images = tmp_path / "images"
+    images.mkdir()
+    paths = [images / "one.jpg", images / "two.jpg"]
+    for path in paths:
+        path.write_bytes(b"offline")
+    targets = _targets()
+    verified = _verified_inputs(tmp_path, paths, targets)
+    model = _stub_model(tmp_path, paths, [_variants([], []), _variants([], [])])
+    validator = _BoundHarness(
+        model,
+        _config(tmp_path),
+        paths,
+        targets,
+        benchmark_context=_verified_context(verified),
+        verified_dataset=verified,
+        binding_mutation=binding_mutation,
+    )
+    return validator, model, verified, paths
+
+
+def test_verified_dataset_binding_runs_and_records_portable_context(tmp_path):
+    validator, model, verified, paths = _bound_validator(tmp_path)
+
+    validator.run()
+
+    assert model.forward_count == 2
+    assert (
+        validator.benchmark_config["benchmark_run"]["dataset"]
+        == (_verified_context(verified)["dataset"])
+    )
+    serialized_context = json.dumps(
+        validator.benchmark_config["benchmark_run"]["dataset"], sort_keys=True
+    )
+    assert str(tmp_path) not in serialized_context
+    assert [item["file_name"] for item in validator.dataset_manifest["images"]] == [
+        path.name for path in paths
+    ]
+
+
+def test_portable_dataset_context_requires_verified_evidence(tmp_path):
+    path = tmp_path / "one.jpg"
+    path.write_bytes(b"offline")
+    model = _stub_model(tmp_path, [path], [_variants([], [])])
+
+    with pytest.raises(ValueError, match="requires matching verified_dataset"):
+        _Harness(
+            model,
+            _config(tmp_path),
+            [path],
+            torch.zeros((1, 1, 5)),
+            benchmark_context={"dataset": {}},
+        )
+    assert model.forward_count == 0
+
+
+def test_verified_evidence_must_match_portable_dataset_context(tmp_path):
+    validator, model, verified, paths = _bound_validator(tmp_path)
+    mismatched = replace(verified, manifest_sha256="f" * 64)
+
+    with pytest.raises(ValueError, match="does not match verified_dataset"):
+        _BoundHarness(
+            model,
+            _config(tmp_path, save_dir=tmp_path / "mismatch"),
+            paths,
+            _targets(),
+            benchmark_context=_verified_context(verified),
+            verified_dataset=mismatched,
+        )
+    assert validator._verified_dataset is verified
+    assert model.forward_count == 0
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("ground_truth", "ground-truth annotations"),
+        ("category", "ground-truth categories"),
+        ("order", "image order"),
+        ("name", "image name"),
+        ("path", "image path"),
+        ("annotation_path", "annotation path"),
+        ("dimensions", "image dimensions"),
+    ],
+)
+def test_verified_dataset_mismatch_fails_before_first_forward(
+    tmp_path, mutation, message
+):
+    validator, model, _, _ = _bound_validator(tmp_path, binding_mutation=mutation)
+
+    with pytest.raises(RuntimeError, match=message):
+        validator.run()
+
+    assert model.forward_count == 0
+
+
+@pytest.mark.parametrize(
+    ("artifact", "message"),
+    [
+        ("image", "Benchmark image 2.*before generation"),
+        ("source", "source annotations.*before generation"),
+        ("annotation", "annotation artifact.*before generation"),
+        ("manifest", "manifest.*before generation"),
+        ("review", "review attestation.*before generation"),
+    ],
+)
+def test_verified_hash_mismatch_fails_before_first_forward(tmp_path, artifact, message):
+    validator, model, verified, paths = _bound_validator(tmp_path)
+    targets = {
+        "image": paths[-1],
+        "source": verified.source_annotations,
+        "annotation": verified.annotation_path,
+        "manifest": verified.manifest_path,
+        "review": verified.review_attestation_path,
+    }
+    targets[artifact].write_bytes(b"changed-before-run")
+
+    with pytest.raises(RuntimeError, match=message):
+        validator.run()
+
+    assert model.forward_count == 0
+
+
+def test_verified_decoded_dimensions_fail_before_first_forward(tmp_path):
+    validator, model, _, _ = _bound_validator(tmp_path)
+    original = model._preprocess
+
+    def wrong_size(*args, **kwargs):
+        inputs, image, _, ratio = original(*args, **kwargs)
+        return inputs, image, (99, 100), ratio
+
+    model._preprocess = wrong_size
+
+    with pytest.raises(RuntimeError, match="Decoded image dimensions"):
+        validator.run()
+
+    assert model.forward_count == 0
+
+
+def test_verified_image_is_rehashed_after_its_generation(tmp_path):
+    validator, model, _, paths = _bound_validator(tmp_path)
+    original = model._forward_for_confidence_gate
+
+    def mutate_current(inputs, *, model=None):
+        output = original(inputs, model=model)
+        paths[0].write_bytes(b"changed-during-forward")
+        return output
+
+    model._forward_for_confidence_gate = mutate_current
+
+    with pytest.raises(RuntimeError, match="changed during generation"):
+        validator.run()
+
+    assert model.forward_count == 1
+
+
+@pytest.mark.parametrize(
+    ("artifact", "message"),
+    [
+        ("prior_image", "Benchmark image 1.*after generation"),
+        ("source", "source annotations.*after generation"),
+        ("annotation", "annotation artifact.*after generation"),
+    ],
+)
+def test_verified_files_receive_a_final_full_rehash(tmp_path, artifact, message):
+    validator, model, verified, paths = _bound_validator(tmp_path)
+    original = model._forward_for_confidence_gate
+
+    def mutate_after_prior_check(inputs, *, model=None):
+        output = original(inputs, model=model)
+        if output == 1:
+            if artifact == "prior_image":
+                paths[0].write_bytes(b"changed-after-its-own-check")
+            elif artifact == "source":
+                verified.source_annotations.write_bytes(b"changed-source")
+            else:
+                verified.annotation_path.write_bytes(b"changed-annotation")
+        return output
+
+    model._forward_for_confidence_gate = mutate_after_prior_check
+
+    with pytest.raises(RuntimeError, match=message):
+        validator.run()
+
+    assert model.forward_count == 2
+
+
+def test_verified_dataset_enforces_final_processed_image_count(tmp_path):
+    validator, model, _, _ = _bound_validator(tmp_path, binding_mutation="short_batch")
+
+    with pytest.raises(RuntimeError, match="image count"):
+        validator.run()
+
+    assert model.forward_count == 1
+
+
+def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path):
     paths = [tmp_path / "one.jpg", tmp_path / "two.jpg"]
     for path in paths:
         path.write_bytes(b"offline")
@@ -312,7 +698,7 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path, monkeypa
     model.set_classes(["dog"])
     live_model = _LivePeftModel(model.model)
     runner_context = {
-        "schema": "libreyolo.vlm-confidence-benchmark-context.v1",
+        "schema": "libreyolo.vlm-confidence-test-context.v1",
         "git": {"commit": "c" * 40, "dirty": False},
         "runtime": {
             "python": "3.11.0",
@@ -435,35 +821,6 @@ def test_serial_gate_reports_coco_deltas_quality_and_coverage(tmp_path, monkeypa
     assert report["predictions"][2]["candidate_score"] is None
     assert report["predictions"][2]["effective_score"] == 1.0
 
-    normalized_metrics, nonfinite_metrics = benchmark._normalized_metrics(metrics)
-    benchmark._write_json_atomic(
-        report_path.parent / "vlm_confidence_run.json",
-        {
-            "schema": "libreyolo.vlm-confidence-benchmark-run.v1",
-            "run_id": "1" * 32,
-            "process_id": "2" * 32,
-            "request": {
-                "dataset_yaml": str(tmp_path / "dataset.yaml"),
-                "seed": 0,
-                "model_family": "qwen3vl",
-                "model_size": "2b",
-                "device": "auto",
-                "imgsz": 100,
-                "default_conf": 0.25,
-                "confidence_iou": 0.5,
-            },
-            "execution_context": runner_context,
-            "report": {
-                "path": "vlm_confidence_report.json",
-                "sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
-            },
-            "metrics": normalized_metrics,
-            "nonfinite_metrics": list(nonfinite_metrics),
-        },
-    )
-    envelope = benchmark._load_runner_envelope(report_path, "round_trip")
-    assert envelope.run_id == "1" * 32
-    assert envelope.process_id == "2" * 32
     assert report["calibration"]["population"] == "scored_postprocessed_predictions"
     assert report["calibration"]["total_predictions"] == 3
     assert report["calibration"]["scored_predictions"] == 2

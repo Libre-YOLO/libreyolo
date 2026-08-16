@@ -20,13 +20,96 @@ from libreyolo.validation.vlm_confidence_report import VLMConfidenceReportError
 pytestmark = [pytest.mark.unit, pytest.mark.vlm]
 
 
-def _dataset(tmp_path: Path) -> Path:
-    path = tmp_path / "dataset.yaml"
-    path.write_text("names: [cat]\n", encoding="utf-8")
-    return path
+_REVIEW_CHECKS = {
+    "canonical_source": True,
+    "image_attribution_sufficiency": True,
+    "annotation_license_and_redistribution": True,
+    "privacy_and_pii": True,
+    "visual_quality": True,
+    "selection_salt_freeze": True,
+    "benchmark_suitability": True,
+    "publication_upload_authorization": True,
+}
 
 
-def _install_run_fakes(monkeypatch, events, *, metrics=None, failure=None):
+def _verified_inputs(tmp_path: Path):
+    bundle = tmp_path / "bundle"
+    annotation = bundle / "annotations" / "instances_val2017_promotion500.json"
+    annotation.parent.mkdir(parents=True)
+    annotation.write_text("{}\n", encoding="utf-8")
+    manifest = bundle / "manifest.json"
+    manifest.write_text("{}\n", encoding="utf-8")
+    source = tmp_path / "instances_val2017.json"
+    source.write_text("{}\n", encoding="utf-8")
+    images = tmp_path / "val2017"
+    images.mkdir()
+    review = tmp_path / "review.json"
+    review.write_text("{}\n", encoding="utf-8")
+    manifest_sha256 = "1" * 64
+    return SimpleNamespace(
+        manifest_path=manifest.resolve(),
+        manifest_sha256=manifest_sha256,
+        source_annotations=source.resolve(),
+        source_canonical_sha256="2" * 64,
+        source_file_sha256="6" * 64,
+        source_file_size_bytes=source.stat().st_size,
+        images_dir=images.resolve(),
+        selected_image_identity_sha256="3" * 64,
+        partition_name="promotion500",
+        partition_role="zero_shot_confidence_promotion",
+        partition_start=0,
+        partition_stop=500,
+        annotation_path=annotation.resolve(),
+        annotation_sha256="4" * 64,
+        annotation_size_bytes=annotation.stat().st_size,
+        class_names=tuple(f"class-{index}" for index in range(80)),
+        expected_images=(),
+        expected_categories=tuple(
+            {"id": index + 1, "name": f"class-{index}"} for index in range(80)
+        ),
+        expected_annotations=(),
+        review_attestation_path=review.resolve(),
+        review_attestation_sha256="5" * 64,
+        review_attestation={
+            "schema": "libreyolo.vlm-benchmark-dataset-review.v1",
+            "manifest_sha256": manifest_sha256,
+            "partition_role": "zero_shot_confidence_promotion",
+            "status": "approved",
+            "reviewer": "Offline test reviewer",
+            "reviewed_at": "2026-08-16T10:30:00Z",
+            "checks": dict(_REVIEW_CHECKS),
+        },
+    )
+
+
+def _run(verified, output, **kwargs):
+    return benchmark.run_benchmark(
+        verified.manifest_path,
+        verified.source_annotations,
+        verified.images_dir,
+        verified.review_attestation_path,
+        output,
+        **kwargs,
+    )
+
+
+def _cli_run_args(verified, output):
+    return [
+        "run",
+        "--manifest",
+        str(verified.manifest_path),
+        "--annotations",
+        str(verified.source_annotations),
+        "--images-dir",
+        str(verified.images_dir),
+        "--review-attestation",
+        str(verified.review_attestation_path),
+        "--output-root",
+        str(output),
+    ]
+
+
+def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=None):
     metrics = {"metric/finite": 0.5} if metrics is None else metrics
     report_identities = {}
 
@@ -47,7 +130,12 @@ def _install_run_fakes(monkeypatch, events, *, metrics=None, failure=None):
     class FakeModel:
         def __init__(self, *, size, device):
             events.append(("model", size, device))
-            assert events[0][0] == "determinism"
+            assert [event[0] for event in events[:4]] == [
+                "verify",
+                "pycocotools",
+                "data_config",
+                "determinism",
+            ]
             self.device = torch.device("cpu")
 
     class FakeValidator:
@@ -71,10 +159,17 @@ def _install_run_fakes(monkeypatch, events, *, metrics=None, failure=None):
                     "size": "2b",
                     "seed": self.seed,
                     "device": str(self.model.device),
+                    "class_names": list(verified.class_names),
                     "evaluation": {
                         "imgsz": [self.config.imgsz, self.config.imgsz],
                         "faster_coco_eval": self.config.faster_coco_eval,
                         "backend": "pycocotools offline",
+                        "label_to_category_id": {
+                            str(index): int(category["id"])
+                            for index, category in enumerate(
+                                verified.expected_categories
+                            )
+                        },
                     },
                     "confidence_evaluation": {
                         "default_conf": self.kwargs["default_conf"],
@@ -109,6 +204,39 @@ def _install_run_fakes(monkeypatch, events, *, metrics=None, failure=None):
         )
 
     monkeypatch.setattr(benchmark, "configure_determinism", fake_determinism)
+    monkeypatch.setattr(
+        benchmark,
+        "verify_benchmark_run_inputs",
+        lambda manifest, annotations, images_dir, review_attestation, **kwargs: (
+            events.append(
+                (
+                    "verify",
+                    manifest,
+                    annotations,
+                    images_dir,
+                    review_attestation,
+                    kwargs,
+                )
+            )
+            or verified
+        ),
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_require_pycocotools",
+        lambda: events.append(("pycocotools",)),
+    )
+
+    def fake_load_data_config(data, *, autodownload, allow_scripts):
+        payload = json.loads(Path(data).read_text(encoding="utf-8"))
+        events.append(("data_config", Path(data), autodownload, allow_scripts, payload))
+        return {
+            **payload,
+            "root": payload["path"],
+            "val_annotation_file": payload["annotations"]["val"],
+        }
+
+    monkeypatch.setattr(benchmark, "load_data_config", fake_load_data_config)
     monkeypatch.setattr(benchmark, "LibreQwen3VL", FakeModel)
     monkeypatch.setattr(benchmark, "VLMConfidenceValidator", FakeValidator)
     monkeypatch.setattr(benchmark, "compare_confidence_reports", fake_compare)
@@ -164,9 +292,11 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     tmp_path, monkeypatch
 ):
     events = []
+    verified = _verified_inputs(tmp_path)
     _install_run_fakes(
         monkeypatch,
         events,
+        verified,
         metrics={
             "metric/finite": 0.5,
             "metric/nan": float("nan"),
@@ -174,10 +304,9 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
             "metric/negative_infinity": float("-inf"),
         },
     )
-    dataset = _dataset(tmp_path)
     output = tmp_path / "run-a"
 
-    artifacts = benchmark.run_benchmark(dataset, output, seed=17, device="cuda:0")
+    artifacts = _run(verified, output, seed=17, device="cuda:0")
 
     assert artifacts.output_dir == output.resolve()
     assert artifacts.report_path.is_file()
@@ -188,14 +317,35 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     ]
     assert not list(tmp_path.glob(".run-a.tmp-*"))
     assert not (tmp_path / ".run-a.lock").exists()
-    assert [event[0] for event in events[:4]] == [
+    assert [event[0] for event in events[:7]] == [
+        "verify",
+        "pycocotools",
+        "data_config",
         "determinism",
         "model",
         "validator",
         "run",
     ]
-    config = events[2][2]
-    assert config.data == str(dataset.resolve())
+    verify_event = events[0]
+    assert verify_event[1:5] == (
+        verified.manifest_path,
+        verified.source_annotations,
+        verified.images_dir,
+        verified.review_attestation_path,
+    )
+    assert verify_event[5] == {"required_role": "zero_shot_confidence_promotion"}
+    data_event = events[2]
+    assert data_event[2:4] == (False, False)
+    assert data_event[4] == {
+        "path": str(verified.images_dir),
+        "val": str(verified.images_dir),
+        "annotations": {"val": str(verified.annotation_path)},
+        "nc": 80,
+        "names": list(verified.class_names),
+    }
+    config = events[5][2]
+    assert Path(config.data).name == "verified_dataset.yaml"
+    assert not Path(config.data).exists()
     assert config.batch_size == 1
     assert config.num_workers == 0
     assert config.allow_download_scripts is False
@@ -203,9 +353,10 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     assert config.save_json is True
     assert config.save_plots is True
     assert config.faster_coco_eval is False
-    assert events[2][3]["default_conf"] == 0.25
-    assert events[2][3]["confidence_iou"] == 0.5
-    assert events[2][3]["benchmark_context"]["git"] == {
+    assert events[5][3]["default_conf"] == 0.25
+    assert events[5][3]["confidence_iou"] == 0.5
+    assert events[5][3]["verified_dataset"] is verified
+    assert events[5][3]["benchmark_context"]["git"] == {
         "commit": "a" * 40,
         "dirty": False,
     }
@@ -214,11 +365,14 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     assert "NaN" not in raw_envelope
     assert "Infinity" not in raw_envelope
     envelope = json.loads(raw_envelope)
-    assert envelope["schema"] == "libreyolo.vlm-confidence-benchmark-run.v1"
+    assert envelope["schema"] == "libreyolo.vlm-confidence-benchmark-run.v2"
     assert benchmark._RUN_IDENTIFIER.fullmatch(envelope["run_id"])
     assert benchmark._RUN_IDENTIFIER.fullmatch(envelope["process_id"])
     assert envelope["request"] == {
-        "dataset_yaml": str(dataset.resolve()),
+        "manifest": str(verified.manifest_path),
+        "annotations": str(verified.source_annotations),
+        "images_dir": str(verified.images_dir),
+        "review_attestation": str(verified.review_attestation_path),
         "seed": 17,
         "model_family": "qwen3vl",
         "model_size": "2b",
@@ -233,8 +387,39 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     }
     assert (
         envelope["execution_context"]["schema"]
-        == "libreyolo.vlm-confidence-benchmark-context.v1"
+        == "libreyolo.vlm-confidence-benchmark-context.v2"
     )
+    dataset_context = envelope["execution_context"]["dataset"]
+    assert dataset_context["manifest"] == {
+        "schema": "libreyolo.vlm-benchmark-dataset.v1",
+        "sha256": verified.manifest_sha256,
+    }
+    assert dataset_context["source"] == {
+        "canonical_annotation_sha256": verified.source_canonical_sha256,
+        "file_sha256": verified.source_file_sha256,
+        "file_size_bytes": verified.source_file_size_bytes,
+        "selected_image_identity_sha256": verified.selected_image_identity_sha256,
+    }
+    assert dataset_context["partition"] == {
+        "name": "promotion500",
+        "role": "zero_shot_confidence_promotion",
+        "start": 0,
+        "stop": 500,
+        "image_count": 500,
+        "annotation_artifact": ("annotations/instances_val2017_promotion500.json"),
+        "annotation_size_bytes": verified.annotation_size_bytes,
+        "annotation_sha256": verified.annotation_sha256,
+    }
+    assert dataset_context["classes"] == {
+        "count": 80,
+        "names": list(verified.class_names),
+        "category_ids": [
+            int(category["id"]) for category in verified.expected_categories
+        ],
+    }
+    assert dataset_context["review"]["sha256"] == verified.review_attestation_sha256
+    assert dataset_context["review"]["checks"] == _REVIEW_CHECKS
+    assert str(tmp_path.resolve()) not in benchmark._json_text(dataset_context)
     assert envelope["execution_context"]["determinism"]["seed"] == 17
     assert (
         envelope["report"]["sha256"]
@@ -255,8 +440,9 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
 
 def test_runner_envelope_binds_companion_report_context(tmp_path, monkeypatch):
     events = []
-    report_identities = _install_run_fakes(monkeypatch, events)
-    artifacts = benchmark.run_benchmark(_dataset(tmp_path), tmp_path / "run-a")
+    verified = _verified_inputs(tmp_path)
+    report_identities = _install_run_fakes(monkeypatch, events, verified)
+    artifacts = _run(verified, tmp_path / "run-a")
     envelope = json.loads(artifacts.envelope_path.read_text(encoding="utf-8"))
 
     validated = benchmark._load_runner_envelope(artifacts.report_path, "run")
@@ -292,6 +478,64 @@ def test_runner_envelope_binds_companion_report_context(tmp_path, monkeypatch):
             lambda item: item["request"].__setitem__("default_conf", "0.25"),
             "default_conf",
         ),
+        (
+            lambda item: item["request"].__setitem__("manifest", "manifest.json"),
+            "absolute operational path",
+        ),
+        (
+            lambda item: item["execution_context"]["dataset"]["manifest"].__setitem__(
+                "sha256", "0" * 64
+            ),
+            "review.manifest_sha256",
+        ),
+        (
+            lambda item: item["execution_context"]["dataset"]["source"].__setitem__(
+                "file_sha256", "invalid"
+            ),
+            "source.file_sha256",
+        ),
+        (
+            lambda item: item["execution_context"]["dataset"]["source"].__setitem__(
+                "file_size_bytes", 0
+            ),
+            "source.file_size_bytes",
+        ),
+        (
+            lambda item: item["execution_context"]["dataset"]["partition"].__setitem__(
+                "role", "fine_tune_training"
+            ),
+            "partition.role",
+        ),
+        (
+            lambda item: item["execution_context"]["dataset"]["partition"].__setitem__(
+                "image_count", 499
+            ),
+            "partition.image_count",
+        ),
+        (
+            lambda item: item["execution_context"]["dataset"]["classes"].__setitem__(
+                "category_ids", list(reversed(range(1, 81)))
+            ),
+            "classes.category_ids",
+        ),
+        (
+            lambda item: item["execution_context"]["dataset"]["review"].__setitem__(
+                "status", "pending"
+            ),
+            "review.status",
+        ),
+        (
+            lambda item: item["execution_context"]["dataset"]["review"][
+                "checks"
+            ].__setitem__("privacy_and_pii", False),
+            "review.checks",
+        ),
+        (
+            lambda item: item["execution_context"]["dataset"].__setitem__(
+                "absolute_path", "C:/forbidden"
+            ),
+            "unsupported absolute_path",
+        ),
     ):
         tampered = json.loads(json.dumps(envelope))
         mutate(tampered)
@@ -325,6 +569,38 @@ def test_runner_envelope_binds_companion_report_context(tmp_path, monkeypatch):
                 "backend", "faster-coco-eval 1.7.2"
             ),
             "evaluation.backend",
+        ),
+        (
+            lambda item: item["evaluation"].pop("label_to_category_id"),
+            "classes.category_ids",
+        ),
+        (
+            lambda item: item["evaluation"]["label_to_category_id"].__setitem__(
+                "0", 80
+            ),
+            "classes.category_ids",
+        ),
+        (
+            lambda item: item["evaluation"].__setitem__(
+                "label_to_category_id",
+                {
+                    str(index): category_id
+                    for index, category_id in enumerate(reversed(range(1, 81)))
+                },
+            ),
+            "classes.category_ids",
+        ),
+        (
+            lambda item: item.__setitem__(
+                "class_names", [*item["class_names"][:-1], "wrong-class"]
+            ),
+            "classes.names",
+        ),
+        (
+            lambda item: item["benchmark_run"]["dataset"]["review"].__setitem__(
+                "sha256", "0" * 64
+            ),
+            "execution_context",
         ),
     ):
         benchmark._write_json_atomic(artifacts.envelope_path, envelope)
@@ -370,15 +646,17 @@ def test_runner_envelope_wraps_oversized_json_integer(tmp_path):
 
 def test_run_benchmark_cleans_staging_artifacts_after_failure(tmp_path, monkeypatch):
     events = []
+    verified = _verified_inputs(tmp_path)
     _install_run_fakes(
         monkeypatch,
         events,
+        verified,
         failure=RuntimeError("offline failure"),
     )
     output = tmp_path / "failed-run"
 
     with pytest.raises(RuntimeError, match="offline failure"):
-        benchmark.run_benchmark(_dataset(tmp_path), output)
+        _run(verified, output)
 
     assert not output.exists()
     assert not list(tmp_path.glob(".failed-run.tmp-*"))
@@ -387,7 +665,8 @@ def test_run_benchmark_cleans_staging_artifacts_after_failure(tmp_path, monkeypa
 
 def test_run_benchmark_rejects_code_drift_during_generation(tmp_path, monkeypatch):
     events = []
-    _install_run_fakes(monkeypatch, events)
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
     contexts = iter(
         [
             {"commit": "a" * 40, "dirty": False},
@@ -398,7 +677,7 @@ def test_run_benchmark_rejects_code_drift_during_generation(tmp_path, monkeypatc
     output = tmp_path / "drifted-run"
 
     with pytest.raises(RuntimeError, match="changed during execution"):
-        benchmark.run_benchmark(_dataset(tmp_path), output)
+        _run(verified, output)
 
     assert not output.exists()
     assert not list(tmp_path.glob(".drifted-run.tmp-*"))
@@ -406,7 +685,7 @@ def test_run_benchmark_rejects_code_drift_during_generation(tmp_path, monkeypatc
 
 
 def test_run_benchmark_refuses_overwrite_before_git_or_model(tmp_path, monkeypatch):
-    dataset = _dataset(tmp_path)
+    verified = _verified_inputs(tmp_path)
     output = tmp_path / "existing"
     output.mkdir()
     marker = output / "keep.txt"
@@ -423,12 +702,13 @@ def test_run_benchmark_refuses_overwrite_before_git_or_model(tmp_path, monkeypat
     )
 
     with pytest.raises(benchmark.BenchmarkOutputExistsError):
-        benchmark.run_benchmark(dataset, output)
+        _run(verified, output)
 
     assert marker.read_text(encoding="utf-8") == "preserve"
 
 
 def test_run_benchmark_refuses_broken_output_symlink(tmp_path, monkeypatch):
+    verified = _verified_inputs(tmp_path)
     target = tmp_path / "missing-target"
     output = tmp_path / "broken-output"
     try:
@@ -442,13 +722,14 @@ def test_run_benchmark_refuses_broken_output_symlink(tmp_path, monkeypatch):
     )
 
     with pytest.raises(benchmark.BenchmarkOutputExistsError):
-        benchmark.run_benchmark(_dataset(tmp_path), output)
+        _run(verified, output)
 
     assert output.is_symlink()
     assert not target.exists()
 
 
 def test_run_benchmark_refuses_output_inside_git_worktree(tmp_path, monkeypatch):
+    verified = _verified_inputs(tmp_path)
     monkeypatch.setattr(benchmark, "_repo_root", lambda: tmp_path)
     monkeypatch.setattr(
         benchmark,
@@ -462,7 +743,7 @@ def test_run_benchmark_refuses_output_inside_git_worktree(tmp_path, monkeypatch)
     )
 
     with pytest.raises(benchmark.BenchmarkInputError, match="outside the git"):
-        benchmark.run_benchmark(_dataset(tmp_path), tmp_path / "runs" / "run-a")
+        _run(verified, tmp_path / "runs" / "run-a")
 
 
 def test_atomic_json_write_does_not_leave_partial_file(tmp_path, monkeypatch):
@@ -565,6 +846,7 @@ def test_attention_backend_rejects_flash_attention():
 
 
 def test_run_benchmark_refuses_dirty_worktree_before_model(tmp_path, monkeypatch):
+    verified = _verified_inputs(tmp_path)
     monkeypatch.setattr(
         benchmark,
         "_git_context",
@@ -577,7 +859,7 @@ def test_run_benchmark_refuses_dirty_worktree_before_model(tmp_path, monkeypatch
     )
 
     with pytest.raises(benchmark.BenchmarkInputError, match="clean git worktree"):
-        benchmark.run_benchmark(_dataset(tmp_path), tmp_path / "output")
+        _run(verified, tmp_path / "output")
 
 
 @pytest.mark.parametrize("override", ["1", "true", "YES", "on"])
@@ -585,21 +867,195 @@ def test_run_benchmark_refuses_faster_coco_env_before_model(
     override, tmp_path, monkeypatch
 ):
     events = []
-    _install_run_fakes(monkeypatch, events)
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
     monkeypatch.setenv("LIBREYOLO_FASTER_COCO_EVAL", override)
 
     with pytest.raises(benchmark.BenchmarkInputError, match="faster-coco-eval"):
-        benchmark.run_benchmark(_dataset(tmp_path), tmp_path / "run-a")
+        _run(verified, tmp_path / "run-a")
 
     assert events == []
+
+
+def test_run_benchmark_translates_dataset_rejection_before_any_execution(
+    tmp_path, monkeypatch
+):
+    verified = _verified_inputs(tmp_path)
+    output = tmp_path / "rejected"
+    monkeypatch.setattr(
+        benchmark,
+        "_git_context",
+        lambda: {"commit": "a" * 40, "dirty": False},
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "verify_benchmark_run_inputs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            benchmark.BenchmarkDatasetError("review attestation is not approved")
+        ),
+    )
+    for name in (
+        "_require_pycocotools",
+        "load_data_config",
+        "configure_determinism",
+        "LibreQwen3VL",
+        "_staged_output",
+    ):
+        monkeypatch.setattr(
+            benchmark,
+            name,
+            lambda *args, _name=name, **kwargs: pytest.fail(
+                f"{_name} must not run after dataset rejection"
+            ),
+        )
+
+    with pytest.raises(
+        benchmark.BenchmarkInputError, match="review attestation is not approved"
+    ):
+        _run(verified, output)
+
+    assert not output.exists()
+    assert not (tmp_path / ".rejected.lock").exists()
+
+
+def test_verified_dataset_yaml_round_trips_through_real_local_loader(tmp_path):
+    verified = _verified_inputs(tmp_path)
+
+    with benchmark._temporary_verified_dataset_yaml(verified) as dataset_yaml:
+        payload = json.loads(dataset_yaml.read_text(encoding="utf-8"))
+        temporary_parent = dataset_yaml.parent
+        assert payload == {
+            "path": str(verified.images_dir),
+            "val": str(verified.images_dir),
+            "annotations": {"val": str(verified.annotation_path)},
+            "nc": 80,
+            "names": list(verified.class_names),
+        }
+
+    assert not temporary_parent.exists()
+
+
+def test_run_benchmark_preflights_pycocotools_before_config_or_model(
+    tmp_path, monkeypatch
+):
+    verified = _verified_inputs(tmp_path)
+    events = []
+    monkeypatch.setattr(
+        benchmark,
+        "_git_context",
+        lambda: {"commit": "a" * 40, "dirty": False},
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "verify_benchmark_run_inputs",
+        lambda *args, **kwargs: events.append(("verify",)) or verified,
+    )
+
+    def reject_dependency():
+        events.append(("pycocotools",))
+        raise benchmark.BenchmarkInputError("pycocotools is required")
+
+    monkeypatch.setattr(benchmark, "_require_pycocotools", reject_dependency)
+    for name in (
+        "load_data_config",
+        "configure_determinism",
+        "LibreQwen3VL",
+        "_staged_output",
+    ):
+        monkeypatch.setattr(
+            benchmark,
+            name,
+            lambda *args, _name=name, **kwargs: pytest.fail(
+                f"{_name} must not run after dependency rejection"
+            ),
+        )
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="pycocotools"):
+        _run(verified, tmp_path / "missing-dependency")
+
+    assert events == [("verify",), ("pycocotools",)]
+
+
+def test_run_benchmark_rejects_resolved_path_drift_before_staging_or_model(
+    tmp_path, monkeypatch
+):
+    verified = _verified_inputs(tmp_path)
+    events = []
+    _install_run_fakes(monkeypatch, events, verified)
+    wrong_images = tmp_path / "wrong-images"
+    wrong_images.mkdir()
+
+    def wrong_config(data, *, autodownload, allow_scripts):
+        events.append(("data_config_drift", autodownload, allow_scripts))
+        return {
+            "path": str(wrong_images),
+            "root": str(wrong_images),
+            "val": str(wrong_images),
+            "annotations": {"val": str(verified.annotation_path)},
+            "val_annotation_file": str(verified.annotation_path),
+            "nc": 80,
+            "names": list(verified.class_names),
+        }
+
+    monkeypatch.setattr(benchmark, "load_data_config", wrong_config)
+    monkeypatch.setattr(
+        benchmark,
+        "_staged_output",
+        lambda *args, **kwargs: pytest.fail("staging must not begin"),
+    )
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="root does not match"):
+        _run(verified, tmp_path / "drift")
+
+    assert [event[0] for event in events] == [
+        "verify",
+        "pycocotools",
+        "data_config_drift",
+    ]
+
+
+def test_run_cli_reports_dataset_rejection_as_input_error(
+    tmp_path, monkeypatch, capsys
+):
+    verified = _verified_inputs(tmp_path)
+    monkeypatch.setattr(
+        benchmark,
+        "_git_context",
+        lambda: {"commit": "a" * 40, "dirty": False},
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "verify_benchmark_run_inputs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            benchmark.BenchmarkDatasetError("manifest mismatch")
+        ),
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "LibreQwen3VL",
+        lambda **kwargs: pytest.fail("model must not be constructed"),
+    )
+
+    code = benchmark.main(_cli_run_args(verified, tmp_path / "rejected"))
+
+    assert code == benchmark.EXIT_USAGE
+    status = _status(capsys)
+    assert status["error"]["kind"] == "input"
+    assert "manifest mismatch" in status["error"]["message"]
 
 
 def test_parse_cli_args_covers_run_and_compare_contracts():
     run = benchmark.parse_cli_args(
         [
             "run",
-            "--data",
-            "dataset.yaml",
+            "--manifest",
+            "bundle/manifest.json",
+            "--annotations",
+            "instances_val2017.json",
+            "--images-dir",
+            "val2017",
+            "--review-attestation",
+            "review.json",
             "--output-root",
             "run-a",
             "--seed",
@@ -609,7 +1065,10 @@ def test_parse_cli_args_covers_run_and_compare_contracts():
         ]
     )
     assert run.mode == "run"
-    assert run.data == Path("dataset.yaml")
+    assert run.manifest == Path("bundle/manifest.json")
+    assert run.annotations == Path("instances_val2017.json")
+    assert run.images_dir == Path("val2017")
+    assert run.review_attestation == Path("review.json")
     assert run.output_root == Path("run-a")
     assert run.seed == 19
     assert run.device == "cuda:1"
@@ -638,12 +1097,48 @@ def test_parse_cli_args_covers_run_and_compare_contracts():
         benchmark.parse_cli_args(
             [
                 "run",
-                "--data",
-                "dataset.yaml",
+                "--manifest",
+                "bundle/manifest.json",
+                "--annotations",
+                "instances_val2017.json",
+                "--images-dir",
+                "val2017",
+                "--review-attestation",
+                "review.json",
                 "--output-root",
                 "run-a",
                 "--model-size",
                 "4b",
+            ]
+        )
+
+    with pytest.raises(benchmark._CLIUsageError):
+        benchmark.parse_cli_args(
+            [
+                "run",
+                "--data",
+                "dataset.yaml",
+                "--output-root",
+                "run-a",
+            ]
+        )
+
+    with pytest.raises(benchmark._CLIUsageError):
+        benchmark.parse_cli_args(
+            [
+                "run",
+                "--manifest",
+                "bundle/manifest.json",
+                "--annotations",
+                "instances_val2017.json",
+                "--images-dir",
+                "val2017",
+                "--review-attestation",
+                "review.json",
+                "--output-root",
+                "run-a",
+                "--partition-role",
+                "confidence_smoke",
             ]
         )
 
@@ -662,22 +1157,16 @@ def test_compare_cli_rejects_invalid_tolerances_as_json_usage(bad_tolerance, cap
 
 def test_run_cli_success_emits_one_strict_json_status(tmp_path, monkeypatch, capsys):
     events = []
+    verified = _verified_inputs(tmp_path)
     _install_run_fakes(
         monkeypatch,
         events,
+        verified,
         metrics={"metric/undefined": float("nan")},
     )
     output = tmp_path / "run-a"
 
-    code = benchmark.main(
-        [
-            "run",
-            "--data",
-            str(_dataset(tmp_path)),
-            "--output-root",
-            str(output),
-        ]
-    )
+    code = benchmark.main(_cli_run_args(verified, output))
 
     assert code == benchmark.EXIT_OK
     status = _status(capsys)
@@ -690,6 +1179,7 @@ def test_run_cli_success_emits_one_strict_json_status(tmp_path, monkeypatch, cap
 def test_run_cli_routes_library_stdout_away_from_json_status(
     tmp_path, monkeypatch, capsys
 ):
+    verified = _verified_inputs(tmp_path)
     output = tmp_path / "run-a"
 
     def fake_run(*args, **kwargs):
@@ -704,9 +1194,7 @@ def test_run_cli_routes_library_stdout_away_from_json_status(
 
     monkeypatch.setattr(benchmark, "run_benchmark", fake_run)
 
-    code = benchmark.main(
-        ["run", "--data", "dataset.yaml", "--output-root", str(output)]
-    )
+    code = benchmark.main(_cli_run_args(verified, output))
 
     assert code == benchmark.EXIT_OK
     captured = capsys.readouterr()
@@ -716,18 +1204,11 @@ def test_run_cli_routes_library_stdout_away_from_json_status(
 
 
 def test_run_cli_reports_overwrite_with_distinct_exit_code(tmp_path, capsys):
+    verified = _verified_inputs(tmp_path)
     output = tmp_path / "occupied"
     output.mkdir()
 
-    code = benchmark.main(
-        [
-            "run",
-            "--data",
-            str(_dataset(tmp_path)),
-            "--output-root",
-            str(output),
-        ]
-    )
+    code = benchmark.main(_cli_run_args(verified, output))
 
     assert code == benchmark.EXIT_OUTPUT_EXISTS
     status = _status(capsys)
@@ -808,22 +1289,16 @@ def test_run_cli_reports_execution_failure_and_leaves_no_output(
     tmp_path, monkeypatch, capsys
 ):
     events = []
+    verified = _verified_inputs(tmp_path)
     _install_run_fakes(
         monkeypatch,
         events,
+        verified,
         failure=RuntimeError("generation failed"),
     )
     output = tmp_path / "failed"
 
-    code = benchmark.main(
-        [
-            "run",
-            "--data",
-            str(_dataset(tmp_path)),
-            "--output-root",
-            str(output),
-        ]
-    )
+    code = benchmark.main(_cli_run_args(verified, output))
 
     assert code == benchmark.EXIT_RUN_FAILED
     status = _status(capsys)
@@ -901,8 +1376,9 @@ def test_direct_compare_requires_distinct_processes(monkeypatch):
 
 @pytest.mark.parametrize("value", [True, -1, 2**32, 1.5, "1.5"])
 def test_run_benchmark_rejects_invalid_seed_before_side_effects(value, tmp_path):
+    verified = _verified_inputs(tmp_path)
     with pytest.raises(benchmark.BenchmarkInputError):
-        benchmark.run_benchmark(_dataset(tmp_path), tmp_path / "output", seed=value)
+        _run(verified, tmp_path / "output", seed=value)
 
 
 def test_metric_normalization_rejects_non_numeric_values():

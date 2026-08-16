@@ -18,7 +18,7 @@ import re
 import sys
 import time
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from enum import Enum
 from importlib import metadata
@@ -34,6 +34,7 @@ from libreyolo.utils.coco_geometry import clipped_coco_bbox_xyxy
 
 from .coco_evaluator import COCOEvaluator
 from .detection_validator import DetectionValidator
+from .vlm_benchmark_dataset import VerifiedBenchmarkRunInputs
 from .vlm_confidence import (
     VLMDetection,
     benchmark_manifest_hash,
@@ -48,6 +49,8 @@ logger = logging.getLogger(__name__)
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 _CONFIDENCE_METHOD = "qwen_generation_policy_label_bbox_geomean_v1"
 _CALIBRATION_BINS = 10
+_BENCHMARK_DATASET_CONTEXT_SCHEMA = "libreyolo.vlm-confidence-benchmark-dataset.v1"
+_BENCHMARK_DATASET_MANIFEST_SCHEMA = "libreyolo.vlm-benchmark-dataset.v1"
 _MODEL_WEIGHT_SUFFIXES = {
     ".bin",
     ".h5",
@@ -104,6 +107,7 @@ class VLMConfidenceValidator(DetectionValidator):
         default_conf: float = 0.25,
         confidence_iou: float = 0.5,
         benchmark_context: Optional[Mapping[str, Any]] = None,
+        verified_dataset: Optional[VerifiedBenchmarkRunInputs] = None,
         **kwargs,
     ) -> None:
         self.generation_model = generation_model
@@ -126,6 +130,14 @@ class VLMConfidenceValidator(DetectionValidator):
             if benchmark_context is None
             else self._canonical_config_value(benchmark_context, "benchmark_context")
         )
+        if verified_dataset is not None and not isinstance(
+            verified_dataset, VerifiedBenchmarkRunInputs
+        ):
+            raise TypeError(
+                "verified_dataset must be VerifiedBenchmarkRunInputs when supplied."
+            )
+        self._verified_dataset = verified_dataset
+        self._verified_image_paths: tuple[Path, ...] = ()
         super().__init__(model, config, **kwargs)
         self._validate_gate_contract()
 
@@ -151,6 +163,15 @@ class VLMConfidenceValidator(DetectionValidator):
                 "VLM confidence validation is a local-only reproducibility gate; "
                 "allow_download_scripts=True is not supported."
             )
+        context_has_dataset = isinstance(self._benchmark_context, Mapping) and (
+            "dataset" in self._benchmark_context
+        )
+        if context_has_dataset and self._verified_dataset is None:
+            raise ValueError(
+                "benchmark_context.dataset requires matching verified_dataset evidence."
+            )
+        if self._verified_dataset is not None:
+            self._validate_verified_dataset_context()
         for hook in (
             "_preprocess",
             "_forward_for_confidence_gate",
@@ -160,6 +181,352 @@ class VLMConfidenceValidator(DetectionValidator):
         ):
             if not callable(getattr(self.model, hook, None)):
                 raise TypeError(f"VLM confidence validation requires model.{hook}().")
+
+    def _expected_verified_dataset_context(self) -> dict[str, Any]:
+        verified = self._verified_dataset
+        if verified is None:  # pragma: no cover - guarded by the caller
+            raise RuntimeError("Verified benchmark dataset evidence is unavailable.")
+        try:
+            annotation_artifact = verified.annotation_path.relative_to(
+                verified.manifest_path.parent
+            ).as_posix()
+        except ValueError as exc:
+            raise ValueError(
+                "verified_dataset.annotation_path must be inside the manifest bundle."
+            ) from exc
+        review = verified.review_attestation
+        return self._canonical_config_value(
+            {
+                "schema": _BENCHMARK_DATASET_CONTEXT_SCHEMA,
+                "manifest": {
+                    "schema": _BENCHMARK_DATASET_MANIFEST_SCHEMA,
+                    "sha256": verified.manifest_sha256,
+                },
+                "source": {
+                    "canonical_annotation_sha256": (verified.source_canonical_sha256),
+                    "file_sha256": verified.source_file_sha256,
+                    "file_size_bytes": verified.source_file_size_bytes,
+                    "selected_image_identity_sha256": (
+                        verified.selected_image_identity_sha256
+                    ),
+                },
+                "partition": {
+                    "name": verified.partition_name,
+                    "role": verified.partition_role,
+                    "start": verified.partition_start,
+                    "stop": verified.partition_stop,
+                    "image_count": (verified.partition_stop - verified.partition_start),
+                    "annotation_artifact": annotation_artifact,
+                    "annotation_size_bytes": verified.annotation_size_bytes,
+                    "annotation_sha256": verified.annotation_sha256,
+                },
+                "classes": {
+                    "count": len(verified.class_names),
+                    "names": list(verified.class_names),
+                    "category_ids": [
+                        int(category["id"]) for category in verified.expected_categories
+                    ],
+                },
+                "review": {
+                    "schema": review.get("schema"),
+                    "sha256": verified.review_attestation_sha256,
+                    "manifest_sha256": review.get("manifest_sha256"),
+                    "partition_role": review.get("partition_role"),
+                    "status": review.get("status"),
+                    "reviewer": review.get("reviewer"),
+                    "reviewed_at": review.get("reviewed_at"),
+                    "checks": review.get("checks"),
+                },
+            },
+            "verified_dataset_context",
+        )
+
+    def _validate_verified_dataset_context(self) -> None:
+        verified = self._verified_dataset
+        if verified is None:  # pragma: no cover - guarded by the caller
+            return
+        if verified.partition_stop <= verified.partition_start:
+            raise ValueError("verified_dataset partition bounds must be increasing.")
+        expected_count = verified.partition_stop - verified.partition_start
+        if len(verified.expected_images) != expected_count:
+            raise ValueError(
+                "verified_dataset expected image count does not match its partition."
+            )
+        if not verified.expected_categories or not verified.class_names:
+            raise ValueError(
+                "verified_dataset requires expected categories and class names."
+            )
+        expected_context = self._expected_verified_dataset_context()
+        actual_context = (
+            self._benchmark_context.get("dataset")
+            if isinstance(self._benchmark_context, Mapping)
+            else None
+        )
+        if actual_context != expected_context:
+            raise ValueError(
+                "benchmark_context.dataset does not match verified_dataset evidence."
+            )
+
+    @staticmethod
+    def _stable_file_identity(path: Path, label: str) -> tuple[str, int, Path]:
+        if path.is_symlink():
+            raise RuntimeError(f"{label} must not be a symlink: {path}")
+        try:
+            resolved = path.resolve(strict=True)
+        except (FileNotFoundError, OSError) as exc:
+            raise FileNotFoundError(f"{label} does not exist: {path}") from exc
+        if not resolved.is_file():
+            raise FileNotFoundError(f"{label} is not a regular file: {resolved}")
+        try:
+            before = resolved.stat()
+            digest = hashlib.sha256()
+            with resolved.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            after = resolved.stat()
+        except OSError as exc:
+            raise RuntimeError(f"Could not fingerprint {label}: {resolved}") from exc
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if before_identity != after_identity:
+            raise RuntimeError(f"{label} changed while it was fingerprinted.")
+        return digest.hexdigest(), int(after.st_size), resolved
+
+    @classmethod
+    def _require_file_identity(
+        cls,
+        path: Path,
+        *,
+        expected_sha256: str,
+        label: str,
+        expected_size: Optional[int] = None,
+    ) -> Path:
+        digest, size, resolved = cls._stable_file_identity(path, label)
+        if digest != expected_sha256 or (
+            expected_size is not None and size != expected_size
+        ):
+            raise RuntimeError(f"{label} does not match the verified benchmark data.")
+        return resolved
+
+    def _expected_evaluator_ground_truth(self) -> dict[str, Any]:
+        verified = self._verified_dataset
+        if verified is None:  # pragma: no cover - guarded by the caller
+            raise RuntimeError("Verified benchmark dataset evidence is unavailable.")
+        images = [
+            {
+                "id": int(image["image_id"]),
+                "width": int(image["width"]),
+                "height": int(image["height"]),
+            }
+            for image in verified.expected_images
+        ]
+        images.sort(key=lambda item: item["id"])
+        categories = [
+            {"id": int(category["id"]), "name": str(category["name"])}
+            for category in verified.expected_categories
+        ]
+        categories.sort(key=lambda item: item["id"])
+        annotations = []
+        for annotation in verified.expected_annotations:
+            bbox = [float(value) for value in annotation.get("bbox", ())]
+            if len(bbox) != 4:
+                raise ValueError(
+                    "verified_dataset contains an annotation with an invalid bbox."
+                )
+            annotations.append(
+                {
+                    "id": int(annotation["id"]),
+                    "image_id": int(annotation["image_id"]),
+                    "category_id": int(annotation["category_id"]),
+                    "bbox": bbox,
+                    "area": float(annotation.get("area", bbox[2] * bbox[3])),
+                    "iscrowd": int(annotation.get("iscrowd", 0)),
+                    "ignore": int(annotation.get("ignore", 0)),
+                }
+            )
+        annotations.sort(
+            key=lambda item: (
+                item["image_id"],
+                item["category_id"],
+                item["id"],
+            )
+        )
+        return {
+            "images": images,
+            "categories": categories,
+            "annotations": annotations,
+        }
+
+    def _verify_bound_dataset_files(self, phase: str) -> None:
+        verified = self._verified_dataset
+        if verified is None:
+            return
+        self._require_file_identity(
+            verified.source_annotations,
+            expected_sha256=verified.source_file_sha256,
+            expected_size=verified.source_file_size_bytes,
+            label=f"Benchmark source annotations ({phase})",
+        )
+        self._require_file_identity(
+            verified.manifest_path,
+            expected_sha256=verified.manifest_sha256,
+            label=f"Benchmark manifest ({phase})",
+        )
+        self._require_file_identity(
+            verified.annotation_path,
+            expected_sha256=verified.annotation_sha256,
+            expected_size=verified.annotation_size_bytes,
+            label=f"Benchmark annotation artifact ({phase})",
+        )
+        self._require_file_identity(
+            verified.review_attestation_path,
+            expected_sha256=verified.review_attestation_sha256,
+            label=f"Benchmark review attestation ({phase})",
+        )
+        if len(self._verified_image_paths) != len(verified.expected_images):
+            raise RuntimeError(
+                "Verified benchmark image paths were not completely preflighted."
+            )
+        for path, image in zip(self._verified_image_paths, verified.expected_images):
+            self._require_file_identity(
+                path,
+                expected_sha256=str(image["sha256"]),
+                expected_size=int(image["size_bytes"]),
+                label=f"Benchmark image {image['image_id']} ({phase})",
+            )
+
+    def _preflight_bound_dataset(
+        self, evaluator_ground_truth: Mapping[str, Any]
+    ) -> None:
+        verified = self._verified_dataset
+        if verified is None:
+            return
+        annotation_path = self._coco_annotation_file
+        if annotation_path is None:
+            raise RuntimeError(
+                "Verified VLM benchmark requires a native COCO annotation artifact."
+            )
+        _, _, resolved_annotation = self._stable_file_identity(
+            Path(annotation_path), "Resolved COCO annotation artifact"
+        )
+        if resolved_annotation != verified.annotation_path:
+            raise RuntimeError(
+                "Resolved COCO annotation path does not match verified_dataset."
+            )
+
+        expected_ground_truth = self._expected_evaluator_ground_truth()
+        for field in ("images", "categories", "annotations"):
+            if evaluator_ground_truth.get(field) != expected_ground_truth[field]:
+                raise RuntimeError(
+                    f"Evaluator ground-truth {field} do not match verified_dataset."
+                )
+
+        expected_categories = tuple(
+            (int(category["id"]), str(category["name"]))
+            for category in verified.expected_categories
+        )
+        expected_class_names = tuple(verified.class_names)
+        if tuple(self.class_names or ()) != expected_class_names:
+            raise RuntimeError(
+                "Dataset class names do not match verified_dataset categories."
+            )
+        if tuple(name for _, name in expected_categories) != expected_class_names:
+            raise RuntimeError(
+                "Verified category order does not match its class-name vocabulary."
+            )
+        expected_category_map = {
+            label: category_id
+            for label, (category_id, _) in enumerate(expected_categories)
+        }
+        if self._coco_label_to_category_id != expected_category_map:
+            raise RuntimeError(
+                "COCO class-to-category mapping does not match verified_dataset."
+            )
+
+        dataset = self.dataloader.dataset
+        raw_ids = getattr(dataset, "ids", None)
+        if not isinstance(raw_ids, Sequence) or isinstance(
+            raw_ids, (str, bytes, bytearray)
+        ):
+            raise RuntimeError(
+                "Verified VLM benchmark requires an ordered native COCO dataset."
+            )
+        if any(type(value) is not int for value in raw_ids):
+            raise RuntimeError(
+                "Verified VLM benchmark requires canonical integer COCO image ids."
+            )
+        actual_ids = tuple(raw_ids)
+        expected_ids = tuple(
+            int(image["image_id"]) for image in verified.expected_images
+        )
+        if actual_ids != expected_ids or len(dataset) != len(expected_ids):
+            raise RuntimeError(
+                "Validation image order does not match verified_dataset."
+            )
+
+        coco = getattr(dataset, "coco", None)
+        coco_images = getattr(coco, "imgs", None)
+        if not isinstance(coco_images, Mapping):
+            raise RuntimeError(
+                "Verified VLM benchmark requires native COCO image metadata."
+            )
+        image_root = verified.images_dir.resolve(strict=True)
+        resolved_paths = []
+        for index, (image_id, expected) in enumerate(
+            zip(expected_ids, verified.expected_images)
+        ):
+            actual = coco_images.get(image_id)
+            if not isinstance(actual, Mapping):
+                raise RuntimeError(
+                    f"COCO image metadata is missing verified image {image_id}."
+                )
+            expected_name = str(expected["file_name"])
+            actual_name = str(actual.get("file_name", ""))
+            if actual_name != expected_name or Path(actual_name).name != actual_name:
+                raise RuntimeError(
+                    f"COCO image name does not match verified image {image_id}."
+                )
+            expected_size = (int(expected["width"]), int(expected["height"]))
+            actual_size = (int(actual.get("width", 0)), int(actual.get("height", 0)))
+            if actual_size != expected_size:
+                raise RuntimeError(
+                    f"COCO image dimensions do not match verified image {image_id}."
+                )
+            expected_candidate = image_root / expected_name
+            if expected_candidate.is_symlink():
+                raise RuntimeError(
+                    f"Verified image path is unsafe for image {image_id}."
+                )
+            expected_path = expected_candidate.resolve(strict=True)
+            if expected_path.parent != image_root:
+                raise RuntimeError(
+                    f"Verified image path is unsafe for image {image_id}."
+                )
+            actual_path = self._resolve_required_image_path(dataset, index, image_id)
+            if actual_path.is_symlink():
+                raise RuntimeError(
+                    f"Validation image path must not be a symlink: {actual_path}"
+                )
+            actual_path = actual_path.resolve(strict=True)
+            if actual_path != expected_path:
+                raise RuntimeError(
+                    f"Validation image path does not match verified image {image_id}."
+                )
+            resolved_paths.append(actual_path)
+        self._verified_image_paths = tuple(resolved_paths)
+        self._verify_bound_dataset_files("before generation")
 
     def run(self, **kwargs) -> Dict[str, float]:
         """Run the internal gate without changing the public validation surface."""
@@ -253,6 +620,7 @@ class VLMConfidenceValidator(DetectionValidator):
         self.benchmark_config = None
         self._ordering_ground_truth_manifest = None
         self._generation_device = None
+        self._verified_image_paths = ()
         self._responses = 0
         self._scored_responses = 0
         self._parsed_detections = 0
@@ -874,12 +1242,11 @@ class VLMConfidenceValidator(DetectionValidator):
             value = value.item()
         if isinstance(value, np.generic):
             value = value.item()
-        try:
-            return int(value)
-        except (TypeError, ValueError) as exc:
+        if type(value) is not int:
             raise ValueError(
-                f"COCO image id must be integer-like, got {value!r}."
-            ) from exc
+                f"COCO image id must be a canonical integer, got {value!r}."
+            )
+        return value
 
     def _resolve_required_image_path(
         self, dataset, global_index: int, image_id: int
@@ -1011,6 +1378,7 @@ class VLMConfidenceValidator(DetectionValidator):
         if not self.class_names:
             raise RuntimeError("Dataset vocabulary was not initialized.")
         evaluator_ground_truth = self._evaluator_ground_truth_manifest()
+        self._preflight_bound_dataset(evaluator_ground_truth)
         self._require_plain_ordering_ground_truth(evaluator_ground_truth)
         self._ordering_ground_truth_manifest = evaluator_ground_truth
         self._ground_truth = self._ordering_ground_truth(evaluator_ground_truth)
@@ -1036,15 +1404,58 @@ class VLMConfidenceValidator(DetectionValidator):
                 for image_index, raw_image_id in enumerate(img_ids):
                     evaluator_image_id = self._scalar_image_id(raw_image_id)
                     record_image_id = str(evaluator_image_id)
+                    verified_image = None
+                    if self._verified_dataset is not None:
+                        if global_index >= len(self._verified_dataset.expected_images):
+                            raise RuntimeError(
+                                "Validation produced more images than verified_dataset."
+                            )
+                        verified_image = self._verified_dataset.expected_images[
+                            global_index
+                        ]
+                        if evaluator_image_id != int(verified_image["image_id"]):
+                            raise RuntimeError(
+                                "Validation image order changed after verified preflight."
+                            )
                     path = self._resolve_required_image_path(
                         dataset, global_index, evaluator_image_id
                     )
-                    image_hash = self._file_sha256(path)
+                    if verified_image is None:
+                        image_hash = self._file_sha256(path)
+                    else:
+                        expected_path = self._verified_image_paths[global_index]
+                        if path.resolve(strict=True) != expected_path:
+                            raise RuntimeError(
+                                f"Validation image path changed for {evaluator_image_id}."
+                            )
+                        self._require_file_identity(
+                            path,
+                            expected_sha256=str(verified_image["sha256"]),
+                            expected_size=int(verified_image["size_bytes"]),
+                            label=f"Benchmark image {evaluator_image_id} before generation",
+                        )
+                        image_hash = str(verified_image["sha256"])
 
                     started = time.time()
                     inputs, _, original_size, _ = self.model._preprocess(
                         str(path), color_format="auto", input_size=self._actual_imgsz
                     )
+                    if verified_image is not None:
+                        exact_size = (
+                            isinstance(original_size, Sequence)
+                            and not isinstance(original_size, (str, bytes, bytearray))
+                            and len(original_size) == 2
+                            and all(type(value) is int for value in original_size)
+                        )
+                        expected_size = (
+                            int(verified_image["width"]),
+                            int(verified_image["height"]),
+                        )
+                        if not exact_size or tuple(original_size) != expected_size:
+                            raise RuntimeError(
+                                f"Decoded image dimensions do not match verified image "
+                                f"{evaluator_image_id}."
+                            )
                     inputs = self._move_inputs_to_model_device(inputs)
                     self.speed["preprocess"] += time.time() - started
 
@@ -1072,7 +1483,26 @@ class VLMConfidenceValidator(DetectionValidator):
                     self._predictions.extend(records)
                     self._record_response(variants)
                     self._record_generation(variants, record_image_id)
-                    if self._file_sha256(path) != image_hash:
+                    if verified_image is None:
+                        image_changed = self._file_sha256(path) != image_hash
+                    else:
+                        try:
+                            self._require_file_identity(
+                                path,
+                                expected_sha256=image_hash,
+                                expected_size=int(verified_image["size_bytes"]),
+                                label=(
+                                    f"Benchmark image {evaluator_image_id} "
+                                    "after generation"
+                                ),
+                            )
+                        except (FileNotFoundError, RuntimeError) as exc:
+                            raise RuntimeError(
+                                f"Validation image {evaluator_image_id} changed during "
+                                "generation; refusing a mismatched manifest."
+                            ) from exc
+                        image_changed = False
+                    if image_changed:
                         raise RuntimeError(
                             f"Validation image {evaluator_image_id} changed during "
                             "generation; refusing a mismatched manifest."
@@ -1090,6 +1520,12 @@ class VLMConfidenceValidator(DetectionValidator):
                     self.seen += 1
                     global_index += 1
 
+        if self._verified_dataset is not None:
+            if global_index != len(self._verified_dataset.expected_images):
+                raise RuntimeError(
+                    "Validation image count does not match verified_dataset."
+                )
+            self._verify_bound_dataset_files("after generation")
         self.speed["total"] = time.time() - total_start
 
     @staticmethod
