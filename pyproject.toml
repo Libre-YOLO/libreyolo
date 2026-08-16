@@ -285,7 +285,8 @@ dvc = [
 ]
 hf = [
     # Hugging Face Hub loading (LibreYOLO("owner/repo")) and push_to_hub.
-    "huggingface_hub>=0.34.0",
+    # v1 adds dry-run byte metadata used to bound gated model downloads.
+    "huggingface_hub>=1.0.0",
 ]
 all = [
     "libreyolo[stream]",

@@ -1996,13 +1996,17 @@ LibreYOLO Hugging Face org as librefacerec-det.onnx). Consumed via
 OpenCV's bundled cv2.FaceDetectorYN; no code is ported.
 MHR / Momentum Human Rig (Meta Platforms, Inc.)
 --------------------------------------------------------------------
-Source: https://github.com/facebookresearch/MHR
+Source: https://github.com/facebookresearch/MHR/tree/4998cec385b1aaa07abdefba71bfba2f83c7db32
 License: Apache License 2.0 (see licenses/Apache-2.0.txt)
 Copyright (c) Meta Platforms, Inc. and affiliates.
 Used for: the body model behind the `mesh` task. No MHR code is ported. The
 TorchScript asset assets/mhr_model.pt is downloaded at runtime from the public
-upstream release by libreyolo/models/sam3dbody/mhr_body.py and cached locally;
-it is NOT mirrored by LibreYOLO. The parameter layout used to drive it (204
+upstream v1.0.1 release by libreyolo/models/sam3dbody/mhr_body.py and cached
+locally; it is NOT mirrored by LibreYOLO. The release archive SHA-256 is
+e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94 and the
+extracted mhr_model.pt SHA-256 is
+352e271a6c42729c68554ceaea0c955e866970160c31e35506d782dc0f7377bc. The
+parameter layout used to drive it (204
 model parameters, 45 identity coefficients, 72 expression coefficients) is
 documented by the upstream Apache-2.0 demo.py and mhr.py and was additionally
 verified empirically against the released asset.
@@ -2010,7 +2014,7 @@ verified empirically against the released asset.
 --------------------------------------------------------------------
 SAM 3D Body (Meta Platforms, Inc.)
 --------------------------------------------------------------------
-Source: https://github.com/facebookresearch/sam-3d-body
+Source: https://github.com/facebookresearch/sam-3d-body/tree/b5c765a0d89d789985e186d396315e7590887b94
 License: SAM License (NOT a permissive license; it carries field-of-use
          restrictions including military, nuclear, espionage and weapons use,
          a no-reverse-engineering clause, and unilateral amendment by Meta)
@@ -2026,8 +2030,16 @@ Model weights: the SAM License permits redistribution provided its terms are
 passed through, so the checkpoints are mirrored byte-identically at
 huggingface.co/LibreYOLO/LibreSAM3DBodyd3-mesh and
 huggingface.co/LibreYOLO/LibreSAM3DBodyh-mesh, each carrying the SAM License
-text and an access gate recording acceptance. Mirroring does not change the
-license: those weights remain SAM-licensed, not MIT.
+text and an automatic access gate recording license acceptance plus
+self-attested identity and jurisdiction. The gate is not manual approval or
+screening by Meta. Mirroring does not change the license: those weights remain
+SAM-licensed, not MIT. Runtime transport is pinned respectively to Hub commits
+46e286e25347518d861ab0f21e1b2b5b630dc21f and
+a745fa6fcd5d71e16c4da921a28a6bb6f1ff9e3e and verifies the complete local
+runtime file set immediately before and after the SAM-licensed path-only loader
+runs. That handoff requires a trusted, quiescent same-user local filesystem;
+the wrapper does not claim to prevent transient substitution by a process that
+can mutate the same paths between the two checks.
 
 --------------------------------------------------------------------
 TEED (Xavier Soria Poma)

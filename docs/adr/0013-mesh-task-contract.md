@@ -86,6 +86,15 @@ The asset is fetched from the public upstream release and cached locally rather
 than mirrored on the LibreYOLO org: it is freely reachable and 700 MB, so a
 second copy would serve no one.
 
+The transport is pinned. LibreYOLO fetches the exact MHR v1.0.1 archive,
+checks its reviewed size and SHA-256 while streaming with a hard byte cap, and
+extracts only the exact reviewed `assets/mhr_model.pt` ZIP member. The member is
+checked again before create-only cache publication. LibreYOLO's standalone MHR
+decoder passes the same verified descriptor to `torch.jit.load`; the SAM 3D
+Body wrapper instead gives the upstream path-only constructor a pathname and
+rehashes it immediately before and after construction. Existing cache files are
+never trusted by existence alone.
+
 ### Deferred deliberately
 
 * **Export** is gated off with an explicit error, as semantic and point were.
@@ -122,9 +131,30 @@ never encounters SAM terms at all.
 
 Weights are a separate question from code. The SAM License does permit
 redistribution provided the terms are passed through, so the checkpoints are
-mirrored on the LibreYOLO org with the license included, behind a gate
-comparable to Meta's. Redistributing them ungated would route around Meta's
-sanctions screening and move that exposure onto this project.
+mirrored on the LibreYOLO org with the license included, behind an automatic
+gate. The gate records license acceptance plus self-attested identity and
+jurisdiction. It is not manual approval, sanctions screening, or other review
+by Meta.
+
+Each mirror is addressed by an immutable Hub commit. During online acquisition,
+LibreYOLO requires the reviewed `auto` gate and exact repository tree metadata,
+then dry-runs all five reviewed repository files to check the requested commit
+and transport-declared size before any runtime payload fetch. Offline
+acquisition makes no remote Hub API or network request and checks only the
+three runtime objects already present in the local Hub cache. Both paths materialize only
+`model.ckpt`, `model_config.yaml`, and `LICENSE` into a revision-keyed private
+cache view and hash every local byte. An explicit local checkpoint path must
+satisfy the same byte contract.
+
+The upstream SAM 3D Body constructor accepts checkpoint and MHR pathnames only;
+it has no descriptor-based loading API. LibreYOLO therefore validates the full
+snapshot and MHR file immediately before construction, validates both again
+after construction, and fails closed on a persistent change. This is not an
+immutable handoff: a same-user process could transiently substitute bytes and
+restore them between those checks. Checkpoint, config, license, and MHR paths
+must be held on a trusted, quiescent same-user local filesystem while the
+constructor runs. Network shares, adversarially writable directories, and a
+concurrent process mutating those paths are outside this wrapper's trust model.
 
 Consequences the wrapper accepts: the upstream repository has no packaging
 metadata, so it cannot be `pip install`ed and the user must clone it and point

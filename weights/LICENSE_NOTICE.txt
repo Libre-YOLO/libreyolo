@@ -567,9 +567,11 @@ project the weights were derived from. Per-family summary:
              are passed through, so the checkpoints are mirrored
              byte-identically at LibreYOLO/LibreSAM3DBodyd3-mesh and
              LibreYOLO/LibreSAM3DBodyh-mesh, each carrying the SAM License
-             text and an access gate recording acceptance. Mirroring does
-             not change the license: the weights remain SAM-licensed, not
-             MIT, and are NOT covered by LibreYOLO's permissive license.
+             text and an automatic access gate recording license acceptance
+             plus self-attested identity and jurisdiction. The gate is not
+             manual approval or screening by Meta. Mirroring does not change
+             the license: the weights remain SAM-licensed, not MIT, and are
+             NOT covered by LibreYOLO's permissive license.
              No upstream code is ported; libreyolo/models/sam3dbody/ is
              LibreYOLO's own MIT wrapper around the optional upstream
              package. See THIRD_PARTY_NOTICES.txt for the full description.
