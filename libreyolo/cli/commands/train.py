@@ -307,6 +307,16 @@ def _validate_vlm_train_request(
     val: bool,
 ) -> None:
     """Fail before loading weights when the VLM train request is unsupported."""
+    if reference.remote:
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "Training directly from a remote VLM artifact is unsupported.",
+            suggestion=(
+                "Train the corresponding base-model alias and pass a local "
+                "checkpoint directory with resume=."
+            ),
+        )
     if not reference.trainable:
         exit_with_error(
             out,

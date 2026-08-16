@@ -122,8 +122,9 @@ for genuinely per-call prompts.
 
 ### CLI surface
 
-The CLI recognizes every VLM alias and a checkpoint directory containing a
-valid `libreyolo_vlm.json` contract. Prediction uses the same sticky
+The CLI recognizes every VLM alias, a checkpoint directory containing a valid
+`libreyolo_vlm.json` contract, and an immutable
+`hf+vlm://owner/repo@<commit>` publication URI. Prediction uses the same sticky
 open-vocabulary surface through `--names`:
 
 ```bash
@@ -158,6 +159,22 @@ adapter is already merged; continuation uses a pristine base alias plus
 recorded base.
 Standalone `val`, `export`, and `quantize` also reject VLM aliases and
 checkpoints before loading weights.
+
+### VLM Hub artifacts
+
+VLM publication is separate from the detector `hf://` single-file transport.
+The verified Qwen3-VL 2B/4B LoRA cohort can be packaged only after a human
+approves manifest-bound data, license, privacy, evaluation, and code-provenance
+evidence. The builder includes the adapter and exact Qwen processor assets but
+references the immutable base-weight snapshot instead of copying it.
+
+`push_vlm_artifact()` accepts only the resulting strict artifact, refuses an
+existing repository, uploads one commit private by default, verifies it through
+a fresh download, and returns its immutable `hf+vlm://` URI. The generic Hub
+logger and `LibreVLMModel.push_to_hub()` remain disabled. Remote artifacts are
+prediction inputs; training still begins from a verified base alias with an
+optional local `resume=` checkpoint. See
+[`vlm_hub_artifact.md`](vlm_hub_artifact.md).
 
 ## Decision 3: the output is `Results`, and confidence is honestly soft
 
@@ -281,9 +298,12 @@ non-commercial model license and must be loaded through HF remote code.
 Remote-code families additionally pin `HF_REVISIONS` to a commit SHA so runtime
 downloads do not execute mutable upstream code.
 
-LibreYOLO contributes only adapter code. It does not redistribute VLM weights or
-remote-code model repositories; those are downloaded at runtime under the
-upstream model repository's terms when a user chooses that model.
+Family aliases do not mirror upstream VLM snapshots or remote-code model
+repositories; those are downloaded at runtime under the selected repository's
+terms. The strict Qwen LoRA publication format is narrower: base weights remain
+reference-only, while the exact Qwen processor, tokenizer, and chat-template
+assets are redistributed under Apache-2.0 with generated license and notice
+files.
 
 ## Multi-task families
 
@@ -345,11 +365,12 @@ These are deliberate v1 scoping choices, called out so behavior matches expectat
   passes its real-data quality gate.
 - **`batch=` does not speed up VLMs.** `predict("folder/")` works, but generation
   runs one image at a time, so a larger `batch=` gives no throughput gain in v1.
-- **CLI scope is narrow.** `predict` supports VLM aliases and checkpoint
-  directories, including `--names`. `train` supports only the verified
-  Qwen3-VL 2B/4B cohort. Other model-execution and detector-specific commands
-  fail before loading VLM weights. Use the Python API for tier-specific methods
-  such as `chat()`.
+- **CLI scope is narrow.** `predict` supports VLM aliases, checkpoint
+  directories, and immutable `hf+vlm://` artifacts, including `--names`.
+  `train` supports only the verified Qwen3-VL 2B/4B cohort and rejects remote
+  artifacts. Other model-execution and detector-specific commands fail before
+  loading VLM weights. Use the Python API for tier-specific methods such as
+  `chat()`.
 - **`chat()`** applies to chat-template families only. Florence-2, Kosmos-2,
   and LibreMODUS are task-driven and raise; `prompt=` is ignored by the first
   two and is a one-phrase grounding convenience for LibreMODUS.

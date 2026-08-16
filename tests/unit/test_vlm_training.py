@@ -504,10 +504,11 @@ class _StubProcessor:
         tokenize,
         return_dict,
         return_tensors,
-        padding,
+        processor_kwargs,
         add_generation_prompt=False,
     ):
-        assert tokenize and return_dict and padding
+        assert tokenize and return_dict
+        assert processor_kwargs == {"padding": True}
         assert self.tokenizer.padding_side == "right"
         encoded = [
             self._encode_conv(conv, add_generation_prompt) for conv in conversations
@@ -1232,6 +1233,39 @@ class TestCheckpointContract:
         with pytest.raises(ImportError, match=r"libreyolo\[vlm\]"):
             LibreQwen3VL(size="2b", checkpoint_dir=str(target), device="cpu")
 
+    def test_direct_adapter_constructor_rejects_old_peft_before_base_init(
+        self, tmp_path, monkeypatch
+    ):
+        import importlib.metadata
+        import sys
+        from types import SimpleNamespace
+
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        target = tmp_path / "adapter"
+        save_vlm_checkpoint(
+            target,
+            peft_model=_StubSaveable(),
+            processor=_StubSaveable(),
+            wrapper=_StubWrapper(),
+        )
+        monkeypatch.setitem(sys.modules, "peft", SimpleNamespace(PeftModel=object))
+        real_version = importlib.metadata.version
+        monkeypatch.setattr(
+            importlib.metadata,
+            "version",
+            lambda name: "0.18.0" if name == "peft" else real_version(name),
+        )
+        monkeypatch.setattr(
+            BaseModel,
+            "__init__",
+            lambda *_args, **_kwargs: pytest.fail("old PEFT loaded the base"),
+        )
+
+        with pytest.raises(ImportError, match=r"peft>=0\.19\.1"):
+            LibreQwen3VL(size="2b", checkpoint_dir=str(target), device="cpu")
+
     @pytest.mark.parametrize(
         ("field", "value"),
         [
@@ -1434,16 +1468,56 @@ class TestTrainGating:
         with pytest.raises(ValueError, match=match):
             VLMDetectionTrainer(_StubWrapper(), data="unused.yaml", **kwargs)
 
-    def test_vlm_lora_dependency_floor_rejects_prerelease(self, monkeypatch):
+    @pytest.mark.parametrize("installed", ["0.17.0", "0.19.1rc1", "0.20.0"])
+    def test_vlm_lora_dependency_requires_audited_writer_version(
+        self, monkeypatch, installed
+    ):
         import sys
         from types import SimpleNamespace
 
         from libreyolo.models.vlm.training import trainer as trainer_module
 
         monkeypatch.setitem(sys.modules, "peft", SimpleNamespace())
-        monkeypatch.setattr(trainer_module, "version", lambda _name: "0.17.0rc1")
+        monkeypatch.setattr(
+            trainer_module,
+            "version",
+            lambda name: installed if name == "peft" else "5.12.1",
+        )
 
-        with pytest.raises(ImportError, match="peft>=0.17.0"):
+        with pytest.raises(ImportError, match="peft==0.19.1"):
+            trainer_module.require_vlm_lora_dependencies()
+
+    def test_vlm_lora_dependency_accepts_audited_writer_version(self, monkeypatch):
+        import sys
+        from types import SimpleNamespace
+
+        from libreyolo.models.vlm.training import trainer as trainer_module
+
+        monkeypatch.setitem(sys.modules, "peft", SimpleNamespace())
+        monkeypatch.setattr(
+            trainer_module,
+            "version",
+            lambda name: {"peft": "0.19.1", "transformers": "5.12.1"}[name],
+        )
+
+        trainer_module.require_vlm_lora_dependencies()
+
+    def test_vlm_lora_dependency_requires_audited_transformers_writer(
+        self, monkeypatch
+    ):
+        import sys
+        from types import SimpleNamespace
+
+        from libreyolo.models.vlm.training import trainer as trainer_module
+
+        monkeypatch.setitem(sys.modules, "peft", SimpleNamespace())
+        monkeypatch.setattr(
+            trainer_module,
+            "version",
+            lambda name: {"peft": "0.19.1", "transformers": "5.13.0"}[name],
+        )
+
+        with pytest.raises(ImportError, match="transformers==5.12.1"):
             trainer_module.require_vlm_lora_dependencies()
 
     @pytest.mark.parametrize("configured", [False, True])

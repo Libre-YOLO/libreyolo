@@ -51,10 +51,11 @@ class LibreQwen3VL(LibreVLMModel):
     # establishes useful ordering and a safe interaction with ``conf=``.
     TOKEN_LOGPROB_CONFIDENCE = False
 
-    # First trainable family: grounding-pretrained, Apache-2.0, native
-    # transformers classes, and an official upstream fine-tuning recipe this
-    # implementation mirrors (LoRA on the LM, frozen vision tower). Recipe in
-    # ``training/recipes.py``.
+    # First trainable family: grounding-pretrained, Apache-2.0, and native
+    # transformers classes. The recipe uses the official Apache-2.0 Qwen3-VL
+    # fine-tuning code as a reference for language-model LoRA with a frozen
+    # vision tower; LibreYOLO's scope and hyperparameters differ. See
+    # ``training/recipes.py`` and ``THIRD_PARTY_NOTICES.txt``.
     TRAINABLE = True
     TRAINABLE_SIZES = ("2b", "4b")
 

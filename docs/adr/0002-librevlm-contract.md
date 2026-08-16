@@ -83,10 +83,11 @@ libreyolo predict --model qwen3-vl-4b --source image.jpg \
 libreyolo train --model qwen3-vl-2b --data dataset.yaml
 ```
 
-- `predict` resolves VLM aliases and schema-valid checkpoint directories.
-  `--names` is a VLM-only JSON vocabulary; `--classes` remains a numeric output
-  filter. Explicit `imgsz=` is rejected because the family processor owns image
-  resizing. Directory chunks still generate one image at a time.
+- `predict` resolves VLM aliases, schema-valid checkpoint directories, and
+  immutable `hf+vlm://owner/repo@<commit>` artifacts. `--names` is a VLM-only
+  JSON vocabulary; `--classes` remains a numeric output filter. Explicit
+  `imgsz=` is rejected because the family processor owns image resizing.
+  Directory chunks still generate one image at a time.
 - `train` is verified only for the Qwen3-VL 2B and 4B base aliases. It uses
   VLM-native defaults rather than detector defaults, and selects `best` by
   validation loss when a validation split exists, otherwise training loss.
@@ -94,6 +95,25 @@ libreyolo train --model qwen3-vl-2b --data dataset.yaml
   training an inference-loaded checkpoint wrapper is rejected.
 - Detector-only training options, unsupported families/sizes, and standalone
   `val`, `export`, or `quantize` requests fail before loading VLM weights.
+
+### Publication artifacts
+
+Local training checkpoints and published artifacts are different contracts.
+The v1 publication builder accepts only Qwen3-VL 2B/4B detection LoRA output
+written with `peft==0.19.1` and `transformers==5.12.1`. It requires external,
+human-approved evidence that binds the adapter, checkpoint contract, processor,
+complete immutable base snapshot, training-data manifest, evaluation report,
+clean code revision, and fixed recipe. The library can generate an unapproved
+template with derived hashes, but it cannot manufacture an approval.
+
+The artifact includes the adapter and exact Qwen processor, tokenizer, and
+chat-template assets under Apache-2.0. Base weights remain reference-only.
+`push_vlm_artifact()` refuses existing repositories, starts private, creates
+one commit, verifies that immutable tree through a fresh download, and returns
+`hf+vlm://owner/repo@<40-character-commit>`. The detector `hf://` transport and
+generic Hub logger are not used. Hashes are integrity bindings, not signatures
+or proof that human claims are true. See
+[`../vlm_hub_artifact.md`](../vlm_hub_artifact.md).
 
 ## Internal Contract
 
@@ -186,10 +206,13 @@ paths. Scored greedy generations use the additive per-item scoring path.
 
 ## Licensing
 
-LibreYOLO ships only its own VLM adapter code: families either load through the
-Apache-2.0 `transformers` API or, when a model genuinely requires Hugging Face
-remote code, download that upstream model-repository code at runtime under the
-upstream model repo's terms. LibreYOLO does not redistribute VLM weights.
+Family aliases either load through the Apache-2.0 `transformers` API or, when a
+model genuinely requires Hugging Face remote code, download that upstream
+repository at runtime under its terms. LibreYOLO does not mirror those base
+weights or remote-code repositories. The strict Qwen LoRA artifact is the
+narrow exception for non-weight assets: it redistributes the exact processor,
+tokenizer, and chat-template files under Apache-2.0 while retaining the base
+weights as an immutable external reference.
 
 The default model (Qwen3-VL-4B) is Apache-2.0, so it needs no notice. When a
 model's weights or required model-repository code are under a non-permissive
@@ -237,7 +260,9 @@ executing mutable upstream model-repository code under the same alias.
   SmolVLM2, Gemma 4). Florence-2 and Kosmos-2 use task / grounding tokens.
   Moondream uses native detect/point skills. See the Available-models table in
   [`../librevlm_design.md`](../librevlm_design.md).
-- CLI alias/checkpoint routing for VLM prediction and verified Qwen3-VL 2B/4B
-  training, with pre-load guards for unsupported validation, export, and
-  quantization.
+- CLI alias/checkpoint/immutable-artifact routing for VLM prediction and
+  verified Qwen3-VL 2B/4B training, with pre-load guards for remote training
+  and unsupported validation, export, and quantization.
+- Strict, reviewed Qwen3-VL LoRA artifact construction and immutable Hub
+  transport, separate from detector checkpoint publication.
 - Offline parser unit tests plus a `vlm`-marked end-to-end smoke test.

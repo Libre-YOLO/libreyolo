@@ -47,6 +47,34 @@ _SNAPSHOT_COMPLETE_MARKER = ".libreyolo_snapshot_complete"
 _COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
+def _require_peft_adapter_runtime() -> None:
+    """Fail before base-model loading when PEFT cannot read v1 adapters."""
+    try:
+        from peft import PeftModel as _PeftModel  # noqa: F401, PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "Loading a LoRA fine-tune checkpoint requires PEFT. "
+            "Install with:\n    pip install 'libreyolo[vlm]'"
+        ) from exc
+    try:
+        from importlib.metadata import PackageNotFoundError, version  # noqa: PLC0415
+
+        from packaging.version import InvalidVersion, Version  # noqa: PLC0415
+
+        raw_version = version("peft")
+    except (ImportError, PackageNotFoundError) as exc:
+        raise ImportError(_INSTALL_HINT) from exc
+    try:
+        supported = Version(raw_version) >= Version("0.19.1")
+    except InvalidVersion:
+        supported = False
+    if not supported:
+        raise ImportError(
+            f"Loading a VLM LoRA checkpoint requires peft>=0.19.1, "
+            f"found {raw_version!r}.\n" + _INSTALL_HINT
+        )
+
+
 @dataclass(frozen=True)
 class _ScoredGeneration:
     """Generated token ids plus one generation-policy log-probability per step."""
@@ -223,13 +251,7 @@ class LibreVLMModel(BaseModel):
             representation = validate_vlm_checkpoint_artifact(self._checkpoint_dir)
             if representation == "adapter":
                 # Fail before resolving or loading the multi-GB base snapshot.
-                try:
-                    from peft import PeftModel as _PeftModel  # noqa: F401, PLC0415
-                except ImportError as exc:
-                    raise ImportError(
-                        "Loading a LoRA fine-tune checkpoint requires PEFT. "
-                        "Install with:\n    pip install 'libreyolo[vlm]'"
-                    ) from exc
+                _require_peft_adapter_runtime()
 
             # Fine-tune checkpoints are self-describing: keep their learned
             # prompt/output convention even if family defaults evolve later.
@@ -619,7 +641,11 @@ class LibreVLMModel(BaseModel):
 
     def _load_checkpoint_processor(self, checkpoint_dir: Path, fallback):
         """Prefer the processor snapshot saved inside the checkpoint."""
-        if not (checkpoint_dir / "preprocessor_config.json").exists():
+        processor_markers = (
+            checkpoint_dir / "preprocessor_config.json",
+            checkpoint_dir / "processor_config.json",
+        )
+        if not any(marker.exists() for marker in processor_markers):
             return fallback
         try:
             from transformers import AutoProcessor
@@ -1014,10 +1040,10 @@ class LibreVLMModel(BaseModel):
 
     def push_to_hub(self, *args, **kwargs) -> str:
         raise NotImplementedError(
-            "LibreVLM Hub publication is not available yet. The generic model "
-            "uploader produces a .pt artifact that LibreVLM cannot reload; keep "
-            "the structured best/last checkpoint directory local until the VLM "
-            "publication manifest and license gates are implemented."
+            "LibreVLMModel.push_to_hub() is intentionally disabled because the "
+            "generic uploader produces a .pt file that LibreVLM cannot reload. "
+            "Create a reviewed directory with build_vlm_artifact(), then upload "
+            "it explicitly with push_vlm_artifact()."
         )
 
     def val(self, *args, **kwargs):

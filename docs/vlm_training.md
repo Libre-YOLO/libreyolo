@@ -24,9 +24,11 @@ libreyolo train --model qwen3-vl-2b --data strawberries.yaml
 libreyolo predict --model runs/vlm/train/weights/best --source field.jpg
 ```
 
-Prediction accepts a VLM alias or VLM checkpoint directory. Training starts
-from a verified base alias. To continue a LoRA adapter, keep the base alias and
-pass the checkpoint through `--resume`:
+Prediction accepts a VLM alias, a local VLM checkpoint directory, or an
+immutable `hf+vlm://owner/repo@<commit>` publication URI. Training starts from
+a verified base alias; remote publication artifacts are inference-only. To
+continue a LoRA adapter, keep the base alias and pass the local checkpoint
+through `--resume`:
 
 ```bash
 libreyolo train --model qwen3-vl-2b --data strawberries.yaml \
@@ -52,6 +54,11 @@ Needs the optional extra:
 ```
 pip install "libreyolo[vlm-train]"
 ```
+
+The v1 training and publication writer contract pins `peft==0.19.1` and
+`transformers==5.12.1`; training preflight rejects other writer versions. The
+broader `libreyolo[vlm]` dependency range applies to inference, not artifact
+creation.
 
 - `data` is the standard detect dataset (`docs/dataset_schema.md`): YAML with
   `train`/`val` image sources and either normalized txt label rows or native
@@ -99,7 +106,7 @@ typos or detector-only options. Dataset YAML, class names, local train/val
 sources, resume identity, adapter payloads, and optional dependencies are
 preflighted before base weights are loaded where the reference permits it.
 
-## Checkpoints
+## Local checkpoints
 
 A VLM checkpoint is a directory, not a `.pt`:
 
@@ -118,8 +125,8 @@ recorded base and immutable revision, merges the adapter for
 inference speed, and pre-applies the saved vocabulary, prompt, and coordinate
 convention. An explicit `prompt=` may override the saved prompt, while parsing
 continues to use the checkpoint's saved box key, coordinate divisor, and box
-layout. Base weights are never copied into checkpoints, so LibreYOLO never
-redistributes upstream weights.
+layout. LoRA checkpoints reference their pinned base and do not copy its
+weights.
 
 Current Qwen checkpoints record an immutable upstream revision. Older schema-1
 checkpoints may contain a null `base_revision`; they remain loadable, but cannot
@@ -127,7 +134,9 @@ prove bit-for-bit base-model reproducibility and resolve the recorded repository
 without inventing a newer pin.
 
 Full fine-tunes (`lora=False`) save a self-contained model directory instead;
-the same `LibreVLM(path)` call loads either kind.
+the same `LibreVLM(path)` call loads either kind. Unlike a LoRA checkpoint, a
+full fine-tune necessarily contains model weights and is not accepted by the
+v1 Hub artifact builder.
 Each `best` or `last` write is staged and replaces the complete prior directory,
 so switching between LoRA and full-model runs cannot leave stale files that
 change how the checkpoint is interpreted.
@@ -135,8 +144,30 @@ change how the checkpoint is interpreted.
 The inherited generic `save()` and `push_to_hub()` methods are deliberately
 disabled for LibreVLM. They would create a monolithic detector-style `.pt`
 artifact that the LibreVLM factory cannot reload and that lacks the required
-dataset, benchmark, and upstream-license publication manifest. Keep `best` or
-`last` local until the VLM Hub artifact contract is released.
+dataset, benchmark, and upstream-license evidence. The generic Hugging Face
+logger is disabled for the same reason.
+
+## Reviewed publication artifacts
+
+A local `best` or `last` directory is not automatically publishable. For a
+Qwen3-VL 2B/4B LoRA checkpoint, the strict publication workflow is:
+
+1. Generate a create-only, unapproved evidence template with
+   `create_vlm_publication_evidence_template()`.
+2. Have a human review the bound data, license, privacy, evaluation, code, base,
+   adapter, contract, and processor evidence. The library never creates an
+   approval.
+3. Build and validate `libreyolo.vlm-artifact.v1` with
+   `build_vlm_artifact()` and `validate_vlm_artifact()`.
+4. Explicitly upload it with `push_vlm_artifact()`, which returns an immutable
+   `hf+vlm://` URI.
+
+Base weights remain reference-only. The artifact does include the exact Qwen
+processor, tokenizer, and chat-template assets under Apache-2.0, with generated
+license and notice files. Evidence hashes bind reviewed bytes and reports for
+integrity; they do not authenticate the reviewer or prove that a report is
+true. Full details and Python examples are in
+[`vlm_hub_artifact.md`](vlm_hub_artifact.md).
 
 ## Best/last selection
 

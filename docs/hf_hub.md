@@ -1,19 +1,32 @@
 # Hugging Face Hub integration
 
-LibreYOLO can load checkpoints from any Hugging Face Hub repository and push
-your own fine-tuned checkpoints back, in both cases using the standard
-LibreYOLO metadata schema (v1.0, see `docs/checkpoint_schema.md`).
+LibreYOLO has two separate Hub transports:
 
-The integration is optional:
+- `hf://` and bare `owner/repo` references select one detector checkpoint file.
+- `hf+vlm://owner/repo@<commit>` selects one immutable, multi-file VLM
+  publication artifact.
+
+Detector checkpoints use the standard LibreYOLO metadata schema described in
+[`checkpoint_schema.md`](checkpoint_schema.md). VLM artifacts use the stricter
+directory contract in [`vlm_hub_artifact.md`](vlm_hub_artifact.md). The two URI
+forms are not interchangeable.
+
+Detector Hub transport is optional:
 
 ```bash
 pip install libreyolo[hf]
 ```
 
+Loading an immutable VLM artifact also needs the VLM runtime:
+
+```bash
+pip install "libreyolo[vlm,hf]"
+```
+
 `import libreyolo` never imports `huggingface_hub`; it is only loaded when a
 Hub reference or push is actually used.
 
-## Loading models from the Hub
+## Loading detector checkpoints from the Hub
 
 Any repository that contains a LibreYOLO checkpoint can be loaded directly:
 
@@ -51,7 +64,7 @@ pass a local path, which re-enables legacy architecture detection.
 
 Private and gated repos work once you are authenticated (see below).
 
-## Pushing models to the Hub
+## Pushing detector checkpoints to the Hub
 
 Any loaded model can be published, together with an auto-generated model card
 derived from its checkpoint metadata (family, size, task, classes, metrics):
@@ -97,6 +110,61 @@ uploads unattended and a model trained on proprietary data must not become
 public by surprise. Pass `private=False` to publish from training. Repos that
 already exist keep their current visibility either way.
 
+This detector push path, including `HuggingFaceHubLogger`, does not accept
+LibreVLM directory checkpoints. VLM publication is an explicit, reviewed
+operation described below.
+
+## Loading and publishing VLM artifacts
+
+A published VLM adapter is addressed only by a canonical URI with a lowercase,
+40-character commit SHA:
+
+```python
+from libreyolo import LibreVLM
+from libreyolo.models.vlm import inspect_vlm_hub_artifact
+
+uri = "hf+vlm://someuser/strawberry-vlm@0123456789abcdef0123456789abcdef01234567"
+manifest = inspect_vlm_hub_artifact(uri)  # manifest only; no tensor payload
+model = LibreVLM(uri)
+```
+
+Branches, tags, abbreviated hashes, bare repository IDs, query strings, and
+file suffixes are rejected. `LibreVLM(uri)` validates the artifact, acquires
+and validates the exact Qwen base snapshot recorded by it, and revalidates both
+before use. The base weights are not stored in the adapter repository.
+
+To materialize an artifact without loading a model:
+
+```python
+from libreyolo.models.vlm import download_vlm_artifact, validate_vlm_artifact
+
+info = download_vlm_artifact(uri, "artifacts/strawberry-vlm")
+validate_vlm_artifact(info.root)
+```
+
+The destination must not already exist. Online inspection and download also
+require the repository tree at that commit to equal the manifest inventory.
+`local_files_only=True` validates the cached allowlisted files, but cannot
+prove that the remote commit has no additional files.
+
+Upload is separate from training and from the detector Hub logger:
+
+```python
+from libreyolo.models.vlm import push_vlm_artifact
+
+uri = push_vlm_artifact(
+    "artifacts/strawberry-vlm",
+    "someuser/strawberry-vlm",
+)  # private=True by default; returns an immutable hf+vlm:// URI
+```
+
+`push_vlm_artifact` accepts only a fully validated artifact and refuses any
+pre-existing repository, including an empty one. It creates a private repo,
+uploads the exact artifact in one commit, and verifies that commit through a
+fresh download. With `private=False`, visibility changes only after that
+verification succeeds. See [`vlm_hub_artifact.md`](vlm_hub_artifact.md) for the
+required human evidence gates and build workflow.
+
 ## Authentication
 
 Reading public repos needs no login. Private repos, gated repos, and all
@@ -104,7 +172,8 @@ pushes need a Hugging Face token, resolved the standard way:
 
 1. Run `hf auth login` once (stores a token on the machine), or
 2. set the `HF_TOKEN` environment variable, or
-3. pass `token="hf_..."` to `push_to_hub` / `HuggingFaceHubLogger`.
+3. pass `token="hf_..."` to `push_to_hub`, `HuggingFaceHubLogger`, or the VLM
+   Hub functions.
 
 Pushing requires a token with write scope; create one at
 <https://huggingface.co/settings/tokens>. Error messages repeat these steps

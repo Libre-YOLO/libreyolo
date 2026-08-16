@@ -69,6 +69,32 @@ class TestSetClasses:
             m.set_classes(["Boat", "boat"])
 
 
+class TestCheckpointProcessor:
+    def test_writer_processor_config_is_loaded(self, tmp_path, monkeypatch):
+        import transformers
+
+        checkpoint = tmp_path / "checkpoint"
+        checkpoint.mkdir()
+        (checkpoint / "processor_config.json").write_text("{}", encoding="utf-8")
+        loaded = object()
+        calls = []
+
+        def _from_pretrained(path, *, trust_remote_code):
+            calls.append((path, trust_remote_code))
+            return loaded
+
+        monkeypatch.setattr(
+            transformers.AutoProcessor,
+            "from_pretrained",
+            _from_pretrained,
+        )
+        model = _bare_model()
+        model.TRUST_REMOTE_CODE = False
+
+        assert model._load_checkpoint_processor(checkpoint, object()) is loaded
+        assert calls == [(str(checkpoint), False)]
+
+
 class TestFactoryResolution:
     """The LibreVLM(...) name resolution (offline; no model is loaded)."""
 
@@ -168,9 +194,23 @@ class TestReferenceInspection:
         assert isinstance(aliases, tuple)
         assert all(inspect_vlm_reference(alias) is not None for alias in aliases)
         assert {
+            "VLMArtifactError",
+            "VLMArtifactInfo",
+            "VLMBaseSnapshotInfo",
+            "VLMHubRef",
             "VLMReference",
+            "build_vlm_artifact",
+            "create_vlm_publication_evidence_template",
+            "download_vlm_artifact",
+            "ensure_vlm_base_snapshot",
             "get_vlm_aliases",
+            "inspect_vlm_hub_artifact",
             "inspect_vlm_reference",
+            "parse_vlm_hub_uri",
+            "push_vlm_artifact",
+            "read_vlm_artifact_manifest",
+            "validate_vlm_artifact",
+            "validate_vlm_base_snapshot",
         } <= set(vlm_module.__all__)
 
     def test_alias_metadata_is_immutable_and_does_not_construct_model(
@@ -671,5 +711,5 @@ def test_vlm_generic_save_and_hub_upload_are_rejected():
 
     with pytest.raises(NotImplementedError, match="structured directories"):
         model.save("invalid.pt")
-    with pytest.raises(NotImplementedError, match="publication manifest"):
+    with pytest.raises(NotImplementedError, match="build_vlm_artifact"):
         model.push_to_hub("owner/repo")

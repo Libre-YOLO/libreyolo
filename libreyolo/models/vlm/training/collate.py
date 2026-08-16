@@ -77,14 +77,14 @@ class VLMChatCollator:
                 tokenize=True,
                 return_dict=True,
                 return_tensors="pt",
-                padding=True,
+                processor_kwargs={"padding": True},
             )
             prompts = self.processor.apply_chat_template(
                 prompt_only,
                 tokenize=True,
                 return_dict=True,
                 return_tensors="pt",
-                padding=True,
+                processor_kwargs={"padding": True},
                 add_generation_prompt=True,
             )
         finally:

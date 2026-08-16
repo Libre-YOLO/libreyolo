@@ -1745,6 +1745,31 @@ Used for: the Transformers-backed LibreEdgeTAM adapter in
 The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
 
 --------------------------------------------------------------------
+Qwen3-VL fine-tuning recipe (QwenLM)
+--------------------------------------------------------------------
+Source: https://github.com/QwenLM/Qwen3-VL
+Commit: 96588727e44c78b25ba03ea03b8e12f7e64fd0da
+Source paths:
+  qwen-vl-finetune/qwenvl/train/argument.py
+  qwen-vl-finetune/qwenvl/train/train_qwen.py
+  qwen-vl-finetune/README.md
+License: Apache License 2.0 (see licenses/Apache-2.0.txt)
+Copyright 2023 Rohan Taori, Ishaan Gulrajani, Tianyi Zhang,
+               Yann Dubois, Xuechen Li (retained by train_qwen.py, which
+               identifies FastChat and Stanford Alpaca as earlier sources)
+Used for: the Qwen3-VL recipe reference behind
+          libreyolo/models/vlm/training/recipes.py,
+          libreyolo/models/vlm/training/trainer.py, and the trainability
+          declaration in libreyolo/models/vlm/qwen3vl.py: PEFT LoRA on
+          language-model projections while the vision tower remains frozen,
+          plus the 0.03 warmup-ratio and cosine-schedule reference. LibreYOLO
+          adds its own MLP projection scope and detection-specific pipeline,
+          and uses different rank, alpha, dropout, learning-rate, and
+          weight-decay values. No upstream source file is bundled.
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
 SenseNova-Vision / Bagel (SenseTime; ByteDance; Hugging Face; BFL)
 --------------------------------------------------------------------
 Source: https://github.com/OpenSenseNova/SenseNova-Vision

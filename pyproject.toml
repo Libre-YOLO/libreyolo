@@ -109,14 +109,15 @@ vlm = [
     # LocateAnything's HF remote-code processor/model imports these at load time.
     "decord==0.6.0",
     "lmdb>=1.7.0",
-    "peft>=0.12.0",
+    "peft>=0.19.1",
 ]
 vlm-train = [
     # VLM detection fine-tuning: the vlm inference stack plus PEFT for LoRA.
-    # peft>=0.17 is the floor the LoRA-adapter save/load contract was
-    # validated against.
+    # The exact PEFT writer schema is part of the publishable VLM artifact v1
+    # contract. Re-audit before changing this pin.
     "libreyolo[vlm]",
-    "peft>=0.17.0",
+    "peft==0.19.1",
+    "transformers==5.12.1",
 ]
 sam = [
     # Promptable-segmentation families load through transformers;
@@ -279,8 +280,9 @@ dvc = [
     "libreyolo[dvclive]",
 ]
 hf = [
-    # Hugging Face Hub loading (LibreYOLO("owner/repo")) and push_to_hub.
-    "huggingface_hub>=0.34.0",
+    # Hub loading/publishing, including bounded dry-run metadata checks used
+    # before immutable VLM artifact payload downloads.
+    "huggingface_hub>=1.0.0",
 ]
 all = [
     "libreyolo[stream]",

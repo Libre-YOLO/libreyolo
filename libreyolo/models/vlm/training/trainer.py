@@ -181,28 +181,33 @@ def resolve_vlm_training_device(requested, fallback) -> torch.device:
 
 
 def require_vlm_lora_dependencies() -> None:
-    """Require the PEFT version used by the VLM adapter contract."""
+    """Require the writer versions used by the publishable VLM contract."""
     try:
         import peft  # noqa: F401, PLC0415
+        import transformers  # noqa: F401, PLC0415
     except ImportError as exc:
-        raise ImportError(_INSTALL_HINT) from exc
-    try:
-        raw_version = version("peft")
-    except PackageNotFoundError as exc:
         raise ImportError(_INSTALL_HINT) from exc
     try:
         from packaging.version import InvalidVersion, Version  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(_INSTALL_HINT) from exc
-    try:
-        supported = Version(raw_version) >= Version("0.17.0")
-    except InvalidVersion:
-        supported = False
-    if not supported:
-        raise ImportError(
-            f"VLM fine-tuning requires peft>=0.17.0, found {raw_version!r}.\n"
-            + _INSTALL_HINT
-        )
+    for distribution, expected in (
+        ("peft", "0.19.1"),
+        ("transformers", "5.12.1"),
+    ):
+        try:
+            raw_version = version(distribution)
+        except PackageNotFoundError as exc:
+            raise ImportError(_INSTALL_HINT) from exc
+        try:
+            supported = Version(raw_version) == Version(expected)
+        except InvalidVersion:
+            supported = False
+        if not supported:
+            raise ImportError(
+                f"VLM fine-tuning requires {distribution}=={expected}, "
+                f"found {raw_version!r}.\n" + _INSTALL_HINT
+            )
 
 
 def validate_vlm_resume_checkpoint(directory, wrapper) -> Path:
