@@ -31,11 +31,10 @@ from .parsing import build_detection_dict, extract_bare_boxes
 
 _MIN_TRANSFORMERS = (5, 16)
 _VERSION_HINT = (
-    "North Micro Vision requires transformers>=5.16.0 (the CohereCompass "
-    "architecture). Upgrade with:\n"
+    "North Micro Vision requires a released transformers>=5.16.0 build "
+    "(the CohereCompass architecture). Install it when available with:\n"
     "    pip install -U 'transformers>=5.16.0'\n"
-    "or, until 5.16.0 is on PyPI:\n"
-    "    pip install git+https://github.com/huggingface/transformers"
+    "Mutable source checkouts are not a supported production dependency."
 )
 
 

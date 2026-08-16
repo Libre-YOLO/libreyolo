@@ -336,8 +336,10 @@ class TestNorthMicroTransformersGuard:
         from libreyolo.models.vlm import northmicro
 
         monkeypatch.setattr(transformers, "__version__", "5.15.0")
-        with pytest.raises(ImportError, match="transformers>=5.16.0"):
+        with pytest.raises(ImportError, match="transformers>=5.16.0") as exc_info:
             northmicro._require_transformers()
+        assert "git+" not in str(exc_info.value)
+        assert "released" in str(exc_info.value)
 
     def test_new_transformers_passes(self, monkeypatch):
         transformers = pytest.importorskip("transformers")
