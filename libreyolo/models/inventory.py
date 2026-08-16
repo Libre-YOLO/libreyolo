@@ -117,6 +117,11 @@ def collect_model_inventory() -> dict[str, dict]:
     if any(cls.FAMILY == "rfdetr" for cls in BaseModel._registry):
         optional["rfdetr"] = ("rfdetr", True)
         optional["dinov2"] = ("rfdetr", True)
+    if any(cls.FAMILY == "lama" for cls in BaseModel._registry):
+        optional["lama"] = (
+            "onnx",
+            importlib.util.find_spec("onnxruntime") is not None,
+        )
 
     for module_name, class_name, extra, requirement in OPTIONAL_MODELS:
         available = (

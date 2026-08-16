@@ -82,6 +82,15 @@ class _FakeRestoreModel:
         )
 
 
+class _FakeGuidedRestoreModel(_FakeRestoreModel):
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, source, **kwargs):
+        self.calls.append((source, kwargs))
+        return super().__call__(source, **kwargs)
+
+
 class _FakeStreamModel:
     FAMILY = "yolo9"
     task = "classify"
@@ -220,6 +229,39 @@ def test_predict_formats_restore_results(monkeypatch, tmp_path):
 
     assert human_result.exit_code == 0
     assert "restored" in human_result.stdout
+
+
+@pytest.mark.parametrize("guide_name", ["mask", "trimap"])
+def test_predict_forwards_guided_image_option(monkeypatch, tmp_path, guide_name):
+    source = tmp_path / "image.jpg"
+    guide = tmp_path / f"{guide_name}.png"
+    Image.new("RGB", (12, 10)).save(source)
+    Image.new("L", (12, 10)).save(guide)
+    fake_model = _FakeGuidedRestoreModel()
+
+    monkeypatch.setattr(
+        predict_module,
+        "resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        predict_module,
+        "load_model_or_exit",
+        lambda *args, **kwargs: fake_model,
+    )
+
+    result = runner.invoke(
+        _make_app(),
+        [
+            f"source={source}",
+            "model=fake-guided.pt",
+            f"{guide_name}={guide}",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert fake_model.calls[0][1][guide_name] == str(guide)
 
 
 def test_predict_webcam_source_auto_streams_as_ndjson(monkeypatch):

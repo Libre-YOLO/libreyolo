@@ -3912,3 +3912,51 @@ _add(
         "input has no supported conversion path."
     ),
 )
+
+
+# --- Guided and specialist restoration -----------------------------------
+_add(
+    "blocked",
+    ("ddcolor",),
+    ("restore",),
+    EXPORT_FORMATS,
+    reason=(
+        "DDColor export needs a two-input contract that preserves the source "
+        "image's original-resolution OpenCV Lab luminance plane through RGB "
+        "reconstruction. Native prediction is supported; no exported runtime "
+        "contract or parity gate is defined yet."
+    ),
+)
+_add(
+    "blocked",
+    ("hvi_cidnet",),
+    ("restore",),
+    EXPORT_FORMATS,
+    reason=(
+        "HVI-CIDNet export has not defined metadata and runtime semantics for "
+        "its gamma, saturation, and intensity controls, and no exported "
+        "runtime parity gate has been recorded. Use native PyTorch inference."
+    ),
+)
+_add(
+    "blocked",
+    ("lama",),
+    ("restore",),
+    EXPORT_FORMATS,
+    reason=(
+        "LibreLaMa already embeds and executes the exact upstream QDQ ONNX "
+        "artifact. Re-exporting that opaque graph through PyTorch is neither "
+        "meaningful nor supported."
+    ),
+)
+_add(
+    "blocked",
+    ("vitmatte",),
+    ("matte",),
+    EXPORT_FORMATS,
+    reason=(
+        "ViTMatte needs a documented four-channel RGB-plus-trimap runtime "
+        "input contract and guided-backend parity before export can be "
+        "advertised. Use native PyTorch inference."
+    ),
+)

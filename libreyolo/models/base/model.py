@@ -166,6 +166,13 @@ class BaseModel(ABC):
     # on). Set False where that does not hold (e.g. generative VLMs).
     SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = True
 
+    # Family-specific inputs consumed while preparing one prediction image.
+    # Guided families opt in explicitly (for example with ``("mask",)`` or
+    # ``("trimap",)``); ordinary families accept no auxiliary image inputs.
+    # Required keys must also appear in PREDICT_INPUT_KWARGS.
+    PREDICT_INPUT_KWARGS: ClassVar[tuple[str, ...]] = ()
+    REQUIRED_PREDICT_INPUT_KWARGS: ClassVar[tuple[str, ...]] = ()
+
     # CUDA-graph policy: True once a family's ``_forward`` is verified to
     # capture and replay bit-identically. Capture forbids host-visible work
     # mid-forward (``.item()``, ``.cpu()``, writing a Python int into a CUDA
@@ -285,6 +292,7 @@ class BaseModel(ABC):
             self.model_path = None
             state_dict = self._prepare_state_dict(self._strip_ddp_prefix(model_path))
             self._validate_loaded_state_dict_for_task(state_dict, model_path)
+            self._prepare_model_for_state_dict(state_dict)
             self._load_state_dict_logged(state_dict, source="state dict")
         else:
             self.model_path = model_path
@@ -379,6 +387,27 @@ class BaseModel(ABC):
             Tuple of (input_tensor, original_image, original_size, ratio).
         """
         pass
+
+    def _preprocess_predict(
+        self,
+        image: ImageInput,
+        color_format: str = "auto",
+        input_size: Optional[int] = None,
+        **predict_input_kwargs,
+    ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
+        """Preprocess one public prediction input.
+
+        The default keeps every existing family on its established
+        ``_preprocess`` path. Families that declare auxiliary prediction
+        inputs may override this hook to prepare the image and its guide
+        together.
+        """
+        return self._preprocess(
+            image,
+            color_format,
+            input_size=input_size,
+            **predict_input_kwargs,
+        )
 
     @abstractmethod
     def _forward(self, input_tensor: torch.Tensor) -> Any:
