@@ -3,6 +3,8 @@
 import hashlib
 import json
 import math
+import os
+import subprocess
 from dataclasses import replace
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -1392,6 +1394,218 @@ def _base_checkpoint_identity(tmp_path, model):
         model.HF_REPOS[model.size],
         model.HF_REVISIONS[model.size],
     )
+
+
+def test_snapshot_path_helpers_match_model_bound_identities(tmp_path):
+    model = _stub_model(tmp_path, [], [])
+    snapshot = Path(model.processor.name_or_path)
+    repo = model.HF_REPOS[model.size]
+    revision = model.HF_REVISIONS[model.size]
+    validator = VLMConfidenceValidator(model, _config(tmp_path))
+
+    direct_snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, repo, revision
+    )
+    direct_processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, repo, revision
+    )
+    runtime_processor = validator._processor_identity(repo, revision)
+
+    assert direct_snapshot == validator._base_snapshot_identity(repo, revision)
+    assert direct_processor == {
+        key: value for key, value in runtime_processor.items() if key != "class"
+    }
+
+
+def test_snapshot_path_helpers_do_not_construct_validator_or_model(
+    tmp_path, monkeypatch
+):
+    snapshot = _write_base_snapshot(tmp_path / "snapshot")
+
+    def refuse_construction(*args, **kwargs):
+        raise AssertionError("path-only identity helpers constructed a model")
+
+    monkeypatch.setattr(VLMConfidenceValidator, "__init__", refuse_construction)
+    monkeypatch.setattr(_StubVLM, "__init__", refuse_construction)
+
+    checkpoint = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, "stub/base", "a" * 40
+    )
+    processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, "stub/base", "a" * 40
+    )
+
+    assert checkpoint["kind"] == "pinned_hf_snapshot"
+    assert checkpoint["weight_files"] == ["model.safetensors"]
+    assert processor["source"] == "stub/base"
+    assert processor["revision"] == "a" * 40
+    assert len(processor["sha256"]) == 64
+
+
+@pytest.mark.parametrize(
+    "helper_name",
+    [
+        "_base_snapshot_identity_from_root",
+        "_processor_content_identity_from_root",
+    ],
+)
+@pytest.mark.parametrize("link_position", ["leaf", "ancestor"])
+def test_snapshot_path_helpers_reject_symlinked_leaf_or_ancestor(
+    tmp_path, helper_name, link_position
+):
+    if link_position == "leaf":
+        target = _write_base_snapshot(tmp_path / "real-snapshot")
+        lexical = tmp_path / "linked-snapshot"
+        link_target = target
+    else:
+        target_parent = tmp_path / "real-parent"
+        _write_base_snapshot(target_parent / "snapshot")
+        lexical_parent = tmp_path / "linked-parent"
+        lexical = lexical_parent / "snapshot"
+        link_target = target_parent
+    link = lexical if link_position == "leaf" else lexical.parent
+    try:
+        link.symlink_to(link_target, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"Directory symlinks are unavailable: {exc}")
+
+    helper = getattr(VLMConfidenceValidator, helper_name)
+    with pytest.raises(RuntimeError, match="symlink or junction"):
+        helper(lexical, "stub/base", "a" * 40)
+
+
+@pytest.mark.parametrize(
+    "helper_name",
+    [
+        "_base_snapshot_identity_from_root",
+        "_processor_content_identity_from_root",
+    ],
+)
+def test_snapshot_path_helpers_reject_nested_file_symlink(tmp_path, helper_name):
+    snapshot = _write_base_snapshot(tmp_path / "snapshot")
+    nested = snapshot / "nested"
+    nested.mkdir()
+    target = tmp_path / "external.json"
+    target.write_text('{"external":true}\n', encoding="utf-8")
+    link = nested / "linked.json"
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"File symlinks are unavailable: {exc}")
+
+    helper = getattr(VLMConfidenceValidator, helper_name)
+    with pytest.raises(RuntimeError, match="symlink or junction"):
+        helper(snapshot, "stub/base", "a" * 40)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction contract")
+@pytest.mark.parametrize(
+    "helper_name",
+    [
+        "_base_snapshot_identity_from_root",
+        "_processor_content_identity_from_root",
+    ],
+)
+@pytest.mark.parametrize("junction_position", ["leaf", "ancestor"])
+def test_snapshot_path_helpers_reject_windows_junction_leaf_or_ancestor(
+    tmp_path, helper_name, junction_position
+):
+    if junction_position == "leaf":
+        target = _write_base_snapshot(tmp_path / "real-snapshot")
+        junction = tmp_path / "junction-snapshot"
+        lexical = junction
+    else:
+        target = tmp_path / "real-parent"
+        _write_base_snapshot(target / "snapshot")
+        junction = tmp_path / "junction-parent"
+        lexical = junction / "snapshot"
+    process = subprocess.run(
+        ["cmd", "/d", "/c", "mklink", "/J", str(junction), str(target)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if process.returncode != 0:
+        pytest.skip(f"Windows junctions are unavailable: {process.stderr.strip()}")
+    try:
+        helper = getattr(VLMConfidenceValidator, helper_name)
+        with pytest.raises(RuntimeError, match="symlink or junction"):
+            helper(lexical, "stub/base", "a" * 40)
+    finally:
+        os.rmdir(junction)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction contract")
+@pytest.mark.parametrize(
+    "helper_name",
+    [
+        "_base_snapshot_identity_from_root",
+        "_processor_content_identity_from_root",
+    ],
+)
+def test_snapshot_path_helpers_reject_nested_windows_directory_junction(
+    tmp_path, helper_name
+):
+    snapshot = _write_base_snapshot(tmp_path / "snapshot")
+    target = tmp_path / "external-directory"
+    target.mkdir()
+    (target / "tokenizer.json").write_text('{"external":true}\n', encoding="utf-8")
+    junction = snapshot / "nested-junction"
+    process = subprocess.run(
+        ["cmd", "/d", "/c", "mklink", "/J", str(junction), str(target)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if process.returncode != 0:
+        pytest.skip(f"Windows junctions are unavailable: {process.stderr.strip()}")
+    try:
+        helper = getattr(VLMConfidenceValidator, helper_name)
+        with pytest.raises(RuntimeError, match="symlink or junction"):
+            helper(snapshot, "stub/base", "a" * 40)
+    finally:
+        os.rmdir(junction)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("weights", "Base snapshot identity changed"),
+        ("processor", "Processor content identity changed"),
+    ],
+)
+def test_expected_loaded_identity_rejects_a_to_b_disk_mutation_before_forward(
+    tmp_path, mutation, message
+):
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"offline")
+    model = _stub_model(tmp_path, [image], [_variants([], [])])
+    snapshot = Path(model.processor.name_or_path)
+    expected_snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    expected_processor = VLMConfidenceValidator._processor_content_identity_from_root(
+        snapshot, model.HF_REPOS[model.size], model.HF_REVISIONS[model.size]
+    )
+    validator = _Harness(
+        model,
+        _config(tmp_path),
+        [image],
+        torch.zeros((1, 1, 5)),
+        expected_snapshot_identity=expected_snapshot,
+        expected_processor_content_identity=expected_processor,
+    )
+    if mutation == "weights":
+        (snapshot / "model.safetensors").write_bytes(b"mutated-after-load")
+    else:
+        (snapshot / "preprocessor_config.json").write_text(
+            '{"processor_class":"Mutated"}\n', encoding="utf-8"
+        )
+
+    with pytest.raises(RuntimeError, match=message):
+        validator.run()
+
+    assert model.forward_count == 0
 
 
 def test_base_snapshot_checkpoint_binds_weight_bytes_and_ignores_cache(tmp_path):

@@ -33,11 +33,15 @@ import numpy as np
 import torch
 import cv2
 import PIL
+from torch.utils.data import DataLoader
 
-from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
 from libreyolo.data import load_data_config
+from libreyolo.data.dataset import COCODataset
+from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
 
+from .coco_evaluator import COCOEvaluator
 from .config import ValidationConfig
+from .detection_validator import val_collate_fn
 from .vlm_benchmark_dataset import (
     BenchmarkDatasetError,
     VerifiedBenchmarkRunInputs,
@@ -61,6 +65,7 @@ _ENVELOPE_NAME = "vlm_confidence_run.json"
 _RUN_SCHEMA = "libreyolo.vlm-confidence-benchmark-run.v2"
 _STATUS_SCHEMA = "libreyolo.vlm-confidence-benchmark-status.v1"
 _CONTEXT_SCHEMA = "libreyolo.vlm-confidence-benchmark-context.v2"
+_PREFLIGHT_SCHEMA = "libreyolo.vlm-confidence-benchmark-preflight.v1"
 _DATASET_CONTEXT_SCHEMA = "libreyolo.vlm-confidence-benchmark-dataset.v1"
 _DATASET_MANIFEST_SCHEMA = "libreyolo.vlm-benchmark-dataset.v1"
 _REVIEW_SCHEMA = "libreyolo.vlm-benchmark-dataset-review.v1"
@@ -88,6 +93,46 @@ _GIT_COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
 _RUN_IDENTIFIER = re.compile(r"^[0-9a-f]{32}$")
 _PROCESS_IDENTIFIER = secrets.token_hex(16)
 _FASTER_COCO_ENV = "LIBREYOLO_FASTER_COCO_EVAL"
+_OFFLINE_ENVIRONMENT = {
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "HF_HUB_DISABLE_TELEMETRY": "1",
+    "DO_NOT_TRACK": "1",
+}
+_QWEN_2B_REPO = "Qwen/Qwen3-VL-2B-Instruct"
+_QWEN_2B_REVISION = "89644892e4d85e24eaac8bacfd4f463576704203"
+# Audited 2026-08-16 from the official revision API and its /resolve/... blobs:
+# https://huggingface.co/api/models/Qwen/Qwen3-VL-2B-Instruct/revision/89644892e4d85e24eaac8bacfd4f463576704203
+# https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/tree/89644892e4d85e24eaac8bacfd4f463576704203
+_QWEN_2B_SNAPSHOT_IDENTITY = {
+    "kind": "pinned_hf_snapshot",
+    "schema": "libreyolo.vlm-hf-snapshot-identity.v1",
+    "source": _QWEN_2B_REPO,
+    "revision": _QWEN_2B_REVISION,
+    "format": "safetensors_single",
+    "artifacts": [
+        {
+            "path": "config.json",
+            "size_bytes": 1_505,
+            "sha256": "bec4b3d446efa05807365c9e1cec03ac590836879d02f3a6da879971154bdd3b",
+        },
+        {
+            "path": "model.safetensors",
+            "size_bytes": 4_255_140_312,
+            "sha256": "7de1838c87a5349b016c26a1c3f7d2bc400a3d485f95ef39a7059ffd734977a0",
+        },
+    ],
+    "sha256": "ed2f80a94ea529acc7c3192ca7d1c4a8cfc28f69de472417e0402a59fdb6cd07",
+    "files": 2,
+    "size_bytes": 4_255_141_817,
+    "weight_files": ["model.safetensors"],
+}
+_QWEN_2B_PROCESSOR_CONTENT_IDENTITY = {
+    "source": _QWEN_2B_REPO,
+    "revision": _QWEN_2B_REVISION,
+    "sha256": "f6626ce88ba637238391c175ea0b8f57a58f7bfcbe8b9876ceaded603185826d",
+    "files": 9,
+}
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -118,6 +163,40 @@ class BenchmarkArtifacts:
     envelope_path: Path
     metrics: dict[str, float | None]
     nonfinite_metrics: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BenchmarkPreflight:
+    """Fully checked, process-local readiness evidence for one benchmark run."""
+
+    output_dir: Path
+    snapshot_root: Path
+    snapshot_identity: dict[str, Any]
+    processor_content_identity: dict[str, Any]
+    dataset_context: dict[str, Any]
+    git_context: dict[str, Any]
+    determinism: dict[str, Any]
+    runtime_context: dict[str, Any]
+    offline_context: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _PreModelInputs:
+    destination: Path
+    requested_device: str
+    resolved_device: str
+    verified: VerifiedBenchmarkRunInputs
+    dataset_yaml: Path
+    portable_dataset_context: dict[str, Any]
+    native_dataset_context: dict[str, Any]
+    git_context: dict[str, Any]
+    determinism: dict[str, Any]
+    runtime_context: dict[str, Any]
+    device_probe: dict[str, Any]
+    offline_context: dict[str, Any]
+    snapshot_root: Path
+    snapshot_identity: dict[str, Any]
+    processor_content_identity: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -219,6 +298,255 @@ def configure_determinism(seed: int) -> dict[str, Any]:
     }
 
 
+def _validate_device_argument(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise BenchmarkInputError("device must be a non-empty string")
+    requested = value.strip()
+    if requested == "auto":
+        return requested
+    candidate = f"cuda:{int(requested)}" if requested.isdigit() else requested
+    try:
+        torch.device(candidate)
+    except (RuntimeError, TypeError, ValueError) as exc:
+        raise BenchmarkInputError(f"invalid benchmark device: {requested!r}") from exc
+    return requested
+
+
+def _validate_output_destination(output_root: str | os.PathLike[str]) -> Path:
+    requested = Path(output_root).expanduser()
+    if _path_exists(requested):
+        raise BenchmarkOutputExistsError(
+            f"benchmark output already exists: {requested}"
+        )
+    destination = Path(os.path.abspath(os.fspath(requested)))
+    repository = _repo_root()
+    if destination == repository or repository in destination.parents:
+        raise BenchmarkInputError(
+            "benchmark output must be outside the git worktree so generated "
+            "artifacts cannot change the recorded source state"
+        )
+    if _path_exists(destination):
+        raise BenchmarkOutputExistsError(
+            f"benchmark output already exists: {destination}"
+        )
+
+    ancestor = destination.parent
+    while not _path_exists(ancestor):
+        parent = ancestor.parent
+        if parent == ancestor:
+            raise BenchmarkInputError(
+                f"benchmark output has no existing directory ancestor: {destination}"
+            )
+        ancestor = parent
+    try:
+        lexical_ancestor, resolved_ancestor = (
+            VLMConfidenceValidator._strict_local_directory_root(
+                ancestor, "Benchmark output ancestor"
+            )
+        )
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise BenchmarkInputError(f"invalid benchmark output parent: {exc}") from exc
+
+    missing_parent_parts = destination.parent.relative_to(lexical_ancestor).parts
+    try:
+        with tempfile.TemporaryDirectory(
+            dir=resolved_ancestor, prefix=".libreyolo-vlm-output-probe-"
+        ) as temporary_root:
+            simulated_parent = Path(temporary_root).joinpath(*missing_parent_parts)
+            if missing_parent_parts:
+                simulated_parent.mkdir(parents=True, exist_ok=False)
+            simulated_destination = simulated_parent / destination.name
+            lock = simulated_parent / f".{destination.name}.lock"
+            descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(descriptor)
+            stage = Path(tempfile.mkdtemp(dir=simulated_parent, prefix=".stage-"))
+            stage.rename(simulated_destination)
+    except (OSError, ValueError) as exc:
+        raise BenchmarkInputError(
+            f"benchmark output cannot be staged at the requested location: {exc}"
+        ) from exc
+    return destination
+
+
+def _configure_offline_environment() -> dict[str, Any]:
+    for name, value in _OFFLINE_ENVIRONMENT.items():
+        os.environ[name] = value
+    try:
+        hub_constants = import_module("huggingface_hub.constants")
+        transformers_hub = import_module("transformers.utils.hub")
+    except ImportError as exc:
+        raise BenchmarkInputError(
+            "cannot import the required Hugging Face offline-mode runtime"
+        ) from exc
+    hub_offline = getattr(hub_constants, "HF_HUB_OFFLINE", None)
+    telemetry_disabled = getattr(hub_constants, "HF_HUB_DISABLE_TELEMETRY", None)
+    transformers_offline = getattr(transformers_hub, "is_offline_mode", None)
+    transformers_offline = (
+        transformers_offline() if callable(transformers_offline) else None
+    )
+    if (
+        hub_offline is not True
+        or telemetry_disabled is not True
+        or transformers_offline is not True
+    ):
+        raise BenchmarkInputError(
+            "Hugging Face offline mode and telemetry suppression must be enabled "
+            "before importing huggingface_hub or transformers"
+        )
+    return {
+        "hf_hub_offline": os.environ["HF_HUB_OFFLINE"],
+        "transformers_offline": os.environ["TRANSFORMERS_OFFLINE"],
+        "hf_hub_disable_telemetry": os.environ["HF_HUB_DISABLE_TELEMETRY"],
+        "do_not_track": os.environ["DO_NOT_TRACK"],
+        "hub_runtime_offline": hub_offline,
+        "transformers_runtime_offline": transformers_offline,
+        "hub_runtime_telemetry_disabled": telemetry_disabled,
+    }
+
+
+def _reject_faster_coco_override() -> None:
+    value = os.environ.get(_FASTER_COCO_ENV)
+    if value is not None and value.strip().lower() in {"1", "true", "yes", "on"}:
+        raise BenchmarkInputError(
+            f"{_FASTER_COCO_ENV} must not enable faster-coco-eval for this benchmark"
+        )
+
+
+def _required_package_versions() -> dict[str, str]:
+    versions = {}
+    for package in (
+        "transformers",
+        "huggingface_hub",
+        "tokenizers",
+        "safetensors",
+        "pycocotools",
+    ):
+        try:
+            version = metadata.version(package)
+        except metadata.PackageNotFoundError as exc:
+            raise BenchmarkInputError(
+                f"cannot identify required benchmark package {package!r}"
+            ) from exc
+        if not isinstance(version, str) or not version.strip():
+            raise BenchmarkInputError(
+                f"cannot identify required benchmark package {package!r}"
+            )
+        versions[package] = version
+    return versions
+
+
+def _mps_available() -> bool:
+    backend = getattr(torch.backends, "mps", None)
+    return bool(backend is not None and backend.is_available())
+
+
+def _resolve_and_probe_device(requested_device: str) -> tuple[str, dict[str, Any]]:
+    """Resolve BaseModel device syntax and exercise the selected device locally."""
+
+    requested_device = _validate_device_argument(requested_device)
+    if requested_device == "auto":
+        if torch.cuda.is_available():
+            device = torch.device("cuda", torch.cuda.current_device())
+        elif _mps_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
+    elif requested_device.isdigit():
+        device = torch.device("cuda", int(requested_device))
+    else:
+        device = torch.device(requested_device)
+
+    if device.type not in {"cpu", "cuda", "mps"}:
+        raise BenchmarkInputError(
+            "the VLM confidence benchmark supports only cpu, cuda, and mps devices"
+        )
+
+    index: int | None = device.index
+    name: str | None = None
+    capability: list[int] | None = None
+    total_memory: int | None = None
+    free_memory: int | None = None
+    bf16_supported: bool | None = None
+    driver: str | None = None
+    try:
+        if device.type == "cuda":
+            if not torch.cuda.is_available():
+                raise BenchmarkInputError(
+                    f"requested CUDA device is unavailable: {requested_device!r}"
+                )
+            count = int(torch.cuda.device_count())
+            if index is None:
+                index = int(torch.cuda.current_device())
+            if index < 0 or index >= count:
+                raise BenchmarkInputError(
+                    f"requested CUDA device index {index} is outside the available "
+                    f"range 0..{max(count - 1, 0)}"
+                )
+            device = torch.device("cuda", index)
+            properties = torch.cuda.get_device_properties(index)
+            name = str(properties.name)
+            capability = [
+                int(value) for value in torch.cuda.get_device_capability(index)
+            ]
+            total_memory = int(properties.total_memory)
+            free_memory, reported_total = (
+                int(value) for value in torch.cuda.mem_get_info(index)
+            )
+            if reported_total != total_memory:
+                total_memory = reported_total
+            with torch.cuda.device(index):
+                bf16_supported = bool(torch.cuda.is_bf16_supported())
+                probe = torch.ones(1, device=device, dtype=torch.float32)
+                if float((probe + 1.0).item()) != 2.0:
+                    raise RuntimeError("CUDA tensor probe returned an invalid result")
+            torch.cuda.synchronize(index)
+            driver = _nvidia_driver_version()
+        elif device.type == "mps":
+            if not _mps_available():
+                raise BenchmarkInputError("requested MPS device is unavailable")
+            probe = torch.ones(1, device=device, dtype=torch.float32)
+            if float((probe + 1.0).item()) != 2.0:
+                raise RuntimeError("MPS tensor probe returned an invalid result")
+            mps_module = getattr(torch, "mps", None)
+            synchronize = getattr(mps_module, "synchronize", None)
+            if callable(synchronize):
+                synchronize()
+            try:
+                bf16_probe = torch.ones(1, device=device, dtype=torch.bfloat16)
+                bf16_supported = bool(float((bf16_probe + 1.0).float().item()) == 2.0)
+            except (RuntimeError, TypeError):
+                bf16_supported = False
+            name = platform.processor() or platform.machine()
+        else:
+            device = torch.device("cpu")
+            probe = torch.ones(1, device=device, dtype=torch.float32)
+            if float((probe + 1.0).item()) != 2.0:
+                raise RuntimeError("CPU tensor probe returned an invalid result")
+            name = platform.processor() or platform.machine()
+    except BenchmarkInputError:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise BenchmarkInputError(
+            f"could not execute a probe on benchmark device {device}: {exc}"
+        ) from exc
+
+    resolved = str(device)
+    return resolved, {
+        "requested_device": requested_device,
+        "resolved_device": resolved,
+        "type": device.type,
+        "index": index,
+        "name": name,
+        "capability": capability,
+        "total_memory_bytes": total_memory,
+        "free_memory_bytes": free_memory,
+        "bf16_supported": bf16_supported,
+        "cuda_runtime": None if torch.version.cuda is None else str(torch.version.cuda),
+        "nvidia_driver": driver,
+        "tiny_tensor_probe": "ok",
+    }
+
+
 def _git_context() -> dict[str, Any]:
     root = _repo_root()
     try:
@@ -257,22 +585,18 @@ def _git_context() -> dict[str, Any]:
     return {"commit": commit, "dirty": bool(status_process.stdout)}
 
 
-def _runtime_context(*, requested_device: str, resolved_device: str) -> dict[str, Any]:
+def _runtime_context(
+    *,
+    requested_device: str,
+    resolved_device: str,
+    package_versions: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     cudnn_version = torch.backends.cudnn.version()
-    package_versions = {}
-    for package in (
-        "transformers",
-        "huggingface_hub",
-        "tokenizers",
-        "safetensors",
-        "pycocotools",
-    ):
-        try:
-            package_versions[package] = metadata.version(package)
-        except metadata.PackageNotFoundError as exc:
-            raise RuntimeError(
-                f"cannot identify required benchmark package {package!r}"
-            ) from exc
+    package_versions = (
+        _required_package_versions()
+        if package_versions is None
+        else dict(package_versions)
+    )
     return {
         "python": platform.python_version(),
         "implementation": platform.python_implementation(),
@@ -656,6 +980,557 @@ def _temporary_verified_dataset_yaml(
         yield dataset_yaml
 
 
+class _RecordingValPreprocessor:
+    def __init__(self, delegate: Any) -> None:
+        self.delegate = delegate
+        self.input_dimensions: list[tuple[int, int]] = []
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return bool(getattr(self.delegate, "wants_unresized_image", False))
+
+    def __call__(self, image: np.ndarray, targets: np.ndarray, input_size: Any):
+        self.input_dimensions.append((int(image.shape[0]), int(image.shape[1])))
+        return self.delegate(image, targets, input_size)
+
+
+def _normalized_native_annotation(row: Mapping[str, Any]) -> dict[str, Any]:
+    bbox = row.get("bbox")
+    if not isinstance(bbox, Sequence) or isinstance(bbox, (str, bytes, bytearray)):
+        raise ValueError("COCO annotation bbox must be a sequence")
+    if len(bbox) != 4:
+        raise ValueError("COCO annotation bbox must contain four values")
+    normalized_bbox = [float(value) for value in bbox]
+    if not all(math.isfinite(value) for value in normalized_bbox):
+        raise ValueError("COCO annotation bbox values must be finite")
+    area = float(row.get("area", normalized_bbox[2] * normalized_bbox[3]))
+    if not math.isfinite(area):
+        raise ValueError("COCO annotation area must be finite")
+    return {
+        "id": int(row["id"]),
+        "image_id": int(row["image_id"]),
+        "category_id": int(row["category_id"]),
+        "bbox": normalized_bbox,
+        "area": area,
+        "iscrowd": int(row.get("iscrowd", 0)),
+        "ignore": int(row.get("ignore", 0)),
+    }
+
+
+def _exercise_native_evaluator(
+    dataset: COCODataset,
+    annotations: Sequence[Mapping[str, Any]],
+    expected_category_map: Mapping[int, int],
+) -> str:
+    """Run one real, deterministic pycocotools evaluation against verified GT."""
+
+    category_to_label = {
+        int(category_id): int(label)
+        for label, category_id in expected_category_map.items()
+    }
+    candidate = next(
+        (
+            row
+            for row in annotations
+            if int(row["iscrowd"]) == 0
+            and int(row["ignore"]) == 0
+            and float(row["bbox"][2]) > 0.0
+            and float(row["bbox"][3]) > 0.0
+            and int(row["category_id"]) in category_to_label
+        ),
+        None,
+    )
+    if candidate is None:
+        raise ValueError(
+            "native COCO evaluator self-test has no usable ground-truth annotation"
+        )
+
+    x, y, width, height = (float(value) for value in candidate["bbox"])
+    probe = COCOEvaluator(
+        dataset.coco,
+        iou_type="bbox",
+        label_to_category_id=expected_category_map,
+        faster_coco_eval=False,
+    )
+    probe.update(
+        {
+            "boxes": np.asarray([[x, y, x + width, y + height]], dtype=np.float32),
+            "scores": np.asarray([1.0], dtype=np.float32),
+            "classes": np.asarray(
+                [category_to_label[int(candidate["category_id"])]], dtype=np.int64
+            ),
+        },
+        int(candidate["image_id"]),
+    )
+    try:
+        metrics = probe.compute()
+    except Exception as exc:
+        raise ValueError(f"native COCO evaluator self-test failed: {exc}") from exc
+    if not isinstance(metrics, Mapping):
+        raise ValueError("native COCO evaluator self-test returned no metric mapping")
+    required_metrics = {"mAP", "mAP50", "mAP75", "map_5095", "ar_100"}
+    if not required_metrics.issubset(metrics):
+        raise ValueError("native COCO evaluator self-test omitted required metrics")
+    try:
+        normalized_metrics = {
+            str(name): float(value) for name, value in metrics.items()
+        }
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            "native COCO evaluator self-test returned a non-numeric metric"
+        ) from exc
+    if not all(math.isfinite(value) for value in normalized_metrics.values()):
+        raise ValueError("native COCO evaluator self-test returned a non-finite metric")
+    map50 = normalized_metrics["mAP50"]
+    if not 0.0 < map50 <= 1.0 + 1e-12:
+        raise ValueError(
+            "native COCO evaluator self-test did not match its perfect prediction"
+        )
+    if not isinstance(probe.last_backend, str) or not probe.last_backend.startswith(
+        "pycocotools "
+    ):
+        raise ValueError(
+            "native COCO evaluator self-test did not execute the pycocotools backend"
+        )
+    return probe.last_backend
+
+
+def _preflight_native_dataset(
+    verified: VerifiedBenchmarkRunInputs,
+) -> dict[str, Any]:
+    """Exercise the exact native dataset/evaluator path without loading a model."""
+
+    try:
+        expected_images = list(verified.expected_images)
+        expected_count = verified.partition_stop - verified.partition_start
+        if expected_count <= 0 or len(expected_images) != expected_count:
+            raise ValueError(
+                "verified image rows do not match the benchmark partition bounds"
+            )
+        if len(verified.class_names) != _REQUIRED_CLASS_COUNT:
+            raise ValueError("verified class count is not the fixed 80-class contract")
+
+        preprocessor_class = LibreQwen3VL.val_preprocessor_class
+        preprocessor = _RecordingValPreprocessor(
+            preprocessor_class(img_size=(_IMAGE_SIZE, _IMAGE_SIZE))
+        )
+        dataset = COCODataset(
+            data_dir=str(verified.images_dir),
+            json_file=str(verified.annotation_path),
+            name=str(verified.images_dir),
+            img_size=(_IMAGE_SIZE, _IMAGE_SIZE),
+            preproc=preprocessor,
+            num_classes=len(verified.class_names),
+            names=list(verified.class_names),
+        )
+
+        expected_ids = [int(row["image_id"]) for row in expected_images]
+        actual_ids = [int(value) for value in dataset.ids]
+        if actual_ids != expected_ids:
+            raise ValueError("native COCO dataset image order changed")
+        if tuple(dataset._classes) != tuple(verified.class_names):
+            raise ValueError("native COCO dataset class names changed")
+
+        expected_categories = [
+            {"id": int(row["id"]), "name": str(row["name"])}
+            for row in verified.expected_categories
+        ]
+        actual_categories = [
+            {"id": int(row["id"]), "name": str(row["name"])} for row in dataset.cats
+        ]
+        if actual_categories != expected_categories:
+            raise ValueError("native COCO category rows changed")
+        expected_category_map = {
+            index: int(category["id"])
+            for index, category in enumerate(expected_categories)
+        }
+        if dict(dataset.label_to_category_id) != expected_category_map:
+            raise ValueError("native COCO class-to-category mapping changed")
+
+        annotation_rows = dataset.coco.dataset.get("annotations")
+        if not isinstance(annotation_rows, list):
+            raise ValueError("native COCO ground truth has no annotation rows")
+        actual_annotations = [
+            _normalized_native_annotation(row) for row in annotation_rows
+        ]
+        expected_annotations = [
+            _normalized_native_annotation(row) for row in verified.expected_annotations
+        ]
+        if actual_annotations != expected_annotations:
+            raise ValueError("native COCO ground-truth annotation rows changed")
+
+        image_rows = dataset.coco.dataset.get("images")
+        if not isinstance(image_rows, list):
+            raise ValueError("native COCO ground truth has no image rows")
+        actual_image_rows = [
+            {
+                "image_id": int(row["id"]),
+                "file_name": str(row["file_name"]),
+                "width": int(row["width"]),
+                "height": int(row["height"]),
+            }
+            for row in image_rows
+        ]
+        expected_image_rows = [
+            {
+                "image_id": int(row["image_id"]),
+                "file_name": str(row["file_name"]),
+                "width": int(row["width"]),
+                "height": int(row["height"]),
+            }
+            for row in expected_images
+        ]
+        if actual_image_rows != expected_image_rows:
+            raise ValueError("native COCO ground-truth image rows changed")
+
+        image_root = verified.images_dir.resolve(strict=True)
+        for index, row in enumerate(expected_images):
+            candidate = dataset._image_path(index)
+            if candidate.is_symlink():
+                raise ValueError(f"native COCO image path is a symlink: {candidate}")
+            resolved = candidate.resolve(strict=True)
+            expected = (image_root / str(row["file_name"])).resolve(strict=True)
+            if resolved != expected or resolved.parent != image_root:
+                raise ValueError(
+                    f"native COCO image path changed for image {row['image_id']}"
+                )
+
+        evaluator = COCOEvaluator(
+            dataset.coco,
+            iou_type="bbox",
+            label_to_category_id=dataset.label_to_category_id,
+            faster_coco_eval=False,
+        )
+        if evaluator.faster_coco_eval is not False:
+            raise ValueError("native COCO evaluator selected faster-coco-eval")
+        if evaluator.label_to_category_id != expected_category_map:
+            raise ValueError("native COCO evaluator category mapping changed")
+        evaluator_self_test_backend = _exercise_native_evaluator(
+            dataset, actual_annotations, expected_category_map
+        )
+
+        dataloader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=False,
+            collate_fn=val_collate_fn,
+            drop_last=False,
+        )
+        observed_ids = []
+        for index, batch in enumerate(dataloader):
+            if index >= expected_count:
+                raise ValueError("native COCO dataloader produced extra images")
+            images, targets, image_info, image_ids = batch
+            if tuple(images.shape) != (1, 3, _IMAGE_SIZE, _IMAGE_SIZE):
+                raise ValueError(
+                    "native COCO dataloader produced an unexpected image tensor shape"
+                )
+            if int(targets.shape[0]) != 1:
+                raise ValueError(
+                    "native COCO dataloader violated the batch-size-one contract"
+                )
+            raw_id = image_ids[0]
+            if isinstance(raw_id, torch.Tensor):
+                if raw_id.numel() != 1:
+                    raise ValueError("native COCO image id is not scalar")
+                raw_id = raw_id.item()
+            image_id = int(raw_id)
+            row = expected_images[index]
+            if image_id != int(row["image_id"]):
+                raise ValueError("native COCO dataloader image order changed")
+            info = tuple(int(value) for value in image_info[0])
+            expected_info = (int(row["height"]), int(row["width"]))
+            if info != expected_info:
+                raise ValueError(
+                    f"native COCO decoded dimensions changed for image {image_id}"
+                )
+            observed_ids.append(image_id)
+
+        if observed_ids != expected_ids or len(preprocessor.input_dimensions) != len(
+            expected_ids
+        ):
+            raise ValueError(
+                "native COCO dataloader did not iterate the full partition"
+            )
+        for row, observed in zip(expected_images, preprocessor.input_dimensions):
+            raw_height, raw_width = int(row["height"]), int(row["width"])
+            if preprocessor.wants_unresized_image:
+                expected_input = (raw_height, raw_width)
+            else:
+                ratio = min(_IMAGE_SIZE / raw_height, _IMAGE_SIZE / raw_width)
+                expected_input = (int(raw_height * ratio), int(raw_width * ratio))
+            if observed != expected_input:
+                raise ValueError(
+                    "native COCO preprocessor input dimensions changed for image "
+                    f"{row['image_id']}"
+                )
+
+        order_payload = [
+            {
+                "image_id": int(row["image_id"]),
+                "file_name": str(row["file_name"]),
+                "width": int(row["width"]),
+                "height": int(row["height"]),
+            }
+            for row in expected_images
+        ]
+        return {
+            "dataset_class": (
+                f"{type(dataset).__module__}.{type(dataset).__qualname__}"
+            ),
+            "preprocessor_class": (
+                f"{preprocessor_class.__module__}.{preprocessor_class.__qualname__}"
+            ),
+            "evaluator_class": (
+                f"{type(evaluator).__module__}.{type(evaluator).__qualname__}"
+            ),
+            "batch_size": 1,
+            "num_workers": 0,
+            "faster_coco_eval": False,
+            "evaluator_self_test": "passed",
+            "evaluator_self_test_backend": evaluator_self_test_backend,
+            "image_count": len(observed_ids),
+            "category_count": len(actual_categories),
+            "annotation_count": len(actual_annotations),
+            "image_order_sha256": hashlib.sha256(
+                _json_text(order_payload).encode("utf-8")
+            ).hexdigest(),
+            "ground_truth_sha256": hashlib.sha256(
+                _json_text(
+                    {
+                        "images": actual_image_rows,
+                        "categories": actual_categories,
+                        "annotations": actual_annotations,
+                    }
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
+    except BenchmarkInputError:
+        raise
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise BenchmarkInputError(
+            f"native benchmark dataset preflight failed: {exc}"
+        ) from exc
+
+
+_VERIFIED_INPUT_FIELDS = (
+    "manifest_path",
+    "manifest_sha256",
+    "source_annotations",
+    "source_canonical_sha256",
+    "source_file_sha256",
+    "source_file_size_bytes",
+    "images_dir",
+    "selected_image_identity_sha256",
+    "partition_name",
+    "partition_role",
+    "partition_start",
+    "partition_stop",
+    "annotation_path",
+    "annotation_sha256",
+    "annotation_size_bytes",
+    "class_names",
+    "expected_images",
+    "expected_categories",
+    "expected_annotations",
+    "review_attestation_path",
+    "review_attestation_sha256",
+    "review_attestation",
+)
+
+
+def _verified_inputs_identity(verified: VerifiedBenchmarkRunInputs) -> str:
+    return _json_text(
+        {name: getattr(verified, name) for name in _VERIFIED_INPUT_FIELDS}
+    )
+
+
+def _verify_run_inputs(
+    manifest: str | os.PathLike[str],
+    source_annotations: str | os.PathLike[str],
+    images_dir: str | os.PathLike[str],
+    review_attestation: str | os.PathLike[str],
+) -> VerifiedBenchmarkRunInputs:
+    try:
+        return verify_benchmark_run_inputs(
+            manifest,
+            source_annotations,
+            images_dir,
+            review_attestation,
+            required_role=_REQUIRED_PARTITION_ROLE,
+        )
+    except BenchmarkDatasetError as exc:
+        raise BenchmarkInputError(f"invalid benchmark dataset evidence: {exc}") from exc
+
+
+def _snapshot_evidence() -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    prefix = LibreQwen3VL.FILENAME_PREFIX
+    repos = LibreQwen3VL.HF_REPOS
+    revisions = LibreQwen3VL.HF_REVISIONS
+    if (
+        not isinstance(prefix, str)
+        or not prefix
+        or _MODEL_SIZE not in repos
+        or _MODEL_SIZE not in revisions
+    ):
+        raise BenchmarkInputError("cannot derive the fixed Qwen snapshot identity")
+    root = Path.cwd() / "weights" / f"{prefix}{_MODEL_SIZE}"
+    repo = str(repos[_MODEL_SIZE])
+    revision = str(revisions[_MODEL_SIZE])
+    if repo != _QWEN_2B_REPO or revision != _QWEN_2B_REVISION:
+        raise BenchmarkInputError(
+            "the benchmark Qwen repository or revision differs from its official pin"
+        )
+    try:
+        snapshot = VLMConfidenceValidator._base_snapshot_identity_from_root(
+            root, repo, revision
+        )
+        processor = VLMConfidenceValidator._processor_content_identity_from_root(
+            root, repo, revision
+        )
+    except (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise BenchmarkInputError(
+            f"invalid local Qwen benchmark snapshot: {exc}"
+        ) from exc
+    if snapshot != _QWEN_2B_SNAPSHOT_IDENTITY:
+        raise BenchmarkInputError(
+            "local Qwen benchmark weights do not match the official pinned bytes"
+        )
+    if processor != _QWEN_2B_PROCESSOR_CONTENT_IDENTITY:
+        raise BenchmarkInputError(
+            "local Qwen benchmark processor content does not match the official "
+            "pinned bytes"
+        )
+    return root, snapshot, processor
+
+
+@contextmanager
+def _verified_pre_model_inputs(
+    manifest: str | os.PathLike[str],
+    source_annotations: str | os.PathLike[str],
+    images_dir: str | os.PathLike[str],
+    review_attestation: str | os.PathLike[str],
+    output_root: str | os.PathLike[str],
+    *,
+    seed: int,
+    device: str,
+) -> Iterator[_PreModelInputs]:
+    seed = _validate_seed(seed)
+    requested_device = _validate_device_argument(device)
+    destination = _validate_output_destination(output_root)
+
+    try:
+        git_context = _git_context()
+    except RuntimeError as exc:
+        raise BenchmarkInputError(str(exc)) from exc
+    if git_context["dirty"]:
+        raise BenchmarkInputError(
+            "the benchmark requires a clean git worktree so its code identity is "
+            "immutable"
+        )
+
+    determinism = configure_determinism(seed)
+    offline_context = _configure_offline_environment()
+    _reject_faster_coco_override()
+    package_versions = _required_package_versions()
+    _require_pycocotools()
+    resolved_device, device_probe = _resolve_and_probe_device(requested_device)
+    try:
+        runtime_context = _runtime_context(
+            requested_device=requested_device,
+            resolved_device=resolved_device,
+            package_versions=package_versions,
+        )
+    except RuntimeError as exc:
+        raise BenchmarkInputError(str(exc)) from exc
+
+    verified = _verify_run_inputs(
+        manifest, source_annotations, images_dir, review_attestation
+    )
+    dataset_context = _portable_dataset_context(verified)
+    initial_verified_identity = _verified_inputs_identity(verified)
+
+    with _temporary_verified_dataset_yaml(verified) as dataset_yaml:
+        native_dataset_context = _preflight_native_dataset(verified)
+        snapshot_root, snapshot_identity, processor_identity = _snapshot_evidence()
+
+        stable_verified = _verify_run_inputs(
+            manifest, source_annotations, images_dir, review_attestation
+        )
+        if _verified_inputs_identity(stable_verified) != initial_verified_identity:
+            raise BenchmarkInputError(
+                "benchmark dataset evidence changed during preflight"
+            )
+        try:
+            final_git_context = _git_context()
+        except RuntimeError as exc:
+            raise BenchmarkInputError(str(exc)) from exc
+        if final_git_context != git_context:
+            raise BenchmarkInputError(
+                "the benchmark git revision or worktree changed during preflight"
+            )
+
+        yield _PreModelInputs(
+            destination=destination,
+            requested_device=requested_device,
+            resolved_device=resolved_device,
+            verified=stable_verified,
+            dataset_yaml=dataset_yaml,
+            portable_dataset_context=dataset_context,
+            native_dataset_context=native_dataset_context,
+            git_context=git_context,
+            determinism=determinism,
+            runtime_context=runtime_context,
+            device_probe=device_probe,
+            offline_context=offline_context,
+            snapshot_root=snapshot_root,
+            snapshot_identity=snapshot_identity,
+            processor_content_identity=processor_identity,
+        )
+
+
+def preflight_benchmark(
+    manifest: str | os.PathLike[str],
+    source_annotations: str | os.PathLike[str],
+    images_dir: str | os.PathLike[str],
+    review_attestation: str | os.PathLike[str],
+    output_root: str | os.PathLike[str],
+    *,
+    seed: int = 0,
+    device: str = "auto",
+) -> BenchmarkPreflight:
+    """Verify that a benchmark run is ready without constructing its model."""
+
+    with _verified_pre_model_inputs(
+        manifest,
+        source_annotations,
+        images_dir,
+        review_attestation,
+        output_root,
+        seed=seed,
+        device=device,
+    ) as prepared:
+        return BenchmarkPreflight(
+            output_dir=prepared.destination,
+            snapshot_root=prepared.snapshot_root,
+            snapshot_identity=prepared.snapshot_identity,
+            processor_content_identity=prepared.processor_content_identity,
+            dataset_context={
+                "identity": prepared.portable_dataset_context,
+                "native": prepared.native_dataset_context,
+            },
+            git_context=prepared.git_context,
+            determinism=prepared.determinism,
+            runtime_context={
+                **prepared.runtime_context,
+                "device_probe": prepared.device_probe,
+            },
+            offline_context=prepared.offline_context,
+        )
+
+
 def run_benchmark(
     manifest: str | os.PathLike[str],
     source_annotations: str | os.PathLike[str],
@@ -668,79 +1543,53 @@ def run_benchmark(
 ) -> BenchmarkArtifacts:
     """Run one fresh Qwen3-VL-2B confidence benchmark into an immutable directory."""
 
-    seed = _validate_seed(seed)
-    if not isinstance(device, str) or not device.strip():
-        raise BenchmarkInputError("device must be a non-empty string")
-    faster_coco_override = os.environ.get(_FASTER_COCO_ENV)
-    if faster_coco_override is not None and faster_coco_override.strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        raise BenchmarkInputError(
-            f"{_FASTER_COCO_ENV} must not enable faster-coco-eval for this benchmark"
-        )
-    requested_destination = Path(output_root).expanduser()
-    if _path_exists(requested_destination):
-        raise BenchmarkOutputExistsError(
-            f"benchmark output already exists: {requested_destination}"
-        )
-    destination = requested_destination.resolve(strict=False)
-    repository = _repo_root()
-    if destination == repository or repository in destination.parents:
-        raise BenchmarkInputError(
-            "benchmark output must be outside the git worktree so generated "
-            "artifacts cannot change the recorded source state"
-        )
-    if _path_exists(destination):
-        raise BenchmarkOutputExistsError(
-            f"benchmark output already exists: {destination}"
-        )
-    git_context = _git_context()
-    if git_context["dirty"]:
-        raise BenchmarkInputError(
-            "the benchmark requires a clean git worktree so its code identity is "
-            "immutable"
-        )
-
-    try:
-        verified = verify_benchmark_run_inputs(
-            manifest,
-            source_annotations,
-            images_dir,
-            review_attestation,
-            required_role=_REQUIRED_PARTITION_ROLE,
-        )
-    except BenchmarkDatasetError as exc:
-        raise BenchmarkInputError(f"invalid benchmark dataset evidence: {exc}") from exc
-    dataset_context = _portable_dataset_context(verified)
-    _require_pycocotools()
-
     normalized_metrics: dict[str, float | None]
     nonfinite_metrics: tuple[str, ...]
-    with _temporary_verified_dataset_yaml(verified) as dataset_yaml:
+    with _verified_pre_model_inputs(
+        manifest,
+        source_annotations,
+        images_dir,
+        review_attestation,
+        output_root,
+        seed=seed,
+        device=device,
+    ) as prepared:
+        seed = int(prepared.determinism["seed"])
+        destination = prepared.destination
+        verified = prepared.verified
         with _staged_output(destination) as stage:
-            determinism = configure_determinism(seed)
-            model = LibreQwen3VL(size=_MODEL_SIZE, device=device)
+            model = LibreQwen3VL(size=_MODEL_SIZE, device=prepared.requested_device)
             resolved_device = _resolved_model_device(model)
-            runtime_context = _runtime_context(
-                requested_device=device, resolved_device=resolved_device
-            )
+            if resolved_device != prepared.resolved_device:
+                raise RuntimeError(
+                    "benchmark model resolved to a different device than the "
+                    "pre-model device probe"
+                )
+            snapshot_root, snapshot_identity, processor_identity = _snapshot_evidence()
+            if (
+                snapshot_root != prepared.snapshot_root
+                or snapshot_identity != prepared.snapshot_identity
+                or processor_identity != prepared.processor_content_identity
+            ):
+                raise RuntimeError(
+                    "local Qwen benchmark snapshot changed during model construction"
+                )
+
+            runtime_context = dict(prepared.runtime_context)
             runtime_context["attention_backends"] = _attention_backends(model)
             execution_context = {
                 "schema": _CONTEXT_SCHEMA,
-                "git": git_context,
+                "git": prepared.git_context,
                 "runtime": runtime_context,
-                "determinism": determinism,
-                "dataset": dataset_context,
+                "determinism": prepared.determinism,
+                "dataset": prepared.portable_dataset_context,
             }
             config = ValidationConfig(
-                data=str(dataset_yaml),
+                data=str(prepared.dataset_yaml),
                 split="val",
                 batch_size=1,
                 imgsz=_IMAGE_SIZE,
-                device=device,
+                device=prepared.requested_device,
                 save_dir=str(stage),
                 num_workers=0,
                 allow_download_scripts=False,
@@ -756,12 +1605,14 @@ def run_benchmark(
                 confidence_iou=_CONFIDENCE_IOU,
                 benchmark_context=execution_context,
                 verified_dataset=verified,
+                expected_snapshot_identity=snapshot_identity,
+                expected_processor_content_identity=processor_identity,
             )
             metrics = validator.run()
             if not isinstance(metrics, Mapping):
                 raise TypeError("VLM confidence validator must return a metric mapping")
             normalized_metrics, nonfinite_metrics = _normalized_metrics(metrics)
-            if _git_context() != git_context:
+            if _git_context() != prepared.git_context:
                 raise RuntimeError(
                     "the benchmark git revision or worktree changed during execution"
                 )
@@ -782,7 +1633,7 @@ def run_benchmark(
                     "seed": seed,
                     "model_family": _MODEL_FAMILY,
                     "model_size": _MODEL_SIZE,
-                    "device": device,
+                    "device": prepared.requested_device,
                     "imgsz": _IMAGE_SIZE,
                     "default_conf": _DEFAULT_CONF,
                     "confidence_iou": _CONFIDENCE_IOU,
@@ -1607,6 +2458,16 @@ def compare_benchmarks(
     return comparison
 
 
+def _add_benchmark_request_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--manifest", required=True, type=Path)
+    parser.add_argument("--annotations", required=True, type=Path)
+    parser.add_argument("--images-dir", required=True, type=Path)
+    parser.add_argument("--review-attestation", required=True, type=Path)
+    parser.add_argument("--output-root", required=True, type=Path)
+    parser.add_argument("--seed", type=_arg_seed, default=0)
+    parser.add_argument("--device", default="auto")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _JSONArgumentParser(
         prog="python -m libreyolo.validation.vlm_confidence_benchmark"
@@ -1615,13 +2476,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser(
         "run", help="run one fresh Qwen3-VL-2B benchmark process"
     )
-    run_parser.add_argument("--manifest", required=True, type=Path)
-    run_parser.add_argument("--annotations", required=True, type=Path)
-    run_parser.add_argument("--images-dir", required=True, type=Path)
-    run_parser.add_argument("--review-attestation", required=True, type=Path)
-    run_parser.add_argument("--output-root", required=True, type=Path)
-    run_parser.add_argument("--seed", type=_arg_seed, default=0)
-    run_parser.add_argument("--device", default="auto")
+    _add_benchmark_request_arguments(run_parser)
+    preflight_parser = subparsers.add_parser(
+        "preflight",
+        help="verify one Qwen3-VL-2B benchmark request without loading the model",
+    )
+    _add_benchmark_request_arguments(preflight_parser)
 
     compare_parser = subparsers.add_parser(
         "compare", help="compare two independently persisted reports"
@@ -1660,7 +2520,9 @@ def _error_status(*, mode: str | None, code: int, kind: str, message: str) -> in
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     mode_hint = (
-        arguments[0] if arguments and arguments[0] in {"run", "compare"} else None
+        arguments[0]
+        if arguments and arguments[0] in {"preflight", "run", "compare"}
+        else None
     )
     try:
         args = parse_cli_args(arguments)
@@ -1670,6 +2532,50 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     try:
+        if args.mode == "preflight":
+            with redirect_stdout(sys.stderr):
+                preflight = preflight_benchmark(
+                    args.manifest,
+                    args.annotations,
+                    args.images_dir,
+                    args.review_attestation,
+                    args.output_root,
+                    seed=args.seed,
+                    device=args.device,
+                )
+            _emit_status(
+                {
+                    "schema": _STATUS_SCHEMA,
+                    "status": "ready",
+                    "mode": "preflight",
+                    "code": EXIT_OK,
+                    "preflight": {
+                        "schema": _PREFLIGHT_SCHEMA,
+                        "request": {
+                            "model_family": _MODEL_FAMILY,
+                            "model_size": _MODEL_SIZE,
+                            "seed": preflight.determinism["seed"],
+                            "device": args.device.strip(),
+                            "resolved_device": preflight.runtime_context[
+                                "resolved_device"
+                            ],
+                            "output_root": preflight.output_dir,
+                        },
+                        "git": preflight.git_context,
+                        "offline": preflight.offline_context,
+                        "determinism": preflight.determinism,
+                        "runtime": preflight.runtime_context,
+                        "dataset": preflight.dataset_context,
+                        "snapshot": {
+                            "root": preflight.snapshot_root,
+                            "weights": preflight.snapshot_identity,
+                            "processor_content": (preflight.processor_content_identity),
+                        },
+                    },
+                }
+            )
+            return EXIT_OK
+
         if args.mode == "run":
             with redirect_stdout(sys.stderr):
                 artifacts = run_benchmark(

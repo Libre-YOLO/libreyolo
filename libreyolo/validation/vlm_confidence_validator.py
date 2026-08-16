@@ -16,6 +16,7 @@ import math
 import os
 import platform
 import re
+import stat
 import sys
 import time
 from collections import Counter
@@ -115,6 +116,8 @@ class VLMConfidenceValidator(DetectionValidator):
         confidence_iou: float = 0.5,
         benchmark_context: Optional[Mapping[str, Any]] = None,
         verified_dataset: Optional[VerifiedBenchmarkRunInputs] = None,
+        expected_snapshot_identity: Optional[Mapping[str, Any]] = None,
+        expected_processor_content_identity: Optional[Mapping[str, Any]] = None,
         **kwargs,
     ) -> None:
         self.generation_model = generation_model
@@ -136,6 +139,36 @@ class VLMConfidenceValidator(DetectionValidator):
             None
             if benchmark_context is None
             else self._canonical_config_value(benchmark_context, "benchmark_context")
+        )
+        if (expected_snapshot_identity is None) != (
+            expected_processor_content_identity is None
+        ):
+            raise ValueError(
+                "expected snapshot and processor identities must be supplied together"
+            )
+        for value, label in (
+            (expected_snapshot_identity, "expected_snapshot_identity"),
+            (
+                expected_processor_content_identity,
+                "expected_processor_content_identity",
+            ),
+        ):
+            if value is not None and not isinstance(value, Mapping):
+                raise TypeError(f"{label} must be a mapping when supplied.")
+        self._expected_snapshot_identity = (
+            None
+            if expected_snapshot_identity is None
+            else self._canonical_config_value(
+                expected_snapshot_identity, "expected_snapshot_identity"
+            )
+        )
+        self._expected_processor_content_identity = (
+            None
+            if expected_processor_content_identity is None
+            else self._canonical_config_value(
+                expected_processor_content_identity,
+                "expected_processor_content_identity",
+            )
         )
         if verified_dataset is not None and not isinstance(
             verified_dataset, VerifiedBenchmarkRunInputs
@@ -671,24 +704,48 @@ class VLMConfidenceValidator(DetectionValidator):
     def _directory_sha256(
         cls, root: Path, *, processor_artifacts: bool = False
     ) -> tuple[str, int]:
-        files = sorted(
-            (
-                path
-                for path in root.rglob("*")
-                if path.is_file()
-                and (
-                    not processor_artifacts
-                    or (
-                        ".cache" not in path.relative_to(root).parts
-                        and path.suffix.lower() in _PROCESSOR_ARTIFACT_SUFFIXES
-                        and path.suffix.lower() not in _MODEL_WEIGHT_SUFFIXES
+        files: list[Path] = []
+        directories = [root]
+        kind = "processor" if processor_artifacts else "checkpoint"
+        while directories:
+            directory = directories.pop()
+            try:
+                entries = sorted(directory.iterdir(), key=lambda path: path.name)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not inspect {kind} directory: {directory}"
+                ) from exc
+            for path in entries:
+                relative = path.relative_to(root)
+                if processor_artifacts and ".cache" in relative.parts:
+                    continue
+                try:
+                    linked = cls._is_link_or_junction(path)
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"Could not inspect {kind} directory entry: "
+                        f"{relative.as_posix()}"
+                    ) from exc
+                if linked:
+                    raise RuntimeError(
+                        f"{kind.capitalize()} directory content must not contain a "
+                        f"symlink or junction: {relative.as_posix()}"
                     )
-                )
-            ),
-            key=lambda path: path.relative_to(root).as_posix(),
-        )
+                if path.is_dir():
+                    directories.append(path)
+                    continue
+                if not path.is_file():
+                    raise RuntimeError(
+                        f"{kind.capitalize()} directory contains a non-regular entry: "
+                        f"{relative.as_posix()}"
+                    )
+                if not processor_artifacts or (
+                    path.suffix.lower() in _PROCESSOR_ARTIFACT_SUFFIXES
+                    and path.suffix.lower() not in _MODEL_WEIGHT_SUFFIXES
+                ):
+                    files.append(path)
+        files.sort(key=lambda path: path.relative_to(root).as_posix())
         if not files:
-            kind = "processor" if processor_artifacts else "checkpoint"
             raise RuntimeError(
                 f"Could not fingerprint an empty {kind} directory: {root}"
             )
@@ -1049,6 +1106,44 @@ class VLMConfidenceValidator(DetectionValidator):
             seal,
         )
 
+    @staticmethod
+    def _is_link_or_junction(path: Path) -> bool:
+        identity = os.lstat(path)
+        reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        return stat.S_ISLNK(identity.st_mode) or bool(
+            getattr(identity, "st_file_attributes", 0) & reparse_point
+        )
+
+    @classmethod
+    def _strict_local_directory_root(cls, root: Path, label: str) -> tuple[Path, Path]:
+        """Return lexical/resolved roots after rejecting linked path components."""
+
+        lexical = Path(root).expanduser()
+        if not lexical.is_absolute():
+            lexical = Path.cwd() / lexical
+        current = Path(lexical.anchor)
+        for part in lexical.parts[1:]:
+            current /= part
+            try:
+                linked = cls._is_link_or_junction(current)
+            except (FileNotFoundError, NotADirectoryError) as exc:
+                raise FileNotFoundError(f"{label} does not exist: {lexical}") from exc
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not inspect {label.lower()} path component: {current}"
+                ) from exc
+            if linked:
+                raise RuntimeError(
+                    f"{label} must not contain a symlink or junction: {current}"
+                )
+        try:
+            resolved = lexical.resolve(strict=True)
+        except (FileNotFoundError, OSError) as exc:
+            raise FileNotFoundError(f"{label} does not exist: {lexical}") from exc
+        if not resolved.is_dir():
+            raise FileNotFoundError(f"{label} is not a directory: {resolved}")
+        return lexical, resolved
+
     def _base_snapshot_root(self) -> Path:
         processor = getattr(self.model, "processor", None)
         loaded_model = getattr(self.model, "model", None)
@@ -1068,23 +1163,21 @@ class VLMConfidenceValidator(DetectionValidator):
         if prefix and size:
             candidates.append(Path("weights") / f"{prefix}{size}")
 
-        snapshot_roots: list[Path] = []
+        snapshot_roots: list[tuple[Path, Path]] = []
         seen: set[Path] = set()
         for candidate in candidates:
-            if candidate.is_symlink():
-                raise RuntimeError(
-                    f"The local base snapshot must not be a symlink: {candidate}"
-                )
             try:
-                resolved = candidate.resolve(strict=True)
-            except (FileNotFoundError, OSError):
+                lexical, resolved = self._strict_local_directory_root(
+                    candidate, "Local base snapshot directory"
+                )
+            except FileNotFoundError:
                 continue
-            if resolved in seen or not resolved.is_dir():
+            if resolved in seen:
                 continue
             seen.add(resolved)
             marker = resolved / _HF_SNAPSHOT_MARKER
             if marker.exists() or marker.is_symlink():
-                snapshot_roots.append(resolved)
+                snapshot_roots.append((lexical, resolved))
 
         if not snapshot_roots:
             raise RuntimeError(
@@ -1092,15 +1185,15 @@ class VLMConfidenceValidator(DetectionValidator):
                 f"gate requires {_HF_SNAPSHOT_MARKER!r} beside the pinned weights."
             )
         if len(snapshot_roots) != 1:
-            rendered = ", ".join(str(root) for root in snapshot_roots)
+            rendered = ", ".join(str(root[0]) for root in snapshot_roots)
             raise RuntimeError(
                 "Multiple local base snapshots are eligible for fingerprinting: "
                 f"{rendered}"
             )
-        return snapshot_roots[0]
+        return snapshot_roots[0][0]
 
-    @staticmethod
-    def _snapshot_files(root: Path) -> dict[str, Path]:
+    @classmethod
+    def _snapshot_files(cls, root: Path) -> dict[str, Path]:
         files: dict[str, Path] = {}
         directories = [root]
         while directories:
@@ -1115,9 +1208,17 @@ class VLMConfidenceValidator(DetectionValidator):
                 relative = path.relative_to(root)
                 if ".cache" in relative.parts:
                     continue
-                if path.is_symlink():
+                try:
+                    linked = cls._is_link_or_junction(path)
+                except OSError as exc:
                     raise RuntimeError(
-                        "Local base snapshot content must not be a symlink: "
+                        "Could not inspect local base snapshot entry: "
+                        f"{relative.as_posix()}"
+                    ) from exc
+                if linked:
+                    raise RuntimeError(
+                        "Local base snapshot content must not contain a symlink or "
+                        "junction: "
                         f"{relative.as_posix()}"
                     )
                 if path.is_dir():
@@ -1156,7 +1257,13 @@ class VLMConfidenceValidator(DetectionValidator):
         sealed_files: Sequence[tuple[Path, tuple[int, int, int, int, int], str]],
     ) -> None:
         for path, expected, label in sealed_files:
-            if path.is_symlink():
+            try:
+                linked = cls._is_link_or_junction(path)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"{label} changed while it was fingerprinted."
+                ) from exc
+            if linked:
                 raise RuntimeError(f"{label} changed while it was fingerprinted.")
             try:
                 actual = cls._stat_identity(path.stat())
@@ -1167,15 +1274,18 @@ class VLMConfidenceValidator(DetectionValidator):
             if actual != expected:
                 raise RuntimeError(f"{label} changed while it was fingerprinted.")
 
-    def _base_snapshot_identity(
-        self, base_repo: str, base_revision: str
+    @classmethod
+    def _base_snapshot_identity_from_root(
+        cls, root: Path, base_repo: str, base_revision: str
     ) -> dict[str, Any]:
-        root = self._base_snapshot_root()
-        initial_files = self._snapshot_files(root)
+        _lexical, root = cls._strict_local_directory_root(
+            root, "Local base snapshot directory"
+        )
+        initial_files = cls._snapshot_files(root)
 
         marker_path = root / _HF_SNAPSHOT_MARKER
         marker, _marker_digest, _marker_size, _marker_resolved, marker_seal = (
-            self._stable_json_file_identity(marker_path, "Base snapshot marker")
+            cls._stable_json_file_identity(marker_path, "Base snapshot marker")
         )
         if not isinstance(marker, dict) or set(marker) != {"repo", "revision"}:
             raise RuntimeError(
@@ -1189,7 +1299,7 @@ class VLMConfidenceValidator(DetectionValidator):
 
         config_path = root / _HF_SNAPSHOT_CONFIG
         config, config_digest, config_size, config_resolved, config_seal = (
-            self._stable_json_file_identity(config_path, "Base snapshot config")
+            cls._stable_json_file_identity(config_path, "Base snapshot config")
         )
         if not isinstance(config, dict):
             raise RuntimeError("Base snapshot config must be a JSON object.")
@@ -1233,7 +1343,7 @@ class VLMConfidenceValidator(DetectionValidator):
                 )
             index_path = root / _SAFETENSORS_INDEX
             index, index_digest, index_size, _index_resolved, index_seal = (
-                self._stable_json_file_identity(
+                cls._stable_json_file_identity(
                     index_path, "Base snapshot safetensors index"
                 )
             )
@@ -1255,7 +1365,7 @@ class VLMConfidenceValidator(DetectionValidator):
                 )
             referenced = sorted(
                 {
-                    self._safe_safetensors_shard_name(value)
+                    cls._safe_safetensors_shard_name(value)
                     for value in weight_map.values()
                 }
             )
@@ -1318,7 +1428,7 @@ class VLMConfidenceValidator(DetectionValidator):
             )
 
         for name in weight_names:
-            digest, size, resolved, seal = self._stable_file_identity_with_seal(
+            digest, size, resolved, seal = cls._stable_file_identity_with_seal(
                 root / name, f"Base snapshot weight {name!r}"
             )
             if size == 0:
@@ -1326,7 +1436,7 @@ class VLMConfidenceValidator(DetectionValidator):
             artifacts.append({"path": name, "size_bytes": size, "sha256": digest})
             sealed_files.append((resolved, seal, f"Base snapshot weight {name!r}"))
 
-        final_files = self._snapshot_files(root)
+        final_files = cls._snapshot_files(root)
         final_weight_names = sorted(
             name for name in final_files if name.lower().endswith(".safetensors")
         )
@@ -1343,7 +1453,7 @@ class VLMConfidenceValidator(DetectionValidator):
             raise RuntimeError(
                 "Base snapshot weight layout changed while it was fingerprinted."
             )
-        self._validate_snapshot_file_seals(sealed_files)
+        cls._validate_snapshot_file_seals(sealed_files)
 
         artifacts.sort(key=lambda item: item["path"])
         payload = {
@@ -1368,6 +1478,13 @@ class VLMConfidenceValidator(DetectionValidator):
             "size_bytes": sum(item["size_bytes"] for item in artifacts),
             "weight_files": list(weight_names),
         }
+
+    def _base_snapshot_identity(
+        self, base_repo: str, base_revision: str
+    ) -> dict[str, Any]:
+        return self._base_snapshot_identity_from_root(
+            self._base_snapshot_root(), base_repo, base_revision
+        )
 
     def _checkpoint_identity(
         self,
@@ -1438,6 +1555,21 @@ class VLMConfidenceValidator(DetectionValidator):
             **payload,
         }
 
+    @classmethod
+    def _processor_content_identity_from_root(
+        cls, root: Path, base_repo: str, base_revision: str
+    ) -> dict[str, Any]:
+        _lexical, root = cls._strict_local_directory_root(
+            root, "Local processor content directory"
+        )
+        digest, file_count = cls._directory_sha256(root, processor_artifacts=True)
+        return {
+            "source": base_repo,
+            "revision": base_revision,
+            "sha256": digest,
+            "files": file_count,
+        }
+
     def _processor_identity(self, base_repo: str, base_revision: str) -> dict[str, Any]:
         processor = getattr(self.model, "processor", None)
         candidates: list[Path] = []
@@ -1459,21 +1591,23 @@ class VLMConfidenceValidator(DetectionValidator):
 
         seen: set[Path] = set()
         for candidate in candidates:
-            resolved = candidate.resolve()
-            if resolved in seen or not resolved.is_dir():
+            try:
+                lexical, resolved = self._strict_local_directory_root(
+                    candidate, "Local processor content directory"
+                )
+            except FileNotFoundError:
+                continue
+            if resolved in seen:
                 continue
             seen.add(resolved)
             try:
-                digest, file_count = self._directory_sha256(
-                    resolved, processor_artifacts=True
+                content = self._processor_content_identity_from_root(
+                    lexical, base_repo, base_revision
                 )
             except RuntimeError:
                 continue
             return {
-                "source": base_repo,
-                "revision": base_revision,
-                "sha256": digest,
-                "files": file_count,
+                **content,
                 "class": (
                     f"{type(processor).__module__}.{type(processor).__qualname__}"
                     if processor is not None
@@ -1557,6 +1691,29 @@ class VLMConfidenceValidator(DetectionValidator):
         fallback_score = _probability(
             getattr(self.model, "DEFAULT_SCORE", 1.0), "model.DEFAULT_SCORE"
         )
+        checkpoint_identity = self._checkpoint_identity(
+            target, base_repo, base_revision
+        )
+        processor_identity = self._processor_identity(base_repo, base_revision)
+        if (
+            self._expected_snapshot_identity is not None
+            and checkpoint_identity != self._expected_snapshot_identity
+        ):
+            raise RuntimeError(
+                "Base snapshot identity changed after model construction and before "
+                "the first generation."
+            )
+        processor_content_identity = {
+            key: value for key, value in processor_identity.items() if key != "class"
+        }
+        if (
+            self._expected_processor_content_identity is not None
+            and processor_content_identity != self._expected_processor_content_identity
+        ):
+            raise RuntimeError(
+                "Processor content identity changed after model construction and "
+                "before the first generation."
+            )
         actual_imgsz = self._actual_imgsz
         if isinstance(actual_imgsz, tuple):
             actual_imgsz = list(actual_imgsz)
@@ -1566,8 +1723,8 @@ class VLMConfidenceValidator(DetectionValidator):
             "size": size,
             "base_repo": base_repo,
             "base_revision": base_revision,
-            "checkpoint": self._checkpoint_identity(target, base_repo, base_revision),
-            "processor": self._processor_identity(base_repo, base_revision),
+            "checkpoint": checkpoint_identity,
+            "processor": processor_identity,
             "class_names": list(self.class_names or []),
             "confidence_method": _CONFIDENCE_METHOD,
             "generation_kwargs": {

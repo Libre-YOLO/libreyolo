@@ -7,12 +7,15 @@ import json
 import math
 import os
 import random
+import socket
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
+from PIL import Image
 
 from libreyolo.validation import vlm_confidence_benchmark as benchmark
 from libreyolo.validation.vlm_confidence_report import VLMConfidenceReportError
@@ -93,9 +96,20 @@ def _run(verified, output, **kwargs):
     )
 
 
-def _cli_run_args(verified, output):
+def _preflight(verified, output, **kwargs):
+    return benchmark.preflight_benchmark(
+        verified.manifest_path,
+        verified.source_annotations,
+        verified.images_dir,
+        verified.review_attestation_path,
+        output,
+        **kwargs,
+    )
+
+
+def _cli_request_args(mode, verified, output):
     return [
-        "run",
+        mode,
         "--manifest",
         str(verified.manifest_path),
         "--annotations",
@@ -109,9 +123,28 @@ def _cli_run_args(verified, output):
     ]
 
 
+def _cli_run_args(verified, output):
+    return _cli_request_args("run", verified, output)
+
+
+def _cli_preflight_args(verified, output):
+    return _cli_request_args("preflight", verified, output)
+
+
 def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=None):
     metrics = {"metric/finite": 0.5} if metrics is None else metrics
     report_identities = {}
+    snapshot_root = verified.images_dir.parent / "weights" / "LibreQwen3VL2b"
+    snapshot_identity = {
+        "kind": "pinned_hf_snapshot",
+        "sha256": "7" * 64,
+    }
+    processor_identity = {
+        "source": "Qwen/Qwen3-VL-2B-Instruct",
+        "revision": "8" * 40,
+        "sha256": "9" * 64,
+        "files": 4,
+    }
 
     def fake_determinism(seed):
         events.append(("determinism", seed))
@@ -130,15 +163,25 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
     class FakeModel:
         def __init__(self, *, size, device):
             events.append(("model", size, device))
-            assert [event[0] for event in events[:4]] == [
-                "verify",
-                "pycocotools",
-                "data_config",
+            assert [event[0] for event in events[:10]] == [
                 "determinism",
+                "offline",
+                "dependencies",
+                "pycocotools",
+                "device",
+                "verify",
+                "data_config",
+                "native_dataset",
+                "snapshot",
+                "verify",
             ]
-            self.device = torch.device("cpu")
+            self.device = torch.device("cpu" if device == "auto" else device)
 
     class FakeValidator:
+        _strict_local_directory_root = staticmethod(
+            benchmark.VLMConfidenceValidator._strict_local_directory_root
+        )
+
         def __init__(self, model, config, *, seed, **kwargs):
             events.append(("validator", seed, config, kwargs))
             self.model = model
@@ -206,6 +249,36 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
     monkeypatch.setattr(benchmark, "configure_determinism", fake_determinism)
     monkeypatch.setattr(
         benchmark,
+        "_configure_offline_environment",
+        lambda: (
+            events.append(("offline",))
+            or {
+                "hf_hub_offline": "1",
+                "transformers_offline": "1",
+                "hf_hub_disable_telemetry": "1",
+                "do_not_track": "1",
+                "hub_runtime_offline": True,
+                "transformers_runtime_offline": True,
+                "hub_runtime_telemetry_disabled": True,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_required_package_versions",
+        lambda: (
+            events.append(("dependencies",))
+            or {
+                "transformers": "offline",
+                "huggingface_hub": "offline",
+                "tokenizers": "offline",
+                "safetensors": "offline",
+                "pycocotools": "offline",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        benchmark,
         "verify_benchmark_run_inputs",
         lambda manifest, annotations, images_dir, review_attestation, **kwargs: (
             events.append(
@@ -226,6 +299,21 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
         "_require_pycocotools",
         lambda: events.append(("pycocotools",)),
     )
+    monkeypatch.setattr(
+        benchmark,
+        "_resolve_and_probe_device",
+        lambda requested: (
+            events.append(("device", requested))
+            or (
+                "cpu" if requested == "auto" else requested,
+                {
+                    "requested_device": requested,
+                    "resolved_device": "cpu" if requested == "auto" else requested,
+                    "tiny_tensor_probe": "ok",
+                },
+            )
+        ),
+    )
 
     def fake_load_data_config(data, *, autodownload, allow_scripts):
         payload = json.loads(Path(data).read_text(encoding="utf-8"))
@@ -237,6 +325,27 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
         }
 
     monkeypatch.setattr(benchmark, "load_data_config", fake_load_data_config)
+    monkeypatch.setattr(
+        benchmark,
+        "_preflight_native_dataset",
+        lambda actual: (
+            events.append(("native_dataset", actual))
+            or {
+                "image_count": 500,
+                "batch_size": 1,
+                "num_workers": 0,
+                "faster_coco_eval": False,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_snapshot_evidence",
+        lambda: (
+            events.append(("snapshot",))
+            or (snapshot_root, dict(snapshot_identity), dict(processor_identity))
+        ),
+    )
     monkeypatch.setattr(benchmark, "LibreQwen3VL", FakeModel)
     monkeypatch.setattr(benchmark, "VLMConfidenceValidator", FakeValidator)
     monkeypatch.setattr(benchmark, "compare_confidence_reports", fake_compare)
@@ -248,10 +357,11 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
         "_git_context",
         lambda: {"commit": "a" * 40, "dirty": False},
     )
-    monkeypatch.setattr(
-        benchmark,
-        "_runtime_context",
-        lambda **kwargs: {
+
+    def fake_runtime_context(
+        *, requested_device, resolved_device, package_versions=None
+    ):
+        return {
             "python": "3.11.0",
             "implementation": "CPython",
             "platform": "offline",
@@ -259,21 +369,17 @@ def _install_run_fakes(monkeypatch, events, verified, *, metrics=None, failure=N
             "numpy": "offline",
             "pillow": "offline",
             "opencv": "offline",
-            "packages": {
-                "transformers": "offline",
-                "huggingface_hub": "offline",
-                "tokenizers": "offline",
-                "safetensors": "offline",
-                "pycocotools": "offline",
-            },
+            "packages": dict(package_versions or {}),
             "cuda_runtime": None,
             "cudnn": None,
             "nvidia_driver": None,
             "cuda_available": False,
             "attention_backends": {"model": "offline"},
-            **kwargs,
-        },
-    )
+            "requested_device": requested_device,
+            "resolved_device": resolved_device,
+        }
+
+    monkeypatch.setattr(benchmark, "_runtime_context", fake_runtime_context)
     monkeypatch.setattr(
         benchmark, "_attention_backends", lambda model: {"model": "offline"}
     )
@@ -286,6 +392,94 @@ def _status(capsys):
     assert "NaN" not in output
     assert "Infinity" not in output
     return json.loads(output)
+
+
+def test_preflight_runs_shared_checks_without_model_network_or_output(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    output = tmp_path / "preflight-output"
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("preflight must not download or open a network connection")
+
+    for name in benchmark._OFFLINE_ENVIRONMENT:
+        monkeypatch.setenv(name, "1")
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+
+    result = _preflight(verified, output, seed=17, device="cuda:0")
+
+    assert result.output_dir == output.resolve()
+    assert result.snapshot_identity["sha256"] == "7" * 64
+    assert result.processor_content_identity["sha256"] == "9" * 64
+    assert result.runtime_context["resolved_device"] == "cuda:0"
+    assert result.runtime_context["device_probe"]["tiny_tensor_probe"] == "ok"
+    assert result.dataset_context["native"]["image_count"] == 500
+    assert [event[0] for event in events] == [
+        "determinism",
+        "offline",
+        "dependencies",
+        "pycocotools",
+        "device",
+        "verify",
+        "data_config",
+        "native_dataset",
+        "snapshot",
+        "verify",
+    ]
+    assert not output.exists()
+    assert not (tmp_path / ".preflight-output.lock").exists()
+    assert not list(tmp_path.glob(".preflight-output.tmp-*"))
+    assert not list(tmp_path.glob(".libreyolo-vlm-output-probe-*"))
+
+
+def test_preflight_cli_emits_ready_evidence_without_persisting_it(
+    tmp_path, monkeypatch, capsys
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    output = tmp_path / "preflight-output"
+
+    code = benchmark.main(
+        _cli_preflight_args(verified, output) + ["--seed", "19", "--device", "cuda:0"]
+    )
+
+    assert code == benchmark.EXIT_OK
+    status = _status(capsys)
+    assert status["schema"] == "libreyolo.vlm-confidence-benchmark-status.v1"
+    assert status["status"] == "ready"
+    assert status["mode"] == "preflight"
+    assert status["code"] == benchmark.EXIT_OK
+    evidence = status["preflight"]
+    assert evidence["schema"] == "libreyolo.vlm-confidence-benchmark-preflight.v1"
+    assert evidence["request"] == {
+        "model_family": "qwen3vl",
+        "model_size": "2b",
+        "seed": 19,
+        "device": "cuda:0",
+        "resolved_device": "cuda:0",
+        "output_root": str(output.resolve()),
+    }
+    assert evidence["snapshot"]["weights"]["sha256"] == "7" * 64
+    assert evidence["snapshot"]["processor_content"]["sha256"] == "9" * 64
+    assert evidence["dataset"]["identity"]["review"]["status"] == "approved"
+    assert evidence["offline"] == {
+        "do_not_track": "1",
+        "hf_hub_disable_telemetry": "1",
+        "hf_hub_offline": "1",
+        "hub_runtime_offline": True,
+        "hub_runtime_telemetry_disabled": True,
+        "transformers_offline": "1",
+        "transformers_runtime_offline": True,
+    }
+    assert not output.exists()
+    assert not (tmp_path / ".preflight-output.lock").exists()
 
 
 def test_run_benchmark_stages_complete_artifacts_and_records_context(
@@ -317,16 +511,23 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     ]
     assert not list(tmp_path.glob(".run-a.tmp-*"))
     assert not (tmp_path / ".run-a.lock").exists()
-    assert [event[0] for event in events[:7]] == [
-        "verify",
-        "pycocotools",
-        "data_config",
+    assert [event[0] for event in events[:14]] == [
         "determinism",
+        "offline",
+        "dependencies",
+        "pycocotools",
+        "device",
+        "verify",
+        "data_config",
+        "native_dataset",
+        "snapshot",
+        "verify",
         "model",
+        "snapshot",
         "validator",
         "run",
     ]
-    verify_event = events[0]
+    verify_event = events[5]
     assert verify_event[1:5] == (
         verified.manifest_path,
         verified.source_annotations,
@@ -334,7 +535,7 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
         verified.review_attestation_path,
     )
     assert verify_event[5] == {"required_role": "zero_shot_confidence_promotion"}
-    data_event = events[2]
+    data_event = events[6]
     assert data_event[2:4] == (False, False)
     assert data_event[4] == {
         "path": str(verified.images_dir),
@@ -343,7 +544,7 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
         "nc": 80,
         "names": list(verified.class_names),
     }
-    config = events[5][2]
+    config = events[12][2]
     assert Path(config.data).name == "verified_dataset.yaml"
     assert not Path(config.data).exists()
     assert config.batch_size == 1
@@ -353,10 +554,12 @@ def test_run_benchmark_stages_complete_artifacts_and_records_context(
     assert config.save_json is True
     assert config.save_plots is True
     assert config.faster_coco_eval is False
-    assert events[5][3]["default_conf"] == 0.25
-    assert events[5][3]["confidence_iou"] == 0.5
-    assert events[5][3]["verified_dataset"] is verified
-    assert events[5][3]["benchmark_context"]["git"] == {
+    assert events[12][3]["default_conf"] == 0.25
+    assert events[12][3]["confidence_iou"] == 0.5
+    assert events[12][3]["verified_dataset"] is verified
+    assert events[12][3]["expected_snapshot_identity"]["sha256"] == "7" * 64
+    assert events[12][3]["expected_processor_content_identity"]["sha256"] == "9" * 64
+    assert events[12][3]["benchmark_context"]["git"] == {
         "commit": "a" * 40,
         "dirty": False,
     }
@@ -670,6 +873,7 @@ def test_run_benchmark_rejects_code_drift_during_generation(tmp_path, monkeypatc
     contexts = iter(
         [
             {"commit": "a" * 40, "dirty": False},
+            {"commit": "a" * 40, "dirty": False},
             {"commit": "b" * 40, "dirty": False},
         ]
     )
@@ -682,6 +886,98 @@ def test_run_benchmark_rejects_code_drift_during_generation(tmp_path, monkeypatc
     assert not output.exists()
     assert not list(tmp_path.glob(".drifted-run.tmp-*"))
     assert not (tmp_path / ".drifted-run.lock").exists()
+
+
+def test_run_rejects_snapshot_drift_immediately_after_model_construction(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    snapshot_root = tmp_path / "weights" / "LibreQwen3VL2b"
+    identities = iter(
+        [
+            {"kind": "pinned_hf_snapshot", "sha256": "1" * 64},
+            {"kind": "pinned_hf_snapshot", "sha256": "2" * 64},
+        ]
+    )
+
+    def drifting_snapshot():
+        events.append(("snapshot",))
+        return (
+            snapshot_root,
+            next(identities),
+            {"source": "repo", "revision": "pin", "sha256": "3" * 64},
+        )
+
+    monkeypatch.setattr(benchmark, "_snapshot_evidence", drifting_snapshot)
+    output = tmp_path / "snapshot-drift"
+
+    with pytest.raises(RuntimeError, match="changed during model construction"):
+        _run(verified, output)
+
+    assert "validator" not in [event[0] for event in events]
+    assert not output.exists()
+    assert not (tmp_path / ".snapshot-drift.lock").exists()
+
+
+def test_run_rejects_model_device_drift_before_second_snapshot(tmp_path, monkeypatch):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    monkeypatch.setattr(benchmark, "_resolved_model_device", lambda model: "cpu:1")
+    output = tmp_path / "device-drift"
+
+    with pytest.raises(RuntimeError, match="different device"):
+        _run(verified, output)
+
+    assert [event[0] for event in events].count("snapshot") == 1
+    assert "validator" not in [event[0] for event in events]
+    assert not output.exists()
+
+
+def test_preflight_rejects_dataset_evidence_that_changes_during_checks(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    changed = SimpleNamespace(**vars(verified))
+    changed.manifest_sha256 = "0" * 64
+    values = iter((verified, changed))
+
+    def changing_verify(*args, **kwargs):
+        events.append(("verify",))
+        return next(values)
+
+    monkeypatch.setattr(benchmark, "verify_benchmark_run_inputs", changing_verify)
+    output = tmp_path / "unstable-evidence"
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="changed during preflight"):
+        _preflight(verified, output)
+
+    assert "model" not in [event[0] for event in events]
+    assert not output.exists()
+
+
+def test_preflight_rejects_git_drift_after_local_evidence_checks(tmp_path, monkeypatch):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    contexts = iter(
+        [
+            {"commit": "a" * 40, "dirty": False},
+            {"commit": "b" * 40, "dirty": False},
+        ]
+    )
+    monkeypatch.setattr(benchmark, "_git_context", lambda: next(contexts))
+    output = tmp_path / "git-drift"
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="during preflight"):
+        _preflight(verified, output)
+
+    assert "model" not in [event[0] for event in events]
+    assert not output.exists()
 
 
 def test_run_benchmark_refuses_overwrite_before_git_or_model(tmp_path, monkeypatch):
@@ -744,6 +1040,38 @@ def test_run_benchmark_refuses_output_inside_git_worktree(tmp_path, monkeypatch)
 
     with pytest.raises(benchmark.BenchmarkInputError, match="outside the git"):
         _run(verified, tmp_path / "runs" / "run-a")
+
+
+def test_preflight_rejects_regular_file_output_parent_without_side_effects(
+    tmp_path, monkeypatch
+):
+    verified = _verified_inputs(tmp_path)
+    parent_file = tmp_path / "not-a-directory"
+    parent_file.write_text("preserve\n", encoding="utf-8")
+    output = parent_file / "run-a"
+    monkeypatch.setattr(
+        benchmark,
+        "_git_context",
+        lambda: pytest.fail("git must not run for an invalid output parent"),
+    )
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="output parent"):
+        _preflight(verified, output)
+
+    assert parent_file.read_text(encoding="utf-8") == "preserve\n"
+    assert not output.exists()
+    assert not list(tmp_path.glob(".libreyolo-vlm-output-probe-*"))
+
+
+def test_output_preflight_accepts_existing_writable_parent_without_side_effects(
+    tmp_path,
+):
+    output = tmp_path / "run-a"
+
+    destination = benchmark._validate_output_destination(output)
+
+    assert destination == output.resolve()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_atomic_json_write_does_not_leave_partial_file(tmp_path, monkeypatch):
@@ -827,6 +1155,145 @@ def test_configure_determinism_rejects_late_hash_seed_env_mutation(monkeypatch):
         benchmark.configure_determinism(0)
 
 
+def test_offline_environment_is_forced_before_hugging_face_work(monkeypatch):
+    for name in benchmark._OFFLINE_ENVIRONMENT:
+        monkeypatch.setenv(name, "0")
+    real_import = benchmark.import_module
+
+    def offline_import(name):
+        if name == "huggingface_hub.constants":
+            return SimpleNamespace(HF_HUB_OFFLINE=True, HF_HUB_DISABLE_TELEMETRY=True)
+        if name == "transformers.utils.hub":
+            return SimpleNamespace(is_offline_mode=lambda: True)
+        return real_import(name)
+
+    monkeypatch.setattr(benchmark, "import_module", offline_import)
+
+    context = benchmark._configure_offline_environment()
+
+    assert all(os.environ[name] == "1" for name in benchmark._OFFLINE_ENVIRONMENT)
+    assert context == {
+        "hf_hub_offline": "1",
+        "transformers_offline": "1",
+        "hf_hub_disable_telemetry": "1",
+        "do_not_track": "1",
+        "hub_runtime_offline": True,
+        "transformers_runtime_offline": True,
+        "hub_runtime_telemetry_disabled": True,
+    }
+
+
+def test_offline_environment_rejects_late_hugging_face_import(monkeypatch):
+    for name in benchmark._OFFLINE_ENVIRONMENT:
+        monkeypatch.setenv(name, "0")
+
+    def cached_online_import(name):
+        if name == "huggingface_hub.constants":
+            return SimpleNamespace(HF_HUB_OFFLINE=False, HF_HUB_DISABLE_TELEMETRY=False)
+        if name == "transformers.utils.hub":
+            return SimpleNamespace(is_offline_mode=lambda: False)
+        raise AssertionError(name)
+
+    monkeypatch.setattr(benchmark, "import_module", cached_online_import)
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="before importing"):
+        benchmark._configure_offline_environment()
+
+    assert all(os.environ[name] == "1" for name in benchmark._OFFLINE_ENVIRONMENT)
+
+
+def test_device_probe_normalizes_numeric_cuda_and_records_bounded_evidence(
+    monkeypatch,
+):
+    synchronized = []
+
+    class ProbeScalar:
+        def __add__(self, value):
+            assert value == 1.0
+            return self
+
+        def item(self):
+            return 2.0
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 1)
+    monkeypatch.setattr(
+        torch.cuda,
+        "get_device_properties",
+        lambda index: SimpleNamespace(name=f"GPU {index}", total_memory=24_000),
+    )
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda index: (8, 9))
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda index: (12_000, 24_000))
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device", lambda index: nullcontext())
+    monkeypatch.setattr(torch.cuda, "synchronize", synchronized.append)
+    monkeypatch.setattr(torch, "ones", lambda *args, **kwargs: ProbeScalar())
+    monkeypatch.setattr(benchmark, "_nvidia_driver_version", lambda: "999.1")
+
+    resolved, evidence = benchmark._resolve_and_probe_device("0")
+
+    assert resolved == "cuda:0"
+    assert evidence == {
+        "requested_device": "0",
+        "resolved_device": "cuda:0",
+        "type": "cuda",
+        "index": 0,
+        "name": "GPU 0",
+        "capability": [8, 9],
+        "total_memory_bytes": 24_000,
+        "free_memory_bytes": 12_000,
+        "bf16_supported": True,
+        "cuda_runtime": (
+            None if torch.version.cuda is None else str(torch.version.cuda)
+        ),
+        "nvidia_driver": "999.1",
+        "tiny_tensor_probe": "ok",
+    }
+    assert synchronized == [0]
+
+
+def test_device_probe_resolves_auto_to_cpu_without_model(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(benchmark, "_mps_available", lambda: False)
+
+    resolved, evidence = benchmark._resolve_and_probe_device("auto")
+
+    assert resolved == "cpu"
+    assert evidence["requested_device"] == "auto"
+    assert evidence["tiny_tensor_probe"] == "ok"
+
+
+def test_device_probe_rejects_unavailable_or_out_of_range_cuda(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(benchmark.BenchmarkInputError, match="unavailable"):
+        benchmark._resolve_and_probe_device("cuda:0")
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    with pytest.raises(benchmark.BenchmarkInputError, match="outside"):
+        benchmark._resolve_and_probe_device("2")
+
+
+@pytest.mark.parametrize("value", ["", " ", "cuda:nope", object()])
+def test_device_syntax_rejected_before_output_or_git(value, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        benchmark,
+        "_validate_output_destination",
+        lambda *args, **kwargs: pytest.fail("output checks must not start"),
+    )
+
+    with pytest.raises(benchmark.BenchmarkInputError):
+        benchmark.preflight_benchmark(
+            "manifest",
+            "annotations",
+            "images",
+            "review",
+            tmp_path / "output",
+            device=value,
+        )
+
+
 def test_resolved_model_device_canonicalizes_indexless_cuda(monkeypatch):
     monkeypatch.setattr(torch.cuda, "current_device", lambda: 3)
     model = SimpleNamespace(model=None, device=torch.device("cuda"))
@@ -874,48 +1341,221 @@ def test_run_benchmark_refuses_faster_coco_env_before_model(
     with pytest.raises(benchmark.BenchmarkInputError, match="faster-coco-eval"):
         _run(verified, tmp_path / "run-a")
 
-    assert events == []
+    assert [event[0] for event in events] == ["determinism", "offline"]
 
 
 def test_run_benchmark_translates_dataset_rejection_before_any_execution(
     tmp_path, monkeypatch
 ):
+    events = []
     verified = _verified_inputs(tmp_path)
     output = tmp_path / "rejected"
-    monkeypatch.setattr(
-        benchmark,
-        "_git_context",
-        lambda: {"commit": "a" * 40, "dirty": False},
-    )
+    _install_run_fakes(monkeypatch, events, verified)
+
+    def reject_inputs(*args, **kwargs):
+        events.append(("verify_rejected",))
+        raise benchmark.BenchmarkDatasetError("review attestation is not approved")
+
     monkeypatch.setattr(
         benchmark,
         "verify_benchmark_run_inputs",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            benchmark.BenchmarkDatasetError("review attestation is not approved")
-        ),
+        reject_inputs,
     )
-    for name in (
-        "_require_pycocotools",
-        "load_data_config",
-        "configure_determinism",
-        "LibreQwen3VL",
+    monkeypatch.setattr(
+        benchmark,
         "_staged_output",
-    ):
-        monkeypatch.setattr(
-            benchmark,
-            name,
-            lambda *args, _name=name, **kwargs: pytest.fail(
-                f"{_name} must not run after dataset rejection"
-            ),
-        )
+        lambda *args, **kwargs: pytest.fail("staging must not run after rejection"),
+    )
 
     with pytest.raises(
         benchmark.BenchmarkInputError, match="review attestation is not approved"
     ):
         _run(verified, output)
 
+    assert [event[0] for event in events] == [
+        "determinism",
+        "offline",
+        "dependencies",
+        "pycocotools",
+        "device",
+        "verify_rejected",
+    ]
     assert not output.exists()
     assert not (tmp_path / ".rejected.lock").exists()
+
+
+def test_snapshot_evidence_uses_only_the_fixed_local_qwen_snapshot(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "weights" / "LibreQwen3VL2b"
+    root.mkdir(parents=True)
+    calls = []
+
+    def weights(cls, actual_root, repo, revision):
+        calls.append(("weights", actual_root, repo, revision))
+        return json.loads(json.dumps(benchmark._QWEN_2B_SNAPSHOT_IDENTITY))
+
+    def processor(cls, actual_root, repo, revision):
+        calls.append(("processor", actual_root, repo, revision))
+        return dict(benchmark._QWEN_2B_PROCESSOR_CONTENT_IDENTITY)
+
+    monkeypatch.setattr(
+        benchmark.VLMConfidenceValidator,
+        "_base_snapshot_identity_from_root",
+        classmethod(weights),
+    )
+    monkeypatch.setattr(
+        benchmark.VLMConfidenceValidator,
+        "_processor_content_identity_from_root",
+        classmethod(processor),
+    )
+
+    actual_root, snapshot, processor_content = benchmark._snapshot_evidence()
+
+    expected_repo = benchmark.LibreQwen3VL.HF_REPOS["2b"]
+    expected_revision = benchmark.LibreQwen3VL.HF_REVISIONS["2b"]
+    assert actual_root == root.resolve()
+    assert calls == [
+        ("weights", root.resolve(), expected_repo, expected_revision),
+        ("processor", root.resolve(), expected_repo, expected_revision),
+    ]
+    assert snapshot == benchmark._QWEN_2B_SNAPSHOT_IDENTITY
+    assert processor_content == benchmark._QWEN_2B_PROCESSOR_CONTENT_IDENTITY
+
+
+@pytest.mark.parametrize("link_position", ["leaf", "ancestor"])
+def test_snapshot_evidence_preserves_lexical_weights_path_for_validator_checks(
+    tmp_path, monkeypatch, link_position
+):
+    monkeypatch.chdir(tmp_path)
+    external = tmp_path / "external"
+    external.mkdir()
+    if link_position == "leaf":
+        target = external / "snapshot"
+        target.mkdir()
+        link = tmp_path / "weights" / "LibreQwen3VL2b"
+        link.parent.mkdir()
+    else:
+        target_parent = external / "weights"
+        target = target_parent / "LibreQwen3VL2b"
+        target.mkdir(parents=True)
+        link = tmp_path / "weights"
+    try:
+        link.symlink_to(
+            target if link_position == "leaf" else target_parent,
+            target_is_directory=True,
+        )
+    except OSError as exc:
+        pytest.skip(f"Directory symlinks are unavailable: {exc}")
+
+    roots = []
+
+    def checkpoint(cls, root, repo, revision):
+        roots.append(root)
+        return json.loads(json.dumps(benchmark._QWEN_2B_SNAPSHOT_IDENTITY))
+
+    def processor(cls, root, repo, revision):
+        roots.append(root)
+        return dict(benchmark._QWEN_2B_PROCESSOR_CONTENT_IDENTITY)
+
+    monkeypatch.setattr(
+        benchmark.VLMConfidenceValidator,
+        "_base_snapshot_identity_from_root",
+        classmethod(checkpoint),
+    )
+    monkeypatch.setattr(
+        benchmark.VLMConfidenceValidator,
+        "_processor_content_identity_from_root",
+        classmethod(processor),
+    )
+
+    root, _snapshot, _processor = benchmark._snapshot_evidence()
+
+    lexical = tmp_path / "weights" / "LibreQwen3VL2b"
+    assert root == lexical
+    assert roots == [lexical, lexical]
+    assert root.resolve(strict=True) == target.resolve(strict=True)
+    assert root != root.resolve(strict=True)
+
+
+def test_snapshot_evidence_wraps_local_identity_failures_as_input_errors(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "weights" / "LibreQwen3VL2b").mkdir(parents=True)
+    monkeypatch.setattr(
+        benchmark.VLMConfidenceValidator,
+        "_base_snapshot_identity_from_root",
+        classmethod(
+            lambda cls, root, repo, revision: (_ for _ in ()).throw(
+                RuntimeError("unreferenced shard")
+            )
+        ),
+    )
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="unreferenced shard"):
+        benchmark._snapshot_evidence()
+
+
+@pytest.mark.parametrize(
+    ("target", "malformed"),
+    [
+        ("snapshot", True),
+        ("snapshot", False),
+        ("processor", True),
+        ("processor", False),
+    ],
+)
+def test_snapshot_evidence_rejects_malformed_or_forged_official_identity(
+    tmp_path, monkeypatch, target, malformed
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "weights" / "LibreQwen3VL2b").mkdir(parents=True)
+    snapshot = json.loads(json.dumps(benchmark._QWEN_2B_SNAPSHOT_IDENTITY))
+    processor = dict(benchmark._QWEN_2B_PROCESSOR_CONTENT_IDENTITY)
+    if target == "snapshot":
+        if malformed:
+            snapshot = {"sha256": snapshot["sha256"]}
+        else:
+            snapshot["artifacts"][1]["sha256"] = "0" * 64
+    elif malformed:
+        processor = {"sha256": processor["sha256"]}
+    else:
+        processor["sha256"] = "0" * 64
+
+    monkeypatch.setattr(
+        benchmark.VLMConfidenceValidator,
+        "_base_snapshot_identity_from_root",
+        classmethod(lambda cls, root, repo, revision: snapshot),
+    )
+    monkeypatch.setattr(
+        benchmark.VLMConfidenceValidator,
+        "_processor_content_identity_from_root",
+        classmethod(lambda cls, root, repo, revision: processor),
+    )
+
+    expected = "weights" if target == "snapshot" else "processor content"
+    with pytest.raises(benchmark.BenchmarkInputError, match=expected):
+        benchmark._snapshot_evidence()
+
+
+def test_snapshot_evidence_rejects_runner_repo_or_revision_pin_drift(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        benchmark.LibreQwen3VL,
+        "HF_REVISIONS",
+        {"2b": "0" * 40},
+    )
+    monkeypatch.setattr(
+        benchmark.VLMConfidenceValidator,
+        "_base_snapshot_identity_from_root",
+        lambda *args, **kwargs: pytest.fail("identity hashing must not start"),
+    )
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="official pin"):
+        benchmark._snapshot_evidence()
 
 
 def test_verified_dataset_yaml_round_trips_through_real_local_loader(tmp_path):
@@ -935,21 +1575,155 @@ def test_verified_dataset_yaml_round_trips_through_real_local_loader(tmp_path):
     assert not temporary_parent.exists()
 
 
+def test_native_preflight_iterates_real_coco_path_and_binds_ground_truth(tmp_path):
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    Image.new("RGB", (4, 2), color=(20, 30, 40)).save(
+        images_dir / "first.jpg", format="JPEG"
+    )
+    Image.new("RGB", (3, 5), color=(50, 60, 70)).save(
+        images_dir / "second.jpg", format="JPEG"
+    )
+    categories = [{"id": index + 1, "name": f"class-{index}"} for index in range(80)]
+    annotations = [
+        {
+            "id": 10,
+            "image_id": 101,
+            "category_id": 1,
+            "bbox": [0.0, 0.0, 2.0, 1.0],
+            "area": 2.0,
+            "iscrowd": 0,
+        },
+        {
+            "id": 11,
+            "image_id": 202,
+            "category_id": 80,
+            "bbox": [0.0, 0.0, 1.0, 2.0],
+            "area": 2.0,
+            "iscrowd": 0,
+            "ignore": 0,
+        },
+    ]
+    annotation_path = tmp_path / "instances.json"
+    annotation_path.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "id": 101,
+                        "file_name": "first.jpg",
+                        "width": 4,
+                        "height": 2,
+                    },
+                    {
+                        "id": 202,
+                        "file_name": "second.jpg",
+                        "width": 3,
+                        "height": 5,
+                    },
+                ],
+                "annotations": annotations,
+                "categories": categories,
+            }
+        ),
+        encoding="utf-8",
+    )
+    verified = SimpleNamespace(
+        images_dir=images_dir.resolve(),
+        annotation_path=annotation_path.resolve(),
+        partition_start=0,
+        partition_stop=2,
+        class_names=tuple(category["name"] for category in categories),
+        expected_images=(
+            {
+                "image_id": 101,
+                "file_name": "first.jpg",
+                "width": 4,
+                "height": 2,
+            },
+            {
+                "image_id": 202,
+                "file_name": "second.jpg",
+                "width": 3,
+                "height": 5,
+            },
+        ),
+        expected_categories=tuple(categories),
+        expected_annotations=tuple(annotations),
+    )
+
+    context = benchmark._preflight_native_dataset(verified)
+
+    assert context["dataset_class"].endswith(".COCODataset")
+    assert context["preprocessor_class"].endswith(".StandardValPreprocessor")
+    assert context["evaluator_class"].endswith(".COCOEvaluator")
+    assert context["batch_size"] == 1
+    assert context["num_workers"] == 0
+    assert context["faster_coco_eval"] is False
+    assert context["evaluator_self_test"] == "passed"
+    assert context["evaluator_self_test_backend"].startswith("pycocotools ")
+    assert context["image_count"] == 2
+    assert context["category_count"] == 80
+    assert context["annotation_count"] == 2
+    assert benchmark._HEX_DIGEST.fullmatch(context["image_order_sha256"])
+    assert benchmark._HEX_DIGEST.fullmatch(context["ground_truth_sha256"])
+
+
+def test_native_evaluator_self_test_converts_compute_failure(monkeypatch):
+    class BrokenEvaluator:
+        def __init__(self, *args, **kwargs):
+            self.last_backend = None
+
+        def update(self, predictions, image_id):
+            pass
+
+        def compute(self):
+            raise RuntimeError("broken cocoeval")
+
+    monkeypatch.setattr(benchmark, "COCOEvaluator", BrokenEvaluator)
+    annotation = {
+        "image_id": 101,
+        "category_id": 1,
+        "bbox": [0.0, 0.0, 2.0, 1.0],
+        "iscrowd": 0,
+        "ignore": 0,
+    }
+
+    with pytest.raises(ValueError, match="self-test failed: broken cocoeval"):
+        benchmark._exercise_native_evaluator(
+            SimpleNamespace(coco=object()), [annotation], {0: 1}
+        )
+
+
+def test_evaluator_self_test_failure_stops_before_model_or_output(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    output = tmp_path / "broken-evaluator"
+    monkeypatch.setattr(
+        benchmark,
+        "_preflight_native_dataset",
+        lambda verified: (_ for _ in ()).throw(
+            benchmark.BenchmarkInputError("COCO evaluator self-test failed")
+        ),
+    )
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="self-test failed"):
+        _run(verified, output)
+
+    assert "model" not in [event[0] for event in events]
+    assert not output.exists()
+    assert not (tmp_path / ".broken-evaluator.lock").exists()
+
+
 def test_run_benchmark_preflights_pycocotools_before_config_or_model(
     tmp_path, monkeypatch
 ):
     verified = _verified_inputs(tmp_path)
     events = []
-    monkeypatch.setattr(
-        benchmark,
-        "_git_context",
-        lambda: {"commit": "a" * 40, "dirty": False},
-    )
-    monkeypatch.setattr(
-        benchmark,
-        "verify_benchmark_run_inputs",
-        lambda *args, **kwargs: events.append(("verify",)) or verified,
-    )
+    _install_run_fakes(monkeypatch, events, verified)
 
     def reject_dependency():
         events.append(("pycocotools",))
@@ -958,7 +1732,6 @@ def test_run_benchmark_preflights_pycocotools_before_config_or_model(
     monkeypatch.setattr(benchmark, "_require_pycocotools", reject_dependency)
     for name in (
         "load_data_config",
-        "configure_determinism",
         "LibreQwen3VL",
         "_staged_output",
     ):
@@ -973,7 +1746,12 @@ def test_run_benchmark_preflights_pycocotools_before_config_or_model(
     with pytest.raises(benchmark.BenchmarkInputError, match="pycocotools"):
         _run(verified, tmp_path / "missing-dependency")
 
-    assert events == [("verify",), ("pycocotools",)]
+    assert [event[0] for event in events] == [
+        "determinism",
+        "offline",
+        "dependencies",
+        "pycocotools",
+    ]
 
 
 def test_run_benchmark_rejects_resolved_path_drift_before_staging_or_model(
@@ -1008,8 +1786,12 @@ def test_run_benchmark_rejects_resolved_path_drift_before_staging_or_model(
         _run(verified, tmp_path / "drift")
 
     assert [event[0] for event in events] == [
-        "verify",
+        "determinism",
+        "offline",
+        "dependencies",
         "pycocotools",
+        "device",
+        "verify",
         "data_config_drift",
     ]
 
@@ -1017,23 +1799,15 @@ def test_run_benchmark_rejects_resolved_path_drift_before_staging_or_model(
 def test_run_cli_reports_dataset_rejection_as_input_error(
     tmp_path, monkeypatch, capsys
 ):
+    events = []
     verified = _verified_inputs(tmp_path)
-    monkeypatch.setattr(
-        benchmark,
-        "_git_context",
-        lambda: {"commit": "a" * 40, "dirty": False},
-    )
+    _install_run_fakes(monkeypatch, events, verified)
     monkeypatch.setattr(
         benchmark,
         "verify_benchmark_run_inputs",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             benchmark.BenchmarkDatasetError("manifest mismatch")
         ),
-    )
-    monkeypatch.setattr(
-        benchmark,
-        "LibreQwen3VL",
-        lambda **kwargs: pytest.fail("model must not be constructed"),
     )
 
     code = benchmark.main(_cli_run_args(verified, tmp_path / "rejected"))
@@ -1072,6 +1846,49 @@ def test_parse_cli_args_covers_run_and_compare_contracts():
     assert run.output_root == Path("run-a")
     assert run.seed == 19
     assert run.device == "cuda:1"
+
+    preflight = benchmark.parse_cli_args(
+        [
+            "preflight",
+            "--manifest",
+            "bundle/manifest.json",
+            "--annotations",
+            "instances_val2017.json",
+            "--images-dir",
+            "val2017",
+            "--review-attestation",
+            "review.json",
+            "--output-root",
+            "run-a",
+            "--seed",
+            "19",
+            "--device",
+            "cuda:1",
+        ]
+    )
+    assert {
+        key: getattr(preflight, key)
+        for key in (
+            "manifest",
+            "annotations",
+            "images_dir",
+            "review_attestation",
+            "output_root",
+            "seed",
+            "device",
+        )
+    } == {
+        key: getattr(run, key)
+        for key in (
+            "manifest",
+            "annotations",
+            "images_dir",
+            "review_attestation",
+            "output_root",
+            "seed",
+            "device",
+        )
+    }
 
     compare = benchmark.parse_cli_args(
         [
@@ -1213,6 +2030,96 @@ def test_run_cli_reports_overwrite_with_distinct_exit_code(tmp_path, capsys):
     assert code == benchmark.EXIT_OUTPUT_EXISTS
     status = _status(capsys)
     assert status["error"]["kind"] == "output_exists"
+
+
+def test_preflight_cli_reports_existing_output_without_running_checks(
+    tmp_path, monkeypatch, capsys
+):
+    verified = _verified_inputs(tmp_path)
+    output = tmp_path / "occupied-preflight"
+    output.mkdir()
+    monkeypatch.setattr(
+        benchmark,
+        "_git_context",
+        lambda: pytest.fail("git must not run for an occupied output"),
+    )
+
+    code = benchmark.main(_cli_preflight_args(verified, output))
+
+    assert code == benchmark.EXIT_OUTPUT_EXISTS
+    status = _status(capsys)
+    assert status["mode"] == "preflight"
+    assert status["error"]["kind"] == "output_exists"
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [
+        ("configure_determinism", "process-start hash seed is not fixed"),
+        ("_configure_offline_environment", "offline mode could not be forced"),
+        ("_required_package_versions", "required dependency is missing"),
+        ("_resolve_and_probe_device", "requested device probe failed"),
+        ("_snapshot_evidence", "local snapshot is incomplete"),
+    ],
+)
+def test_preflight_cli_maps_readiness_failures_to_input_exit(
+    target, message, tmp_path, monkeypatch, capsys
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    output = tmp_path / "not-ready"
+    monkeypatch.setattr(
+        benchmark,
+        target,
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            benchmark.BenchmarkInputError(message)
+        ),
+    )
+
+    code = benchmark.main(_cli_preflight_args(verified, output))
+
+    assert code == benchmark.EXIT_USAGE
+    status = _status(capsys)
+    assert status["mode"] == "preflight"
+    assert status["error"] == {"kind": "input", "message": message}
+    assert "model" not in [event[0] for event in events]
+    assert not output.exists()
+    assert not (tmp_path / ".not-ready.lock").exists()
+
+
+def test_preflight_rejects_dirty_git_before_process_or_model_checks(
+    tmp_path, monkeypatch, capsys
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    monkeypatch.setattr(
+        benchmark, "_git_context", lambda: {"commit": "a" * 40, "dirty": True}
+    )
+    output = tmp_path / "dirty-preflight"
+
+    code = benchmark.main(_cli_preflight_args(verified, output))
+
+    assert code == benchmark.EXIT_USAGE
+    status = _status(capsys)
+    assert "clean git worktree" in status["error"]["message"]
+    assert events == []
+    assert not output.exists()
+
+
+def test_preflight_rejects_faster_coco_override_before_dependencies_or_model(
+    tmp_path, monkeypatch
+):
+    events = []
+    verified = _verified_inputs(tmp_path)
+    _install_run_fakes(monkeypatch, events, verified)
+    monkeypatch.setenv("LIBREYOLO_FASTER_COCO_EVAL", "true")
+
+    with pytest.raises(benchmark.BenchmarkInputError, match="faster-coco-eval"):
+        _preflight(verified, tmp_path / "faster-preflight")
+
+    assert [event[0] for event in events] == ["determinism", "offline"]
 
 
 @pytest.mark.parametrize(

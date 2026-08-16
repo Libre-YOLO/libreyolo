@@ -25,7 +25,9 @@ import json
 import math
 import os
 import re
+import secrets
 import shutil
+import stat
 import sys
 import tempfile
 import warnings
@@ -45,6 +47,7 @@ _STATUS_SCHEMA = "libreyolo.vlm-benchmark-dataset-status.v1"
 _REVIEW_SCHEMA = "libreyolo.vlm-benchmark-dataset-review.v1"
 _PROMOTION_ROLE = "zero_shot_confidence_promotion"
 _REVIEW_STATUS = "approved"
+_REVIEW_TEMPLATE_STATUS = "unapproved"
 _SOURCE_CANONICALIZATION = "coco-arrays-by-id-json-v1"
 _SELECTION_ALGORITHM = "category-coverage-then-sha256-rank-v1"
 _SELECTION_SALT = "libreyolo:coco-val2017:license-4:v1"
@@ -60,6 +63,10 @@ _MAX_IMAGE_BYTES = 64 * 1024 * 1024
 _MAX_JSON_DEPTH = 64
 _MAX_JSON_NODES = 10_000_000
 _MAX_SAFE_INTEGER = (1 << 53) - 1
+_SUPPORTS_DIR_FD_PUBLICATION = all(
+    operation in os.supports_dir_fd
+    for operation in (os.link, os.open, os.stat, os.unlink)
+)
 _UTC_RFC3339 = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 _JSON_ARRAY_FIELDS = ("licenses", "images", "annotations", "categories")
 _SOURCE_FIELDS = {"info", *_JSON_ARRAY_FIELDS}
@@ -159,6 +166,15 @@ class BenchmarkDatasetArtifacts:
 
 
 @dataclass(frozen=True)
+class BenchmarkReviewTemplateArtifacts:
+    """The intentionally unapproved review template written for a human."""
+
+    output_path: Path
+    manifest_sha256: str
+    partition_role: str
+
+
+@dataclass(frozen=True)
 class VerifiedBenchmarkDataset:
     """Identity returned after reconstructing and checking a local bundle."""
 
@@ -237,6 +253,19 @@ def _path_exists(path: Path) -> bool:
     return os.path.lexists(os.fspath(path))
 
 
+def _is_link_or_junction(path: Path) -> bool:
+    try:
+        identity = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as exc:
+        raise BenchmarkDatasetError(f"could not inspect path entry: {path}") from exc
+    reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(identity.st_mode) or bool(
+        getattr(identity, "st_file_attributes", 0) & reparse_point
+    )
+
+
 def _path_argument(value: Any, label: str) -> Path:
     if isinstance(value, bool) or not isinstance(value, (str, os.PathLike)):
         raise TypeError(f"{label} must be a filesystem path")
@@ -245,8 +274,10 @@ def _path_argument(value: Any, label: str) -> Path:
 
 def _required_file(value: Any, label: str) -> Path:
     path = _path_argument(value, label)
-    if path.is_symlink():
-        raise BenchmarkDatasetError(f"{label} must not be a symlink: {path}")
+    if _is_link_or_junction(path):
+        raise BenchmarkDatasetError(
+            f"{label} must not be a symlink or junction: {path}"
+        )
     try:
         resolved = path.resolve(strict=True)
     except (FileNotFoundError, OSError) as exc:
@@ -258,8 +289,10 @@ def _required_file(value: Any, label: str) -> Path:
 
 def _required_directory(value: Any, label: str) -> Path:
     path = _path_argument(value, label)
-    if path.is_symlink():
-        raise BenchmarkDatasetError(f"{label} must not be a symlink: {path}")
+    if _is_link_or_junction(path):
+        raise BenchmarkDatasetError(
+            f"{label} must not be a symlink or junction: {path}"
+        )
     try:
         resolved = path.resolve(strict=True)
     except (FileNotFoundError, OSError) as exc:
@@ -281,6 +314,30 @@ def _assert_separate_bundle_root(bundle_root: Path, images_dir: Path) -> None:
         raise BenchmarkDatasetError(
             "metadata output and source image directory must be disjoint"
         )
+
+
+def _new_regular_file_destination(value: Any, label: str) -> Path:
+    """Resolve a new file path without accepting symlinked path components."""
+
+    requested = _path_argument(value, label)
+    if _is_link_or_junction(requested):
+        raise BenchmarkDatasetError(
+            f"{label} must not be a symlink or junction: {requested}"
+        )
+    if _path_exists(requested):
+        raise BenchmarkDatasetOutputExistsError(f"{label} already exists: {requested}")
+    for parent in (requested.parent, *requested.parent.parents):
+        if _is_link_or_junction(parent):
+            raise BenchmarkDatasetError(
+                f"{label} must not use a symlinked parent or junction: {parent}"
+            )
+    try:
+        resolved = requested.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise BenchmarkDatasetError(f"could not resolve {label}: {requested}") from exc
+    if _path_exists(resolved):
+        raise BenchmarkDatasetOutputExistsError(f"{label} already exists: {resolved}")
+    return resolved
 
 
 def _read_bounded(path: Path, *, max_bytes: int, label: str) -> bytes:
@@ -792,9 +849,9 @@ def _select_images(
 def _selected_image_path(images_dir: Path, image: Mapping[str, Any]) -> Path:
     filename = str(image["file_name"])
     candidate = images_dir / filename
-    if candidate.is_symlink():
+    if _is_link_or_junction(candidate):
         raise BenchmarkDatasetError(
-            f"selected image must not be a symlink: {candidate}"
+            f"selected image must not be a symlink or junction: {candidate}"
         )
     try:
         resolved = candidate.resolve(strict=True)
@@ -1179,6 +1236,197 @@ def _write_bytes(path: Path, payload: bytes) -> None:
         os.fsync(stream.fileno())
 
 
+def _write_bytes_atomic_create_only(
+    destination: Path, payload: bytes, *, label: str
+) -> None:
+    """Publish complete bytes atomically without replacing any existing entry."""
+
+    def directory_seal(path: Path) -> tuple[int, int, int]:
+        value = path.stat()
+        return value.st_dev, value.st_ino, value.st_mode
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        resolved_parent = destination.parent.resolve(strict=True)
+        parent_seal = directory_seal(resolved_parent)
+    except (OSError, RuntimeError) as exc:
+        raise BenchmarkDatasetError(
+            f"could not resolve {label} parent: {destination.parent}"
+        ) from exc
+    if resolved_parent != destination.parent or _is_link_or_junction(
+        destination.parent
+    ):
+        raise BenchmarkDatasetError(
+            f"{label} parent changed or became ambiguous: {destination.parent}"
+        )
+    if _is_link_or_junction(destination):
+        raise BenchmarkDatasetError(
+            f"{label} must not be a symlink or junction: {destination}"
+        )
+    if _path_exists(destination):
+        raise BenchmarkDatasetOutputExistsError(
+            f"{label} already exists: {destination}"
+        )
+
+    def require_sealed_parent() -> None:
+        try:
+            current_parent = destination.parent.resolve(strict=True)
+            current_seal = directory_seal(current_parent)
+        except (OSError, RuntimeError) as exc:
+            raise BenchmarkDatasetError(
+                f"{label} parent changed while the file was being written"
+            ) from exc
+        if current_parent != resolved_parent or current_seal != parent_seal:
+            raise BenchmarkDatasetError(
+                f"{label} parent changed while the file was being written"
+            )
+
+    if _SUPPORTS_DIR_FD_PUBLICATION:
+        directory_flags = os.O_RDONLY
+        directory_flags |= getattr(os, "O_CLOEXEC", 0)
+        directory_flags |= getattr(os, "O_DIRECTORY", 0)
+        directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            parent_descriptor = os.open(resolved_parent, directory_flags)
+        except OSError as exc:
+            raise BenchmarkDatasetError(
+                f"could not open sealed {label} parent: {resolved_parent}"
+            ) from exc
+        temporary_name = f".{destination.name}.{secrets.token_hex(12)}.tmp"
+        temporary_descriptor: int | None = None
+        linked = False
+        completed = False
+        try:
+            opened_parent = os.fstat(parent_descriptor)
+            if (
+                opened_parent.st_dev,
+                opened_parent.st_ino,
+                opened_parent.st_mode,
+            ) != parent_seal:
+                raise BenchmarkDatasetError(
+                    f"{label} parent changed while the file was being written"
+                )
+            temporary_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            temporary_flags |= getattr(os, "O_CLOEXEC", 0)
+            try:
+                temporary_descriptor = os.open(
+                    temporary_name,
+                    temporary_flags,
+                    0o600,
+                    dir_fd=parent_descriptor,
+                )
+            except FileExistsError as exc:
+                raise BenchmarkDatasetError(
+                    f"could not reserve a unique temporary {label}"
+                ) from exc
+            with os.fdopen(temporary_descriptor, "wb", closefd=False) as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+                require_sealed_parent()
+                try:
+                    os.link(
+                        temporary_name,
+                        destination.name,
+                        src_dir_fd=parent_descriptor,
+                        dst_dir_fd=parent_descriptor,
+                    )
+                except FileExistsError as exc:
+                    raise BenchmarkDatasetOutputExistsError(
+                        f"{label} appeared while it was being written: {destination}"
+                    ) from exc
+                linked = True
+                require_sealed_parent()
+            require_sealed_parent()
+            completed = True
+        finally:
+            if linked and not completed and temporary_descriptor is not None:
+                try:
+                    opened = os.fstat(temporary_descriptor)
+                    published = os.stat(
+                        destination.name,
+                        dir_fd=parent_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (opened.st_dev, opened.st_ino) == (
+                        published.st_dev,
+                        published.st_ino,
+                    ):
+                        os.unlink(destination.name, dir_fd=parent_descriptor)
+                except (FileNotFoundError, OSError):
+                    pass
+            if temporary_descriptor is not None:
+                try:
+                    os.close(temporary_descriptor)
+                except OSError:
+                    pass
+                try:
+                    os.unlink(temporary_name, dir_fd=parent_descriptor)
+                except OSError:
+                    pass
+            try:
+                os.close(parent_descriptor)
+            except OSError:
+                pass
+        return
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=destination.parent,
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    linked = False
+    completed = False
+    try:
+        require_sealed_parent()
+        try:
+            temporary_parent = temporary.resolve(strict=True).parent
+        except (OSError, RuntimeError) as exc:
+            raise BenchmarkDatasetError(
+                f"{label} temporary file became ambiguous"
+            ) from exc
+        if temporary_parent != resolved_parent:
+            raise BenchmarkDatasetError(
+                f"{label} parent changed while the file was being written"
+            )
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+            require_sealed_parent()
+            try:
+                os.link(temporary, destination)
+            except FileExistsError as exc:
+                raise BenchmarkDatasetOutputExistsError(
+                    f"{label} appeared while it was being written: {destination}"
+                ) from exc
+            linked = True
+            require_sealed_parent()
+        completed = True
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    finally:
+        if linked and not completed:
+            try:
+                opened = os.fstat(descriptor)
+                published = destination.stat()
+                if (opened.st_dev, opened.st_ino) == (
+                    published.st_dev,
+                    published.st_ino,
+                ):
+                    destination.unlink()
+            except (FileNotFoundError, OSError):
+                pass
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        temporary.unlink(missing_ok=True)
+
+
 @contextmanager
 def _staged_directory(destination: Path) -> Iterator[Path]:
     if _path_exists(destination):
@@ -1229,9 +1477,9 @@ def _verify_tree(root: Path, expected_files: set[str]) -> None:
     actual_directories: set[str] = set()
     for path in root.rglob("*"):
         relative = path.relative_to(root).as_posix()
-        if path.is_symlink():
+        if _is_link_or_junction(path):
             raise BenchmarkDatasetError(
-                f"metadata bundle must not contain symlinks: {relative}"
+                f"metadata bundle must not contain symlinks or junctions: {relative}"
             )
         if path.is_file():
             actual_files.add(relative)
@@ -1270,7 +1518,7 @@ def _verify_bundle_evidence(
     manifest_payload: bytes | None = None
     for relative, expected in derived.files.items():
         path = _safe_relative(bundle_root, relative)
-        if path.is_symlink() or not path.is_file():
+        if _is_link_or_junction(path) or not path.is_file():
             raise BenchmarkDatasetError(f"metadata artifact is missing: {relative}")
         actual = _read_bounded(
             path,
@@ -1396,6 +1644,44 @@ def _verified_review_attestation(
     return _sha256(payload), normalized
 
 
+def _review_requirements(
+    derived_manifest: Mapping[str, Any], required_role: str
+) -> tuple[Mapping[str, Any], tuple[str, ...]]:
+    """Return the one fixed partition and its externally reviewed checks."""
+
+    if required_role != _PROMOTION_ROLE:
+        raise BenchmarkDatasetError(
+            f"benchmark partition role must be {_PROMOTION_ROLE!r}"
+        )
+    matching_partitions = [
+        partition
+        for partition in derived_manifest["partitions"]
+        if required_role in partition["roles"]
+    ]
+    if len(matching_partitions) != 1:  # pragma: no cover - derived fixed contract
+        raise BenchmarkDatasetError(
+            "benchmark manifest must contain exactly one required partition role"
+        )
+    manual_review = _exact_fields(
+        derived_manifest["manual_review"],
+        {"status", "checks"},
+        "benchmark manifest manual_review",
+    )
+    if manual_review["status"] != "required-outside-manifest":
+        raise BenchmarkDatasetError(
+            "benchmark manifest does not require an external review attestation"
+        )
+    expected_checks = tuple(
+        _nonempty_string(check, "benchmark manifest manual review check")
+        for check in _sequence(
+            manual_review["checks"], "benchmark manifest manual_review.checks"
+        )
+    )
+    if len(set(expected_checks)) != len(expected_checks):
+        raise BenchmarkDatasetError("benchmark manifest review checks are not unique")
+    return matching_partitions[0], expected_checks
+
+
 def _freeze_json(value: Any) -> Any:
     if isinstance(value, Mapping):
         return MappingProxyType(
@@ -1450,16 +1736,7 @@ def verify_benchmark_run_inputs(
         manifest_candidate, source_annotations, images_dir
     )
     derived_manifest = evidence.derived.manifest
-    matching_partitions = [
-        partition
-        for partition in derived_manifest["partitions"]
-        if required_role in partition["roles"]
-    ]
-    if len(matching_partitions) != 1:  # pragma: no cover - derived fixed contract
-        raise BenchmarkDatasetError(
-            "benchmark manifest must contain exactly one required partition role"
-        )
-    partition = matching_partitions[0]
+    partition, expected_checks = _review_requirements(derived_manifest, required_role)
     artifact_name = str(partition["annotation_artifact"])
     artifact = derived_manifest["artifacts"][artifact_name]
     relative_annotation_path = str(artifact["path"])
@@ -1477,23 +1754,6 @@ def verify_benchmark_run_inputs(
         _nonempty_string(category["name"], "benchmark category name")
         for category in expected_categories
     )
-    manual_review = _exact_fields(
-        derived_manifest["manual_review"],
-        {"status", "checks"},
-        "benchmark manifest manual_review",
-    )
-    if manual_review["status"] != "required-outside-manifest":
-        raise BenchmarkDatasetError(
-            "benchmark manifest does not require an external review attestation"
-        )
-    expected_checks = tuple(
-        _nonempty_string(check, "benchmark manifest manual review check")
-        for check in _sequence(
-            manual_review["checks"], "benchmark manifest manual_review.checks"
-        )
-    )
-    if len(set(expected_checks)) != len(expected_checks):
-        raise BenchmarkDatasetError("benchmark manifest review checks are not unique")
     review_sha256, normalized_review = _verified_review_attestation(
         attestation_path,
         manifest_sha256=evidence.manifest_sha256,
@@ -1532,6 +1792,56 @@ def verify_benchmark_run_inputs(
         review_attestation_path=attestation_path,
         review_attestation_sha256=review_sha256,
         review_attestation=normalized_review,
+    )
+
+
+def build_unapproved_review_template(
+    manifest: str | os.PathLike[str],
+    source_annotations: str | os.PathLike[str],
+    images_dir: str | os.PathLike[str],
+    output_path: str | os.PathLike[str],
+) -> BenchmarkReviewTemplateArtifacts:
+    """Write a manifest-bound template that cannot itself authorize a run.
+
+    The metadata bundle and selected local image evidence are fully rebuilt
+    before the template is published. Human identity, review time, approval,
+    and every manual check remain deliberately unset.
+    """
+
+    evidence = _verify_bundle_evidence(manifest, source_annotations, images_dir)
+    _partition, expected_checks = _review_requirements(
+        evidence.derived.manifest, _PROMOTION_ROLE
+    )
+    destination = _new_regular_file_destination(
+        output_path, "benchmark review template output"
+    )
+    if (
+        destination == evidence.bundle_root
+        or evidence.bundle_root in destination.parents
+    ):
+        raise BenchmarkDatasetError(
+            "benchmark review template must remain outside the metadata bundle"
+        )
+    payload = _json_file_bytes(
+        {
+            "schema": _REVIEW_SCHEMA,
+            "manifest_sha256": evidence.manifest_sha256,
+            "partition_role": _PROMOTION_ROLE,
+            "status": _REVIEW_TEMPLATE_STATUS,
+            "reviewer": "",
+            "reviewed_at": None,
+            "checks": {check: False for check in expected_checks},
+        }
+    )
+    _write_bytes_atomic_create_only(
+        destination,
+        payload,
+        label="benchmark review template output",
+    )
+    return BenchmarkReviewTemplateArtifacts(
+        output_path=destination,
+        manifest_sha256=evidence.manifest_sha256,
+        partition_role=_PROMOTION_ROLE,
     )
 
 
@@ -1581,6 +1891,14 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--manifest", required=True, type=Path)
     verify.add_argument("--annotations", required=True, type=Path)
     verify.add_argument("--images-dir", required=True, type=Path)
+    review_template = subparsers.add_parser(
+        "review-template",
+        help="write a manifest-bound template that remains unapproved",
+    )
+    review_template.add_argument("--manifest", required=True, type=Path)
+    review_template.add_argument("--annotations", required=True, type=Path)
+    review_template.add_argument("--images-dir", required=True, type=Path)
+    review_template.add_argument("--output", required=True, type=Path)
     return parser
 
 
@@ -1612,7 +1930,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "manifest_sha256": result.manifest_sha256,
                 }
             )
-        else:
+        elif args.mode == "verify":
             result = verify_benchmark_dataset(
                 args.manifest,
                 args.annotations,
@@ -1627,6 +1945,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "manifest": str(result.manifest_path),
                     "manifest_sha256": result.manifest_sha256,
                     "selected_image_count": result.selected_image_count,
+                }
+            )
+        else:
+            result = build_unapproved_review_template(
+                args.manifest,
+                args.annotations,
+                args.images_dir,
+                args.output,
+            )
+            _status(
+                {
+                    "schema": _STATUS_SCHEMA,
+                    "status": "ok",
+                    "mode": "review-template",
+                    "output": str(result.output_path),
+                    "manifest_sha256": result.manifest_sha256,
+                    "partition_role": result.partition_role,
+                    "approved": False,
                 }
             )
         return 0

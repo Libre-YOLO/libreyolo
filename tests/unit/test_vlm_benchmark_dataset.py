@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
+import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -816,3 +818,280 @@ def test_verify_benchmark_run_inputs_rejects_review_symlink_and_wrong_role(
             review_path,
             required_role="fine_tune_training",
         )
+
+
+def test_build_review_template_is_exactly_unapproved_and_rejected_for_run(
+    tmp_path, pinned_local_source
+):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    output = tmp_path / "reviews" / "promotion500.json"
+
+    result = dataset_manifest.build_unapproved_review_template(
+        bundle.manifest_path,
+        source.source,
+        source.images,
+        output,
+    )
+
+    expected = {
+        "schema": "libreyolo.vlm-benchmark-dataset-review.v1",
+        "manifest_sha256": bundle.manifest_sha256,
+        "partition_role": "zero_shot_confidence_promotion",
+        "status": "unapproved",
+        "reviewer": "",
+        "reviewed_at": None,
+        "checks": {check: False for check in _REVIEW_CHECKS},
+    }
+    assert result == dataset_manifest.BenchmarkReviewTemplateArtifacts(
+        output_path=output.resolve(),
+        manifest_sha256=bundle.manifest_sha256,
+        partition_role="zero_shot_confidence_promotion",
+    )
+    assert _json(output) == expected
+    assert output.read_bytes() == dataset_manifest._json_file_bytes(expected)
+    assert not output.is_symlink()
+
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="not approved"):
+        dataset_manifest.verify_benchmark_run_inputs(
+            bundle.manifest_path,
+            source.source,
+            source.images,
+            output,
+        )
+
+
+def test_build_review_template_verifies_bundle_before_writing(
+    tmp_path, pinned_local_source
+):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    output = tmp_path / "review.json"
+    (bundle.output_dir / "ATTRIBUTION.jsonl").write_bytes(b"modified\n")
+
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="modified"):
+        dataset_manifest.build_unapproved_review_template(
+            bundle.manifest_path,
+            source.source,
+            source.images,
+            output,
+        )
+
+    assert not output.exists()
+
+
+def test_build_review_template_refuses_existing_or_bundled_output(
+    tmp_path, pinned_local_source
+):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    existing = tmp_path / "existing.json"
+    existing.write_bytes(b"do not replace")
+
+    with pytest.raises(dataset_manifest.BenchmarkDatasetOutputExistsError):
+        dataset_manifest.build_unapproved_review_template(
+            bundle.manifest_path,
+            source.source,
+            source.images,
+            existing,
+        )
+    assert existing.read_bytes() == b"do not replace"
+
+    bundled = bundle.output_dir / "review.json"
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="outside"):
+        dataset_manifest.build_unapproved_review_template(
+            bundle.manifest_path,
+            source.source,
+            source.images,
+            bundled,
+        )
+    assert not bundled.exists()
+
+
+def test_build_review_template_refuses_symlinked_output_paths(
+    tmp_path, pinned_local_source
+):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    target = tmp_path / "target.json"
+    target.write_bytes(b"target")
+    output_link = tmp_path / "review-link.json"
+    real_parent = tmp_path / "real-reviews"
+    real_parent.mkdir()
+    parent_link = tmp_path / "review-parent-link"
+    try:
+        output_link.symlink_to(target)
+        parent_link.symlink_to(real_parent, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"Symlinks are unavailable in this test environment: {exc}")
+
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="symlink"):
+        dataset_manifest.build_unapproved_review_template(
+            bundle.manifest_path,
+            source.source,
+            source.images,
+            output_link,
+        )
+    assert target.read_bytes() == b"target"
+
+    ambiguous = parent_link / "review.json"
+    with pytest.raises(
+        dataset_manifest.BenchmarkDatasetError, match="symlinked parent"
+    ):
+        dataset_manifest.build_unapproved_review_template(
+            bundle.manifest_path,
+            source.source,
+            source.images,
+            ambiguous,
+        )
+    assert not (real_parent / "review.json").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction contract")
+def test_build_review_template_refuses_junction_parent(tmp_path, pinned_local_source):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    target = tmp_path / "real-reviews"
+    target.mkdir()
+    junction = tmp_path / "review-junction"
+    process = subprocess.run(
+        ["cmd", "/d", "/c", "mklink", "/J", str(junction), str(target)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if process.returncode != 0:
+        pytest.skip(f"Windows junctions are unavailable: {process.stderr.strip()}")
+    try:
+        with pytest.raises(
+            dataset_manifest.BenchmarkDatasetError, match="symlinked parent or junction"
+        ):
+            dataset_manifest.build_unapproved_review_template(
+                bundle.manifest_path,
+                source.source,
+                source.images,
+                junction / "review.json",
+            )
+        assert not (target / "review.json").exists()
+    finally:
+        os.rmdir(junction)
+
+
+def test_review_template_atomic_publish_never_overwrites_racing_output(
+    tmp_path, pinned_local_source, monkeypatch
+):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    output = tmp_path / "review.json"
+
+    def racing_link(_source, _destination, **_kwargs):
+        output.write_bytes(b"racing writer")
+        raise FileExistsError
+
+    monkeypatch.setattr(dataset_manifest.os, "link", racing_link)
+    with pytest.raises(dataset_manifest.BenchmarkDatasetOutputExistsError):
+        dataset_manifest.build_unapproved_review_template(
+            bundle.manifest_path,
+            source.source,
+            source.images,
+            output,
+        )
+
+    assert output.read_bytes() == b"racing writer"
+    assert not list(tmp_path.glob(".review.json.*.tmp"))
+
+
+def test_review_template_refuses_parent_replacement_during_publish(
+    tmp_path, pinned_local_source, monkeypatch
+):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    parent = tmp_path / "reviews"
+    displaced_parent = tmp_path / "reviews-displaced"
+    output = parent / "review.json"
+    if dataset_manifest._SUPPORTS_DIR_FD_PUBLICATION:
+        real_link = dataset_manifest.os.link
+
+        def replacing_link(*args, **kwargs):
+            parent.rename(displaced_parent)
+            parent.mkdir()
+            return real_link(*args, **kwargs)
+
+        monkeypatch.setattr(dataset_manifest.os, "link", replacing_link)
+    else:
+        real_mkstemp = dataset_manifest.tempfile.mkstemp
+
+        def replacing_mkstemp(*args, **kwargs):
+            parent.rename(displaced_parent)
+            parent.mkdir()
+            return real_mkstemp(*args, **kwargs)
+
+        monkeypatch.setattr(dataset_manifest.tempfile, "mkstemp", replacing_mkstemp)
+    with pytest.raises(dataset_manifest.BenchmarkDatasetError, match="parent changed"):
+        dataset_manifest.build_unapproved_review_template(
+            bundle.manifest_path,
+            source.source,
+            source.images,
+            output,
+        )
+
+    assert not output.exists()
+    assert not (displaced_parent / "review.json").exists()
+    assert not list(parent.glob(".review.json.*.tmp"))
+    assert not list(displaced_parent.glob(".review.json.*.tmp"))
+
+
+def test_review_template_cli_reports_unapproved_and_has_no_approval_fields(
+    tmp_path, pinned_local_source, capsys
+):
+    source = pinned_local_source
+    bundle = dataset_manifest.build_benchmark_dataset(
+        source.source, source.images, tmp_path / "bundle"
+    )
+    output = tmp_path / "review.json"
+    arguments = [
+        "review-template",
+        "--manifest",
+        str(bundle.manifest_path),
+        "--annotations",
+        str(source.source),
+        "--images-dir",
+        str(source.images),
+        "--output",
+        str(output),
+    ]
+
+    code = dataset_manifest.main(arguments)
+
+    assert code == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status == {
+        "schema": "libreyolo.vlm-benchmark-dataset-status.v1",
+        "status": "ok",
+        "mode": "review-template",
+        "output": str(output.resolve()),
+        "manifest_sha256": bundle.manifest_sha256,
+        "partition_role": "zero_shot_confidence_promotion",
+        "approved": False,
+    }
+    assert _json(output)["status"] == "unapproved"
+
+    for forbidden in ("--approve", "--status", "--reviewer", "--reviewed-at"):
+        with pytest.raises(SystemExit):
+            dataset_manifest.build_parser().parse_args(
+                [*arguments, forbidden, "approved"]
+            )

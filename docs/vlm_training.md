@@ -171,6 +171,23 @@ Image attribution sufficiency, annotation redistribution, privacy/PII, visual
 quality, selection stability, benchmark suitability, and publication approval
 remain explicit human-review gates before a run or upload.
 
+Generate an unapproved, manifest-bound review template after preparing the
+bundle:
+
+```text
+python -m libreyolo.validation.vlm_benchmark_dataset review-template \
+  --manifest /data/libreyolo-vlm-benchmark/manifest.json \
+  --annotations /data/coco/annotations/instances_val2017.json \
+  --images-dir /data/coco/val2017 \
+  --output /data/reviews/vlm-promotion500-review.json
+```
+
+The command re-verifies the bundle and selected image bytes, then writes a
+create-only template with status `unapproved`, no reviewer or review time, and
+every manual check set to `false`. It cannot authorize a run. A human reviewer
+must complete the external file; the library never creates an approved
+attestation.
+
 The manifest records category coverage per partition. In the current pin,
 holdout100 and promotion500 represent 79 of 80 COCO categories (raw category
 89 is unavailable after the eligibility filter); train400 represents 76 of 80
@@ -196,9 +213,34 @@ The external attestation uses schema
 `libreyolo.vlm-benchmark-dataset-review.v1`, binds the manifest SHA256 and
 `zero_shot_confidence_promotion` role, names the reviewer and UTC review time,
 and must explicitly approve every manual gate listed by the manifest. The
-library never creates or approves this assertion. It records the attestation
-digest and checks the COCO artifact, category mapping, image order, dimensions,
-and selected image bytes again before generation.
+library records the attestation digest and checks the COCO artifact, category
+mapping, image order, dimensions, and selected image bytes again before
+generation.
+
+Before renting or starting the full run, use the same evidence with
+`preflight`:
+
+```text
+PYTHONHASHSEED=0 python -m libreyolo.validation.vlm_confidence_benchmark preflight \
+  --manifest /data/libreyolo-vlm-benchmark/manifest.json \
+  --annotations /data/coco/annotations/instances_val2017.json \
+  --images-dir /data/coco/val2017 \
+  --review-attestation /data/reviews/vlm-promotion500-review.json \
+  --output-root /data/runs/qwen-confidence-1 \
+  --device cuda
+```
+
+Preflight creates no run directory, lock, model, or network request. It checks
+the clean code revision, process-start determinism, offline dependency state,
+target device, native COCO loading and metric backend, all verified dataset
+evidence, and the exact official Qwen3-VL-2B config, safetensors, and processor
+bytes already present under `weights/LibreQwen3VL2b`. The output directory must
+not exist and must be outside the worktree. `run` repeats these checks and does
+not trust a saved preflight result.
+
+A ready preflight is a point-in-time local readiness result. It does not prove
+that the model will fit in memory, that a human attestation is truthful, or
+that confidence quality meets the promotion thresholds.
 
 Run twice in fresh processes and compare the persisted reports:
 
@@ -218,7 +260,7 @@ default-threshold retention, and calibration still require maintainer review.
 |---|---|---|
 | qwen3-vl 2B/4B | yes | grounding-pretrained, Apache-2.0; first verified training cohort |
 | qwen3-vl 8B | not yet | outside the first verified training cohort |
-| lfm2-vl 450M | not yet | immutable base and original LoRA scope prepared; activation waits for the live Vast smoke and real detection gate |
+| lfm2-vl 450M | not yet | activation is blocked pending maintainer licensing and provenance review; no recipe is enabled |
 | lfm2-vl 1.6B/3B, florence-2, north-micro-vision, internvl3, gemma-4, moondream | not yet | planned; see the training ADR draft |
 | smolvlm2 | no | not grounding-pretrained; cannot reliably learn box emission |
 | kosmos-2 | no | no established recipe; 224px 32x32 grid caps localization |
