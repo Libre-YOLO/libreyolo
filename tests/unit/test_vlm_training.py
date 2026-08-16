@@ -1166,6 +1166,35 @@ class TestTrainGating:
         assert wrapper.device == next(model.parameters()).device
         assert wrapper._model_dtype == torch.float64
 
+    def test_full_ft_reenables_parameters_frozen_by_a_prior_lora_merge(self):
+        from libreyolo.models.vlm.training.trainer import (
+            VLMDetectionTrainer,
+            VLMTrainConfig,
+        )
+
+        model = torch.nn.Module()
+        model.model = torch.nn.Module()
+        model.model.visual = torch.nn.Linear(2, 2)
+        model.model.language_model = torch.nn.Linear(2, 2)
+        for parameter in model.parameters():
+            parameter.requires_grad_(False)
+
+        trainer = object.__new__(VLMDetectionTrainer)
+        trainer.config = VLMTrainConfig(lora=False)
+        trainer.wrapper = type("Wrapper", (), {"model": model})()
+        trainer.recipe = get_recipe("qwen3vl")
+
+        train_model = trainer._build_train_model(resume_dir=None)
+
+        assert train_model is model
+        assert all(
+            not parameter.requires_grad for parameter in model.model.visual.parameters()
+        )
+        assert all(
+            parameter.requires_grad
+            for parameter in model.model.language_model.parameters()
+        )
+
     def test_training_dtype_checks_the_requested_cuda_device(self, monkeypatch):
         from libreyolo.models.vlm.training.trainer import VLMDetectionTrainer
 

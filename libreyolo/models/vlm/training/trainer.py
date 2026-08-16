@@ -435,8 +435,11 @@ class VLMDetectionTrainer:
         # Full fine-tune: freeze the recipe's frozen prefixes, train the rest.
         frozen = 0
         for name, param in self.wrapper.model.named_parameters():
-            if any(name.startswith(prefix) for prefix in self.recipe.frozen_prefixes):
-                param.requires_grad_(False)
+            is_frozen = any(
+                name.startswith(prefix) for prefix in self.recipe.frozen_prefixes
+            )
+            param.requires_grad_(not is_frozen)
+            if is_frozen:
                 frozen += 1
         logger.info("Full fine-tune: froze %d frozen-scope parameters.", frozen)
         return self.wrapper.model
