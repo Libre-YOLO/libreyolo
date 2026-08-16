@@ -1873,6 +1873,42 @@ Used for: the native DexiNed edge-detection architecture in
           libreyolo/models/dexined/NOTICE.
 
 --------------------------------------------------------------------
+ShowUI grounding system instruction (Show Lab)
+--------------------------------------------------------------------
+Source: https://huggingface.co/showlab/ShowUI-2B
+Commit: cabec4fcc48d15ffd3efe0b33ea9bc7d41509d60
+License: MIT (the pinned model card declares ``license: mit``)
+Copyright (c) 2024 Show Lab
+Used for: the verbatim grounding system instruction in
+          libreyolo/models/ground/showui.py. The adapter control flow is
+          original LibreYOLO code; no upstream model implementation is
+          vendored or ported. The license text below is preserved verbatim
+          from showlab/ShowUI commit
+          59e059c4df62db0857cc7a7ef0b15d067a30c274.
+
+MIT License
+
+Copyright (c) 2024 Show Lab
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------
 HRNet pose (Leo Xiao / Microsoft)
 --------------------------------------------------------------------
 Source: https://github.com/leoxiaobin/deep-high-resolution-net.pytorch

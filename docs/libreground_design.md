@@ -81,9 +81,13 @@ Each family declares `COORD_SPACE`:
 - `unit` — model emits `[0,1]`
 - `milli` — model emits `0–1000`
 - `pixel` — model emits original-image pixels
-- `pixel_view` — model emits pixels on the processor's resized view
-  (Holo). The adapter records that view size in `_preprocess` and scales
-  back to the original canvas.
+- `pixel_view` — model emits pixels on the processor's resized view. The
+  adapter records that view size in `_preprocess` and scales back to the
+  original canvas.
+
+The valid `unit` and `milli` upper endpoints are the continuous right and
+bottom canvas edges. They snap to the final pixel; values more than half a
+pixel beyond an edge are dropped.
 
 Always verify empirically with a synthetic screenshot before trusting a
 new family. The shared parser (`libreyolo/models/ground/parsing.py`) is

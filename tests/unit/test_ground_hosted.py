@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from libreyolo.models.ground import HOSTED_SNAPSHOTS, LibreGround, _ALIASES
+from libreyolo.models.ground import _ALIASES, HOSTED_SNAPSHOTS, LibreGround
 from libreyolo.models.ground.florence import LibreGroundFlorence2
 from libreyolo.models.ground.moondream import LibreGroundMoondream
 from libreyolo.models.ground.qwen3vl import LibreGroundQwen3VL
@@ -46,7 +46,9 @@ def test_public_factory_resolves_hosted_aliases_without_loading():
 
 def test_upload_script_mirrors_match_hosted_factory_repos():
     """The upload helper's new mirrors must match the factory HOSTED_SNAPSHOTS."""
-    script = Path(__file__).resolve().parents[2] / "weights" / "upload_ground_snapshot_hf.py"
+    script = (
+        Path(__file__).resolve().parents[2] / "weights" / "upload_ground_snapshot_hf.py"
+    )
     tree = ast.parse(script.read_text(encoding="utf-8"))
     mirrors = None
     for node in tree.body:
@@ -60,7 +62,11 @@ def test_upload_script_mirrors_match_hosted_factory_repos():
     # Moondream was already published; the other three must be in the uploader.
     assert "LibreYOLO/LibreMoondream2" in hosted
     assert uploaded <= hosted
-    assert {"LibreYOLO/LibreGroundFlorence2base", "LibreYOLO/LibreShowUI2b", "LibreYOLO/LibreGroundQwen3VL2b"} <= hosted
+    assert {
+        "LibreYOLO/LibreGroundFlorence2base",
+        "LibreYOLO/LibreShowUI2b",
+        "LibreYOLO/LibreGroundQwen3VL2b",
+    } <= hosted
     assert uploaded == {
         "LibreYOLO/LibreGroundFlorence2base",
         "LibreYOLO/LibreShowUI2b",
@@ -69,6 +75,23 @@ def test_upload_script_mirrors_match_hosted_factory_repos():
     showui = next(item for item in mirrors if item["alias"] == "showui-2b")
     assert showui["license"] == "mit"
     assert "Apache-2.0" in showui["license_note"]
+    assert showui["license_source"]["url"].endswith(
+        "59e059c4df62db0857cc7a7ef0b15d067a30c274/LICENSE"
+    )
+    assert showui["license_source"]["sha256"] == (
+        "dc3ad771428560c99f7605c777c9c37f5b8ef3cd37158f668985910d6dbf3f47"
+    )
+    apache = showui["additional_license_sources"]
+    assert len(apache) == 1
+    assert apache[0]["repo"] == "Qwen/Qwen2-VL-2B-Instruct"
+    assert apache[0]["revision"] == "895c3a49bc3fa70a340399125c650a463535e71c"
+    assert apache[0]["destination"] == "LICENSE-APACHE-2.0"
+    assert "_MIT_LICENSE" not in script.read_text(encoding="utf-8")
+    for item in mirrors:
+        source = item["license_source"]
+        assert len(source["sha256"]) == 64
+        if source["kind"] == "hf":
+            assert len(source["revision"]) == 40
 
 
 def test_ground_families_do_not_clobber_vlm_inventory():
@@ -82,4 +105,7 @@ def test_ground_families_do_not_clobber_vlm_inventory():
     assert inventory["ground_moondream"]["class"].endswith("LibreGroundMoondream")
     assert inventory["showui"]["class"].endswith("LibreShowUI")
     assert inventory["ground_florence2"]["tasks"] == ["point"]
-    assert inventory["florence2"]["default_task"] != "point" or "detect" in inventory["florence2"]["tasks"]
+    assert (
+        inventory["florence2"]["default_task"] != "point"
+        or "detect" in inventory["florence2"]["tasks"]
+    )

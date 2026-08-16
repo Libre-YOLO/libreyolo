@@ -12,8 +12,9 @@ Pure (no torch, no model) so it can be unit-tested offline.
 from __future__ import annotations
 
 import json
+import math
 import re
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from collections.abc import Iterable, Sequence
 
 __all__ = [
     "COORD_SPACES",
@@ -47,7 +48,7 @@ _OBJECT = re.compile(r"\{[^{}]*\}")
 _PAIR = re.compile(r"\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]")
 
 
-def coerce_queries(query: str | Sequence[str]) -> List[str]:
+def coerce_queries(query: str | Sequence[str]) -> list[str]:
     """Normalize ``prompt=`` / ``query=`` / ``set_query`` input to a label list."""
     if isinstance(query, str):
         text = query.strip()
@@ -56,8 +57,7 @@ def coerce_queries(query: str | Sequence[str]) -> List[str]:
         return [text]
     if not isinstance(query, (list, tuple)):
         raise TypeError(
-            "query must be a string or a list of strings, "
-            f"not {type(query).__name__}."
+            f"query must be a string or a list of strings, not {type(query).__name__}."
         )
     labels = [str(item).strip() for item in query]
     if not labels or any(not item for item in labels):
@@ -69,10 +69,10 @@ def coerce_queries(query: str | Sequence[str]) -> List[str]:
 
 
 def _finite(values: Iterable[float]) -> bool:
-    return all(v == v and v not in (float("inf"), float("-inf")) for v in values)
+    return all(math.isfinite(value) for value in values)
 
 
-def _pair(x: object, y: object) -> Optional[List[float]]:
+def _pair(x: object, y: object) -> list[float] | None:
     try:
         point = [float(x), float(y)]
     except (TypeError, ValueError):
@@ -80,7 +80,7 @@ def _pair(x: object, y: object) -> Optional[List[float]]:
     return point if _finite(point) else None
 
 
-def _from_mapping(item: dict) -> Optional[dict]:
+def _from_mapping(item: dict) -> dict | None:
     if not isinstance(item, dict):
         return None
     for key in ("point", "position", "coordinate", "coordinates", "click", "xy"):
@@ -114,14 +114,14 @@ def _loads(blob: str):
     return None
 
 
-def _iter_json_objects(text: str) -> List[dict]:
+def _iter_json_objects(text: str) -> list[dict]:
     stripped = _FENCE.sub("", text).strip()
     parsed = _loads(stripped)
     if isinstance(parsed, dict):
         return [parsed]
     if isinstance(parsed, list):
         return [item for item in parsed if isinstance(item, dict)]
-    objects: List[dict] = []
+    objects: list[dict] = []
     seen = set()
     for blob in _OBJECT.findall(stripped):
         parsed = _loads(blob)
@@ -135,7 +135,7 @@ def _iter_json_objects(text: str) -> List[dict]:
     return objects
 
 
-def extract_clicks(text: str | None) -> List[dict]:
+def extract_clicks(text: str | None) -> list[dict]:
     """Pull click candidates out of generated text, first match family wins.
 
     Preference order is the syntax families actually emit:
@@ -200,10 +200,10 @@ def extract_clicks(text: str | None) -> List[dict]:
 def scale_point(
     x: float,
     y: float,
-    original_size: Tuple[int, int],
+    original_size: tuple[int, int],
     coord_space: str,
-    view_size: Tuple[int, int] | None = None,
-) -> Tuple[float, float]:
+    view_size: tuple[int, int] | None = None,
+) -> tuple[float, float]:
     """Map a model-space click onto the original image canvas."""
     if coord_space not in COORD_SPACES:
         raise ValueError(
@@ -218,7 +218,9 @@ def scale_point(
         px, py = x, y
     else:
         if view_size is None:
-            raise ValueError("pixel_view coordinates require view_size=(width, height).")
+            raise ValueError(
+                "pixel_view coordinates require view_size=(width, height)."
+            )
         view_w, view_h = view_size
         if view_w <= 0 or view_h <= 0:
             raise ValueError(f"view_size must be positive, got {view_size!r}.")
@@ -229,23 +231,24 @@ def scale_point(
 def _on_canvas(
     px: float,
     py: float,
-    original_size: Tuple[int, int],
+    original_size: tuple[int, int],
     slack: float = 0.5,
-) -> Optional[Tuple[float, float]]:
+    *,
+    continuous_upper_edge: bool = False,
+) -> tuple[float, float] | None:
     """Keep on-canvas clicks; drop points that are not on the image.
 
-    A half-pixel of slack covers float overshoot. Anything farther is
-    rejected instead of being silently clamped into the frame.
+    A half-pixel of slack covers float overshoot. Unit and milli spaces use
+    the continuous right/bottom canvas edge (``width``, ``height``), while
+    pixel spaces use the last pixel center (``width - 1``, ``height - 1``).
+    Anything farther is rejected instead of being silently clamped.
     """
     width, height = original_size
     if width <= 0 or height <= 0:
         return None
-    if (
-        px < -slack
-        or py < -slack
-        or px > float(width - 1) + slack
-        or py > float(height - 1) + slack
-    ):
+    upper_x = float(width if continuous_upper_edge else width - 1)
+    upper_y = float(height if continuous_upper_edge else height - 1)
+    if px < -slack or py < -slack or px > upper_x + slack or py > upper_y + slack:
         return None
     return (
         min(float(width - 1), max(0.0, px)),
@@ -254,15 +257,15 @@ def _on_canvas(
 
 
 def build_point_dict(
-    items: List[dict],
-    name_to_id: Dict[str, int],
-    original_size: Tuple[int, int],
+    items: list[dict],
+    name_to_id: dict[str, int],
+    original_size: tuple[int, int],
     *,
     coord_space: str = "unit",
-    view_size: Tuple[int, int] | None = None,
+    view_size: tuple[int, int] | None = None,
     conf_thres: float = 0.0,
     max_det: int = 300,
-    classes: Optional[List[int]] = None,
+    classes: list[int] | None = None,
     default_score: float = 1.0,
 ) -> dict:
     """Turn parsed click items into the point-task detection dict."""
@@ -271,7 +274,7 @@ def build_point_dict(
 
     default_id = next(iter(name_to_id.values())) if len(name_to_id) == 1 else None
     allowed = set(classes) if classes is not None else None
-    points: List[List[float]] = []
+    points: list[list[float]] = []
     seen = set()
 
     for item in items:
@@ -295,7 +298,12 @@ def build_point_dict(
         if not _finite((x, y)) or default_score < conf_thres:
             continue
         px, py = scale_point(x, y, original_size, coord_space, view_size)
-        snapped = _on_canvas(px, py, original_size)
+        snapped = _on_canvas(
+            px,
+            py,
+            original_size,
+            continuous_upper_edge=coord_space in {"unit", "milli"},
+        )
         if snapped is None:
             continue
         px, py = snapped

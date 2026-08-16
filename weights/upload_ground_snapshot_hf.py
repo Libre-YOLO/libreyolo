@@ -10,8 +10,10 @@ Follows the VLM / open-vocab snapshot-directory exception in
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
 from pathlib import Path
+from urllib.request import urlopen
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WEIGHTS = REPO_ROOT / "weights"
@@ -25,6 +27,7 @@ SKIP_NAMES = {
     "README.md",
     "LICENSE.md",
     "LICENSE",
+    "LICENSE-APACHE-2.0",
     "NOTICE",
 }
 
@@ -39,7 +42,13 @@ MIRRORS = (
         "authors": "Microsoft / florence-community",
         "alias": "florence-2-base",
         "license": "mit",
-        "license_source": ("microsoft/Florence-2-base", "LICENSE"),
+        "license_source": {
+            "kind": "hf",
+            "repo": "microsoft/Florence-2-base",
+            "revision": "5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac",
+            "filename": "LICENSE",
+            "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+        },
         "allow_bin": False,
     },
     {
@@ -52,9 +61,26 @@ MIRRORS = (
         "authors": "Show Lab",
         "alias": "showui-2b",
         "license": "mit",
+        "license_source": {
+            "kind": "url",
+            "url": "https://raw.githubusercontent.com/showlab/ShowUI/59e059c4df62db0857cc7a7ef0b15d067a30c274/LICENSE",
+            "sha256": "dc3ad771428560c99f7605c777c9c37f5b8ef3cd37158f668985910d6dbf3f47",
+        },
+        "additional_license_sources": (
+            {
+                "kind": "hf",
+                "repo": "Qwen/Qwen2-VL-2B-Instruct",
+                "revision": "895c3a49bc3fa70a340399125c650a463535e71c",
+                "filename": "LICENSE",
+                "destination": "LICENSE-APACHE-2.0",
+                "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+            },
+        ),
         "license_note": (
             "Pinned showlab/ShowUI-2B card declares MIT for the weights. "
-            "ShowUI GitHub code and the Qwen2-VL-2B base are Apache-2.0."
+            "The MIT text is preserved from ShowUI's repository history. "
+            "The Qwen2-VL-2B base is Apache-2.0 and its license is shipped "
+            "separately as LICENSE-APACHE-2.0."
         ),
         "allow_bin": True,
     },
@@ -68,46 +94,28 @@ MIRRORS = (
         "authors": "Qwen / Alibaba",
         "alias": "qwen3-vl-2b",
         "license": "apache-2.0",
+        "license_source": {
+            "kind": "url",
+            "url": "https://raw.githubusercontent.com/QwenLM/Qwen3-VL/96588727e44c78b25ba03ea03b8e12f7e64fd0da/LICENSE",
+            "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+        },
         "allow_bin": False,
     },
 )
 
 
-_MIT_LICENSE = """\
-MIT License
-
-Copyright (c) 2024 Show Lab
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-"""
-
-
 def _readme(spec: dict) -> str:
     license_yaml = spec["license"]
-    license_label = (
-        "MIT License" if license_yaml == "mit" else "Apache License 2.0"
-    )
+    license_label = "MIT License" if license_yaml == "mit" else "Apache License 2.0"
     extra_license = spec.get("license_note", "")
     license_body = (
-        f"{license_label}. {extra_license}".strip()
-        if extra_license
-        else license_label
+        f"{license_label}. {extra_license}".strip() if extra_license else license_label
+    )
+    license_files = ["LICENSE"] + [
+        source["destination"] for source in spec.get("additional_license_sources", ())
+    ]
+    license_links = ", ".join(
+        f"[`{filename}`](./{filename})" for filename in license_files
     )
     return f"""---
 license: {license_yaml}
@@ -148,14 +156,16 @@ r.points.xy
 
 {license_body}
 
-See [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).
+See {license_links} and [`NOTICE`](./NOTICE).
 """
 
 
 def _notice(spec: dict) -> str:
     extra = spec.get("license_note")
     license_label = (
-        "the MIT License" if spec["license"] == "mit" else "the Apache License, Version 2.0"
+        "the MIT License"
+        if spec["license"] == "mit"
+        else "the Apache License, Version 2.0"
     )
     extra_block = f"\n{extra}\n" if extra else ""
     return (
@@ -177,6 +187,31 @@ def _has_weights(directory: Path, allow_bin: bool) -> bool:
     return allow_bin and any(directory.glob("*.bin"))
 
 
+def _copy_license_source(source: dict, destination: Path) -> None:
+    """Copy a pinned upstream license verbatim and verify its digest."""
+    if source["kind"] == "hf":
+        from huggingface_hub import hf_hub_download
+
+        downloaded = hf_hub_download(
+            source["repo"],
+            source["filename"],
+            revision=source["revision"],
+        )
+        payload = Path(downloaded).read_bytes()
+    elif source["kind"] == "url":
+        with urlopen(source["url"]) as response:
+            payload = response.read()
+    else:
+        raise ValueError(f"Unknown license source kind: {source['kind']!r}")
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != source["sha256"]:
+        raise RuntimeError(
+            f"License digest mismatch for {destination.name}: "
+            f"expected {source['sha256']}, got {digest}."
+        )
+    destination.write_bytes(payload)
+
+
 def stage_one(spec: dict) -> Path:
     """Write card files into the existing local snapshot (no second copy)."""
     from huggingface_hub import hf_hub_download
@@ -184,17 +219,12 @@ def stage_one(spec: dict) -> Path:
     dest = WEIGHTS / spec["local"]
     if not _has_weights(dest, spec["allow_bin"]):
         raise FileNotFoundError(f"Missing snapshot weights at {dest}")
-    shutil.copy2(hf_hub_download(TEMPLATE_REPO, ".gitattributes"), dest / ".gitattributes")
-    if spec.get("license_source"):
-        license_repo, license_name = spec["license_source"]
-        shutil.copy2(
-            hf_hub_download(license_repo, license_name),
-            dest / "LICENSE",
-        )
-    elif spec["license"] == "mit":
-        (dest / "LICENSE").write_text(_MIT_LICENSE, encoding="utf-8")
-    else:
-        shutil.copy2(hf_hub_download(TEMPLATE_REPO, "LICENSE"), dest / "LICENSE")
+    shutil.copy2(
+        hf_hub_download(TEMPLATE_REPO, ".gitattributes"), dest / ".gitattributes"
+    )
+    _copy_license_source(spec["license_source"], dest / "LICENSE")
+    for source in spec.get("additional_license_sources", ()):
+        _copy_license_source(source, dest / source["destination"])
     (dest / "README.md").write_text(_readme(spec), encoding="utf-8")
     (dest / "NOTICE").write_text(_notice(spec), encoding="utf-8")
     return dest
@@ -231,7 +261,9 @@ def main() -> None:
         selected = tuple(
             spec
             for spec in MIRRORS
-            if spec["local"] in wanted or spec["repo"] in wanted or spec["alias"] in wanted
+            if spec["local"] in wanted
+            or spec["repo"] in wanted
+            or spec["alias"] in wanted
         )
     for spec in selected:
         dest = stage_one(spec)

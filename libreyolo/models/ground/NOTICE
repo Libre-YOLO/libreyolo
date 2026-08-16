@@ -1,9 +1,12 @@
 LibreGround
 ==========
 
-The factory, click parser, and adapters under ``libreyolo/models/ground/``
-are original LibreYOLO code. They load Hugging Face snapshots; they do not
-vendor upstream model source.
+The factory, click parser, and adapter control flow under
+``libreyolo/models/ground/`` are original LibreYOLO code. They load Hugging
+Face snapshots and do not vendor upstream model source. The ShowUI system
+instruction is the exception: it is copied verbatim from the permissively
+licensed upstream model card, as recorded below and in
+``THIRD_PARTY_NOTICES.txt``.
 
 Hosted weight snapshots
 -----------------------
@@ -22,6 +25,11 @@ ShowUI-2B (``LibreYOLO/LibreShowUI2b``)
     base (``Qwen/Qwen2-VL-2B-Instruct``) is Apache-2.0. Those Apache
     obligations apply to the code and the base model; they are not a
     re-license of the ShowUI-2B weight grant.
+    ``libreyolo/models/ground/showui.py`` copies the grounding system
+    instruction verbatim from the pinned model card above (MIT). The MIT
+    text is preserved verbatim from ``showlab/ShowUI`` commit
+    ``59e059c4df62db0857cc7a7ef0b15d067a30c274``. The mirror also ships
+    Qwen2-VL's Apache-2.0 text as ``LICENSE-APACHE-2.0``.
 
 Qwen3-VL-2B (``LibreYOLO/LibreGroundQwen3VL2b``)
     Mirrored from ``Qwen/Qwen3-VL-2B-Instruct`` at

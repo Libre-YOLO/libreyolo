@@ -684,11 +684,13 @@ are responsible for accepting its terms themselves.
     ShowUI-2B (LibreShowUI2b)                          MIT (weights)
              mirrored snapshot of showlab/ShowUI-2B @
              cabec4fcc48d15ffd3efe0b33ea9bc7d41509d60. The pinned
-             upstream card declares license: mit. ShowUI GitHub code
-             (https://github.com/showlab/ShowUI) is Apache-2.0. The
-             Qwen2-VL-2B base is Apache-2.0. Those Apache obligations
-             apply to the code and the base model; they are not a
-             re-license of the weight grant. Learned parameters unchanged.
+             upstream card declares license: mit. The MIT text is preserved
+             verbatim from showlab/ShowUI commit
+             59e059c4df62db0857cc7a7ef0b15d067a30c274. The Qwen2-VL-2B
+             base is Apache-2.0; its upstream license is included in the
+             mirror as LICENSE-APACHE-2.0. Those Apache obligations apply
+             to the base model; they are not a re-license of the weight
+             grant. Learned parameters unchanged.
 
     Qwen3-VL-2B (LibreGroundQwen3VL2b)                 Apache-2.0
              mirrored snapshot of Qwen/Qwen3-VL-2B-Instruct @

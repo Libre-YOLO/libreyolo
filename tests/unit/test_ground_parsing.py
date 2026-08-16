@@ -121,6 +121,40 @@ class TestBuildPointDict:
         assert out["num_detections"] == 1
         assert out["points"][0][:2] == [199.0, 0.0]
 
+    @pytest.mark.parametrize(
+        ("point", "coord_space"),
+        [
+            ([1.0, 1.0], "unit"),
+            ([0.999, 0.999], "unit"),
+            ([1000, 1000], "milli"),
+        ],
+    )
+    def test_normalized_right_bottom_edge_is_kept(self, point, coord_space):
+        out = build_point_dict(
+            [{"point": point}],
+            {"a": 0},
+            (200, 100),
+            coord_space=coord_space,
+        )
+        assert out["num_detections"] == 1
+        assert out["points"][0][:2] == [199.0, 99.0]
+
+    @pytest.mark.parametrize(
+        ("point", "coord_space"),
+        [
+            ([1.01, 0.5], "unit"),
+            ([1010, 500], "milli"),
+        ],
+    )
+    def test_normalized_far_overshoot_is_dropped(self, point, coord_space):
+        out = build_point_dict(
+            [{"point": point}],
+            {"a": 0},
+            (200, 100),
+            coord_space=coord_space,
+        )
+        assert out["num_detections"] == 0
+
 
 class TestCoerceQueries:
     def test_string_and_list(self):
