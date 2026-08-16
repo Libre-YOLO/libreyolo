@@ -7,6 +7,13 @@ before 1.4.0 are documented in the
 
 ## [Unreleased]
 
+### Added
+
+- **LibreGround** sibling factory: screenshot + instruction →
+  `Results.points`. Shipped adapters are Florence-2-base (MIT), ShowUI-2B
+  (MIT weights; Apache-2.0 code/base), and Qwen3-VL-2B (Apache-2.0).
+  Inference-only. Install `libreyolo[vlm]` or `libreyolo[ground]`.
+
 ### Changed
 
 - **YOLOv9 letterbox is now stamped on the checkpoint, not flipped
@@ -40,6 +47,20 @@ before 1.4.0 are documented in the
   retrying every call.
 
 ### Added
+
+- **Four restoration and guided-matting specialists.**
+  `LibreDDColor{t,l}-restore.pt` adds automatic colorization;
+  `LibreHVICIDNett-restore.pt` adds adjustable low-light enhancement;
+  `LibreLaMab-restore.pt` adds mask-guided inpainting through the pinned
+  OpenCV Zoo ONNX graph; and `LibreViTMattes-matte.pt` adds trimap-guided
+  alpha matting. All use existing `restore` or `matte` result contracts,
+  include paired validation, strict hash-pinned conversion, and
+  family-specific pinned parity harnesses. `mask=` and `trimap=` are
+  available in Python and the CLI for one-image guided prediction. Checkpoint
+  and training-data terms are documented separately from source-code terms;
+  ViTMatte's published
+  Composition-1k checkpoint is non-commercial. LaMa runtime requires
+  `libreyolo[onnx]`.
 
 - **QuickSRNet Medium 2x super-resolution.** `LibreQuickSRNetm2-restore.pt`
   adds compact native-resolution RGB upscaling, paired PSNR/SSIM validation,

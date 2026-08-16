@@ -597,6 +597,55 @@ project the weights were derived from. Per-family summary:
              covered by LibreYOLO's permissive license. No CC BY-NC 4.0
              source is ported; see libreyolo/models/sensenova/NOTICE.
 
+    DDColor (LibreDDColor{t,l}-restore)                Apache-2.0
+             Publisher-declared artifact license at the exact pinned source
+             repositories piddnad/ddcolor_paper_tiny revision
+             cf9fd99c1d7472689ec7413441c1b799a51866a3 and
+             piddnad/ddcolor_modelscope revision
+             060f67494e31883a4b13cb27f889f3154847ada4. Converted learned
+             tensors are unchanged. Both checkpoints were trained on ImageNet
+             and initialized from ImageNet-22K lineage; ImageNet's data access
+             agreement limits dataset use to non-commercial research and
+             education. No ImageNet data is mirrored. The Artistic checkpoint
+             is excluded because it also uses undisclosed private data. The
+             download notice discloses this boundary; any hosted model card
+             must disclose it too.
+
+    HVI-CIDNet (LibreHVICIDNett-restore)               MIT
+             Publisher-declared artifact license at
+             Fediory/HVI-CIDNet-Generalization revision
+             51481ef2546f870060c43eb6d6525399f5b3d2d3. Converted learned
+             tensors are unchanged. The checkpoint was trained on
+             LOLv2-Synthetic; the canonical LOLv2 source repository publishes
+             no dataset license or explicit use terms. No training images are
+             mirrored. The download notice discloses this gap; any hosted
+             model card must disclose it too.
+
+    LaMa (LibreLaMab-restore)                          Apache-2.0
+             Embeds the exact OpenCV Zoo artifact
+             inpainting_lama_2025jan.onnx from opencv/inpainting_lama
+             revision aee6d22f0a13e5e35af1c9a1c3afd62841fc6f3f. OpenCV Zoo
+             declares every file in the model directory Apache-2.0. The graph
+             was trained on Places365-Challenge; its image-download terms are
+             non-commercial research/education terms and do not expressly
+             state trained-model terms. No Places365 image is mirrored, and
+             commercial training-data clearance was not independently
+             established. The download notice discloses this; any hosted
+             model card must disclose it too.
+
+    ViTMatte (LibreViTMattes-matte)                    Adobe DIM terms
+             The hustvl/vitmatte-small-composition-1k checkpoint at revision
+             6a58ad7646403c1df626fbd746900aec7361ea1d was trained on Adobe
+             Composition-1k. Adobe's Deep Image Matting Dataset License
+             Agreement says models can only be used and distributed for
+             non-commercial purposes and may not be sold. Permitted
+             distribution must include the exact attribution required by
+             section 3. Any hosted model repository must use `license: other`
+             and ship the agreement verbatim. These terms apply to the
+             pretrained checkpoint, not to the separately MIT/Apache-2.0
+             source port or to independently trained weights with their own
+             provenance.
+
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting
 third-party checkpoints locally are responsible for complying with the
@@ -672,6 +721,30 @@ are responsible for accepting its terms themselves.
              competes with M87 Labs's paid versions. Hosted with the
              upstream license verbatim and a banner on the card. Change
              License is Apache-2.0. NOT covered by LibreYOLO's MIT license.
+
+    LibreGround snapshots (instruction → click)
+
+    Florence-2-base (LibreGroundFlorence2base)         MIT
+             mirrored snapshot of florence-community/Florence-2-base @
+             00921df66db728a9ceb750f5eca43e5c203a2051. MIT text from
+             microsoft/Florence-2-base LICENSE. Learned parameters
+             unchanged.
+
+    ShowUI-2B (LibreShowUI2b)                          MIT (weights)
+             mirrored snapshot of showlab/ShowUI-2B @
+             cabec4fcc48d15ffd3efe0b33ea9bc7d41509d60. The pinned
+             upstream card declares license: mit. The MIT text is preserved
+             verbatim from showlab/ShowUI commit
+             59e059c4df62db0857cc7a7ef0b15d067a30c274. The Qwen2-VL-2B
+             base is Apache-2.0; its upstream license is included in the
+             mirror as LICENSE-APACHE-2.0. Those Apache obligations apply
+             to the base model; they are not a re-license of the weight
+             grant. Learned parameters unchanged.
+
+    Qwen3-VL-2B (LibreGroundQwen3VL2b)                 Apache-2.0
+             mirrored snapshot of Qwen/Qwen3-VL-2B-Instruct @
+             89644892e4d85e24eaac8bacfd4f463576704203. Learned
+             parameters unchanged.
 
 Third-party SOURCE CODE bundled inside the LibreYOLO Python package
 (separate from weights) is disclosed in the top-level NOTICE file.

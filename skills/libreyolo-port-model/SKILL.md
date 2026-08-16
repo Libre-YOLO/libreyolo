@@ -22,7 +22,7 @@ follow to write code.
 You have an upstream model. Six questions get you pointed at the right
 scaffold:
 
-1. **Tier**: checkpoint-driven (a `BaseModel` factory family — everything below), or prompt-driven (promptable segmentation, open-vocab detection, VLM)? Prompt-driven models join a **sibling factory** (`LibreSAM` / `LibreOpenVocab` / `LibreVLM`), not the `BaseModel` registry — see §4.1.
+1. **Tier**: checkpoint-driven (a `BaseModel` factory family — everything below), or prompt-driven (promptable segmentation, open-vocab detection, VLM, GUI grounding)? Prompt-driven models join a **sibling factory** (`LibreSAM` / `LibreOpenVocab` / `LibreVLM` / `LibreGround`), not the `BaseModel` registry — see §4.1.
 2. **Architecture**: per-anchor head with NMS (YOLO-grid), set-prediction with Hungarian matching (DETR), or one-to-one head with top-K and no NMS (NMS-free YOLO-grid)?
 3. **Tasks shipped**: detect / pose / segment (this skill's templates), or classify / semantic / depth / restore / point / gaze (clone the merged exemplar family — §10 lists them)?
 4. **Backbone source**: standard PyTorch, vendored separately-licensed (e.g. DINOv3), or loaded from an optional dependency (e.g. transformers — RF-DETR's DINOv2 backbone)?
@@ -161,7 +161,7 @@ Use this decision tree to pick the family you'll clone as your starting point.
 | detect + pose + segment | EC (3-way dispatch in `_init_model`, three converters via `--task` flag) |
 | classify only | MobileNetV4 / ConvNeXt / EfficientNetV2 / ResNet — shared `BaseTrainer` classify path |
 | semantic / depth / restore / point / gaze only | PIDNet + EoMT / Depth Anything V2 / NAFNet / FOMO / L2CS — single-task `BaseModel` families, each with a dedicated validator |
-| open-vocab detect, promptable seg, VLM | not `BaseModel` families — sibling factories `LibreOpenVocab` / `LibreSAM` / `LibreVLM` (§4.1) |
+| open-vocab detect, promptable seg, VLM, GUI grounding | not `BaseModel` families — sibling factories `LibreOpenVocab` / `LibreSAM` / `LibreVLM` / `LibreGround` (§4.1) |
 
 ### 3.3 By non-PyTorch upstream
 
@@ -229,6 +229,11 @@ They live in sibling factories with their own contracts:
 - **`LibreSAM`** — promptable segmentation: SAM-1 and SAM-2 (`models/sam/`),
   MobileSAM (`models/mobilesam/`).
 - **`LibreVLM`** (`models/vlm/`) — vision-language models.
+- **`LibreGround`** (`models/ground/`) — instruction → click: screenshot +
+  referring expression returns `Results.points` on the original canvas.
+  Clone an existing snapshot adapter (`florence.py`, `showui.py`, or
+  `qwen3vl.py`). Hosted weights are VLM-style snapshot
+  mirrors under `LibreYOLO/`, not detect-family `.pt` files.
 
 If your port is prompt-driven, clone one of these factories instead of a
 `BaseModel` family. The license gate (§1), parity discipline (§12), and HF-upload rules
@@ -1279,7 +1284,8 @@ In priority order. Each line: *[which family hit it]* — what to do.
   skiplist `_SKIP_FAMILIES`; RF-DETR's bespoke recognizer lives in `autoconvert.py` itself.
 - **Sibling tiers (prompt-driven)**: `models/openvocab/` (Grounding DINO, OWLv2,
   OMDet-Turbo; towers in `models/bert/` + `models/swin/`), `models/sam/` +
-  `models/mobilesam/` (LibreSAM), `models/vlm/` (LibreVLM).
+  `models/mobilesam/` (LibreSAM), `models/vlm/` (LibreVLM),
+  `models/ground/` (LibreGround).
 - **Conversion tier examples**:
   - metadata-wrap (single-task): `weights/convert_dfine_weights.py`, `weights/convert_deim_weights.py`
   - metadata-wrap (multi-task `--task` flag): `weights/convert_ec_weights.py`

@@ -16,7 +16,7 @@ GROUPS: dict[str, str] = {
     "g2": "Additional trainable-family coverage set.",
     "g3": "Families without a training implementation.",
     "g4": "Historical families with inference coverage.",
-    "s": "Sibling APIs (SAM, open-vocab, VLM, zero-shot) covered separately.",
+    "s": "Sibling APIs (SAM, open-vocab, VLM, grounding, zero-shot) covered separately.",
 }
 
 MODEL_GROUPS: dict[str, str] = {
@@ -83,9 +83,13 @@ MODEL_GROUPS: dict[str, str] = {
     "swinir": "g3",
     "realesrgan": "g3",
     "quicksrnet": "g3",
+    "ddcolor": "g3",
+    "hvi_cidnet": "g3",
+    "lama": "g3",
     "birefnet": "g3",
     "feynobg": "g3",
     "ben2": "g3",
+    "vitmatte": "g3",
     "ppocr": "g3",
     "l2cs": "g3",
     "vgg": "g3",
@@ -120,6 +124,9 @@ MODEL_GROUPS: dict[str, str] = {
     "gemma4": "s",
     "moondream": "s",
     "qwen3vl": "s",
+    "ground_florence2": "s",
+    "ground_qwen3vl": "s",
+    "showui": "s",
     "smolvlm2": "s",
     "clip": "s",
     "siglip2": "s",

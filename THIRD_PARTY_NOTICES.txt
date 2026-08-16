@@ -72,6 +72,189 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------
+DDColor and permissive architecture lineage
+--------------------------------------------------------------------
+Primary source: https://github.com/piddnad/DDColor
+Commit: 2adb63f2656ac41cbdf7b894cddd94121a3faf13
+License: Apache License 2.0
+Used for: the inference-only ConvNeXt encoder, wide UNet decoder,
+          multi-scale color transformer, Lab preprocessing/postprocessing,
+          and compatible parameter layout in libreyolo/models/ddcolor/.
+
+Derived component sources:
+- BasicSR, https://github.com/XPixelGroup/BasicSR, commit
+  8d56e3a045f9fb3e1d8872f92ee4a4f07f886b0a, Apache-2.0,
+  Copyright 2018-2022 BasicSR Authors.
+- ColorFormer, https://github.com/jixiaozhong/ColorFormer, commit
+  0d3ae850a3990bbdb954bb39feba07b15c1aa357, permissive three-clause license,
+  Copyright (C) 2022 THL A29 Limited, a Tencent company.
+- fastai, https://github.com/fastai/fastai, commit
+  517e68da4779897e6d2668f07aa9aed52e0e4a89, Apache-2.0.
+- ConvNeXt, https://github.com/facebookresearch/ConvNeXt, commit
+  048efcea897d999aed302f2639b6270aedf8d4c8, MIT,
+  Copyright (c) Meta Platforms, Inc. and affiliates.
+- Mask2Former, https://github.com/facebookresearch/Mask2Former, commit
+  9b0651c6c1d5b3af2e6da0589b719c514ec0d69a, MIT,
+  Copyright (c) 2022 Meta, Inc.
+- DETR, https://github.com/facebookresearch/detr, commit
+  29901c51d7fe8712168b8d0d64351170bc0f83e0, Apache-2.0,
+  Copyright (c) Facebook, Inc. and its affiliates.
+- BigColor, https://github.com/KIMGEONUNG/BigColor, commit
+  5b7687fbedd9af22fef02a82102c6d7708ab1217, MIT, acknowledged architectural
+  and training lineage only; no BigColor source is copied.
+
+The exact adapted paths are recorded in libreyolo/models/ddcolor/NOTICE.
+Training code, private data, and the Artistic checkpoint are excluded.
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+ColorFormer three-clause license
+--------------------------------
+
+Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+MIT component notices for ConvNeXt and Mask2Former
+--------------------------------------------------
+
+Copyright (c) Meta Platforms, Inc. and affiliates.
+Copyright (c) 2022 Meta, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------
+HVI-CIDNet
+--------------------------------------------------------------------
+Source: https://github.com/Fediory/HVI-CIDNet
+Commit: eb43d7d91e9a336c66856824ff9e4603ae41f408
+License: MIT
+Copyright (c) 2024 Fediory Feng
+Used for: the CIDNet inference graph, HVI transform, local-context attention,
+          and compatible parameter layout in libreyolo/models/hvi_cidnet/.
+          Training, loss, metric, and dataset code are not included.
+
+The full source and checkpoint/data separation is recorded in
+libreyolo/models/hvi_cidnet/NOTICE. LibreYOLO's own wrapper, validation,
+conversion, and tests remain under the repository's MIT license.
+
+Permissive architecture lineage:
+- Restormer, commit 68dc6ac472db26f16361150cb7a96a1bc87da93f,
+  MIT, Copyright (c) 2022 Syed Waqas Zamir and contributors.
+- ConvNeXt, commit 048efcea897d999aed302f2639b6270aedf8d4c8,
+  MIT, Copyright (c) Meta Platforms, Inc. and affiliates.
+- einops, commit e0d5eb4fd535945ff65d309206d0f1754a926821,
+  MIT, Copyright (c) 2018 Alex Rogozhnikov.
+
+The primary repository's eval_hf.py is behaviorally referenced for
+preprocessing and crop semantics; the LibreYOLO helper is a native
+implementation. Each lineage project uses the same MIT grant reproduced
+below for the adapted HVI-CIDNet source.
+
+MIT License
+
+Copyright (c) 2024 Fediory Feng
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------
+LaMa OpenCV Zoo ONNX artifact
+--------------------------------------------------------------------
+Artifact source: https://github.com/opencv/opencv_zoo
+Commit: 966be4cb6eefc2a4f586ed0581bf4bbaa2533070
+Path: models/inpainting_lama
+License: Apache License 2.0
+Directory notice: Copyright [2021] Samsung Research
+Conversion lineage: https://huggingface.co/Carve/LaMa-ONNX
+Revision: c3c0c9e468934d62e79c329e35d82dd09ff8c444
+Original method: https://github.com/advimman/lama
+Commit: 786f5936b27fb3dacd2b1ad799e4de968ea697e7
+Used for: the immutable QDQ ONNX graph embedded in LibreLaMab-restore.pt.
+
+No LaMa source code is copied or reimplemented. The independently written
+MIT adapter in libreyolo/models/lama/ executes the artifact through MIT-
+licensed ONNX Runtime. Exact artifact and training-data provenance is in
+libreyolo/models/lama/NOTICE. The full Apache License 2.0 text is included at
+licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
+ViTMatte / Hugging Face Transformers
+--------------------------------------------------------------------
+Port source: https://github.com/huggingface/transformers
+Commit: 7d6354e04794f3246bf9a0faf4fead080edeebb6
+License: Apache License 2.0
+Copyright 2023 HUST-VL and The HuggingFace Inc. team
+Copyright 2023 The HuggingFace Inc. team
+Copyright 2023 Meta AI and The HuggingFace Inc. team
+Architecture lineage: https://github.com/hustvl/ViTMatte
+Commit: f48208ceb0d172ab0c1c528bba33cc1159596407
+License: MIT
+Copyright (c) 2023 Hust Vision Lab
+Used for: the ViTMatte-S/ViTDet inference graph and four-channel image/trimap
+          processing contract in libreyolo/models/vitmatte/.
+
+No HUST training-stack code or its optional dependencies are copied. The
+Composition-1k pretrained checkpoint has separate Adobe non-commercial terms;
+see libreyolo/models/vitmatte/NOTICE and weights/LICENSE_NOTICE.txt. The full
+Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
 CLIP / OpenCLIP (OpenAI; LAION / ML Foundations)
 --------------------------------------------------------------------
 Source: https://github.com/openai/CLIP, https://github.com/mlfoundations/open_clip
@@ -1902,6 +2085,42 @@ Used for: the native DexiNed edge-detection architecture in
           parameter layout for strict local checkpoint conversion. The full
           MIT notice and the source/weights/data separation are recorded in
           libreyolo/models/dexined/NOTICE.
+
+--------------------------------------------------------------------
+ShowUI grounding system instruction (Show Lab)
+--------------------------------------------------------------------
+Source: https://huggingface.co/showlab/ShowUI-2B
+Commit: cabec4fcc48d15ffd3efe0b33ea9bc7d41509d60
+License: MIT (the pinned model card declares ``license: mit``)
+Copyright (c) 2024 Show Lab
+Used for: the verbatim grounding system instruction in
+          libreyolo/models/ground/showui.py. The adapter control flow is
+          original LibreYOLO code; no upstream model implementation is
+          vendored or ported. The license text below is preserved verbatim
+          from showlab/ShowUI commit
+          59e059c4df62db0857cc7a7ef0b15d067a30c274.
+
+MIT License
+
+Copyright (c) 2024 Show Lab
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 --------------------------------------------------------------------
 HRNet pose (Leo Xiao / Microsoft)

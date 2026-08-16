@@ -699,6 +699,73 @@ EdgeTAM runtime preprocessing and Transformers checkpoint converter (Apache Lice
     the Apache-2.0-declared payload reference; learned tensors are independently
     converted from the official checkpoint and checked exactly.
 
+DDColor (Apache License 2.0, with permissive component notices)
+    Path:    libreyolo/models/ddcolor/,
+             libreyolo/postprocess/ddcolor.py,
+             weights/convert_ddcolor_weights.py,
+             weights/parity_ddcolor.py
+    License: libreyolo/models/ddcolor/NOTICE
+    Source:  https://github.com/piddnad/DDColor
+             commit 2adb63f2656ac41cbdf7b894cddd94121a3faf13
+
+    LibreYOLO ports the inference-only ConvNeXt encoder, wide UNet decoder,
+    multi-scale color transformer, and OpenCV Lab colorization pipeline. The
+    family NOTICE records the Apache-2.0 DDColor and BasicSR/fastai lineage,
+    MIT ConvNeXt/Mask2Former/BigColor lineage, the ColorFormer three-clause
+    notice, exact source paths, and the separate checkpoint/data terms.
+
+HVI-CIDNet (MIT License)
+    Path:    libreyolo/models/hvi_cidnet/,
+             libreyolo/postprocess/hvi_cidnet.py,
+             weights/convert_hvi_cidnet_weights.py,
+             weights/parity_hvi_cidnet.py
+    License: libreyolo/models/hvi_cidnet/NOTICE
+    Source:  https://github.com/Fediory/HVI-CIDNet
+             commit eb43d7d91e9a336c66856824ff9e4603ae41f408
+             Copyright (c) 2024 Fediory Feng
+
+    LibreYOLO ports the inference graph and HVI transform only. Training,
+    losses, metrics, and dataset code are excluded. The family NOTICE records
+    the MIT Restormer and ConvNeXt lineage and the separate checkpoint/data
+    terms.
+
+LaMa / OpenCV Zoo artifact adapter (Apache License 2.0 artifact)
+    Path:    libreyolo/models/lama/,
+             libreyolo/postprocess/lama.py,
+             weights/convert_lama_weights.py,
+             weights/parity_lama.py
+    License: libreyolo/models/lama/NOTICE
+    Source:  https://github.com/opencv/opencv_zoo
+             commit 966be4cb6eefc2a4f586ed0581bf4bbaa2533070
+             Copyright [2021] Samsung Research
+
+    LibreYOLO's adapter is original MIT code and consumes the pinned
+    Apache-2.0 ONNX graph opaquely; it does not copy or reimplement LaMa's
+    native architecture. The family NOTICE records the OpenCV Zoo, Carve
+    conversion, original LaMa, ONNX Runtime, checkpoint, and training-data
+    provenance.
+
+ViTMatte / ViTDet inference graph (Apache License 2.0 and MIT)
+    Path:    libreyolo/models/vitmatte/,
+             libreyolo/postprocess/vitmatte.py,
+             weights/convert_vitmatte_weights.py,
+             weights/parity_vitmatte.py
+    License: libreyolo/models/vitmatte/NOTICE
+    Source:  https://github.com/huggingface/transformers
+             commit 7d6354e04794f3246bf9a0faf4fead080edeebb6
+             Copyright 2023 HUST-VL and The HuggingFace Inc. team
+             Copyright 2023 The HuggingFace Inc. team
+             Copyright 2023 Meta AI and The HuggingFace Inc. team
+    Lineage: https://github.com/hustvl/ViTMatte
+             commit f48208ceb0d172ab0c1c528bba33cc1159596407
+             Copyright (c) 2023 Hust Vision Lab
+
+    LibreYOLO ports only the Apache-2.0 Transformers inference graph and image
+    processor contract. It does not copy HUST's training stack. The released
+    Composition-1k checkpoint is separately restricted to non-commercial use
+    and distribution by Adobe's dataset agreement; see the family NOTICE and
+    weights/LICENSE_NOTICE.txt.
+
 ------------------------------------------------------------------------
 Pretrained model weights
 ------------------------------------------------------------------------

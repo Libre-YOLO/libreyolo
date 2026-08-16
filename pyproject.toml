@@ -50,7 +50,8 @@ stream = [
 onnx = [
     "onnx>=1.14.0",
     "onnxsim>=0.4.0",
-    "onnxruntime>=1.16.0",
+    # Opset-21 runtime floor required by the embedded OpenCV Zoo LaMa graph.
+    "onnxruntime>=1.18.0",
 ]
 triton = [
     # HTTP/HTTPS V2 inference only. gRPC and shared-memory extras are excluded.
@@ -100,8 +101,12 @@ llm = [
     # endpoints through the official Apache-2.0 OpenAI Python SDK.
     "openai>=1.66.0",
 ]
+ground = [
+    # LibreGround (instruction → click) shares the VLM extra stack.
+    "libreyolo[vlm]",
+]
 vlm = [
-    # VLM-as-detector families load through transformers.
+    # VLM-as-detector and LibreGround families load through transformers.
     # huggingface_hub (used for snapshot download) ships with transformers.
     "transformers>=5.1.0",
     # SmolVLM2's processor requires num2words.
@@ -530,6 +535,10 @@ markers = [
     "pe: tests covering the LibrePE Perception Encoder Core zero-shot / embedding family",
     "midas: tests covering the MiDaS relative-depth family",
     "quicksrnet: tests covering the QuickSRNet super-resolution family",
+    "ddcolor: tests covering the DDColor automatic-colorization family",
+    "hvi_cidnet: tests covering the HVI-CIDNet low-light restoration family",
+    "lama: tests covering the LaMa mask-guided inpainting family",
+    "vitmatte: tests covering the ViTMatte trimap-guided matting family",
     "distributed: multi-rank gloo tests that mp.spawn a process group. Linux-only in the PR gate: they exercise distributed-training math, which is platform-independent, while dist.init_process_group(backend='gloo') costs ~105s per test on the macOS runner (a bare 2-rank scalar all-reduce takes 109s there vs 3.9s on Linux). They also compare a parent-process reference gradient against child-process gradients at a BLAS-sensitive tolerance, so running them on every OS yields flakes rather than coverage. The spawn-plumbing tests are deliberately NOT marked: they cover spawn-only failure modes that Linux's fork never hits.",
     "rf1: RF1 training tests",
     "rf5: RF5 training benchmark tests",

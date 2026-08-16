@@ -16,6 +16,7 @@ in preflight.
 | clip | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  | ✓ |
 | clip | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |
 | convnext | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ | ✓ |  | ✓ |
+| ddcolor | restore |  |  |  |  |  |  |  |  |  |  |  |  |
 | deeplabv3 | semantic | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |  |
 | deformable_detr | detect | ✓ | available | available | available | available |  |  |  |  |  |  |  |
 | deim | detect | ✓ | ✓ |  | available | available | ✓ | ✓ |  |  |  |  | ✓ |
@@ -49,11 +50,15 @@ in preflight.
 | florence2 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ |
 | gemma4 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
+| ground_florence2 | point |  |  |  |  |  |  |  |  |  |  |  |  |
+| ground_qwen3vl | point |  |  |  |  |  |  |  |  |  |  |  |  |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | hrnet | pose | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |  |  |
+| hvi_cidnet | restore |  |  |  |  |  |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | l2cs | gaze | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |
+| lama | restore |  |  |  |  |  |  |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | lingbotvision | semantic | ✓ | ✓ | ✓ | available | ✓ |  |  |  |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |  |  |  |  |
@@ -100,6 +105,7 @@ in preflight.
 | sam3 | segment |  |  |  |  |  |  |  |  |  |  |  |  |
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |  |  |  |  |
 | segformer | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |
+| showui | point |  |  |  |  |  |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  | ✓ |  | ✓ |
 | siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  | ✓ |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |  |  |  |  |
@@ -110,6 +116,7 @@ in preflight.
 | tinyformer | detect | available | available | available | available | available |  |  |  |  |  |  |  |
 | vgg | classify | ✓ | ✓ | available | ✓ | ✓ |  |  |  | available |  |  |  |
 | vit | classify | ✓ | available | available | available | available |  |  |  | available |  |  |  |
+| vitmatte | matte |  |  |  |  |  |  |  |  |  |  |  |  |
 | vjepa2 | embed | ✓ | ✓ | available | available | available |  |  |  |  |  |  |  |
 | vjepa2 | classify | available | available | available | available | available |  |  |  |  |  |  |  |
 | yolo1 | detect | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ |
@@ -642,6 +649,18 @@ These converter paths are callable with the recorded validation context.
 - `convnext` / `classify` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `convnext` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
 - `convnext` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `ddcolor` / `restore` / `onnx`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `torchscript`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `executorch`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `tensorrt`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `openvino`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `paddle`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `mnn`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `rknn`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `ncnn`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `tflite`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `coreml`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
+- `ddcolor` / `restore` / `coreai`: DDColor export needs a two-input contract that preserves the source image's original-resolution OpenCV Lab luminance plane through RGB reconstruction. Native prediction is supported; no exported runtime contract or parity gate is defined yet.
 - `deeplabv3` / `semantic` / `executorch`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `deeplabv3` / `semantic` / `paddle`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `deeplabv3` / `semantic` / `mnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
@@ -895,6 +914,30 @@ These converter paths are callable with the recorded validation context.
 - `gemma4` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `gemma4` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `gemma4` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `ground_florence2` / `point` / `onnx`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `torchscript`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `tensorrt`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `openvino`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `paddle`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `mnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `rknn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `ncnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `tflite`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `coreml`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_florence2` / `point` / `coreai`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `onnx`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `torchscript`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `tensorrt`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `openvino`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `paddle`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `mnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `rknn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `ncnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `tflite`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `coreml`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `ground_qwen3vl` / `point` / `coreai`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `grounding_dino` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `executorch`: Open-vocabulary runtime export is out of scope for v1.
@@ -915,6 +958,18 @@ These converter paths are callable with the recorded validation context.
 - `hrnet` / `pose` / `tflite`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `coreml`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
 - `hrnet` / `pose` / `coreai`: The HRNet person-crop pose-head export contract supports ONNX, TorchScript, OpenVINO, and TensorRT only.
+- `hvi_cidnet` / `restore` / `onnx`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `torchscript`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `executorch`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `tensorrt`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `openvino`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `paddle`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `mnn`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `rknn`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `ncnn`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `tflite`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `coreml`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
+- `hvi_cidnet` / `restore` / `coreai`: HVI-CIDNet export has not defined metadata and runtime semantics for its gamma, saturation, and intensity controls, and no exported runtime parity gate has been recorded. Use native PyTorch inference.
 - `internvl3` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `internvl3` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
@@ -946,6 +1001,18 @@ These converter paths are callable with the recorded validation context.
 - `l2cs` / `gaze` / `tflite`: The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.
 - `l2cs` / `gaze` / `coreml`: The L2CS gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.
 - `l2cs` / `gaze` / `coreai`: The model itself refuses: 'LibreL2CS export to coreai is not implemented. The gaze export contract supports ONNX, TorchScript, ExecuTorch, TensorRT, and OpenVINO only.' That is a model-side decision, unchanged by opening the support gate, so nothing about Core AI is being tested here.
+- `lama` / `restore` / `onnx`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `torchscript`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `executorch`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `tensorrt`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `openvino`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `paddle`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `mnn`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `rknn`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `ncnn`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `tflite`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `coreml`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
+- `lama` / `restore` / `coreai`: LibreLaMa already embeds and executes the exact upstream QDQ ONNX artifact. Re-exporting that opaque graph through PyTorch is neither meaningful nor supported.
 - `lfm2vl` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
@@ -1336,6 +1403,18 @@ These converter paths are callable with the recorded validation context.
 - `segformer` / `semantic` / `tflite`: onnx2tf 2.6.7 emits a flatbuffer, but LiteRT 2.1.2 cannot prepare its attention reshape (1024 input elements versus 256 output elements).
 - `segformer` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `coreai`: The SegFormer Core AI capture path has not been assessed. Its published weights are non-commercial regardless of export format.
+- `showui` / `point` / `onnx`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `torchscript`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `tensorrt`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `openvino`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `paddle`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `mnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `rknn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `ncnn`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `tflite`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `coreml`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
+- `showui` / `point` / `coreai`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `siglip2` / `classify` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
 - `siglip2` / `classify` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `siglip2` / `classify` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.
@@ -1408,6 +1487,18 @@ These converter paths are callable with the recorded validation context.
 - `vit` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `vit` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `vit` / `classify` / `coreai`: This family and task have not been validated for Core AI export.
+- `vitmatte` / `matte` / `onnx`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `torchscript`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `executorch`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `tensorrt`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `openvino`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `paddle`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `mnn`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `rknn`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `ncnn`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `tflite`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `coreml`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
+- `vitmatte` / `matte` / `coreai`: ViTMatte needs a documented four-channel RGB-plus-trimap runtime input contract and guided-backend parity before export can be advertised. Use native PyTorch inference.
 - `vjepa2` / `embed` / `paddle`: This family and task have not been validated through the ONNX-to-Paddle conversion path.
 - `vjepa2` / `embed` / `mnn`: MNN v1 has no implemented runtime contract for this family and task.
 - `vjepa2` / `embed` / `rknn`: RKNN v1 is limited to the exact simulator-tested detection variants: YOLO9-t, YOLO9-E2E-t, YOLO-NAS-s, and PicoDet-s on RK3588.

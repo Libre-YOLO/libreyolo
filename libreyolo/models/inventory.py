@@ -42,6 +42,19 @@ OPTIONAL_MODELS = (
     ("libreyolo.models.vlm.moondream", "LibreMoondream", "vlm", "transformers"),
     ("libreyolo.models.vlm.qwen3vl", "LibreQwen3VL", "vlm", "transformers"),
     ("libreyolo.models.vlm.smolvlm", "LibreSmolVLM2", "vlm", "transformers"),
+    ("libreyolo.models.ground.showui", "LibreShowUI", "vlm", "transformers"),
+    (
+        "libreyolo.models.ground.florence",
+        "LibreGroundFlorence2",
+        "vlm",
+        "transformers",
+    ),
+    (
+        "libreyolo.models.ground.qwen3vl",
+        "LibreGroundQwen3VL",
+        "vlm",
+        "transformers",
+    ),
     (
         "libreyolo.models.openvocab.grounding_dino",
         "LibreGroundingDINO",
@@ -117,6 +130,11 @@ def collect_model_inventory() -> dict[str, dict]:
     if any(cls.FAMILY == "rfdetr" for cls in BaseModel._registry):
         optional["rfdetr"] = ("rfdetr", True)
         optional["dinov2"] = ("rfdetr", True)
+    if any(cls.FAMILY == "lama" for cls in BaseModel._registry):
+        optional["lama"] = (
+            "onnx",
+            importlib.util.find_spec("onnxruntime") is not None,
+        )
 
     for module_name, class_name, extra, requirement in OPTIONAL_MODELS:
         available = (
@@ -151,8 +169,7 @@ def collect_model_inventory() -> dict[str, dict]:
             "default_task": cls.DEFAULT_TASK,
             "sizes": all_sizes,
             "default_imgsz": {
-                size: _jsonable_imgsz(imgsz)
-                for size, imgsz in cls.INPUT_SIZES.items()
+                size: _jsonable_imgsz(imgsz) for size, imgsz in cls.INPUT_SIZES.items()
             },
             "task_sizes": task_sizes,
             "export_override": _export_override(cls, BaseModel),

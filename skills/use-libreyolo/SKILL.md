@@ -39,7 +39,7 @@ The base install is lightweight. Some features need **optional extras** —
 install them as `libreyolo[extra]` (or `libreyolo[all]`). Available extras:
 `onnx`, `rfdetr`, `eomt`, `tensorrt`, `openvino`, `ncnn`, `tflite` (alias
 `litert`; LiteRT is TensorFlow Lite's new name), `coreml`,
-`tracking`, `gaze`, `rtdetr`, `vlm`, `sam`, `openvocab`, `clip`, `label`,
+`tracking`, `gaze`, `rtdetr`, `vlm`, `ground`, `sam`, `openvocab`, `clip`, `label`,
 `plots`, `lora`, `tensorboard`, `mlflow`, `wandb`, `all`. `libreyolo checks`
 reports which are present.
 
@@ -189,7 +189,8 @@ as the source of truth. By tier:
   suffix, e.g. `model = LibreYOLO("LibreResNet50-cls.pt")`. Fine-tune on an
   ImageFolder root (or a known name/`.zip` URL) with `model.train(data=...)`.
 - **Zero-shot / promptable tiers** (need `[openvocab]` / `[sam]` / `[clip]` / `[siglip2]`
-  / `[vlm]`): `LibreOpenVocab` (text-vocabulary detection), `LibreSAM` /
+  / `[vlm]`): `LibreOpenVocab` (text-vocabulary detection), `LibreGround`
+  (screenshot + instruction → click `Results.points`), `LibreSAM` /
   `LibreSAM2` / `LibreSAM3` / `LibreMobileSAM` (point/box-prompted masks;
   SAM 3 also accepts concept `text=` prompts), `LibreCLIP` / `LibreSigLIP2`
   (zero-shot classify), and the `LibreVLM` family (vision-language

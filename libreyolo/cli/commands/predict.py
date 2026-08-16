@@ -24,7 +24,13 @@ from ..command_utils import (
 from ..output import OutputHandler
 
 
-_NATIVE_ONLY_PREDICT_KWARGS = {"tiling", "overlap_ratio", "output_file_format"}
+_NATIVE_ONLY_PREDICT_KWARGS = {
+    "tiling",
+    "overlap_ratio",
+    "output_file_format",
+    "mask",
+    "trimap",
+}
 
 
 def _parse_vlm_names(value: Optional[str]) -> Optional[list[str]]:
@@ -102,6 +108,8 @@ def _build_predict_kwargs(
     show: bool,
     output_path: Optional[str],
     color_format: str,
+    mask: Optional[str],
+    trimap: Optional[str],
     tiling: bool,
     overlap_ratio: float,
     output_file_format: Optional[str],
@@ -125,6 +133,10 @@ def _build_predict_kwargs(
         "overlap_ratio": overlap_ratio,
         "output_file_format": output_file_format,
     }
+    if mask is not None:
+        kwargs["mask"] = mask
+    if trimap is not None:
+        kwargs["trimap"] = trimap
 
     call = loaded_model.__call__
     unsupported = {name for name in kwargs if not _call_accepts_kwarg(call, name)}
@@ -138,6 +150,9 @@ def _build_predict_kwargs(
         requested_unsupported.append("output_file_format")
     if "overlap_ratio" in unsupported and "overlap_ratio" in user_provided:
         requested_unsupported.append("overlap_ratio")
+    for name in ("mask", "trimap"):
+        if name in unsupported and name in kwargs:
+            requested_unsupported.append(name)
 
     if requested_unsupported:
         names = ", ".join(sorted(requested_unsupported))
@@ -193,6 +208,16 @@ def predict_cmd(
     color_format: str = typer.Option("auto", help="Input color: auto, rgb, bgr"),
     output_file_format: Optional[str] = typer.Option(
         None, help="Output format: jpg, png, webp"
+    ),
+    mask: Optional[str] = typer.Option(
+        None,
+        "--mask",
+        help="Single-image binary inpainting mask for models that require it",
+    ),
+    trimap: Optional[str] = typer.Option(
+        None,
+        "--trimap",
+        help="Single-image three-level trimap for guided matting models",
     ),
     device: str = typer.Option("auto", help="Device: 0, cpu, mps, auto"),
     face_detector: Optional[str] = typer.Option(
@@ -442,6 +467,8 @@ def predict_cmd(
         show=show,
         output_path=output_path,
         color_format=color_format,
+        mask=mask,
+        trimap=trimap,
         tiling=tiling,
         overlap_ratio=overlap_ratio,
         output_file_format=output_file_format,
