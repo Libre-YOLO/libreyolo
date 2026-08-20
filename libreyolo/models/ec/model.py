@@ -162,6 +162,7 @@ class LibreEC(BaseModel):
         task: str | None = None,
         **kwargs,
     ):
+        checkpoint = model_path if isinstance(model_path, dict) else None
         if isinstance(model_path, dict):
             model_path = unwrap_ec_checkpoint(model_path)
         resolved_task = normalize_task(task) if task is not None else None
@@ -179,6 +180,8 @@ class LibreEC(BaseModel):
             task=resolved_task,
             **kwargs,
         )
+        if checkpoint is not None:
+            self._cache_checkpoint_train_config(checkpoint)
         if self.task == "pose":
             self.names = {0: "person"}
         if isinstance(model_path, str):
@@ -359,7 +362,11 @@ class LibreEC(BaseModel):
             )
 
         try:
-            data_config = load_data_config(data, autodownload=True)
+            data_config = load_data_config(
+                data,
+                autodownload=True,
+                single_cls=bool(kwargs.get("single_cls", False)),
+            )
             data = data_config.get("yaml_file", data)
         except Exception as e:
             raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")
@@ -599,6 +606,7 @@ class LibreEC(BaseModel):
 
         try:
             loaded = torch.load(model_path, map_location="cpu", weights_only=False)
+            self._cache_checkpoint_train_config(loaded)
             state_dict = unwrap_ec_checkpoint(loaded)
             state_dict = self._strip_ddp_prefix(dict(state_dict))
 

@@ -93,6 +93,28 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
             merged = {k: v for k, v in cfg_kwargs.items() if k not in consumed}
             merged.update(user_kwargs)
 
+        resume = merged.get("resume", False)
+        if resume and not merged.get("single_cls", False):
+            resume_source = (
+                resume
+                if isinstance(resume, (str, Path)) and not isinstance(resume, bool)
+                else None
+            )
+            checkpoint_config = self._checkpoint_train_config(resume_source)
+            if bool(checkpoint_config.get("single_cls", False)):
+                merged["single_cls"] = True
+
+        if merged.get("single_cls"):
+            from ..registry import group_of
+
+            group = group_of(self.FAMILY)
+            task = getattr(self, "task", "detect")
+            if group not in {"g0", "g1"} or task != "detect":
+                raise ValueError(
+                    "single_cls=True is supported only for G0/G1 detection "
+                    f"models; got family={self.FAMILY!r} ({group}), task={task!r}."
+                )
+
         if merged.get("pretrained") is False:
             from ..registry import group_of
 
@@ -257,6 +279,7 @@ class BaseModel(ABC):
         self.size = size
         self.nb_classes = nb_classes
         self.input_size = self._get_task_input_sizes()[size]
+        self._loaded_checkpoint_train_config: dict[str, Any] | None = None
         # Built lazily on the first cuda_graph=True call so models that never
         # ask for capture pay nothing.
         self._graph_runner: Optional["GraphRunner"] = None
@@ -290,6 +313,7 @@ class BaseModel(ABC):
             self.model_path = None
         elif isinstance(model_path, dict):
             self.model_path = None
+            self._cache_checkpoint_train_config(model_path)
             state_dict = self._prepare_state_dict(self._strip_ddp_prefix(model_path))
             self._validate_loaded_state_dict_for_task(state_dict, model_path)
             self._prepare_model_for_state_dict(state_dict)
@@ -597,6 +621,42 @@ class BaseModel(ABC):
         """
         return state_dict
 
+    def _checkpoint_train_config(
+        self, source: str | Path | dict | None = None
+    ) -> dict[str, Any]:
+        """Return the saved training config for a checkpoint, if available."""
+        if source is None:
+            cached = getattr(self, "_loaded_checkpoint_train_config", None)
+            if cached is not None:
+                return dict(cached)
+            source = getattr(self, "model_path", None) or getattr(
+                self, "_weight_source", None
+            )
+        if source is None:
+            return {}
+        if isinstance(source, dict):
+            checkpoint = source
+        else:
+            path = Path(source)
+            if not path.exists():
+                return {}
+            try:
+                checkpoint = load_untrusted_torch_file(
+                    path,
+                    map_location="cpu",
+                    context="checkpoint training-config probe",
+                )
+            except Exception:
+                return {}
+        return self._cache_checkpoint_train_config(checkpoint)
+
+    def _cache_checkpoint_train_config(self, checkpoint: Any) -> dict[str, Any]:
+        """Cache and return checkpoint training config metadata."""
+        config = checkpoint.get("config") if isinstance(checkpoint, dict) else None
+        cached = dict(config) if isinstance(config, dict) else {}
+        self._loaded_checkpoint_train_config = cached
+        return dict(cached)
+
     def _adapt_checkpoint_num_classes(
         self,
         ckpt_nc: int | None,
@@ -860,6 +920,7 @@ class BaseModel(ABC):
                 map_location="cpu",
                 context="model weights",
             )
+            self._cache_checkpoint_train_config(loaded)
 
             if isinstance(loaded, dict):
                 metadata_keys = set(REQUIRED_CHECKPOINT_METADATA_KEYS) - {"model"}

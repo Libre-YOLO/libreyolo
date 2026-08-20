@@ -154,6 +154,7 @@ class LibreDFINE(BaseModel):
         # Must be set before super().__init__ — weight loading (and its task
         # validation hook) runs inside the base constructor.
         self._allow_detect_to_segment_transfer = bool(allow_detect_to_segment_transfer)
+        checkpoint = model_path if isinstance(model_path, dict) else None
         if isinstance(model_path, dict):
             model_path = unwrap_dfine_checkpoint(model_path)
         super().__init__(
@@ -164,6 +165,8 @@ class LibreDFINE(BaseModel):
             task=task,
             **kwargs,
         )
+        if checkpoint is not None:
+            self._cache_checkpoint_train_config(checkpoint)
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
@@ -334,7 +337,11 @@ class LibreDFINE(BaseModel):
         from .trainer import DFINETrainer
 
         try:
-            data_config = load_data_config(data, autodownload=True)
+            data_config = load_data_config(
+                data,
+                autodownload=True,
+                single_cls=bool(kwargs.get("single_cls", False)),
+            )
             data = data_config.get("yaml_file", data)
         except Exception as e:
             raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")
@@ -429,6 +436,7 @@ class LibreDFINE(BaseModel):
 
         try:
             loaded = torch.load(model_path, map_location="cpu", weights_only=False)
+            self._cache_checkpoint_train_config(loaded)
             state_dict = unwrap_dfine_checkpoint(loaded)
             state_dict = self._strip_ddp_prefix(dict(state_dict))
             self._validate_loaded_state_dict_for_task(

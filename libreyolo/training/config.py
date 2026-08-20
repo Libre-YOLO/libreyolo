@@ -51,6 +51,10 @@ class TrainConfig:
     data: Optional[str] = None
     data_dir: Optional[str] = None
     imgsz: Union[int, Tuple[int, int], List[int], str] = 640
+    # Train every detection label as class 0 without changing source annotations.
+    # Supported by G0/G1 detection families only; shared API/CLI gates reject
+    # unsupported families and tasks before a trainer is built.
+    single_cls: bool = False
 
     # Training
     epochs: int = 300
@@ -278,6 +282,7 @@ class TrainConfig:
         self.precise_bn = int(self.precise_bn)
         if self.precise_bn < 0:
             raise ValueError(f"precise_bn must be >= 0, got {self.precise_bn}")
+        self.single_cls = bool(self.single_cls)
         self.class_balanced = bool(self.class_balanced)
         self.export_check = bool(self.export_check)
 

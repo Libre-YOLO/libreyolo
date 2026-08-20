@@ -163,6 +163,11 @@ class BaseTrainer(ABC):
         **kwargs,
     ):
         self.config = self._config_class().from_kwargs(**kwargs)
+        if self.config.single_cls and self.config.class_balanced and is_main_process():
+            logger.warning(
+                "class_balanced=True has no effect with single_cls=True; all labels "
+                "belong to the same class, so sampling remains uniform."
+            )
         self.config.amp_dtype = normalize_amp_dtype(
             getattr(self.config, "amp_dtype", "float16")
         )
@@ -789,6 +794,7 @@ class BaseTrainer(ABC):
             data_cfg = load_data_config(
                 self.config.data,
                 allow_scripts=self.config.allow_download_scripts,
+                single_cls=self.config.single_cls,
             )
             data_dir = data_cfg["root"]
             data_nc = data_cfg.get("nc")
@@ -820,7 +826,8 @@ class BaseTrainer(ABC):
                     load_segments=load_segments,
                     load_obb=load_obb,
                     num_classes=self.num_classes,
-                    names=data_cfg.get("names"),
+                    names=data_cfg.get("_original_names", data_cfg.get("names")),
+                    single_cls=self.config.single_cls,
                 )
             elif img_files:
                 train_dataset = YOLODataset(
@@ -831,6 +838,7 @@ class BaseTrainer(ABC):
                     load_segments=load_segments,
                     load_obb=load_obb,
                     num_classes=self.num_classes if load_obb else None,
+                    single_cls=self.config.single_cls,
                 )
             elif ann_file.exists():
                 train_dataset = COCODataset(
@@ -846,7 +854,8 @@ class BaseTrainer(ABC):
                     load_segments=load_segments,
                     load_obb=load_obb,
                     num_classes=self.num_classes,
-                    names=data_cfg.get("names"),
+                    names=data_cfg.get("_original_names", data_cfg.get("names")),
+                    single_cls=self.config.single_cls,
                 )
             else:
                 train_path = data_cfg.get("train", "images/train")
@@ -872,10 +881,11 @@ class BaseTrainer(ABC):
                     load_segments=load_segments,
                     load_obb=load_obb,
                     num_classes=self.num_classes if load_obb else None,
+                    single_cls=self.config.single_cls,
                 )
         elif self.config.data_dir:
             data_dir = self.config.data_dir
-            self.num_classes = self.config.num_classes
+            self.num_classes = 1 if self.config.single_cls else self.config.num_classes
 
             if (Path(data_dir) / "annotations").exists():
                 train_dataset = COCODataset(
@@ -891,6 +901,7 @@ class BaseTrainer(ABC):
                     load_segments=load_segments,
                     load_obb=load_obb,
                     num_classes=self.num_classes,
+                    single_cls=self.config.single_cls,
                 )
             else:
                 train_dataset = YOLODataset(
@@ -901,6 +912,7 @@ class BaseTrainer(ABC):
                     load_segments=load_segments,
                     load_obb=load_obb,
                     num_classes=self.num_classes if load_obb else None,
+                    single_cls=self.config.single_cls,
                 )
         else:
             raise ValueError("Either 'data' or 'data_dir' must be specified")
@@ -1379,7 +1391,7 @@ class BaseTrainer(ABC):
 
     def _resolve_num_classes_from_data_config(self) -> int:
         """Resolve dataset class count before criterion construction."""
-        resolved = int(self.config.num_classes)
+        resolved = 1 if self.config.single_cls else int(self.config.num_classes)
         if self.config.data:
             # Only the YAML's class count is needed here; the dataset itself is
             # downloaded later in _setup_data.
@@ -1387,6 +1399,7 @@ class BaseTrainer(ABC):
                 self.config.data,
                 autodownload=False,
                 allow_scripts=self.config.allow_download_scripts,
+                single_cls=self.config.single_cls,
             )
             resolved = int(data_cfg.get("nc", resolved))
 
@@ -1418,6 +1431,8 @@ class BaseTrainer(ABC):
         )
 
         if not needs_rebuild:
+            if wrapper is not None and self.config.single_cls:
+                wrapper.names = {0: "object"}
             return
 
         if wrapper is None or not hasattr(wrapper, "_rebuild_for_new_classes"):
@@ -1438,6 +1453,8 @@ class BaseTrainer(ABC):
                 f"{self.get_model_family()} wrapper rebuild did not sync the model "
                 f"head to num_classes={num_classes}; got {rebuilt_nc}."
             )
+        if self.config.single_cls:
+            wrapper.names = {0: "object"}
 
     # =========================================================================
     # Setup / train / epoch
@@ -2795,6 +2812,7 @@ class BaseTrainer(ABC):
 
             val_config = ValidationConfig(
                 data=self.config.data,
+                single_cls=getattr(self.config, "single_cls", False),
                 batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,

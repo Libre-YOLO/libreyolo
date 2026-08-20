@@ -18,6 +18,7 @@ class ValidationConfig:
         data: Path to data.yaml file containing dataset configuration.
         data_dir: Direct path to dataset directory (alternative to data).
         split: Dataset split to validate on ("val" or "test").
+        single_cls: Evaluate every detection category as class 0.
         batch_size: Batch size for validation.
         imgsz: Image size for validation. Accepts an int (square) or (height, width) tuple.
         conf_thres: Confidence threshold. Use 0.0 or a low value for mAP calculation.
@@ -50,6 +51,7 @@ class ValidationConfig:
     data: Optional[str] = None
     data_dir: Optional[str] = None
     split: str = "val"
+    single_cls: bool = field(default=False, kw_only=True)
 
     # Inference
     batch_size: int = 16
@@ -135,6 +137,7 @@ class ValidationConfig:
 
     def __post_init__(self) -> None:
         self.amp_dtype = normalize_amp_dtype(self.amp_dtype)
+        self.single_cls = bool(self.single_cls)
 
         if self.data is None and self.data_dir is None and self.keypoints_json is None:
             raise ValueError(

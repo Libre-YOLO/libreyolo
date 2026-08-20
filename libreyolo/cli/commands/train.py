@@ -303,6 +303,11 @@ def train_cmd(
         help="LVIS-style repeat-factor sampling for long-tailed datasets "
         "(default: off)",
     ),
+    single_cls: bool = typer.Option(
+        False,
+        "--single-cls/--no-single-cls",
+        help="Train a G0/G1 detector with every label remapped to class 0",
+    ),
     average_best: int = typer.Option(
         0,
         help="Uniform-average the N best checkpoints by the watched metric "
@@ -589,6 +594,7 @@ def train_cmd(
         "cache": cache_val,
         "min_samples": min_samples,
         "class_balanced": class_balanced,
+        "single_cls": single_cls,
         "average_best": average_best,
         "export_check": export_check,
         "precise_bn": precise_bn,
@@ -653,6 +659,25 @@ def train_cmd(
             ),
         )
 
+    if params["single_cls"]:
+        from libreyolo.models.registry import group_of
+
+        selected_task = normalized_task or getattr(loaded_model, "task", None)
+        model_cls = get_model_class(family) if family is not None else None
+        if selected_task is None and model_cls is not None:
+            selected_task = (
+                model_cls.detect_task_from_filename(Path(model_path).name)
+                or model_cls.DEFAULT_TASK
+            )
+        group = group_of(family) if family is not None else None
+        if group not in {"g0", "g1"} or selected_task != "detect":
+            exit_with_error(
+                out,
+                "config_unsupported",
+                "single_cls=True is supported only for G0/G1 detection models; "
+                f"got family={family!r} ({group}), task={selected_task!r}.",
+            )
+
     # Warn when explicitly-set params are ignored by the selected family
     # (spec-driven; see libreyolo/data/augment/spec.py).
     ignored_warnings = []
@@ -701,6 +726,7 @@ def train_cmd(
             "amp_dtype": params["amp_dtype"],
             "max_det": params["max_det"],
             "class_balanced": params["class_balanced"],
+            "single_cls": params["single_cls"],
             "average_best": params["average_best"],
             "export_check": params["export_check"],
             "precise_bn": params["precise_bn"],
@@ -736,6 +762,7 @@ def train_cmd(
                 "save_period": params["save_period"],
                 "lora": params["lora"],
                 "class_balanced": params["class_balanced"],
+                "single_cls": params["single_cls"],
                 "average_best": params["average_best"],
                 "export_check": params["export_check"],
                 "precise_bn": params["precise_bn"],

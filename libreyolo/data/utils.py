@@ -232,7 +232,11 @@ def img2label_paths(img_paths: List[Path]) -> List[Path]:
 
 
 def load_data_config(
-    data: str, autodownload: bool = True, allow_scripts: bool = False
+    data: str,
+    autodownload: bool = True,
+    allow_scripts: bool = False,
+    *,
+    single_cls: bool = False,
 ) -> Dict:
     """
     Load dataset configuration from YAML file.
@@ -251,6 +255,8 @@ def load_data_config(
         allow_scripts: Whether to allow execution of Python download scripts
             embedded in YAML configs. When False, only URL-based downloads are
             permitted and script-based downloads are skipped with a warning.
+        single_cls: Return a one-class detection view while retaining the source
+            class names privately for native COCO category mapping.
 
     Returns:
         Dictionary with dataset configuration including:
@@ -315,6 +321,12 @@ def load_data_config(
 
     # Keep 'root' for backward compatibility
     config["root"] = str(dataset_path)
+
+    if single_cls:
+        config["_original_names"] = config.get("names")
+        config["_original_nc"] = config.get("nc")
+        config["nc"] = 1
+        config["names"] = {0: "object"}
 
     return config
 
