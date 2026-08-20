@@ -33,12 +33,22 @@ def load_model_or_exit(
     model_path: str,
     device: str,
     task: str | None = None,
+    names: list[str] | None = None,
 ) -> Any:
     """Load a model with consistent CLI error handling."""
-    from libreyolo import LibreYOLO
+    from libreyolo import LibreVLM, LibreYOLO
+    from libreyolo.models.vlm import inspect_vlm_reference
 
     out.progress(f"Loading {model}...")
     try:
+        vlm_reference = inspect_vlm_reference(model_path)
+        if vlm_reference is not None:
+            kwargs = {"device": device}
+            if task is not None:
+                kwargs["task"] = task
+            if names is not None:
+                kwargs["names"] = names
+            return LibreVLM(model_path, **kwargs)
         return LibreYOLO(model_path, device=device, task=task)
     except Exception as exc:
         exit_with_error(
@@ -141,8 +151,16 @@ def get_loaded_model_input_size(
 def resolve_model_or_exit(out: OutputHandler, model: str) -> str:
     """Resolve a model reference or fail with a consistent CLI error."""
     from libreyolo.backends.triton import is_triton_model_url
+    from libreyolo.models.vlm import get_vlm_aliases, inspect_vlm_reference
     from .config import get_all_cli_names, is_known_weight_filename, resolve_model_name
     from .errors import suggest_key
+
+    try:
+        vlm_reference = inspect_vlm_reference(model)
+    except ValueError as exc:
+        exit_with_error(out, "model_load_failed", str(exc))
+    if vlm_reference is not None:
+        return str(model)
 
     model_path = resolve_model_name(model)
     if (
@@ -153,7 +171,7 @@ def resolve_model_or_exit(out: OutputHandler, model: str) -> str:
     ):
         return model_path
 
-    all_names = get_all_cli_names()
+    all_names = get_all_cli_names() + list(get_vlm_aliases())
     suggestion = suggest_key(model, all_names)
     hint = f" Did you mean '{suggestion}'?" if suggestion else ""
     exit_with_error(
@@ -162,6 +180,27 @@ def resolve_model_or_exit(out: OutputHandler, model: str) -> str:
         f"Unknown model '{model}'.{hint}",
         suggestion=f"Available: {', '.join(all_names)}",
     )
+
+
+def reject_unsupported_vlm_command(
+    out: OutputHandler,
+    *,
+    model_path: str,
+    command: str,
+) -> None:
+    """Reject an unsupported VLM command before loading model weights."""
+    from libreyolo.models.vlm import inspect_vlm_reference
+
+    try:
+        reference = inspect_vlm_reference(model_path)
+    except ValueError as exc:
+        exit_with_error(out, "model_load_failed", str(exc))
+    if reference is not None:
+        exit_with_error(
+            out,
+            "config_unsupported",
+            f"LibreVLM does not support the '{command}' CLI workflow yet.",
+        )
 
 
 def exit_stage_error(

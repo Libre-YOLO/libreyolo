@@ -11,6 +11,7 @@ from ..command_utils import (
     help_json_callback,
     load_model_or_exit,
     parse_imgsz_str,
+    reject_unsupported_vlm_command,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
@@ -102,12 +103,11 @@ def val_cmd(
         if max_det < 1:
             raise ValueError(f"max_det must be >= 1, got {max_det}")
         if eval_max_det is not None and eval_max_det < 1:
-            raise ValueError(
-                f"eval_max_det must be >= 1, got {eval_max_det}"
-            )
+            raise ValueError(f"eval_max_det must be >= 1, got {eval_max_det}")
     except ValueError as exc:
         exit_with_error(out, "config_type_error", str(exc))
     model_path = resolve_model_or_exit(out, model)
+    reject_unsupported_vlm_command(out, model_path=model_path, command="val")
 
     if allow_download_scripts:
         out.warning(
@@ -181,7 +181,9 @@ def val_cmd(
         mle = metrics.get("metrics/MLE", 0.0)
         mae = metrics.get("metrics/MAE", 0.0)
         rmse = metrics.get("metrics/RMSE", 0.0)
-        sweep_key = next((k for k in metrics.keys() if k.startswith("metrics/mAP@[")), None)
+        sweep_key = next(
+            (k for k in metrics.keys() if k.startswith("metrics/mAP@[")), None
+        )
         sweep_map = metrics.get(sweep_key, 0.0) if sweep_key else 0.0
         data_out = {
             "model": model,

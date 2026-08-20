@@ -328,6 +328,36 @@ distributed as training checkpoints.
 For release compatibility, readers accept legacy best-metric aliases such as
 `best_mAP50_95`, `best_mAP50`, `best_metric`, and `best_metric_name`.
 
+## VLM directory checkpoints and Hub artifacts
+
+LibreVLM training outputs directories rather than native detector `.pt` files.
+Each local directory carries `libreyolo_vlm.json` schema 1, which records the
+family, size, task, ordered vocabulary, prompt and box conventions, metrics,
+LibreYOLO version, and exact base repository revision. A LoRA checkpoint also
+contains `adapter_model.safetensors`, `adapter_config.json`, and its processor
+files. A full fine-tune instead contains a self-contained model directory.
+Both are local training/reload formats, not publication approval.
+
+`libreyolo.vlm-artifact.v1` is a separate, flat publication format restricted
+to the verified Qwen3-VL 2B/4B detection LoRA cohort. Its
+`libreyolo_vlm_artifact.json` manifest binds the exact payload inventory and
+the adapter, contract, processor, evidence, and immutable base-snapshot
+identities. Base weights are referenced and verified but are not included;
+the exact Qwen processor, tokenizer, and chat-template assets are redistributed
+under Apache-2.0 with generated license and notice files.
+
+The artifact carries reviewed `libreyolo.vlm-publication-evidence.v2` evidence.
+Its evaluation record binds one primary confidence report and envelope plus a
+canonical `libreyolo.vlm-confidence-repeatability-receipt.v1` comparison of
+that primary run with a second fresh-process run. Both the raw receipt and its
+canonical comparison object are SHA-256 bound. These are structural integrity
+records, not publisher or reviewer authentication.
+
+Published artifacts are addressed as
+`hf+vlm://owner/repo@<40-character-commit>`. This is distinct from the
+single-file detector `hf://` transport. The evidence and Hub workflow are
+defined in [`vlm_hub_artifact.md`](vlm_hub_artifact.md).
+
 ## External Snapshot Exception
 
 The schema above governs LibreYOLO-authored `.pt` checkpoints. It does not

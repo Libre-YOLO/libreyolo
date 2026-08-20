@@ -150,6 +150,11 @@ def resolve_model_name(model: str) -> str:
 
 def detect_family_from_name(model_name: str) -> Optional[str]:
     """Detect model family from a CLI model name like 'yolox-s' or 'yolo9-m'."""
+    from libreyolo.models.vlm import inspect_vlm_reference
+
+    vlm_reference = inspect_vlm_reference(model_name)
+    if vlm_reference is not None:
+        return vlm_reference.family
     _build_name_map()
     lower = model_name.lower()
     resolved = _CLI_NAME_TO_WEIGHTS.get(lower)
@@ -254,6 +259,11 @@ def detect_family_from_model_ref(
         refs.append(resolved_model_path)
 
     for ref in refs:
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        vlm_reference = inspect_vlm_reference(ref)
+        if vlm_reference is not None:
+            return vlm_reference.family
         family = detect_family_from_name(ref)
         if family is not None:
             return family
@@ -395,6 +405,46 @@ def build_train_kwargs(params: dict[str, Any]) -> dict[str, Any]:
         if cli_name in params:
             kwargs[f.name] = params[cli_name]
     return kwargs
+
+
+def build_vlm_train_kwargs(
+    params: dict[str, Any], *, user_provided: set[str] | None = None
+) -> dict[str, Any]:
+    """Translate the shared train CLI into the smaller VLM trainer contract.
+
+    Detector defaults are intentionally not forwarded. Unspecified values come
+    from :class:`VLMTrainConfig`, while the family recipe continues to own the
+    learning rate when ``lr0`` is not explicit.
+    """
+    from libreyolo.models.vlm.training.trainer import VLMTrainConfig
+
+    defaults = VLMTrainConfig()
+    provided = user_provided or set()
+    output_dir = Path(defaults.output_dir)
+
+    def selected(name: str, default: Any) -> Any:
+        return params[name] if name in provided else default
+
+    return {
+        "epochs": selected("epochs", defaults.epochs),
+        "batch": selected("batch", defaults.batch),
+        "accumulate": defaults.accumulate,
+        "lr0": params["lr0"] if "lr0" in provided else defaults.lr0,
+        "lora": selected("lora", defaults.lora),
+        "project": selected("project", output_dir.parent.as_posix()),
+        "name": selected("name", output_dir.name),
+        "exist_ok": selected("exist_ok", defaults.exist_ok),
+        "workers": selected("workers", defaults.workers),
+        "seed": selected("seed", defaults.seed),
+        "device": params.get("device", defaults.device),
+        "gradient_checkpointing": defaults.gradient_checkpointing,
+        "vram_check": defaults.vram_check,
+        "resume": params["resume"] if "resume" in provided else defaults.resume,
+        "hflip": selected("flip_prob", defaults.hflip),
+        "allow_download_scripts": selected(
+            "allow_download_scripts", defaults.allow_download_scripts
+        ),
+    }
 
 
 def _build_rfdetr_train_kwargs(

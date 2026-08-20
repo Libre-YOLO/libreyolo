@@ -31,11 +31,10 @@ from .parsing import build_detection_dict, extract_bare_boxes
 
 _MIN_TRANSFORMERS = (5, 16)
 _VERSION_HINT = (
-    "North Micro Vision requires transformers>=5.16.0 (the CohereCompass "
-    "architecture). Upgrade with:\n"
+    "North Micro Vision requires a released transformers>=5.16.0 build "
+    "(the CohereCompass architecture). Install it when available with:\n"
     "    pip install -U 'transformers>=5.16.0'\n"
-    "or, until 5.16.0 is on PyPI:\n"
-    "    pip install git+https://github.com/huggingface/transformers"
+    "Mutable source checkouts are not a supported production dependency."
 )
 
 
@@ -74,6 +73,9 @@ class LibreNorthMicroVision(LibreVLMModel):
 
     HF_REPOS: ClassVar[Dict[str, str]] = {
         "2.4b": "CohereLabs/North-Micro-Vision-Instruct",
+    }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "2.4b": "8be3368e3ad675d84c162d458b4499aadefc3aeb",
     }
     # Nominal only; the processor owns the real native-resolution handling.
     INPUT_SIZES: ClassVar[Dict[str, int]] = {

@@ -34,6 +34,9 @@ class LibreKosmos2(LibreVLMModel):
     HF_REPOS: ClassVar[Dict[str, str]] = {
         "224": "microsoft/kosmos-2-patch14-224",
     }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "224": "e91cfbcb4ce051b6a55bfb5f96165a3bbf5eb82c",
+    }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         "224": 224,
     }

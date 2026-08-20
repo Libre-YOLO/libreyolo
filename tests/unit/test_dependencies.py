@@ -62,3 +62,10 @@ def test_openvocab_extra_covers_clip_tokenizer_runtime():
     names = {dep.split(">=")[0].split("==")[0].strip() for dep in deps}
     assert "ftfy" in names
     assert "regex" in names
+
+
+def test_hf_extra_supports_bounded_vlm_download_preflight():
+    """Hub 1.0 introduced ``hf_hub_download(dry_run=True)``."""
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+    deps = pyproject["project"]["optional-dependencies"]["hf"]
+    assert "huggingface_hub>=1.0.0" in deps

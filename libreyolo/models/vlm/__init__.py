@@ -17,11 +17,32 @@ See ``docs/librevlm_design.md`` and ``docs/adr/0002-librevlm-contract.md``.
 
 from __future__ import annotations
 
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Tuple, Type
 
+from .artifact import (
+    VLMArtifactError,
+    VLMArtifactInfo,
+    build_vlm_artifact,
+    create_vlm_publication_evidence_template,
+    read_vlm_artifact_manifest,
+    validate_vlm_artifact,
+    validate_vlm_base_snapshot,
+)
 from .base import LibreVLMModel
 from .florence2 import LibreFlorence2
 from .gemma4 import LibreGemma4
+from .hub import (
+    VLMBaseSnapshotInfo,
+    VLMHubRef,
+    download_vlm_artifact,
+    ensure_vlm_base_snapshot,
+    inspect_vlm_hub_artifact,
+    parse_vlm_hub_uri,
+    push_vlm_artifact,
+)
 from .internvl3 import LibreInternVL3
 from .kosmos2 import LibreKosmos2
 from .lfm2 import LibreLFM2VL
@@ -92,11 +113,111 @@ _MODUS_ALIASES: Dict[str, str] = {
 _DEFAULT_MODEL = "qwen3-vl-4b"
 
 
+@dataclass(frozen=True)
+class VLMReference:
+    """Side-effect-free metadata for a recognized LibreVLM reference."""
+
+    family: str | None
+    size: str | None
+    trainable: bool
+    trainable_sizes: tuple[str, ...]
+    checkpoint: bool
+    hub: VLMHubRef | None = None
+
+    @property
+    def remote(self) -> bool:
+        """Whether this reference names an immutable remote artifact."""
+        return self.hub is not None
+
+
+def _family_training_metadata(family: str) -> tuple[bool, tuple[str, ...]]:
+    """Return training capability without constructing a model."""
+    for family_cls, _size in _ALIASES.values():
+        if family_cls.FAMILY == family:
+            return bool(family_cls.TRAINABLE), tuple(family_cls.TRAINABLE_SIZES)
+
+    # These families are imported lazily to avoid circular package imports.
+    # Both currently inherit the non-trainable LibreVLMModel defaults.
+    if family in {"sensenovavision", "libremodus"}:
+        return False, ()
+    return False, ()
+
+
+def _reference(family: str, size: str, *, checkpoint: bool) -> VLMReference:
+    trainable, trainable_sizes = _family_training_metadata(family)
+    return VLMReference(
+        family=family,
+        size=size,
+        trainable=trainable,
+        trainable_sizes=trainable_sizes,
+        checkpoint=checkpoint,
+    )
+
+
+def get_vlm_aliases() -> tuple[str, ...]:
+    """Return every accepted LibreVLM alias in stable sorted order."""
+    return tuple(sorted(set(_ALIASES) | set(_LAZY_ALIASES) | set(_MODUS_ALIASES)))
+
+
+def inspect_vlm_reference(model) -> VLMReference | None:
+    """Inspect a VLM alias, checkpoint, or immutable VLM Hub URI without loading.
+
+    Unknown aliases and directories without a VLM contract return ``None``.
+    A directory that carries ``libreyolo_vlm.json`` is always parsed through
+    the strict checkpoint-contract reader, so malformed contracts raise their
+    validation error instead of falling through to another model factory.
+
+    This function only parses remote URI syntax or reads the small local
+    contract file when present. It never constructs a model, resolves a
+    Hugging Face repository, or downloads weights.
+    """
+    from .hub import VLM_HUB_URI_PREFIX, parse_vlm_hub_uri
+    from .training.checkpoint import (
+        CONTRACT_FILENAME,
+        read_contract,
+        validate_vlm_checkpoint_artifact,
+    )
+
+    if isinstance(model, str) and model.startswith(VLM_HUB_URI_PREFIX):
+        hub = parse_vlm_hub_uri(model)
+        return VLMReference(
+            family=None,
+            size=None,
+            trainable=False,
+            trainable_sizes=(),
+            checkpoint=True,
+            hub=hub,
+        )
+
+    try:
+        path = Path(model)
+    except (TypeError, ValueError):
+        return None
+
+    contract_path = path / CONTRACT_FILENAME
+    if path.is_dir() and (contract_path.exists() or contract_path.is_symlink()):
+        contract = read_contract(path)
+        validate_vlm_checkpoint_artifact(path)
+        return _reference(contract["family"], contract["size"], checkpoint=True)
+
+    key = str(model).strip().lower()
+    match = _ALIASES.get(key)
+    if match is not None:
+        family_cls, size = match
+        return _reference(family_cls.FAMILY, size, checkpoint=False)
+    if key in _LAZY_ALIASES:
+        return _reference("sensenovavision", _LAZY_ALIASES[key], checkpoint=False)
+    if key in _MODUS_ALIASES:
+        return _reference("libremodus", _MODUS_ALIASES[key], checkpoint=False)
+    return None
+
+
 def _load_checkpoint(path, **kwargs) -> LibreVLMModel:
     """Load a fine-tune checkpoint directory produced by ``train()``."""
-    from .training.checkpoint import read_contract
+    from .training.checkpoint import read_contract, validate_vlm_checkpoint_artifact
 
     contract = read_contract(path)
+    validate_vlm_checkpoint_artifact(path)
     family_classes = {cls.FAMILY: cls for cls, _size in _ALIASES.values()}
     family_cls = family_classes.get(contract["family"])
     if family_cls is None:
@@ -109,14 +230,57 @@ def _load_checkpoint(path, **kwargs) -> LibreVLMModel:
     return family_cls(size=contract["size"], checkpoint_dir=str(path), **kwargs)
 
 
+def _load_remote_checkpoint(source: str, **kwargs) -> LibreVLMModel:
+    """Download one immutable Hub artifact into an isolated lifetime directory."""
+    from .artifact import validate_vlm_artifact, validate_vlm_base_snapshot
+    from .hub import download_vlm_artifact, ensure_vlm_base_snapshot
+
+    token = kwargs.pop("token", None)
+    local_files_only = kwargs.pop("local_files_only", False)
+    temporary = tempfile.TemporaryDirectory(prefix="libreyolo-vlm-remote-")
+    try:
+        temporary_root = Path(temporary.name).resolve(strict=True)
+        artifact = download_vlm_artifact(
+            source,
+            temporary_root / "artifact",
+            token=token,
+            local_files_only=local_files_only,
+        )
+        base_snapshot = ensure_vlm_base_snapshot(
+            artifact,
+            token=token,
+            local_files_only=local_files_only,
+        )
+        validate_vlm_base_snapshot(base_snapshot.root, base_snapshot.identity)
+        model = _load_checkpoint(artifact.root, **kwargs)
+        revalidated_artifact = validate_vlm_artifact(artifact.root)
+        if (
+            revalidated_artifact.aggregate_sha256 != artifact.aggregate_sha256
+            or revalidated_artifact.files != artifact.files
+            or revalidated_artifact.manifest != artifact.manifest
+        ):
+            raise ValueError("VLM Hub artifact changed during model construction")
+        validate_vlm_base_snapshot(base_snapshot.root, base_snapshot.identity)
+    except Exception:
+        temporary.cleanup()
+        raise
+
+    # Checkpoint loading is synchronous today, but retaining the validated
+    # directory for the wrapper lifetime also keeps future lazy processor or
+    # adapter reads safe. TemporaryDirectory removes it when the model dies.
+    model._vlm_remote_artifact = temporary
+    model._vlm_remote_source = source
+    return model
+
+
 def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
     """Load a vision-language detector by name or fine-tune checkpoint path.
 
     Args:
-        model: Model alias (e.g. ``"qwen3-vl-4b"``, ``"lfm2-vl-450m"``), or a
-            path to a fine-tune checkpoint directory produced by ``train()``
-            (it carries ``libreyolo_vlm.json``). Defaults to Qwen3-VL-4B
-            (Apache-2.0).
+        model: Model alias (e.g. ``"qwen3-vl-4b"``, ``"lfm2-vl-450m"``), a
+            path to a fine-tune checkpoint directory produced by ``train()``,
+            or an immutable ``hf+vlm://owner/repo@<commit>`` artifact URI.
+            Defaults to Qwen3-VL-4B (Apache-2.0).
         **kwargs: Forwarded to the family constructor: ``device``, ``names``
             (initial class vocabulary, same as calling ``set_classes`` after
             load), ``prompt`` (override the detection prompt), ``max_new_tokens``.
@@ -128,6 +292,9 @@ def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
     """
     from .training.checkpoint import is_vlm_checkpoint
 
+    reference = inspect_vlm_reference(model)
+    if reference is not None and reference.remote:
+        return _load_remote_checkpoint(str(model), **kwargs)
     if is_vlm_checkpoint(model):
         return _load_checkpoint(model, **kwargs)
     key = str(model).strip().lower()
@@ -143,7 +310,7 @@ def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
     if match is None:
         raise ValueError(
             f"Unknown VLM model {model!r}. Known aliases: "
-            f"{', '.join(sorted(set(_ALIASES) | set(_LAZY_ALIASES) | set(_MODUS_ALIASES)))}."
+            f"{', '.join(get_vlm_aliases())}."
         )
     family_cls, size = match
     return family_cls(size=size, **kwargs)
@@ -164,6 +331,23 @@ def __getattr__(name: str):
 __all__ = [
     "LibreVLM",
     "LibreVLMModel",
+    "VLMArtifactError",
+    "VLMArtifactInfo",
+    "VLMBaseSnapshotInfo",
+    "VLMHubRef",
+    "VLMReference",
+    "build_vlm_artifact",
+    "create_vlm_publication_evidence_template",
+    "download_vlm_artifact",
+    "ensure_vlm_base_snapshot",
+    "get_vlm_aliases",
+    "inspect_vlm_hub_artifact",
+    "inspect_vlm_reference",
+    "parse_vlm_hub_uri",
+    "push_vlm_artifact",
+    "read_vlm_artifact_manifest",
+    "validate_vlm_artifact",
+    "validate_vlm_base_snapshot",
     "LibreLFM2VL",
     "LibreQwen3VL",
     "LibreSmolVLM2",

@@ -15,7 +15,17 @@ from .loss import ValidationLossMixin
 
 logger = logging.getLogger(__name__)
 
-COCO_TOPK_FAMILIES = {"dfine", "deim", "deimv2", "tinyformer", "ec", "rfdetr", "rtdetr", "rtdetrv2", "rtdetrv4"}
+COCO_TOPK_FAMILIES = {
+    "dfine",
+    "deim",
+    "deimv2",
+    "tinyformer",
+    "ec",
+    "rfdetr",
+    "rtdetr",
+    "rtdetrv2",
+    "rtdetrv4",
+}
 _N_VAL_SAMPLES = 8  # maximum sample images stored for visualisation
 BEST_CONF_KEY = "metrics/best_conf"
 BEST_CONF_F1_KEY = "metrics/best_conf_f1"
@@ -86,6 +96,15 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
     def _coco_api_kwargs(self) -> Dict[str, Any]:
         return {}
 
+    def _load_detection_data_config(self) -> Dict[str, Any]:
+        """Resolve the configured dataset using the standard validation policy."""
+        from libreyolo.data import load_data_config
+
+        return load_data_config(
+            self.config.data,
+            allow_scripts=self.config.allow_download_scripts,
+        )
+
     def _resolve_imgsz(self) -> int | tuple[int, int]:
         """Return the validation image size, falling back to the model native size."""
         imgsz = self.config.imgsz
@@ -114,7 +133,6 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             get_coco_image_dir,
             get_img_files,
             img2label_paths,
-            load_data_config,
         )
         from libreyolo.data.dataset import YOLODataset, COCODataset
         from torch.utils.data import DataLoader
@@ -134,10 +152,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
         explicit_coco_annotation = None
 
         if self.config.data:
-            data_cfg = load_data_config(
-                self.config.data,
-                allow_scripts=self.config.allow_download_scripts,
-            )
+            data_cfg = self._load_detection_data_config()
             data_dir = data_cfg["root"]
             self.nc = int(data_cfg.get("nc", self.nc))
 
@@ -355,7 +370,6 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
         return 100 if value is None else int(value)
 
     def _init_metrics(self) -> None:
-        from libreyolo.data import load_data_config
         from libreyolo.data.yolo_coco_api import YOLOCocoAPI
         from libreyolo.validation import COCOEvaluator
 
@@ -369,6 +383,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
         self._val_samples: List[Dict] = []
         if self.config.save_plots:
             from .val_plotter import ConfusionMatrix  # noqa: PLC0415
+
             self._confusion_matrix = ConfusionMatrix(nc=self.nc)
 
         # A COCO-annotation dataset (resolvable from either data= or data_dir=)
@@ -412,10 +427,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
         # load_data_config — that handles both relative `path:` fields and
         # registry shortcuts like "coco-val-only", returning absolute file
         # lists. Build YOLOCocoAPI directly from the resolved paths.
-        data_cfg = load_data_config(
-            self.config.data,
-            allow_scripts=self.config.allow_download_scripts,
-        )
+        data_cfg = self._load_detection_data_config()
         split = self.config.split
         img_files = data_cfg.get(f"{split}_img_files")
         label_files = data_cfg.get(f"{split}_label_files")
@@ -540,6 +552,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
     def _resolve_img_path(self, dataset, global_idx: int, img_id) -> Optional[str]:
         """Resolve the file path for an image given its dataset index and COCO id."""
         from torch.utils.data import Subset
+
         if isinstance(dataset, Subset):
             actual_idx = dataset.indices[global_idx]
             actual_dataset = dataset.dataset
@@ -552,7 +565,9 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             return str(img_files[actual_idx])
         if hasattr(actual_dataset, "coco") and hasattr(actual_dataset, "data_dir"):
             coco_img = actual_dataset.coco.loadImgs(int(img_id))[0]
-            img_dir = Path(actual_dataset.data_dir) / getattr(actual_dataset, "name", "images")
+            img_dir = Path(actual_dataset.data_dir) / getattr(
+                actual_dataset, "name", "images"
+            )
             return str(img_dir / coco_img["file_name"])
         return None
 
@@ -606,11 +621,19 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 for i in range(batch_size):
                     path = self._resolve_img_path(dataset, global_idx + i, img_ids[i])
                     if path is None:
-                        detections.append({
-                            "boxes": torch.zeros((0, 4), dtype=torch.float32, device=self.device),
-                            "scores": torch.zeros(0, dtype=torch.float32, device=self.device),
-                            "classes": torch.zeros(0, dtype=torch.int64, device=self.device),
-                        })
+                        detections.append(
+                            {
+                                "boxes": torch.zeros(
+                                    (0, 4), dtype=torch.float32, device=self.device
+                                ),
+                                "scores": torch.zeros(
+                                    0, dtype=torch.float32, device=self.device
+                                ),
+                                "classes": torch.zeros(
+                                    0, dtype=torch.int64, device=self.device
+                                ),
+                            }
+                        )
                         continue
                     result = self.model._predict_augment(
                         path,
@@ -651,7 +674,9 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
         """
         images, targets, img_info, img_ids = batch
         batch_size = len(img_info)
-        uses_letterbox = self.val_preproc is not None and self.val_preproc.uses_letterbox
+        uses_letterbox = (
+            self.val_preproc is not None and self.val_preproc.uses_letterbox
+        )
 
         conf_thres = self.config.conf_thres
         if self._uses_topk_coco_scoring():
@@ -671,15 +696,29 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             )
             if result["num_detections"] > 0:
                 raw = result["boxes"]
-                boxes = raw.to(self.device) if isinstance(raw, torch.Tensor) else torch.tensor(raw, dtype=torch.float32, device=self.device)
+                boxes = (
+                    raw.to(self.device)
+                    if isinstance(raw, torch.Tensor)
+                    else torch.tensor(raw, dtype=torch.float32, device=self.device)
+                )
                 raw = result["scores"]
-                scores = raw.to(self.device) if isinstance(raw, torch.Tensor) else torch.tensor(raw, dtype=torch.float32, device=self.device)
+                scores = (
+                    raw.to(self.device)
+                    if isinstance(raw, torch.Tensor)
+                    else torch.tensor(raw, dtype=torch.float32, device=self.device)
+                )
                 raw = result["classes"]
-                classes = raw.to(self.device) if isinstance(raw, torch.Tensor) else torch.tensor(raw, dtype=torch.int64, device=self.device)
+                classes = (
+                    raw.to(self.device)
+                    if isinstance(raw, torch.Tensor)
+                    else torch.tensor(raw, dtype=torch.int64, device=self.device)
+                )
                 raw_masks = result.get("masks")
                 masks = (
-                    raw_masks.to(self.device) if isinstance(raw_masks, torch.Tensor)
-                    else torch.tensor(raw_masks, device=self.device) if raw_masks is not None
+                    raw_masks.to(self.device)
+                    if isinstance(raw_masks, torch.Tensor)
+                    else torch.tensor(raw_masks, device=self.device)
+                    if raw_masks is not None
                     else None
                 )
             else:
@@ -687,7 +726,11 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 scores = torch.zeros(0, dtype=torch.float32, device=self.device)
                 classes = torch.zeros(0, dtype=torch.int64, device=self.device)
                 masks = None
-            det: Dict[str, torch.Tensor] = {"boxes": boxes, "scores": scores, "classes": classes}
+            det: Dict[str, torch.Tensor] = {
+                "boxes": boxes,
+                "scores": scores,
+                "classes": classes,
+            }
             if masks is not None:
                 det["masks"] = masks
             detections.append(det)
@@ -741,9 +784,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             & (cls_col < self.nc)
             & np.isclose(cls_col, np.round(cls_col))
         )
-        valid_xyxy = (
-            class_like & (arr[:, 2] > arr[:, 0]) & (arr[:, 3] > arr[:, 1])
-        )
+        valid_xyxy = class_like & (arr[:, 2] > arr[:, 0]) & (arr[:, 3] > arr[:, 1])
         vgt_xyxy = arr[valid_xyxy]
         if len(vgt_xyxy):
             uses_lb = getattr(self.val_preproc, "uses_letterbox", False)
@@ -785,7 +826,9 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             # each axis independently: x *= imgsz/orig_w, y *= imgsz/orig_h.
             uses_lb = getattr(self.val_preproc, "uses_letterbox", False)
             if uses_lb:
-                r, off_x, off_y = self.val_preproc.letterbox_scale(orig_h, orig_w, self._actual_imgsz)
+                r, off_x, off_y = self.val_preproc.letterbox_scale(
+                    orig_h, orig_w, self._actual_imgsz
+                )
                 coords = vgt[:, :4].copy()
                 coords[:, [0, 2]] -= off_x
                 coords[:, [1, 3]] -= off_y
@@ -812,7 +855,9 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             cy = vgt[:, 2] * orig_h
             bw = vgt[:, 3] * orig_w
             bh = vgt[:, 4] * orig_h
-            gt_boxes = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1).astype(np.float32)
+            gt_boxes = np.stack(
+                [cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1
+            ).astype(np.float32)
             gt_classes = np.clip(vgt[:, 0].astype(int), 0, self.nc - 1)
 
         return gt_boxes, gt_classes
@@ -831,9 +876,21 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             gt_boxes, gt_classes = self._parse_gt_boxes(targets[i], orig_h, orig_w)
 
             # --- prediction arrays ---
-            pb = pred["boxes"].cpu().numpy() if len(pred["boxes"]) else np.zeros((0, 4), np.float32)
-            ps = pred["scores"].cpu().numpy() if len(pred["scores"]) else np.zeros(0, np.float32)
-            pc = pred["classes"].cpu().numpy().astype(int) if len(pred["classes"]) else np.zeros(0, int)
+            pb = (
+                pred["boxes"].cpu().numpy()
+                if len(pred["boxes"])
+                else np.zeros((0, 4), np.float32)
+            )
+            ps = (
+                pred["scores"].cpu().numpy()
+                if len(pred["scores"])
+                else np.zeros(0, np.float32)
+            )
+            pc = (
+                pred["classes"].cpu().numpy().astype(int)
+                if len(pred["classes"])
+                else np.zeros(0, int)
+            )
 
             # Confusion matrix
             if self._confusion_matrix is not None:
@@ -849,16 +906,18 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 masks_t = pred.get("masks")
                 if masks_t is not None and len(masks_t) > 0:
                     pm = masks_t.cpu().numpy()
-                self._val_samples.append({
-                    "img_path": img_path,
-                    "img_id": img_ids[i],
-                    "gt_boxes": gt_boxes,
-                    "gt_classes": gt_classes,
-                    "pred_boxes": pb,
-                    "pred_classes": pc,
-                    "pred_scores": ps,
-                    "pred_masks": pm,
-                })
+                self._val_samples.append(
+                    {
+                        "img_path": img_path,
+                        "img_id": img_ids[i],
+                        "gt_boxes": gt_boxes,
+                        "gt_classes": gt_classes,
+                        "pred_boxes": pb,
+                        "pred_classes": pc,
+                        "pred_scores": ps,
+                        "pred_masks": pm,
+                    }
+                )
 
     def _save_plots(self, metrics: Dict[str, float]) -> None:
         from .val_plotter import ValPlotter  # noqa: PLC0415
@@ -893,35 +952,57 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
         bm["p50-95"] = bm.get("metrics/precision", 0.0)
         bm["r50-95"] = bm.get("metrics/recall", 0.0)
         if last_eval is not None and getattr(last_eval, "eval", None):
-            prec_arr = last_eval.eval.get("precision")   # (T, R, K, A, M)
-            rec_arr  = last_eval.eval.get("recall")       # (T, K, A, M)
+            prec_arr = last_eval.eval.get("precision")  # (T, R, K, A, M)
+            rec_arr = last_eval.eval.get("recall")  # (T, K, A, M)
             if prec_arr is not None:
+
                 def _mp(t, _pa=prec_arr):
                     p = _pa[t, :, :, 0, -1]
                     v = p[p > -1]
                     return float(v.mean()) if len(v) else 0.0
-                bm["p50-95"] = float(np.mean([_mp(t) for t in range(prec_arr.shape[0])]))
-                bm["p50"]    = _mp(0)
-                bm["p75"]    = _mp(5)  # IoU thresholds: [.50,.55,.60,.65,.70,.75,...]; index 5 = 0.75
+
+                bm["p50-95"] = float(
+                    np.mean([_mp(t) for t in range(prec_arr.shape[0])])
+                )
+                bm["p50"] = _mp(0)
+                bm["p75"] = _mp(
+                    5
+                )  # IoU thresholds: [.50,.55,.60,.65,.70,.75,...]; index 5 = 0.75
             if rec_arr is not None:
+
                 def _mr(t, _ra=rec_arr):
                     r = _ra[t, :, 0, -1]
                     v = r[r > -1]
                     return float(v.mean()) if len(v) else 0.0
+
                 bm["r50-95"] = float(np.mean([_mr(t) for t in range(rec_arr.shape[0])]))
-                bm["r50"]    = _mr(0)
-                bm["r75"]    = _mr(5)  # index 5 = IoU 0.75
+                bm["r50"] = _mr(0)
+                bm["r75"] = _mr(5)  # index 5 = IoU 0.75
 
         if bm:
-            _safe(ValPlotter.plot_metrics_bar, bm, plots_dir / "box_metrics.png",
-                  title="Box Metrics")
+            _safe(
+                ValPlotter.plot_metrics_bar,
+                bm,
+                plots_dir / "box_metrics.png",
+                title="Box Metrics",
+            )
 
         # Per-class box AP and Recall (sorted desc)
         if last_eval is not None:
-            _safe(ValPlotter.plot_per_class_ap, last_eval, names,
-                  plots_dir / "per_class_ap_box.png", "Box")
-            _safe(ValPlotter.plot_per_class_recall, last_eval, names,
-                  plots_dir / "per_class_recall_box.png", "Box")
+            _safe(
+                ValPlotter.plot_per_class_ap,
+                last_eval,
+                names,
+                plots_dir / "per_class_ap_box.png",
+                "Box",
+            )
+            _safe(
+                ValPlotter.plot_per_class_recall,
+                last_eval,
+                names,
+                plots_dir / "per_class_recall_box.png",
+                "Box",
+            )
 
         # PR / P-conf / R-conf curves
         if last_eval is not None:
@@ -929,9 +1010,12 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
 
         # Confusion matrix
         if self._confusion_matrix is not None:
-            _safe(ValPlotter.plot_confusion_matrix,
-                  self._confusion_matrix.matrix, names,
-                  plots_dir / "confusion_matrix.png")
+            _safe(
+                ValPlotter.plot_confusion_matrix,
+                self._confusion_matrix.matrix,
+                names,
+                plots_dir / "confusion_matrix.png",
+            )
 
         # Sample images → plots/samples/
         if self._val_samples:
@@ -1054,9 +1138,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
         }
 
     def _print_results(self, metrics: Dict[str, float]) -> None:
-        printable = {
-            k: v for k, v in metrics.items() if k != BEST_CONF_PER_CLASS_KEY
-        }
+        printable = {k: v for k, v in metrics.items() if k != BEST_CONF_PER_CLASS_KEY}
         super()._print_results(printable)
 
         table = getattr(self, "_best_conf_table", None)
@@ -1091,6 +1173,7 @@ class SegmentationValidator(DetectionValidator):
             return None
         try:
             from pycocotools import mask as mask_utils  # noqa: PLC0415
+
             ann_ids = coco_gt.getAnnIds(imgIds=[int(img_id)], iscrowd=False)
             anns = coco_gt.loadAnns(ann_ids)
             if not anns:
@@ -1112,6 +1195,7 @@ class SegmentationValidator(DetectionValidator):
                 h, w = img_bgr.shape[:2]
                 if m.shape != (h, w):
                     import cv2  # noqa: PLC0415
+
                     m = cv2.resize(
                         m.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST
                     ).astype(bool)
@@ -1181,34 +1265,58 @@ class SegmentationValidator(DetectionValidator):
         mm["r50-95"] = mm.get("metrics/recall", 0.0)
         if last_mask_eval is not None and getattr(last_mask_eval, "eval", None):
             prec_arr = last_mask_eval.eval.get("precision")
-            rec_arr  = last_mask_eval.eval.get("recall")
+            rec_arr = last_mask_eval.eval.get("recall")
             if prec_arr is not None:
+
                 def _mmp(t, _pa=prec_arr):
                     p = _pa[t, :, :, 0, -1]
                     v = p[p > -1]
                     return float(v.mean()) if len(v) else 0.0
-                mm["p50-95"] = float(np.mean([_mmp(t) for t in range(prec_arr.shape[0])]))
-                mm["p50"]    = _mmp(0)
-                mm["p75"]    = _mmp(5)  # IoU thresholds: [.50,.55,...,.75,...]; index 5 = 0.75
+
+                mm["p50-95"] = float(
+                    np.mean([_mmp(t) for t in range(prec_arr.shape[0])])
+                )
+                mm["p50"] = _mmp(0)
+                mm["p75"] = _mmp(
+                    5
+                )  # IoU thresholds: [.50,.55,...,.75,...]; index 5 = 0.75
             if rec_arr is not None:
+
                 def _mmr(t, _ra=rec_arr):
                     r = _ra[t, :, 0, -1]
                     v = r[r > -1]
                     return float(v.mean()) if len(v) else 0.0
-                mm["r50-95"] = float(np.mean([_mmr(t) for t in range(rec_arr.shape[0])]))
-                mm["r50"]    = _mmr(0)
-                mm["r75"]    = _mmr(5)  # index 5 = IoU 0.75
+
+                mm["r50-95"] = float(
+                    np.mean([_mmr(t) for t in range(rec_arr.shape[0])])
+                )
+                mm["r50"] = _mmr(0)
+                mm["r75"] = _mmr(5)  # index 5 = IoU 0.75
 
         if mm:
-            _safe(ValPlotter.plot_metrics_bar, mm, plots_dir / "mask_metrics.png",
-                  title="Mask Metrics")
+            _safe(
+                ValPlotter.plot_metrics_bar,
+                mm,
+                plots_dir / "mask_metrics.png",
+                title="Mask Metrics",
+            )
 
         # Per-class mask AP and Recall (sorted desc)
         if last_mask_eval is not None:
-            _safe(ValPlotter.plot_per_class_ap, last_mask_eval, names,
-                  plots_dir / "per_class_ap_mask.png", "Mask")
-            _safe(ValPlotter.plot_per_class_recall, last_mask_eval, names,
-                  plots_dir / "per_class_recall_mask.png", "Mask")
+            _safe(
+                ValPlotter.plot_per_class_ap,
+                last_mask_eval,
+                names,
+                plots_dir / "per_class_ap_mask.png",
+                "Mask",
+            )
+            _safe(
+                ValPlotter.plot_per_class_recall,
+                last_mask_eval,
+                names,
+                plots_dir / "per_class_recall_mask.png",
+                "Mask",
+            )
 
         # PR / P-conf / R-conf curves for masks
         if last_mask_eval is not None:

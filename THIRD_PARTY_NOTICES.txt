@@ -351,6 +351,7 @@ learned parameters unchanged). See libreyolo/models/pe/NOTICE.md.
 YOLOX (Megvii-BaseDetection)
 --------------------------------------------------------------------
 Source: https://github.com/Megvii-BaseDetection/YOLOX
+Commit: 6d30efe8f9f277e8788fb2d9b17d08238a5ea292
 License: Apache License 2.0
 Copyright (c) 2021-2022 Megvii Inc. All rights reserved.
 Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
@@ -359,7 +360,12 @@ Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
           adapted for the YOLOv7 family (libreyolo/models/yolo7/loss.py:
           imports bboxes_iou/IoULoss from the yolox modules and adapts the
           get_assignments/get_geometry_constraint/simota_matching/get_losses
-          assignment logic to the v7 anchor head).
+          assignment logic to the v7 anchor head). The shared COCO bounding-box
+          clipping helper (libreyolo/utils/coco_geometry.py) is used by the COCO
+          dataset loader (libreyolo/data/dataset.py), native COCO VLM training
+          dataset (libreyolo/models/vlm/training/data.py), and VLM confidence
+          gate writer/report reconstruction (libreyolo/validation/
+          vlm_confidence_validator.py and vlm_confidence_report.py).
 
 --------------------------------------------------------------------
 YOLO (MultimediaTechLab/YOLO)
@@ -1918,6 +1924,31 @@ Used for: the Transformers-backed LibreEdgeTAM adapter in
           Hash-pinned configuration and processor files are copied from the
           Apache-2.0-declared payload reference; learned tensors are converted
           independently and then checked exactly against it.
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
+Qwen3-VL fine-tuning recipe (QwenLM)
+--------------------------------------------------------------------
+Source: https://github.com/QwenLM/Qwen3-VL
+Commit: 96588727e44c78b25ba03ea03b8e12f7e64fd0da
+Source paths:
+  qwen-vl-finetune/qwenvl/train/argument.py
+  qwen-vl-finetune/qwenvl/train/train_qwen.py
+  qwen-vl-finetune/README.md
+License: Apache License 2.0 (see licenses/Apache-2.0.txt)
+Copyright 2023 Rohan Taori, Ishaan Gulrajani, Tianyi Zhang,
+               Yann Dubois, Xuechen Li (retained by train_qwen.py, which
+               identifies FastChat and Stanford Alpaca as earlier sources)
+Used for: the Qwen3-VL recipe reference behind
+          libreyolo/models/vlm/training/recipes.py,
+          libreyolo/models/vlm/training/trainer.py, and the trainability
+          declaration in libreyolo/models/vlm/qwen3vl.py: PEFT LoRA on
+          language-model projections while the vision tower remains frozen,
+          plus the 0.03 warmup-ratio and cosine-schedule reference. LibreYOLO
+          adds its own MLP projection scope and detection-specific pipeline,
+          and uses different rank, alpha, dropout, learning-rate, and
+          weight-decay values. No upstream source file is bundled.
 
 The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
 

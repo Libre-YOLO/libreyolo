@@ -15,12 +15,14 @@ The coordinate contract follows the documented LFM2-VL schema: ``bbox`` is
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Dict, List, Optional, Tuple
 
 __all__ = [
     "extract_detections",
     "extract_bare_boxes",
+    "locate_detection_spans",
     "normalize_bbox",
     "to_xyxy",
     "resolve_label",
@@ -139,6 +141,44 @@ def extract_detections(text: str) -> List[dict]:
     return recovered
 
 
+def locate_detection_spans(
+    text: str, items: List[dict]
+) -> List[Optional[Tuple[int, int]]]:
+    """Locate parsed detection objects in the original generated text.
+
+    Results stay aligned one-for-one with ``items``. Repeated identical objects
+    consume successive source occurrences, and an object that cannot be matched
+    returns ``None`` rather than borrowing another detection's token span.
+    """
+
+    if not isinstance(text, str):
+        return [None] * len(items)
+    occurrences = []
+    for match in _OBJECT.finditer(text):
+        parsed = _loads_object(match.group(0))
+        if parsed is not None:
+            occurrences.append((parsed, match.span()))
+
+    used = set()
+    spans: List[Optional[Tuple[int, int]]] = []
+    for item in items:
+        matching_occurrences = [
+            index for index, (parsed, _span) in enumerate(occurrences) if parsed == item
+        ]
+        matching_items = sum(candidate == item for candidate in items)
+        if len(matching_occurrences) != matching_items:
+            spans.append(None)
+            continue
+        found = None
+        for index in matching_occurrences:
+            if index not in used:
+                used.add(index)
+                found = occurrences[index][1]
+                break
+        spans.append(found)
+    return spans
+
+
 _BARE_QUAD = re.compile(
     r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,"
     r"\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]"
@@ -247,6 +287,8 @@ def build_detection_dict(
     coord_divisor: float = 1.0,
     box_format: str = "xyxy",
     iou_thres: Optional[float] = None,
+    item_scores: Optional[List[Optional[float]]] = None,
+    sort_by_score: bool = True,
 ) -> dict:
     """Turn parsed items into the ``InferenceRunner`` detection dict.
 
@@ -258,9 +300,17 @@ def build_detection_dict(
     malformed boxes are skipped. If ``classes`` is provided, that class filter is
     applied before the ``max_det`` cap so requested classes are not dropped by an
     earlier out-of-filter prediction. ``default_score`` is the synthetic per-box
-    confidence (the VLM emits none); rows below ``conf_thres`` are dropped so
+    confidence fallback. ``item_scores``, when supplied, must align one-for-one
+    with ``items``. A missing, non-finite, or out-of-range entry fails the whole
+    list back to ``default_score`` and source order. Valid scored detections are
+    processed from highest to lowest so duplicate/IoU suppression and
+    ``max_det`` retain the strongest candidate. Internal score-comparison gates
+    may set ``sort_by_score=False`` to freeze source-order geometry before
+    attaching alternative scores. Rows below ``conf_thres`` are dropped so
     ``conf=`` still filters.
     """
+    if item_scores is not None and len(item_scores) != len(items):
+        raise ValueError("item_scores must have one entry per detection item.")
     if max_det <= 0:
         return {
             "boxes": [],
@@ -280,7 +330,35 @@ def build_detection_dict(
     # class + box rounded to ~0.1% of the image).
     seen = set()
 
-    for item in items:
+    try:
+        fallback_score = float(default_score)
+    except (TypeError, ValueError):
+        fallback_score = 1.0
+    if not math.isfinite(fallback_score):
+        fallback_score = 1.0
+    fallback_score = min(1.0, max(0.0, fallback_score))
+
+    resolved_scores = None
+    if item_scores is not None:
+        try:
+            candidates = [float(value) for value in item_scores]
+        except (TypeError, ValueError):
+            candidates = []
+        if len(candidates) == len(items) and all(
+            math.isfinite(score) and 0.0 <= score <= 1.0 for score in candidates
+        ):
+            resolved_scores = candidates
+
+    indexed = list(enumerate(items))
+    if resolved_scores is not None and sort_by_score:
+        indexed.sort(key=lambda pair: resolved_scores[pair[0]], reverse=True)
+
+    for item_index, item in indexed:
+        score = (
+            resolved_scores[item_index]
+            if resolved_scores is not None
+            else fallback_score
+        )
         class_id = resolve_label(item.get("label"), name_to_id)
         if class_id is None:
             continue
@@ -305,7 +383,7 @@ def build_detection_dict(
             box = normalize_bbox(to_xyxy(scaled, box_format)) if scaled else None
         if box is None:
             continue
-        if default_score < conf_thres:
+        if score < conf_thres:
             continue
         key = (class_id, *(round(v, 3) for v in box))
         if key in seen:
@@ -319,7 +397,7 @@ def build_detection_dict(
         x1, y1, x2, y2 = box
         norm_boxes.append(box)
         boxes.append([x1 * width, y1 * height, x2 * width, y2 * height])
-        scores.append(default_score)
+        scores.append(score)
         class_ids.append(class_id)
         if len(boxes) >= max_det:
             break

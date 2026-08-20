@@ -4,6 +4,10 @@
 a bare instance without downloading or loading any model.
 """
 
+import json
+from dataclasses import FrozenInstanceError
+from pathlib import Path
+
 import pytest
 
 from libreyolo.models.vlm.base import LibreVLMModel
@@ -42,6 +46,8 @@ class TestSetClasses:
         m = _bare_model()
         with pytest.raises(ValueError):
             m.set_classes([])
+        with pytest.raises(ValueError, match="non-empty"):
+            m.set_classes(["boat", "   "])
 
     def test_string_or_scalar_raises(self):
         # A bare string would enumerate into one-character classes; reject it.
@@ -61,6 +67,32 @@ class TestSetClasses:
         m = _bare_model()
         with pytest.raises(ValueError):
             m.set_classes(["Boat", "boat"])
+
+
+class TestCheckpointProcessor:
+    def test_writer_processor_config_is_loaded(self, tmp_path, monkeypatch):
+        import transformers
+
+        checkpoint = tmp_path / "checkpoint"
+        checkpoint.mkdir()
+        (checkpoint / "processor_config.json").write_text("{}", encoding="utf-8")
+        loaded = object()
+        calls = []
+
+        def _from_pretrained(path, *, trust_remote_code):
+            calls.append((path, trust_remote_code))
+            return loaded
+
+        monkeypatch.setattr(
+            transformers.AutoProcessor,
+            "from_pretrained",
+            _from_pretrained,
+        )
+        model = _bare_model()
+        model.TRUST_REMOTE_CODE = False
+
+        assert model._load_checkpoint_processor(checkpoint, object()) is loaded
+        assert calls == [(str(checkpoint), False)]
 
 
 class TestFactoryResolution:
@@ -116,6 +148,169 @@ class TestFactoryResolution:
             LibreVLM("definitely-not-a-real-model")
 
 
+class TestReferenceInspection:
+    """VLM references can be classified without loading model weights."""
+
+    @staticmethod
+    def _write_contract(directory: Path, **updates) -> Path:
+        directory.mkdir()
+        contract = {
+            "schema": 1,
+            "family": "qwen3vl",
+            "size": "2b",
+            "base_repo": "Qwen/Qwen3-VL-2B-Instruct",
+            "base_revision": None,
+            "names": ["person"],
+            "bbox_key": "bbox_2d",
+            "coord_divisor": 1000.0,
+            "box_format": "xyxy",
+            "prompt": "Detect person.",
+            "task": "detect",
+        }
+        contract.update(updates)
+        (directory / "libreyolo_vlm.json").write_text(json.dumps(contract))
+        (directory / "adapter_config.json").write_text(
+            json.dumps({"peft_type": "LORA"})
+        )
+        (directory / "adapter_model.safetensors").write_bytes(b"adapter")
+        return directory
+
+    def test_all_aliases_are_exposed_and_inspectable(self):
+        from libreyolo.models import vlm as vlm_module
+        from libreyolo.models.vlm import (
+            _ALIASES,
+            _LAZY_ALIASES,
+            _MODUS_ALIASES,
+            get_vlm_aliases,
+            inspect_vlm_reference,
+        )
+
+        expected = tuple(
+            sorted(set(_ALIASES) | set(_LAZY_ALIASES) | set(_MODUS_ALIASES))
+        )
+        aliases = get_vlm_aliases()
+
+        assert aliases == expected
+        assert isinstance(aliases, tuple)
+        assert all(inspect_vlm_reference(alias) is not None for alias in aliases)
+        assert {
+            "VLMArtifactError",
+            "VLMArtifactInfo",
+            "VLMBaseSnapshotInfo",
+            "VLMHubRef",
+            "VLMReference",
+            "build_vlm_artifact",
+            "create_vlm_publication_evidence_template",
+            "download_vlm_artifact",
+            "ensure_vlm_base_snapshot",
+            "get_vlm_aliases",
+            "inspect_vlm_hub_artifact",
+            "inspect_vlm_reference",
+            "parse_vlm_hub_uri",
+            "push_vlm_artifact",
+            "read_vlm_artifact_manifest",
+            "validate_vlm_artifact",
+            "validate_vlm_base_snapshot",
+        } <= set(vlm_module.__all__)
+
+    def test_alias_metadata_is_immutable_and_does_not_construct_model(
+        self, monkeypatch
+    ):
+        from libreyolo.models.vlm import inspect_vlm_reference
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        def fail_if_constructed(*_args, **_kwargs):
+            raise AssertionError("reference inspection constructed a model")
+
+        monkeypatch.setattr(LibreQwen3VL, "__init__", fail_if_constructed)
+        reference = inspect_vlm_reference("  QWEN3-VL-4B  ")
+
+        assert reference is not None
+        assert reference.family == "qwen3vl"
+        assert reference.size == "4b"
+        assert reference.trainable is True
+        assert reference.trainable_sizes == ("2b", "4b")
+        assert reference.checkpoint is False
+        with pytest.raises(FrozenInstanceError):
+            reference.size = "2b"
+
+    def test_lazy_alias_reports_nontrainable_family(self):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        reference = inspect_vlm_reference("sensenova-vision")
+
+        assert reference is not None
+        assert reference.family == "sensenovavision"
+        assert reference.size == "7b"
+        assert reference.trainable is False
+        assert reference.trainable_sizes == ()
+        assert reference.checkpoint is False
+
+    def test_schema_one_checkpoint_is_inspected_without_loading(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        checkpoint = self._write_contract(tmp_path / "checkpoint")
+        reference = inspect_vlm_reference(checkpoint)
+
+        assert reference is not None
+        assert reference.family == "qwen3vl"
+        assert reference.size == "2b"
+        assert reference.trainable is True
+        assert reference.trainable_sizes == ("2b", "4b")
+        assert reference.checkpoint is True
+
+    def test_valid_unknown_family_contract_remains_a_vlm_reference(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        checkpoint = self._write_contract(
+            tmp_path / "future-checkpoint", family="future-vlm", size="tiny"
+        )
+        reference = inspect_vlm_reference(checkpoint)
+
+        assert reference is not None
+        assert reference.family == "future-vlm"
+        assert reference.size == "tiny"
+        assert reference.trainable is False
+        assert reference.trainable_sizes == ()
+        assert reference.checkpoint is True
+
+    def test_incomplete_checkpoint_artifact_fails_reference_inspection(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        checkpoint = self._write_contract(tmp_path / "incomplete")
+        (checkpoint / "adapter_model.safetensors").unlink()
+
+        with pytest.raises(ValueError, match="no adapter tensor payload"):
+            inspect_vlm_reference(checkpoint)
+
+    def test_malformed_contract_raises_its_validation_error(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        checkpoint = tmp_path / "malformed"
+        checkpoint.mkdir()
+        (checkpoint / "libreyolo_vlm.json").write_text('{"schema": 1}')
+
+        with pytest.raises(ValueError, match="missing 'family'"):
+            inspect_vlm_reference(checkpoint)
+
+    def test_non_file_contract_marker_also_fails_closed(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        checkpoint = tmp_path / "wrong-contract-type"
+        checkpoint.mkdir()
+        (checkpoint / "libreyolo_vlm.json").mkdir()
+
+        with pytest.raises(ValueError, match="Unreadable VLM checkpoint contract"):
+            inspect_vlm_reference(checkpoint)
+
+    def test_non_vlm_references_return_none(self, tmp_path):
+        from libreyolo.models.vlm import inspect_vlm_reference
+
+        assert inspect_vlm_reference("LibreYOLO9s.pt") is None
+        assert inspect_vlm_reference(tmp_path) is None
+        assert inspect_vlm_reference(object()) is None
+
+
 class TestLFM2CoordinateConvention:
     """The 3B emits 0-1000 boxes; smaller sizes emit [0, 1] (offline)."""
 
@@ -141,8 +336,10 @@ class TestNorthMicroTransformersGuard:
         from libreyolo.models.vlm import northmicro
 
         monkeypatch.setattr(transformers, "__version__", "5.15.0")
-        with pytest.raises(ImportError, match="transformers>=5.16.0"):
+        with pytest.raises(ImportError, match="transformers>=5.16.0") as exc_info:
             northmicro._require_transformers()
+        assert "git+" not in str(exc_info.value)
+        assert "released" in str(exc_info.value)
 
     def test_new_transformers_passes(self, monkeypatch):
         transformers = pytest.importorskip("transformers")
@@ -225,6 +422,26 @@ class TestSnapshotComplete:
             is False
         )
 
+    def test_unpinned_request_does_not_reuse_pinned_snapshot(self, tmp_path):
+        (tmp_path / "config.json").write_text("{}")
+        (tmp_path / "model.safetensors").write_text("x")
+        self._mark_complete(tmp_path, {"repo": "example/model", "revision": "abc123"})
+
+        assert (
+            self._base()._snapshot_complete(
+                tmp_path, repo="example/model", revision=None
+            )
+            is False
+        )
+
+        self._mark_complete(tmp_path, {"repo": "example/model", "revision": None})
+        assert (
+            self._base()._snapshot_complete(
+                tmp_path, repo="example/model", revision=None
+            )
+            is True
+        )
+
     def test_pinned_repo_marker_must_match_and_be_present(self, tmp_path):
         (tmp_path / "config.json").write_text("{}")
         (tmp_path / "model.safetensors").write_text("x")
@@ -261,6 +478,40 @@ class TestSnapshotComplete:
 
         with pytest.raises(ValueError, match="40-char commit SHA"):
             m._ensure_weights()
+
+    def test_qwen_download_uses_the_audited_immutable_revision(
+        self, tmp_path, monkeypatch
+    ):
+        import huggingface_hub
+
+        from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+        observed = {}
+
+        def fake_snapshot_download(repo, *, local_dir, ignore_patterns, revision):
+            observed.update(
+                repo=repo,
+                local_dir=local_dir,
+                ignore_patterns=ignore_patterns,
+                revision=revision,
+            )
+            target = Path(local_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "config.json").write_text("{}")
+            (target / "model.safetensors").write_text("weights")
+
+        monkeypatch.setattr(
+            huggingface_hub, "snapshot_download", fake_snapshot_download
+        )
+        monkeypatch.chdir(tmp_path)
+        model = object.__new__(LibreQwen3VL)
+        model.size = "2b"
+
+        resolved = Path(model._ensure_weights())
+
+        assert observed["repo"] == LibreQwen3VL.HF_REPOS["2b"]
+        assert observed["revision"] == LibreQwen3VL.HF_REVISIONS["2b"]
+        assert resolved == Path("weights/LibreQwen3VL2b")
 
     def test_license_notice_is_logged_for_cached_snapshot(
         self, tmp_path, monkeypatch, caplog
@@ -453,3 +704,14 @@ class TestInternVL3Flatten:
             {"label": "boat", "bbox": [5, 6, 7, 8]},
             {"label": "ship", "bbox": [9, 10, 11, 12]},
         ]
+
+
+def test_vlm_generic_save_and_hub_upload_are_rejected():
+    from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
+
+    model = object.__new__(LibreQwen3VL)
+
+    with pytest.raises(NotImplementedError, match="structured directories"):
+        model.save("invalid.pt")
+    with pytest.raises(NotImplementedError, match="build_vlm_artifact"):
+        model.push_to_hub("owner/repo")

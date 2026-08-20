@@ -5,6 +5,7 @@ import pytest
 from libreyolo.models.vlm.parsing import (
     build_detection_dict,
     extract_detections,
+    locate_detection_spans,
     normalize_bbox,
     resolve_label,
 )
@@ -101,6 +102,34 @@ class TestExtractDetections:
         )
         labels = [d["label"] for d in extract_detections(text)]
         assert "ship" in labels
+
+
+class TestLocateDetectionSpans:
+    def test_repeated_objects_consume_successive_occurrences(self):
+        obj = '{"label":"person","bbox":[0.1,0.2,0.3,0.4]}'
+        text = f"prefix [{obj}, {obj}]"
+        items = extract_detections(text)
+        spans = locate_detection_spans(text, items)
+        assert spans == [
+            (text.index(obj), text.index(obj) + len(obj)),
+            (text.rindex(obj), text.rindex(obj) + len(obj)),
+        ]
+
+    def test_truncated_array_object_still_locates(self):
+        text = 'answer: [{"label":"ship","bbox":[0.1,0.2,0.3,0.4]}'
+        items = extract_detections(text)
+        span = locate_detection_spans(text, items)[0]
+        assert text[slice(*span)] == '{"label":"ship","bbox":[0.1,0.2,0.3,0.4]}'
+
+    def test_unmatched_item_fails_closed(self):
+        assert locate_detection_spans("[]", [{"label": "ship"}]) == [None]
+
+    def test_more_identical_source_occurrences_than_items_is_ambiguous(self):
+        obj = '{"label":"ship","bbox":[0.1,0.2,0.3,0.4]}'
+        text = f"example {obj}; final [{obj}]"
+        items = extract_detections(text)
+        assert len(items) == 1
+        assert locate_detection_spans(text, items) == [None]
 
 
 class TestNormalizeBbox:
@@ -228,6 +257,110 @@ class TestBuildDetectionDict:
             "classes": [],
             "num_detections": 0,
         }
+
+    def test_item_scores_remain_aligned_after_invalid_rows(self):
+        items = [
+            {"label": "unknown", "bbox": [0.0, 0.0, 1.0, 1.0]},
+            {"label": "person", "bbox": [0.1, 0.1, 0.2, 0.2]},
+            {"label": "ship", "bbox": [0.3, 0.3, 0.3, 0.5]},
+        ]
+        result = build_detection_dict(
+            items,
+            NAME_TO_ID,
+            (100, 100),
+            item_scores=[0.99, 0.42, 0.8],
+        )
+        assert result["classes"] == [0]
+        assert result["scores"] == [0.42]
+
+    def test_item_confidence_filter_is_per_row(self):
+        items = [
+            {"label": "person", "bbox": [0.1, 0.1, 0.2, 0.2]},
+            {"label": "ship", "bbox": [0.3, 0.3, 0.4, 0.4]},
+        ]
+        result = build_detection_dict(
+            items,
+            NAME_TO_ID,
+            (100, 100),
+            conf_thres=0.5,
+            item_scores=[0.2, 0.8],
+        )
+        assert result["classes"] == [8]
+        assert result["scores"] == [0.8]
+
+    def test_max_det_retains_highest_score(self):
+        items = [
+            {"label": "person", "bbox": [0.1, 0.1, 0.2, 0.2]},
+            {"label": "ship", "bbox": [0.3, 0.3, 0.4, 0.4]},
+        ]
+        result = build_detection_dict(
+            items,
+            NAME_TO_ID,
+            (100, 100),
+            max_det=1,
+            item_scores=[0.2, 0.8],
+        )
+        assert result["classes"] == [8]
+        assert result["scores"] == [0.8]
+
+    def test_duplicate_and_iou_suppression_retain_highest_score(self):
+        items = [
+            {"label": "person", "bbox": [0.1, 0.1, 0.5, 0.5]},
+            {"label": "person", "bbox": [0.1, 0.1, 0.5, 0.5]},
+            {"label": "person", "bbox": [0.11, 0.11, 0.51, 0.51]},
+        ]
+        result = build_detection_dict(
+            items,
+            NAME_TO_ID,
+            (100, 100),
+            item_scores=[0.2, 0.9, 0.7],
+            iou_thres=0.5,
+        )
+        assert result["num_detections"] == 1
+        assert result["scores"] == [0.9]
+
+    def test_score_sanitization_is_explicit(self):
+        items = [
+            {"label": "person", "bbox": [0.0, 0.0, 0.1, 0.1]},
+            {"label": "person", "bbox": [0.2, 0.2, 0.3, 0.3]},
+            {"label": "person", "bbox": [0.4, 0.4, 0.5, 0.5]},
+            {"label": "person", "bbox": [0.6, 0.6, 0.7, 0.7]},
+        ]
+        result = build_detection_dict(
+            items,
+            NAME_TO_ID,
+            (100, 100),
+            default_score=0.4,
+            item_scores=[None, float("nan"), 2.0, -1.0],
+        )
+        assert result["scores"] == [0.4, 0.4, 0.4, 0.4]
+
+    def test_item_score_length_mismatch_raises(self):
+        with pytest.raises(ValueError, match="one entry per detection"):
+            build_detection_dict(
+                [{"label": "person", "bbox": [0.1, 0.1, 0.2, 0.2]}],
+                NAME_TO_ID,
+                (100, 100),
+                item_scores=[],
+            )
+
+    def test_legacy_positional_arguments_keep_their_meaning(self):
+        items = [{"label": "ship", "bbox_2d": [100, 200, 300, 400]}]
+        result = build_detection_dict(
+            items,
+            NAME_TO_ID,
+            (100, 100),
+            0.0,
+            300,
+            None,
+            0.75,
+            "bbox_2d",
+            1000.0,
+            "xyxy",
+            0.5,
+        )
+        assert result["boxes"] == [[10.0, 20.0, 30.0, 40.0]]
+        assert result["scores"] == [0.75]
 
     def test_box_format_xywh(self):
         # x,y,w,h: [0.25,0.25,0.25,0.5] -> xyxy [0.25,0.25,0.5,0.75] -> px

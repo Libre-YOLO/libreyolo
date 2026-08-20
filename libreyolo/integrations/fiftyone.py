@@ -22,6 +22,10 @@ Coordinates follow FiftyOne's convention: boxes and points are normalized to
 ``[0, 1]`` against the original image, and instance masks are stored cropped
 to their box. Boxes are clipped to the image before normalization, which is
 what the COCO evaluators do as well.
+
+Generative VLM confidence values are family-dependent and may be constant
+placeholders. Do not interpret them as calibrated probabilities unless the
+selected adapter documents a validated confidence method.
 """
 
 from __future__ import annotations
@@ -323,7 +327,7 @@ def _model_class():
     import fiftyone.core.models as fom  # noqa: PLC0415
 
     class LibreYOLOModel(fom.Model):
-        """Runs a LibreYOLO model through FiftyOne's ``apply_model``."""
+        """Runs a LibreYOLO or LibreVLM model through ``apply_model``."""
 
         def __init__(self, model, mask_format: str = "mask", **predict_kwargs):
             self.model = model
@@ -339,10 +343,10 @@ def _model_class():
             # False is what unlocks FiftyOne's batching: it means "a batch of
             # transforms() outputs can be passed to predict_all together".
             # transforms is None here, so FiftyOne hands predict_all the raw
-            # images without stacking them, and LibreYOLO letterboxes each one
-            # to a common size itself. Returning True would make FiftyOne warn
-            # "Model does not support batching" and fall back to one image at
-            # a time.
+            # images without stacking them. LibreYOLO's inference runner then
+            # stacks capable detectors or serializes adapters such as VLMs.
+            # Returning True would make FiftyOne warn "Model does not support
+            # batching" and fall back to one image at a time.
             return False
 
         @property
@@ -369,6 +373,9 @@ def _model_class():
             args = list(args)
             if not args:
                 return []
+            # FiftyOne may group inputs here, but LibreVLMModel declares
+            # SUPPORTS_BATCHED_PREDICT=False, so LibreYOLO's inference runner
+            # still executes generative VLM inputs serially.
             results = self.model.predict(
                 args,
                 batch=len(args),
@@ -385,13 +392,35 @@ def _model_class():
     return _MODEL_CLASS
 
 
-def _resolve_model(model):
-    """Accept a loaded LibreYOLO model or a checkpoint name/path."""
+def _resolve_model(model, *, device: Optional[str] = None):
+    """Accept a loaded model or resolve a detector/VLM name or path."""
     if isinstance(model, (str, Path)):
+        from ..models.vlm import LibreVLM, inspect_vlm_reference  # noqa: PLC0415
+
+        load_kwargs = {"device": device} if device is not None else {}
+        if inspect_vlm_reference(model) is not None:
+            return LibreVLM(model, **load_kwargs)
+
         from ..models import LibreYOLO  # noqa: PLC0415
 
-        return LibreYOLO(str(model))
+        return LibreYOLO(str(model), **load_kwargs)
     return model
+
+
+def _validate_vlm_imgsz(model, imgsz: Optional[int]) -> None:
+    """Reject a resize override before resolving or wrapping a VLM."""
+    if imgsz is None:
+        return
+
+    from ..models.vlm import LibreVLMModel, inspect_vlm_reference  # noqa: PLC0415
+
+    if (
+        isinstance(model, (str, Path)) and inspect_vlm_reference(model) is not None
+    ) or isinstance(model, LibreVLMModel):
+        raise ValueError(
+            "imgsz cannot be overridden for LibreVLM models because their "
+            "processor owns image resizing; omit imgsz."
+        )
 
 
 def to_fiftyone_model(
@@ -406,16 +435,19 @@ def to_fiftyone_model(
     mask_format: str = "mask",
     **predict_kwargs,
 ):
-    """Wrap a LibreYOLO model as a ``fiftyone.Model``.
+    """Wrap a LibreYOLO or LibreVLM model as a ``fiftyone.Model``.
 
     The wrapper plugs into every FiftyOne API that takes a model, including
     ``dataset.apply_model(...)``.
 
     Args:
-        model: A loaded LibreYOLO model, or a checkpoint name/path.
-        conf: Confidence threshold.
+        model: A loaded LibreYOLO/LibreVLM model, model alias, or checkpoint
+            name/path.
+        conf: Confidence threshold. Generative VLM scores are family-dependent
+            and may be uncalibrated constant placeholders.
         iou: NMS IoU threshold.
-        imgsz: Input size override (None uses the model default).
+        imgsz: Input size override for detector models. LibreVLM processors
+            own image resizing, so VLM callers must leave this as None.
         device: Torch device string.
         classes: Optional class-id filter.
         max_det: Maximum detections per image.
@@ -430,8 +462,10 @@ def to_fiftyone_model(
         raise ValueError(
             f"mask_format must be 'mask' or 'polyline', got {mask_format!r}"
         )
-    return _model_class()(
-        _resolve_model(model),
+    _validate_vlm_imgsz(model, imgsz)
+    model_class = _model_class()
+    return model_class(
+        _resolve_model(model, device=device),
         mask_format=mask_format,
         conf=conf,
         iou=iou,
@@ -460,22 +494,28 @@ def apply_model(
     progress: Optional[bool] = None,
     **predict_kwargs,
 ):
-    """Run a LibreYOLO model on a FiftyOne dataset or view.
+    """Run a LibreYOLO or LibreVLM model on a FiftyOne dataset or view.
 
     Args:
         samples: A ``fiftyone`` dataset or view.
-        model: A loaded LibreYOLO model, or a checkpoint name/path.
+        model: A loaded LibreYOLO/LibreVLM model, model alias, or checkpoint
+            name/path.
         label_field: Field to write predictions to. Pose models write
             ``keypoints`` and ``detections`` into fields derived from this
             name, since one result carries both.
-        conf: Confidence threshold.
+        conf: Confidence threshold. Generative VLM scores are family-dependent
+            and may be uncalibrated constant placeholders.
         iou: NMS IoU threshold.
-        imgsz: Input size override (None uses the model default).
+        imgsz: Input size override for detector models. LibreVLM processors
+            own image resizing, so VLM callers must leave this as None.
         device: Torch device string.
         classes: Optional class-id filter.
         max_det: Maximum detections per image.
         mask_format: ``"mask"`` or ``"polyline"`` for instance segmentation.
-        batch_size: Images per forward pass. None runs one image at a time.
+        batch_size: Requested image chunk size. Models that support batched
+            prediction use one stacked forward per chunk; serial generative
+            VLM adapters still process each image individually. None requests
+            one image at a time.
         skip_failures: Keep going when a single sample fails.
         progress: Whether to render a progress bar (FiftyOne's default when
             None).

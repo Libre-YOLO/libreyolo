@@ -11,6 +11,7 @@ from ..command_utils import (
     help_json_callback,
     load_model_or_exit,
     parse_imgsz_str,
+    reject_unsupported_vlm_command,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
@@ -91,11 +92,12 @@ def export_cmd(
         exit_with_error(
             out,
             "nms_unsupported_format",
-            "Embedded NMS (--nms) is only supported for ONNX and CoreML, "
-            f"not {fmt!r}.",
+            f"Embedded NMS (--nms) is only supported for ONNX and CoreML, not {fmt!r}.",
         )
     if nms and fmt == "onnx" and dynamic:
-        out.warning("Embedded ONNX NMS uses a fixed batch-1 graph. Using dynamic=False.")
+        out.warning(
+            "Embedded ONNX NMS uses a fixed batch-1 graph. Using dynamic=False."
+        )
         dynamic = False
     if nms and fmt == "coreml" and max_det != 300:
         exit_with_error(
@@ -118,6 +120,7 @@ def export_cmd(
         )
 
     model_path = resolve_model_or_exit(out, model)
+    reject_unsupported_vlm_command(out, model_path=model_path, command="export")
 
     if allow_download_scripts and data is not None:
         out.warning(

@@ -1,7 +1,7 @@
 # ADR 0002: LibreVLM Contract For Vision-Language Detectors
 
 - Status: Accepted
-- Date: 2026-06-05 (updated 2026-06-06)
+- Date: 2026-06-05 (updated 2026-08-16)
 - Scope: New model tier (vision-language models used as open-vocab detectors)
 
 ## Context
@@ -75,6 +75,49 @@ text = model.chat("image.jpg", "How many cars are pink?")  # raw escape hatch
   from a fixed task / grounding token plus the class list, so `prompt=` is ignored
   for those two.
 
+The supported VLM CLI surface is intentionally smaller than the detector CLI:
+
+```bash
+libreyolo predict --model qwen3-vl-4b --source image.jpg \
+  --names '["pink car", "wheel"]'
+libreyolo train --model qwen3-vl-2b --data dataset.yaml
+```
+
+- `predict` resolves VLM aliases, schema-valid checkpoint directories, and
+  immutable `hf+vlm://owner/repo@<commit>` artifacts. `--names` is a VLM-only
+  JSON vocabulary; `--classes` remains a numeric output filter. Explicit
+  `imgsz=` is rejected because the family processor owns image resizing.
+  Directory chunks still generate one image at a time.
+- `train` is verified only for the Qwen3-VL 2B and 4B base aliases. It uses
+  VLM-native defaults rather than detector defaults, and selects `best` by
+  validation loss when a validation split exists, otherwise training loss.
+  Continue an adapter with the base alias plus `resume=<checkpoint directory>`;
+  training an inference-loaded checkpoint wrapper is rejected.
+- Detector-only training options, unsupported families/sizes, and standalone
+  `val`, `export`, or `quantize` requests fail before loading VLM weights.
+
+### Publication artifacts
+
+Local training checkpoints and published artifacts are different contracts.
+The v1 publication builder accepts only Qwen3-VL 2B/4B detection LoRA output
+written with `peft==0.19.1` and `transformers==5.12.1`. It requires external,
+human-approved evidence that binds the adapter, checkpoint contract, processor,
+complete immutable base snapshot, training-data manifest, evaluation report,
+an exact-zero two-run repeatability receipt, clean code revision, and fixed
+recipe. Publication evidence v2 binds the primary and repeat run identities,
+the raw receipt, and its canonical comparison. The library can generate an
+unapproved template with derived hashes, but it cannot manufacture an
+approval.
+
+The artifact includes the adapter and exact Qwen processor, tokenizer, and
+chat-template assets under Apache-2.0. Base weights remain reference-only.
+`push_vlm_artifact()` refuses existing repositories, starts private, creates
+one commit, verifies that immutable tree through a fresh download, and returns
+`hf+vlm://owner/repo@<40-character-commit>`. The detector `hf://` transport and
+generic Hub logger are not used. Hashes are integrity bindings, not signatures
+or proof that human claims are true. See
+[`../vlm_hub_artifact.md`](../vlm_hub_artifact.md).
+
 ## Internal Contract
 
 `LibreVLMModel(BaseModel)` is the shared base. It does NOT define `can_load`, so
@@ -103,8 +146,10 @@ shared `InferenceRunner` drives:
 - `_preprocess(image, ...)` builds the chat-template inputs from the image plus
   the detection prompt; returns `(inputs, pil_image, (W, H), ratio=1.0)`. Boxes
   come back normalized to the image, so there is no letterbox/unpad math.
-- `_forward(inputs)` runs `model.generate(...)` greedily and returns only the
-  newly generated tokens.
+- `_forward(inputs)` runs `model.generate(...)` greedily and returns the newly
+  generated tokens. A family-gated scoring path can also attach one
+  selected-token log-probability per step without retaining vocabulary-sized
+  score tensors.
 - `_postprocess(output, conf, ...)` decodes, tolerantly parses the JSON, scales
   the coordinates per `BBOX_KEY`/`COORD_DIVISOR`, and returns the standard
   detection dict `{boxes, scores, classes, num_detections}` that
@@ -126,25 +171,56 @@ in [`../librevlm_design.md`](../librevlm_design.md).
 
 ## Confidence
 
-Generated detections carry no calibrated per-box score. The tier assigns a
-constant placeholder (`DEFAULT_SCORE = 1.0`), so `predict`/draw/`track` behave
-normally and `conf=` filtering still functions mechanically. Consequences:
+Generated detections carry no calibrated per-box score. The generic VLM families
+currently assign a constant placeholder (`DEFAULT_SCORE = 1.0`). A bounded-memory
+candidate for Qwen3-VL can derive a ranking signal from the geometric mean of
+generated label-token and coordinate-token probabilities. It records one
+selected-token log-probability after the configured generation processors per
+step, rather than retaining a vocabulary-sized score tensor for every token.
+The candidate remains disabled until its real-data gate passes, so ordinary
+`predict()` keeps the established constant-score behavior. Candidate scores are
+available only to the internal validator, not public prediction, the CLI, or
+integrations. LibreMODUS separately uses the minimum constrained-token
+probability for each detection.
 
-- `conf=` thresholds and ranking are soft, not calibrated.
-- `track()` runs, but because every box is scored 1.0, ByteTrack's two-stage,
-  score-stratified association is inert (no separate low-confidence recovery
-  stage and `new_track_thresh` never bites) until a real score lands.
-- `val()` (mAP) is intentionally unsupported; it would be misleading.
+`model.confidence_method` reports the configured source (`constant` today for
+Qwen3-VL, and `constrained_token_min` for LibreMODUS).
 
-`_score_detections(items)` is the documented override point for a real signal
-(decoder token log-probs or self-consistency) in a later iteration.
+Consequences:
+
+- On constant-score families, `conf=` filtering is mechanical and ByteTrack's
+  score-stratified association remains inert (no separate low-confidence
+  recovery stage).
+- `val()` (mAP) remains unsupported until the candidate score orders correct
+  detections better than the constant baseline, behaves safely with the public
+  confidence threshold, and is reproducible. Unit tests establish plumbing, not
+  score quality.
+- Candidate-only Brier error, fixed-bin ECE, and reliability bins are diagnostic
+  outputs of the internal gate, not a calibration claim. Missing scores never
+  inherit the constant fallback in those statistics; fallback safety and score
+  coverage are reported separately.
+- Persisted gate reports use schema v2 and can be compared across processes only
+  after strict reconstruction validates their hashes and duplicated metrics.
+  Timing and plot artifacts do not define reproducibility. The hashes provide
+  consistency checks, not report authentication.
+- A canonical repeatability receipt uses two distinct run and process
+  identifiers and binds both report/envelope byte identities, zero tolerances,
+  and the complete comparison. Publication treats it as structural integrity
+  evidence, not publisher or reviewer authentication or proof that reports are
+  truthful.
+
+`_score_detections(items)` remains the scalar fallback for custom generation
+paths. Scored greedy generations use the additive per-item scoring path.
 
 ## Licensing
 
-LibreYOLO ships only its own VLM adapter code: families either load through the
-Apache-2.0 `transformers` API or, when a model genuinely requires Hugging Face
-remote code, download that upstream model-repository code at runtime under the
-upstream model repo's terms. LibreYOLO does not redistribute VLM weights.
+Family aliases either load through the Apache-2.0 `transformers` API or, when a
+model genuinely requires Hugging Face remote code, download that upstream
+repository at runtime under its terms. LibreYOLO does not mirror those base
+weights or remote-code repositories. The strict Qwen LoRA artifact is the
+narrow exception for non-weight assets: it redistributes the exact processor,
+tokenizer, and chat-template files under Apache-2.0 while retaining the base
+weights as an immutable external reference.
 
 The default model (Qwen3-VL-4B) is Apache-2.0, so it needs no notice. When a
 model's weights or required model-repository code are under a non-permissive
@@ -160,15 +236,15 @@ executing mutable upstream model-repository code under the same alias.
 
 ## Out Of Scope (v1)
 
-- Training / fine-tuning (`train()` raises; fine-tune upstream). Superseded
-  for Qwen3-VL: LoRA detection fine-tuning shipped later behind the same
-  `train()` surface, with untrainable families keeping documented refusal
-  messages. See `docs/vlm_training.md`.
-- Dataset validation / mAP (`val()` raises; see "Confidence").
-- Export to ONNX/TensorRT/etc. (`export()` raises; generative decode).
-- CLI: the `libreyolo` command does not resolve VLM aliases in v1. The tier is a
-  Python-API surface (`LibreVLM(...)`); `predict`/`track` parity is at the API
-  level, not the CLI.
+- Training outside the verified Qwen3-VL 2B/4B detection cohort. Supported
+  fine-tuning is documented in [`../vlm_training.md`](../vlm_training.md).
+- Dataset validation / mAP (`val()` and the CLI `val` command reject VLMs; see
+  "Confidence").
+- Export to ONNX/TensorRT/etc. and post-training quantization. The CLI `export`
+  and `quantize` commands reject VLM references before loading weights.
+- Broad CLI parity. The documented VLM CLI contract is prediction plus the
+  verified Qwen training cohort; tier-specific methods such as `chat()` remain
+  Python API surfaces.
 
 ## Consequences
 
@@ -180,7 +256,8 @@ executing mutable upstream model-repository code under the same alias.
 
 ### Negative
 
-- Confidence is synthetic until the log-prob path lands.
+- Generic-family confidence remains constant until each score path passes its
+  real-data quality gate; LibreMODUS's constrained-token score is uncalibrated.
 - Generation is slower and less deterministic than a detector forward.
 - Adds `transformers` (already an optional extra) to the `vlm` extra.
 
@@ -191,4 +268,9 @@ executing mutable upstream model-repository code under the same alias.
   SmolVLM2, Gemma 4). Florence-2 and Kosmos-2 use task / grounding tokens.
   Moondream uses native detect/point skills. See the Available-models table in
   [`../librevlm_design.md`](../librevlm_design.md).
+- CLI alias/checkpoint/immutable-artifact routing for VLM prediction and
+  verified Qwen3-VL 2B/4B training, with pre-load guards for remote training
+  and unsupported validation, export, and quantization.
+- Strict, reviewed Qwen3-VL LoRA artifact construction and immutable Hub
+  transport, separate from detector checkpoint publication.
 - Offline parser unit tests plus a `vlm`-marked end-to-end smoke test.

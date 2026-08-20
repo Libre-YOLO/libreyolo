@@ -1,6 +1,8 @@
 """Predict command: run inference on images."""
 
+import ast
 import inspect
+import json
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -16,6 +18,7 @@ from ..command_utils import (
     help_json_callback,
     load_model_or_exit,
     parse_imgsz_str,
+    reject_unsupported_vlm_command,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
@@ -28,6 +31,49 @@ _NATIVE_ONLY_PREDICT_KWARGS = {
     "mask",
     "trimap",
 }
+
+
+def _parse_vlm_names(value: Optional[str]) -> Optional[list[str]]:
+    if value is None:
+        return None
+    try:
+        names = json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("names must be a JSON list of non-empty strings") from exc
+    if (
+        not isinstance(names, list)
+        or not names
+        or any(not isinstance(name, str) or not name.strip() for name in names)
+    ):
+        raise ValueError("names must be a non-empty JSON list of non-empty strings")
+    stripped = [name.strip() for name in names]
+    normalized = [name.lower() for name in stripped]
+    if len(normalized) != len(set(normalized)):
+        raise ValueError("names must be unique case-insensitively")
+    return stripped
+
+
+def _parse_class_ids(value: Optional[str]) -> Optional[list[int]]:
+    if value is None:
+        return None
+    try:
+        evaluated = ast.literal_eval(value)
+    except (ValueError, SyntaxError) as exc:
+        raise ValueError(f"Invalid classes value: {value}") from exc
+    if isinstance(evaluated, bool):
+        raise ValueError(f"Invalid classes value: {value}")
+    if isinstance(evaluated, int):
+        parsed = [evaluated]
+    elif isinstance(evaluated, (list, tuple)):
+        parsed = list(evaluated)
+    else:
+        raise ValueError(f"Invalid classes value: {value}")
+    if any(
+        isinstance(item, bool) or not isinstance(item, int) or item < 0
+        for item in parsed
+    ):
+        raise ValueError(f"Invalid classes value: {value}")
+    return parsed
 
 
 def _call_accepts_kwarg(callable_obj, name: str) -> bool:
@@ -131,6 +177,10 @@ def predict_cmd(
     classes: Optional[str] = typer.Option(
         None, help="Filter by class IDs, e.g. [0,2,5]"
     ),
+    names: Optional[str] = typer.Option(
+        None,
+        help='Open-vocabulary VLM labels as JSON, e.g. ["forklift","worker"]',
+    ),
     max_det: int = typer.Option(300, help="Max detections per image"),
     half: bool = typer.Option(
         False, help="FP16 inference (CUDA only, requires model support)"
@@ -139,7 +189,8 @@ def predict_cmd(
     batch: int = typer.Option(
         1,
         help="Images per forward pass for directory sources "
-        "(batch > 1 runs true batched inference on supported models)",
+        "(batch > 1 runs true batched inference on supported models; "
+        "generative VLMs remain serial)",
     ),
     stream: bool = typer.Option(
         False,
@@ -207,6 +258,44 @@ def predict_cmd(
         imgsz = parse_imgsz_str(imgsz) if imgsz is not None else None
     except ValueError as exc:
         exit_with_error(out, "invalid_imgsz", str(exc))
+    try:
+        parsed_names = _parse_vlm_names(names)
+    except ValueError as exc:
+        exit_with_error(out, "config_type_error", str(exc))
+    try:
+        parsed_classes = _parse_class_ids(classes)
+    except ValueError as exc:
+        exit_with_error(out, "config_type_error", str(exc))
+    color_format = color_format.strip().lower()
+    if color_format not in {"auto", "rgb", "bgr"}:
+        exit_with_error(
+            out,
+            "config_type_error",
+            f"Invalid color_format {color_format!r}; use auto, rgb, or bgr.",
+        )
+    if output_file_format is not None:
+        output_file_format = output_file_format.strip().lower().lstrip(".")
+        if output_file_format not in {"jpg", "jpeg", "png", "webp"}:
+            exit_with_error(
+                out,
+                "config_type_error",
+                "output_file_format must be jpg, jpeg, png, or webp.",
+            )
+    range_errors = []
+    if not 0.0 <= conf <= 1.0:
+        range_errors.append("conf must be within [0, 1]")
+    if not 0.0 <= iou <= 1.0:
+        range_errors.append("iou must be within [0, 1]")
+    if max_det < 1:
+        range_errors.append("max_det must be >= 1")
+    if batch < 1:
+        range_errors.append("batch must be >= 1")
+    if vid_stride < 1:
+        range_errors.append("vid_stride must be >= 1")
+    if not 0.0 <= overlap_ratio < 1.0:
+        range_errors.append("overlap_ratio must be within [0, 1)")
+    if range_errors:
+        exit_with_error(out, "config_range_error", "; ".join(range_errors) + ".")
 
     # Classify before path validation so webcam indices and RTSP-style URLs do
     # not fall through as nonexistent image files.
@@ -234,11 +323,54 @@ def predict_cmd(
 
     # Resolve CLI model name (yolox-s → LibreYOLOXs.pt)
     model_path = resolve_model_or_exit(out, model)
+    from libreyolo.models.vlm import inspect_vlm_reference
+
+    vlm_reference = inspect_vlm_reference(model_path)
+    if vlm_reference is not None and "imgsz" in user_provided:
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "imgsz= is not supported for LibreVLM prediction; each family "
+            "processor owns its image-resize contract.",
+        )
+    if vlm_reference is not None:
+        incompatible = []
+        if face_detector is not None:
+            incompatible.append("face_detector")
+        if gallery is not None:
+            incompatible.append("gallery")
+        if "gallery_threshold" in user_provided:
+            incompatible.append("gallery_threshold")
+        if incompatible:
+            exit_with_error(
+                out,
+                "config_unsupported",
+                "LibreVLM prediction does not support these face-specific "
+                f"options: {', '.join(incompatible)}.",
+            )
+    if parsed_names is not None and vlm_reference is None:
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "names= is supported only for LibreVLM model aliases or checkpoints; "
+            "classes= remains the numeric output filter.",
+        )
 
     # Load model
-    loaded_model = load_model_or_exit(
-        out, model=model, model_path=model_path, device=device
-    )
+    load_kwargs = {
+        "out": out,
+        "model": model,
+        "model_path": model_path,
+        "device": device,
+    }
+    if parsed_names is not None:
+        load_kwargs["names"] = parsed_names
+    loaded_model = load_model_or_exit(**load_kwargs)
+    if parsed_names is not None:
+        try:
+            loaded_model.set_classes(parsed_names)
+        except (TypeError, ValueError) as exc:
+            exit_with_error(out, "config_type_error", str(exc))
 
     # Gaze models (LibreL2CS) are two-stage: they need an upstream face
     # detector. The factory builds them without one, so wire it here from
@@ -253,6 +385,11 @@ def predict_cmd(
                 suggestion="e.g. --face-detector path/to/face-detector.pt",
             )
         fd_path = resolve_model_or_exit(out, face_detector)
+        reject_unsupported_vlm_command(
+            out,
+            model_path=fd_path,
+            command="face-detector",
+        )
         fd_model = load_model_or_exit(
             out, model=face_detector, model_path=fd_path, device=device
         )
@@ -309,29 +446,6 @@ def predict_cmd(
     if output_path is None and save:
         save_dir = increment_path(Path(project) / name, exist_ok=exist_ok, mkdir=True)
         output_path = str(save_dir)
-
-    # Parse classes list
-    parsed_classes = None
-    if classes is not None:
-        import ast
-
-        try:
-            evaluated = ast.literal_eval(classes)
-        except (ValueError, SyntaxError):
-            exit_with_error(
-                out, "config_type_error", f"Invalid classes value: {classes}"
-            )
-        # Accept a bare int (classes=0), a list (classes=[0,2,5]), or a
-        # comma-separated string that parses to a tuple (classes="0,2").
-        if isinstance(evaluated, int):
-            parsed_classes = [evaluated]
-        else:
-            try:
-                parsed_classes = list(evaluated)
-            except TypeError:
-                exit_with_error(
-                    out, "config_type_error", f"Invalid classes value: {classes}"
-                )
 
     # Run inference
     out.progress(f"Running inference on {source}...")

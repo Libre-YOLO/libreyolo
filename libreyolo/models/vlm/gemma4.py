@@ -53,6 +53,10 @@ class LibreGemma4(LibreVLMModel):
         "e2b": "LibreYOLO/LibreGemma4e2b",
         "e4b": "LibreYOLO/LibreGemma4e4b",
     }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "e2b": "507bec1827280677ff6332406cc6e2500670b0a6",
+        "e4b": "80662d5dc7f69bfe5d1b5be53da3558b8d481998",
+    }
     # Nominal only; the processor owns variable-resolution resize.
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         "e2b": 896,

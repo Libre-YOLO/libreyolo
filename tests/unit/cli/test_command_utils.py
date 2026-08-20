@@ -12,11 +12,14 @@ import torch
 import typer
 from typer.testing import CliRunner
 
-from libreyolo.cli.commands import export, predict, special, train, val
+from libreyolo.cli.commands import export, predict, quantize, special, train, val
 from libreyolo.cli.command_utils import (
     get_loaded_model_family,
     get_loaded_model_input_size,
+    load_model_or_exit,
+    resolve_model_or_exit,
 )
+from libreyolo.cli.output import OutputHandler
 from libreyolo.cli.parsing import KeyValueCommand
 from libreyolo.utils.model_info import build_model_info, format_model_info
 from libreyolo.utils.results import Boxes, Masks, OBB, Results
@@ -37,6 +40,138 @@ def _make_app(cmds) -> typer.Typer:
     for name, cmd in cmds:
         app.command(name, cls=KeyValueCommand)(cmd)
     return app
+
+
+def _write_vlm_checkpoint(directory: Path) -> Path:
+    directory.mkdir()
+    contract = {
+        "schema": 1,
+        "family": "qwen3vl",
+        "size": "2b",
+        "base_repo": "Qwen/Qwen3-VL-2B-Instruct",
+        "base_revision": None,
+        "names": ["person"],
+        "bbox_key": "bbox_2d",
+        "coord_divisor": 1000.0,
+        "box_format": "xyxy",
+        "prompt": "Detect person.",
+        "task": "detect",
+    }
+    (directory / "libreyolo_vlm.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
+    (directory / "adapter_config.json").write_text(
+        json.dumps({"peft_type": "LORA"}), encoding="utf-8"
+    )
+    (directory / "adapter_model.safetensors").write_bytes(b"adapter")
+    return directory
+
+
+def test_cli_model_loader_routes_vlm_alias_without_detector_factory(monkeypatch):
+    import libreyolo
+
+    loaded = object()
+    calls = []
+
+    def load_vlm(reference, **kwargs):
+        calls.append((reference, kwargs))
+        return loaded
+
+    monkeypatch.setattr(libreyolo, "LibreVLM", load_vlm)
+    monkeypatch.setattr(
+        libreyolo,
+        "LibreYOLO",
+        lambda *_args, **_kwargs: pytest.fail("VLM alias reached detector factory"),
+    )
+    out = OutputHandler(json_mode=True, quiet=True)
+
+    resolved = resolve_model_or_exit(out, "qwen3-vl-2b")
+    result = load_model_or_exit(
+        out,
+        model="qwen3-vl-2b",
+        model_path=resolved,
+        device="cpu",
+        task="detect",
+        names=["forklift", "worker"],
+    )
+
+    assert result is loaded
+    assert calls == [
+        (
+            "qwen3-vl-2b",
+            {
+                "device": "cpu",
+                "task": "detect",
+                "names": ["forklift", "worker"],
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "command", "args"),
+    [
+        ("val", val.val_cmd, ["model=qwen3-vl-2b", "data=coco8.yaml"]),
+        ("export", export.export_cmd, ["model=qwen3-vl-2b"]),
+        ("quantize", quantize.quantize_cmd, ["model=qwen3-vl-2b"]),
+        ("info", special.info_cmd, ["model=qwen3-vl-2b"]),
+    ],
+)
+def test_unsupported_vlm_cli_modes_fail_before_model_load(
+    monkeypatch,
+    name,
+    command,
+    args,
+):
+    module = __import__(command.__module__, fromlist=["load_model_or_exit"])
+    monkeypatch.setattr(
+        module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("unsupported VLM mode loaded weights"),
+    )
+
+    app = _make_app([(name, command), ("info", special.info_cmd)])
+    result = runner.invoke(app, [name, *args, "--json"])
+
+    assert result.exit_code == 2, result.output
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert f"'{name}' CLI workflow" in data["message"]
+
+
+@pytest.mark.parametrize(
+    ("name", "command", "extra_args"),
+    [
+        ("val", val.val_cmd, ["data=coco8.yaml"]),
+        ("export", export.export_cmd, []),
+        ("quantize", quantize.quantize_cmd, []),
+    ],
+)
+def test_unsupported_vlm_checkpoint_modes_fail_before_model_load(
+    tmp_path,
+    monkeypatch,
+    name,
+    command,
+    extra_args,
+):
+    checkpoint = _write_vlm_checkpoint(tmp_path / "checkpoint")
+    module = __import__(command.__module__, fromlist=["load_model_or_exit"])
+    monkeypatch.setattr(
+        module,
+        "load_model_or_exit",
+        lambda *_args, **_kwargs: pytest.fail("unsupported VLM mode loaded weights"),
+    )
+
+    app = _make_app([(name, command), ("info", special.info_cmd)])
+    result = runner.invoke(
+        app,
+        [name, f"model={checkpoint}", *extra_args, "--json"],
+    )
+
+    assert result.exit_code == 2, result.output
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert f"'{name}' CLI workflow" in data["message"]
 
 
 # ---------------------------------------------------------------------------

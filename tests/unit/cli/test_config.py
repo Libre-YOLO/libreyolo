@@ -7,9 +7,11 @@ from dataclasses import fields as dc_fields
 import libreyolo.cli.config as cli_config
 from libreyolo.cli.config import (
     build_train_kwargs,
+    build_vlm_train_kwargs,
     detect_family_from_name,
     detect_family_from_model_ref,
     detect_family_from_weight_filename,
+    get_all_cli_names,
     get_cfg_defaults,
     get_family_defaults,
     get_train_config_class,
@@ -136,6 +138,10 @@ class TestResolveModelName:
     def test_unknown_model_passthrough(self):
         assert resolve_model_name("unknown-model") == "unknown-model"
 
+    def test_vlm_aliases_do_not_pollute_detector_inventory(self):
+        assert resolve_model_name("qwen3-vl-2b") == "qwen3-vl-2b"
+        assert "qwen3-vl-2b" not in get_all_cli_names()
+
     def test_known_weight_filename_detection(self):
         assert is_known_weight_filename("LibreYOLOXs.pt") is True
         assert is_known_weight_filename("weights/LibreYOLOXs.pt") is True
@@ -164,6 +170,9 @@ class TestDetectFamilyFromName:
 
     def test_unknown_returns_none(self):
         assert detect_family_from_name("unknown") is None
+
+    def test_vlm_alias_returns_vlm_family_without_loading(self):
+        assert detect_family_from_name("qwen3-vl-2b") == "qwen3vl"
 
 
 class TestDetectFamilyFromModelRef:
@@ -308,6 +317,76 @@ class TestBuildTrainKwargs:
         assert "pretrained" not in kwargs
         assert "val" not in kwargs
         assert "unknown" not in kwargs
+
+
+class TestBuildVLMTrainKwargs:
+    def test_detector_defaults_do_not_leak_into_vlm_recipe(self):
+        params = {
+            "epochs": 300,
+            "batch": 16,
+            "workers": 4,
+            "seed": 0,
+            "resume": False,
+            "lora": False,
+            "lr0": 0.01,
+            "flip_prob": 0.5,
+            "project": "runs/train",
+            "name": "exp",
+            "exist_ok": False,
+            "allow_download_scripts": False,
+        }
+
+        kwargs = build_vlm_train_kwargs(params, user_provided=set())
+
+        assert kwargs == {
+            "epochs": 10,
+            "batch": 1,
+            "accumulate": 8,
+            "lr0": None,
+            "lora": True,
+            "project": "runs/vlm",
+            "name": "train",
+            "exist_ok": True,
+            "workers": 0,
+            "seed": 0,
+            "device": None,
+            "gradient_checkpointing": True,
+            "vram_check": True,
+            "resume": None,
+            "hflip": 0.5,
+            "allow_download_scripts": False,
+        }
+
+    def test_explicit_vlm_compatible_values_win(self):
+        params = {
+            "epochs": 2,
+            "batch": 3,
+            "workers": 2,
+            "seed": 7,
+            "resume": "adapter",
+            "lora": False,
+            "lr0": 2e-5,
+            "flip_prob": 0.25,
+            "project": "runs/custom",
+            "name": "vlm-exp",
+            "exist_ok": False,
+            "allow_download_scripts": True,
+        }
+
+        kwargs = build_vlm_train_kwargs(params, user_provided=set(params))
+
+        assert kwargs["epochs"] == 2
+        assert kwargs["batch"] == 3
+        assert kwargs["workers"] == 2
+        assert kwargs["seed"] == 7
+        assert kwargs["resume"] == "adapter"
+        assert kwargs["lora"] is False
+        assert kwargs["lr0"] == 2e-5
+        assert kwargs["hflip"] == 0.25
+        assert kwargs["project"] == "runs/custom"
+        assert kwargs["name"] == "vlm-exp"
+        assert kwargs["exist_ok"] is False
+        assert kwargs["allow_download_scripts"] is True
 
 
 class TestGetCfgDefaults:

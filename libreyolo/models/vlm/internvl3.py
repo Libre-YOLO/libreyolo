@@ -31,6 +31,11 @@ class LibreInternVL3(LibreVLMModel):
         "2b": "OpenGVLab/InternVL3-2B-hf",
         "8b": "OpenGVLab/InternVL3-8B-hf",
     }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "1b": "014c0583a0d4bedf29fbe2dbff4f865eb998e171",
+        "2b": "cb57a075cb75a2e6d1b668b128d48bb00ae321d2",
+        "8b": "259a3b64a14623c0ec91a045cb43f7c5af5fa6af",
+    }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         "1b": 448,
         "2b": 448,
