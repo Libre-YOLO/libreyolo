@@ -2306,9 +2306,13 @@ class TFLiteExporter(BaseExporter):
     format_name = "tflite"
     suffix = ".tflite"
     requires_onnx = True
-    supports_int8 = False
+    supports_int8 = True
     supports_fp16 = False
     apply_model_half = False
+    # Deliberately no default calibration set, matching TensorRT and OpenVINO.
+    # A full-integer TFLite graph calibrated on eight images is quietly wrong
+    # rather than loudly missing, so data= stays mandatory.
+    default_int8_calibration_data = False
 
     def __call__(self, *args, dynamic: bool = False, **kwargs) -> str:
         if dynamic:
@@ -2325,11 +2329,6 @@ class TFLiteExporter(BaseExporter):
         if half:
             raise ValueError(
                 "TFLite FP16 export is not supported yet. Omit half=True for FP32."
-            )
-        if int8:
-            raise ValueError(
-                "TFLite INT8 quantization is not supported yet. "
-                "Omit int8=True for FP32."
             )
         return super()._validate(half, int8, data)
 
@@ -2348,6 +2347,8 @@ class TFLiteExporter(BaseExporter):
         metadata,
         onnx_path,
         half,
+        int8,
+        calibration_data,
         verbose,
         onnx2tf_args=None,
         **kwargs,
@@ -2364,6 +2365,8 @@ class TFLiteExporter(BaseExporter):
             onnx_path=onnx_path,
             output_path=output_path,
             half=half,
+            int8=int8,
+            calibration_data=calibration_data,
             verbose=verbose,
             onnx2tf_args=onnx2tf_args,
             metadata=metadata,
