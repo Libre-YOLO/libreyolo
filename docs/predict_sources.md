@@ -104,3 +104,14 @@ ffmpeg -re -stream_loop -1 -i clip.mp4 -c copy -rtsp_transport tcp -f rtsp rtsp:
 
 Then consume `rtsp://127.0.0.1:8554/camera`. OpenCV must have the corresponding
 video backend enabled; the standard `opencv-python` wheels include FFmpeg.
+
+## Saving video output
+
+Saved videos are written as MP4. LibreYOLO tries the H.264 encoder (`avc1`)
+first and falls back to `mp4v` when the OpenCV build has no H.264 encoder,
+which is the case for the standard Linux `opencv-python` wheels. During that
+probe, OpenCV's FFmpeg backend may print lines such as
+`h264_v4l2m2m` or `Failed to initialize VideoWriter` directly to stderr. These
+come from OpenCV, not LibreYOLO, and do not indicate a failure: the output
+file is still written in full. The probe runs once per process, so the
+messages appear at most once per run.

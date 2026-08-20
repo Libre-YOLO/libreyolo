@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 
 MP4_CODEC_CANDIDATES = ("avc1", "mp4v")
 
+# Codecs that failed to open in this process. OpenCV's FFmpeg backend prints
+# its own errors to stderr while probing (for example ``h264_v4l2m2m`` or
+# ``Failed to initialize VideoWriter``), so probe each codec once per process
+# rather than once per video.
+_UNAVAILABLE_CODECS: set = set()
+
 # Video extensions supported via OpenCV's VideoCapture
 VIDEO_EXTENSIONS = {
     ".asf",
@@ -223,7 +229,11 @@ class VideoWriter:
 
         self.codec = None
         self._writer = None
-        for codec in _codec_candidates(self._path):
+        candidates = _codec_candidates(self._path)
+        failed = []
+        for codec in candidates:
+            if codec in _UNAVAILABLE_CODECS and codec != candidates[-1]:
+                continue
             fourcc = cv2.VideoWriter_fourcc(*codec)
             writer = cv2.VideoWriter(self._path, fourcc, fps, (width, height))
             if writer.isOpened():
@@ -231,15 +241,22 @@ class VideoWriter:
                 self._writer = writer
                 break
             writer.release()
+            failed.append(codec)
 
         if self._writer is None:
             raise ValueError(f"Cannot open video writer for: {self._path}")
+        # Only remember failures once a later codec proved the path itself is
+        # writable, so a bad output path does not poison the cache.
+        _UNAVAILABLE_CODECS.update(failed)
 
-        if self.codec != "avc1" and Path(self._path).suffix.lower() == ".mp4":
-            logger.warning(
-                "Could not open H.264 video writer; falling back to %s for %s",
-                self.codec,
+        if self.codec != candidates[0]:
+            # Expected on most Linux OpenCV wheels, which ship without an H.264
+            # encoder. The output is still a valid MP4, so this is not a warning.
+            logger.info(
+                "H.264 encoder not available in this OpenCV build; saving %s with %s. "
+                "Any FFmpeg errors printed above come from that probe and can be ignored.",
                 self._path,
+                self.codec,
             )
 
     # ------------------------------------------------------------------

@@ -149,6 +149,9 @@ class TestVideoSource:
 
 class TestVideoWriter:
     def test_mp4_prefers_h264_codec(self, tmp_path, monkeypatch):
+        from libreyolo.utils import video as video_mod
+
+        monkeypatch.setattr(video_mod, "_UNAVAILABLE_CODECS", set())
         assert _codec_candidates("output.mp4")[0] == "avc1"
 
         calls = []
@@ -178,6 +181,10 @@ class TestVideoWriter:
         assert calls == [avc1]
 
     def test_mp4_falls_back_to_mp4v(self, tmp_path, monkeypatch, caplog):
+        from libreyolo.utils import video as video_mod
+
+        monkeypatch.setattr(video_mod, "_UNAVAILABLE_CODECS", set())
+        caplog.set_level("INFO", logger="libreyolo.utils.video")
         calls = []
         avc1 = cv2.VideoWriter_fourcc(*"avc1")
         mp4v = cv2.VideoWriter_fourcc(*"mp4v")
@@ -204,7 +211,37 @@ class TestVideoWriter:
 
         assert writer.codec == "mp4v"
         assert calls == [avc1, mp4v]
-        assert "falling back to mp4v" in caplog.text
+        assert "saving" in caplog.text and "mp4v" in caplog.text
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_h264_probe_cached_per_process(self, tmp_path, monkeypatch):
+        from libreyolo.utils import video as video_mod
+
+        monkeypatch.setattr(video_mod, "_UNAVAILABLE_CODECS", set())
+        calls = []
+        mp4v = cv2.VideoWriter_fourcc(*"mp4v")
+
+        class FakeWriter:
+            def __init__(self, opened):
+                self.opened = opened
+
+            def isOpened(self):
+                return self.opened
+
+            def release(self):
+                pass
+
+        def fake_video_writer(path, fourcc, fps, size):
+            calls.append(fourcc)
+            return FakeWriter(opened=fourcc == mp4v)
+
+        monkeypatch.setattr(cv2, "VideoWriter", fake_video_writer)
+
+        VideoWriter(tmp_path / "a.mp4", fps=10.0, width=32, height=32).release()
+        VideoWriter(tmp_path / "b.mp4", fps=10.0, width=32, height=32).release()
+
+        # avc1 probed once, then skipped; mp4v opened for both files.
+        assert calls == [cv2.VideoWriter_fourcc(*"avc1"), mp4v, mp4v]
 
     def test_write_and_read_back(self, tmp_path):
         out_path = str(tmp_path / "output.mp4")
