@@ -241,7 +241,14 @@ class TestVideoWriter:
         VideoWriter(tmp_path / "b.mp4", fps=10.0, width=32, height=32).release()
 
         # avc1 probed once, then skipped; mp4v opened for both files.
-        assert calls == [cv2.VideoWriter_fourcc(*"avc1"), mp4v, mp4v]
+        avc1 = cv2.VideoWriter_fourcc(*"avc1")
+        assert calls == [avc1, mp4v, mp4v]
+
+        # A different frame size is probed again: an H.264 encoder may reject
+        # only certain dimensions.
+        calls.clear()
+        VideoWriter(tmp_path / "c.mp4", fps=10.0, width=64, height=64).release()
+        assert calls == [avc1, mp4v]
 
     def test_write_and_read_back(self, tmp_path):
         out_path = str(tmp_path / "output.mp4")

@@ -13,10 +13,12 @@ logger = logging.getLogger(__name__)
 
 MP4_CODEC_CANDIDATES = ("avc1", "mp4v")
 
-# Codecs that failed to open in this process. OpenCV's FFmpeg backend prints
-# its own errors to stderr while probing (for example ``h264_v4l2m2m`` or
-# ``Failed to initialize VideoWriter``), so probe each codec once per process
-# rather than once per video.
+# ``(codec, width, height)`` combinations that failed to open in this process.
+# OpenCV's FFmpeg backend prints its own errors to stderr while probing (for
+# example ``h264_v4l2m2m`` or ``Failed to initialize VideoWriter``), so probe
+# once per process rather than once per video. The frame size is part of the
+# key because some H.264 encoders reject odd dimensions that ``mp4v`` accepts,
+# and one such video must not disable H.264 for every later one.
 _UNAVAILABLE_CODECS: set = set()
 
 # Video extensions supported via OpenCV's VideoCapture
@@ -231,8 +233,10 @@ class VideoWriter:
         self._writer = None
         candidates = _codec_candidates(self._path)
         failed = []
+        last_resort = candidates[-1]
         for codec in candidates:
-            if codec in _UNAVAILABLE_CODECS and codec != candidates[-1]:
+            key = (codec, width, height)
+            if key in _UNAVAILABLE_CODECS and codec != last_resort:
                 continue
             fourcc = cv2.VideoWriter_fourcc(*codec)
             writer = cv2.VideoWriter(self._path, fourcc, fps, (width, height))
@@ -241,7 +245,7 @@ class VideoWriter:
                 self._writer = writer
                 break
             writer.release()
-            failed.append(codec)
+            failed.append(key)
 
         if self._writer is None:
             raise ValueError(f"Cannot open video writer for: {self._path}")
