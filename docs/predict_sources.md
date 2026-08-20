@@ -112,6 +112,18 @@ first and falls back to `mp4v` when the OpenCV build has no H.264 encoder,
 which is the case for the standard Linux `opencv-python` wheels. During that
 probe, OpenCV's FFmpeg backend may print lines such as
 `h264_v4l2m2m` or `Failed to initialize VideoWriter` directly to stderr. These
-come from OpenCV, not LibreYOLO, and do not indicate a failure: the output
-file is still written in full. The probe runs once per process, so the
-messages appear at most once per run.
+come from OpenCV and FFmpeg, not LibreYOLO, and do not indicate a failure:
+the output file is still written in full. Some carry an `[ERROR:...]` prefix
+because that is OpenCV's own severity for a codec it could not open, not
+LibreYOLO's. The probe runs once per frame size per process, so the messages
+appear at most once per run.
+
+To silence them, set both variables before OpenCV is imported:
+
+```bash
+export OPENCV_LOG_LEVEL=SILENT      # OpenCV's own [ERROR:...] lines
+export OPENCV_FFMPEG_LOGLEVEL=-8    # FFmpeg's h264/libopenh264 lines
+```
+
+These are process-global and mute all OpenCV and FFmpeg logging, including
+genuine errors, so LibreYOLO does not set them for you.
