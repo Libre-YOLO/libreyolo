@@ -224,7 +224,10 @@ class LibreYOLO9E2E(LibreYOLO9):
 
         try:
             data_config = load_data_config(
-                data, autodownload=True, allow_scripts=allow_download_scripts
+                data,
+                autodownload=True,
+                allow_scripts=allow_download_scripts,
+                single_cls=bool(kwargs.get("single_cls", False)),
             )
             data = data_config.get("yaml_file", data)
         except Exception as e:

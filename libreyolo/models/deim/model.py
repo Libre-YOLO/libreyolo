@@ -113,6 +113,7 @@ class LibreDEIM(BaseModel):
         device: str = "auto",
         **kwargs,
     ):
+        checkpoint = model_path if isinstance(model_path, dict) else None
         if isinstance(model_path, dict):
             model_path = unwrap_deim_checkpoint(model_path)
         super().__init__(
@@ -122,6 +123,8 @@ class LibreDEIM(BaseModel):
             device=device,
             **kwargs,
         )
+        if checkpoint is not None:
+            self._cache_checkpoint_train_config(checkpoint)
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
@@ -242,7 +245,11 @@ class LibreDEIM(BaseModel):
         from .trainer import DEIMTrainer
 
         try:
-            data_config = load_data_config(data, autodownload=True)
+            data_config = load_data_config(
+                data,
+                autodownload=True,
+                single_cls=bool(kwargs.get("single_cls", False)),
+            )
             data = data_config.get("yaml_file", data)
         except Exception as e:
             raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")
@@ -337,6 +344,7 @@ class LibreDEIM(BaseModel):
 
         try:
             loaded = torch.load(model_path, map_location="cpu", weights_only=False)
+            self._cache_checkpoint_train_config(loaded)
             state_dict = unwrap_deim_checkpoint(loaded)
             state_dict = self._strip_ddp_prefix(dict(state_dict))
 

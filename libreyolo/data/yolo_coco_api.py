@@ -28,6 +28,7 @@ def parse_yolo_label_line(
     num_classes: int,
     label_path: Optional[Path] = None,
     return_segment: bool = False,
+    single_cls: bool = False,
 ) -> Optional[Tuple]:
     """
     Parse a single line from a YOLO label file.
@@ -38,6 +39,7 @@ def parse_yolo_label_line(
         img_h: Image height in pixels
         num_classes: Total number of classes
         label_path: Path to label file (for warnings)
+        single_cls: Remap non-negative class ids to class 0 before validation.
 
     Returns:
         Tuple of (class_id, x1, y1, x2, y2, area) in pixel coordinates,
@@ -84,6 +86,9 @@ def parse_yolo_label_line(
                 f"Invalid label format in {label_path}: '{line[:50]}...' - {e}"
             )
         return None
+
+    if single_cls and class_id >= 0:
+        class_id = 0
 
     # Validate class ID
     if class_id < 0 or class_id >= num_classes:
@@ -148,6 +153,7 @@ class YOLOCocoAPI:
         load_segments: bool = False,
         image_files: List[Path] | None = None,
         label_files: List[Path] | None = None,
+        single_cls: bool = False,
     ):
         """
         Initialize COCO API for a YOLO dataset.
@@ -156,11 +162,13 @@ class YOLOCocoAPI:
             images_dir: Directory containing images
             labels_dir: Directory containing .txt label files
             class_names: List of class names (from data.yaml)
+            single_cls: Remap all non-negative ground-truth classes to class 0.
         """
         self.images_dir = Path(images_dir) if images_dir is not None else None
         self.labels_dir = Path(labels_dir) if labels_dir is not None else None
         self.class_names = class_names
         self.load_segments = load_segments
+        self.single_cls = bool(single_cls)
         num_classes = len(class_names)
 
         # Build COCO-style data structures
@@ -232,6 +240,7 @@ class YOLOCocoAPI:
                             num_classes,
                             label_path,
                             return_segment=load_segments,
+                            single_cls=self.single_cls,
                         )
                         if parsed is None:
                             continue
@@ -476,7 +485,11 @@ class YOLOCocoAPI:
 
 
 def create_yolo_coco_api(
-    data_yaml_path: str, split: str = "val", load_segments: bool = False
+    data_yaml_path: str,
+    split: str = "val",
+    load_segments: bool = False,
+    *,
+    single_cls: bool = False,
 ) -> YOLOCocoAPI:
     """
     Create YOLOCocoAPI from a data.yaml file.
@@ -484,6 +497,7 @@ def create_yolo_coco_api(
     Args:
         data_yaml_path: Path to data.yaml file
         split: Dataset split ('train', 'val', or 'test')
+        single_cls: Build a one-class ground-truth view.
 
     Returns:
         YOLOCocoAPI instance
@@ -496,7 +510,11 @@ def create_yolo_coco_api(
 
     # Reuse the same YAML alias and dataset-root resolution logic as the main
     # loader so COCO evaluation works for dataset names like "coco128.yaml".
-    data = load_data_config(data_yaml_path, autodownload=False)
+    data = load_data_config(
+        data_yaml_path,
+        autodownload=False,
+        single_cls=single_cls,
+    )
     root = Path(data["path"])
 
     # Get class names
@@ -520,6 +538,7 @@ def create_yolo_coco_api(
             load_segments=load_segments,
             image_files=img_files,
             label_files=data.get(f"{split_key}_label_files"),
+            single_cls=single_cls,
         )
 
     images_subpath = data.get(split_key, f"images/{split_key}")
@@ -557,4 +576,5 @@ def create_yolo_coco_api(
         labels_dir=labels_dir,
         class_names=class_names,
         load_segments=load_segments,
+        single_cls=single_cls,
     )

@@ -99,6 +99,7 @@ class RFDETRTrainer(BaseTrainer):
             data_cfg = load_data_config(
                 self.config.data,
                 allow_scripts=self.config.allow_download_scripts,
+                single_cls=self.config.single_cls,
             )
             names = data_cfg.get("names")
             data_nc = data_cfg.get("nc")
@@ -107,6 +108,8 @@ class RFDETRTrainer(BaseTrainer):
             self.config.num_classes = int(
                 data_nc if data_nc is not None else self.config.num_classes
             )
+            if self.config.single_cls:
+                self.config.num_classes = 1
             if isinstance(names, dict):
                 self._class_names = {int(k): str(v) for k, v in names.items()}
             elif isinstance(names, (list, tuple)):
@@ -675,7 +678,9 @@ class RFDETRTrainer(BaseTrainer):
 
         if self.wrapper_model is not None:
             self.wrapper_model.nb_classes = self.config.num_classes
-            if self._class_names:
+            if self.config.single_cls:
+                self.wrapper_model.names = {0: "object"}
+            elif self._class_names:
                 self.wrapper_model.names = self.wrapper_model._sanitize_names(
                     self._class_names,
                     self.config.num_classes,

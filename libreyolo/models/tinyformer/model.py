@@ -130,6 +130,7 @@ class LibreTinyFormer(BaseModel):
         **kwargs,
     ):
         size = normalize_size(size)
+        checkpoint = model_path if isinstance(model_path, dict) else None
         pending_state_dict = None
         if isinstance(model_path, dict):
             pending_state_dict = self._strip_ddp_prefix(
@@ -143,6 +144,8 @@ class LibreTinyFormer(BaseModel):
             device=device,
             **kwargs,
         )
+        if checkpoint is not None:
+            self._cache_checkpoint_train_config(checkpoint)
         if pending_state_dict is not None:
             self._load_state_dict_checked(pending_state_dict)
             self.model.eval()
@@ -260,6 +263,7 @@ class LibreTinyFormer(BaseModel):
                 map_location="cpu",
                 context="TinyFormer model weights",
             )
+            self._cache_checkpoint_train_config(loaded)
             state_dict = self._strip_ddp_prefix(unwrap_deim_checkpoint(loaded))
 
             if isinstance(loaded, dict):
@@ -338,7 +342,11 @@ class LibreTinyFormer(BaseModel):
             imgsz = self._validate_imgsz(imgsz, context="TinyFormer training imgsz")
 
         try:
-            data_config = load_data_config(data, autodownload=True)
+            data_config = load_data_config(
+                data,
+                autodownload=True,
+                single_cls=bool(kwargs.get("single_cls", False)),
+            )
             data = data_config.get("yaml_file", data)
         except Exception as e:
             raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")

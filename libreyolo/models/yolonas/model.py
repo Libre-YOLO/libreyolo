@@ -243,6 +243,7 @@ class LibreYOLONAS(BaseModel):
         # before model construction or from dataset kpt_shape in train().
         self.num_keypoints = self.POSE_NUM_KEYPOINTS
         self.keypoint_dim = self.KEYPOINT_DIM
+        checkpoint = model_path if isinstance(model_path, dict) else None
         if isinstance(model_path, dict):
             model_path = unwrap_yolonas_checkpoint(model_path)
             if resolved_task == "pose":
@@ -270,6 +271,8 @@ class LibreYOLONAS(BaseModel):
             task=resolved_task,
             **kwargs,
         )
+        if checkpoint is not None:
+            self._cache_checkpoint_train_config(checkpoint)
         if self.task == "pose":
             # Placeholder names; overridden by checkpoint metadata in
             # _load_weights or by the dataset yaml at train() time.
@@ -556,6 +559,7 @@ class LibreYOLONAS(BaseModel):
 
         try:
             loaded = torch.load(model_path, map_location="cpu", weights_only=False)
+            self._cache_checkpoint_train_config(loaded)
             state_dict = unwrap_yolonas_checkpoint(loaded)
             state_dict = self._strip_ddp_prefix(dict(state_dict))
             state_dict = self._prepare_state_dict(state_dict)
@@ -733,7 +737,11 @@ class LibreYOLONAS(BaseModel):
         from .trainer import YOLONASTrainer
 
         try:
-            data_config = load_data_config(data, autodownload=True)
+            data_config = load_data_config(
+                data,
+                autodownload=True,
+                single_cls=bool(kwargs.get("single_cls", False)),
+            )
             data = data_config.get("yaml_file", data)
         except Exception as e:
             raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")

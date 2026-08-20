@@ -907,6 +907,7 @@ class LibreRFDETR(BaseModel):
 
             if not isinstance(loaded, dict):
                 raise TypeError("RF-DETR checkpoints must be dictionaries")
+            self._cache_checkpoint_train_config(loaded)
 
             ckpt_family = loaded.get("model_family", "")
             if ckpt_family and ckpt_family != self.FAMILY:
@@ -1330,6 +1331,10 @@ class LibreRFDETR(BaseModel):
         resume_path = None
         if resume:
             resume_path = run_dir / "weights" / "last.pt" if resume is True else resume
+            if not train_kwargs.get("single_cls", False):
+                checkpoint_config = self._checkpoint_train_config(resume_path)
+                if bool(checkpoint_config.get("single_cls", False)):
+                    train_kwargs["single_cls"] = True
             if not train_kwargs.get(
                 "lora", False
             ) and self._resume_checkpoint_uses_lora(resume_path):

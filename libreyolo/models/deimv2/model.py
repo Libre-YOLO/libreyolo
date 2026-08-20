@@ -136,6 +136,7 @@ class LibreDEIMv2(BaseModel):
         **kwargs,
     ):
         size = normalize_size(size)
+        checkpoint = model_path if isinstance(model_path, dict) else None
         pending_state_dict = None
         if isinstance(model_path, dict):
             pending_state_dict = self._prepare_state_dict(
@@ -149,6 +150,8 @@ class LibreDEIMv2(BaseModel):
             device=device,
             **kwargs,
         )
+        if checkpoint is not None:
+            self._cache_checkpoint_train_config(checkpoint)
         if pending_state_dict is not None:
             self._load_state_dict_checked(pending_state_dict)
             self.model.eval()
@@ -277,7 +280,11 @@ class LibreDEIMv2(BaseModel):
             imgsz = self._validate_imgsz(imgsz, context="DEIMv2 training imgsz")
 
         try:
-            data_config = load_data_config(data, autodownload=True)
+            data_config = load_data_config(
+                data,
+                autodownload=True,
+                single_cls=bool(kwargs.get("single_cls", False)),
+            )
             data = data_config.get("yaml_file", data)
         except Exception as e:
             raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")
@@ -459,6 +466,7 @@ class LibreDEIMv2(BaseModel):
 
         try:
             if Path(model_path).suffix == ".safetensors":
+                self._cache_checkpoint_train_config({})
                 self._load_safetensors_weights(model_path)
                 return
 
@@ -467,6 +475,7 @@ class LibreDEIMv2(BaseModel):
                 map_location="cpu",
                 context="DEIMv2 model weights",
             )
+            self._cache_checkpoint_train_config(loaded)
             state_dict = unwrap_deim_checkpoint(loaded)
             state_dict = self._prepare_state_dict(state_dict, self.size)
 

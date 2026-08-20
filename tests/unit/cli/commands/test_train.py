@@ -194,6 +194,48 @@ def test_train_dry_run_rfdetr_lora_flag_is_visible():
     assert data["resolved_config"]["lora"] is True
 
 
+@pytest.mark.parametrize("model", ["LibreYOLO9t.pt", "LibreRFDETRn.pt"])
+def test_train_dry_run_single_cls_is_visible_for_g0_detectors(model):
+    app = _make_app()
+    result = runner.invoke(
+        app,
+        [
+            "data=coco8.yaml",
+            f"model={model}",
+            "single_cls=true",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["resolved_config"]["single_cls"] is True
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        # Unsupported family (G2), detect task.
+        ["model=LibreYOLOXn.pt", "single_cls=true"],
+        # Supported family, unsupported task. Uses a published checkpoint plus
+        # an explicit task so the PR gate never needs to fetch weights.
+        ["model=LibreRFDETRm.pt", "task=segment", "single_cls=true"],
+    ],
+)
+def test_train_dry_run_rejects_single_cls_outside_g0_g1_detection(args):
+    app = _make_app()
+    result = runner.invoke(
+        app,
+        ["data=coco8.yaml", *args, "--dry-run", "--json"],
+    )
+
+    assert result.exit_code == 2
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert "G0/G1 detection" in data["message"]
+
+
 def test_train_dry_run_rfdetr_freeze_flag_is_visible():
     app = _make_app()
     result = runner.invoke(
@@ -523,6 +565,44 @@ def test_train_rfdetr_lora_flag_reaches_trainer(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert captured["kwargs"]["lora"] is True
     assert "ignores these parameters" not in result.output
+
+
+def test_train_rfdetr_single_cls_reaches_trainer(monkeypatch, tmp_path):
+    app = _make_app()
+    captured = {}
+
+    class _RFDETRLike:
+        FAMILY = "rfdetr"
+        DEFAULT_TASK = "detect"
+        device = "cpu"
+
+        @classmethod
+        def detect_task_from_filename(cls, filename):
+            return None
+
+        def train(self, data, **kwargs):
+            captured["kwargs"] = kwargs
+            return {"output_dir": str(tmp_path / "rfdetr_exp")}
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.train.load_model_or_exit",
+        lambda out, model, model_path, device: _RFDETRLike(),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "data=dummy.yaml",
+            "model=LibreRFDETRm.pt",
+            "single_cls=true",
+            f"project={tmp_path}",
+            "exist_ok=true",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["kwargs"]["single_cls"] is True
 
 
 def test_train_rfdetr_lr_drop_override_reaches_trainer(monkeypatch, tmp_path):

@@ -309,6 +309,19 @@ class TestBuildTrainKwargs:
         assert "val" not in kwargs
         assert "unknown" not in kwargs
 
+    def test_rfdetr_direct_mapping_keeps_single_cls(self, tmp_path):
+        kwargs = cli_config._build_rfdetr_train_kwargs(
+            {
+                "project": str(tmp_path),
+                "name": "single-cls",
+                "exist_ok": True,
+                "single_cls": True,
+            },
+            user_provided={"single_cls"},
+        )
+
+        assert kwargs["single_cls"] is True
+
 
 class TestGetCfgDefaults:
     """Test that cfg defaults are fully derived from dataclasses."""

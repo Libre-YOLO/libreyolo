@@ -253,6 +253,7 @@ class YOLODataset(ImageCacheMixin, Dataset):
         load_segments: bool = False,
         load_obb: bool = False,
         num_classes: int | None = None,
+        single_cls: bool = False,
     ):
         """
         Initialize YOLO dataset.
@@ -265,6 +266,7 @@ class YOLODataset(ImageCacheMixin, Dataset):
             img_files: List of image paths (for file list mode).
             label_files: List of label paths (optional, inferred if not provided).
             num_classes: Optional class-count bound used for OBB label validation.
+            single_cls: Remap every non-negative class id to class 0.
         """
         self.img_size = imgsz_to_hw(img_size, name="img_size")
         self.preproc = preproc
@@ -272,6 +274,7 @@ class YOLODataset(ImageCacheMixin, Dataset):
         self.load_segments = load_segments
         self.load_obb = load_obb
         self.num_classes = num_classes
+        self.single_cls = bool(single_cls)
         if self.load_segments and self.load_obb:
             raise ValueError("YOLODataset cannot load segmentation and OBB labels together")
 
@@ -454,9 +457,13 @@ class YOLODataset(ImageCacheMixin, Dataset):
                             skipped_obb_rows += 1
                             first_obb_error = first_obb_error or f"{label_file.name}: {exc}"
                             continue
+                        if self.single_cls:
+                            cls_id = 0
                         labels.append([*proxy.tolist(), cls_id, float(xywhr[4])])
                     elif len(parts) >= 5:
                         cls_id = int(parts[0])
+                        if self.single_cls and cls_id >= 0:
+                            cls_id = 0
 
                         if len(parts) > 5:
                             # Segmentation format: derive bbox from polygon vertices
@@ -612,6 +619,7 @@ class COCODataset(ImageCacheMixin, Dataset):
         load_obb: bool = False,
         num_classes: int | None = None,
         names=None,
+        single_cls: bool = False,
     ):
         """
         Initialize COCO dataset.
@@ -622,6 +630,8 @@ class COCODataset(ImageCacheMixin, Dataset):
             name: Image folder name (e.g., 'train2017')
             img_size: Target image size (height, width)
             preproc: Preprocessing transform
+            single_cls: Remap emitted annotations to class 0 after resolving
+                the original COCO category mapping.
         """
         if load_segments and load_obb:
             raise ValueError("COCODataset cannot load segmentation and OBB labels together")
@@ -643,6 +653,7 @@ class COCODataset(ImageCacheMixin, Dataset):
         self.load_obb = load_obb
         self.num_classes = num_classes
         self.names = names
+        self.single_cls = bool(single_cls)
 
         # Load COCO annotations
         ann_file = self._annotation_path()
@@ -658,7 +669,9 @@ class COCODataset(ImageCacheMixin, Dataset):
         self.category_id_to_label, self.label_to_category_id = (
             self._build_category_mappings()
         )
-        if self.names is None:
+        if self.single_cls:
+            self._classes = ("object",)
+        elif self.names is None:
             self._classes = tuple([c["name"] for c in self.cats])
         else:
             class_names = self._normalized_class_names()
@@ -717,7 +730,7 @@ class COCODataset(ImageCacheMixin, Dataset):
                     )
                 category_to_label[int(category["id"])] = name_to_label[category_name]
 
-        if self.num_classes is not None:
+        if self.num_classes is not None and not self.single_cls:
             for category_id, label in category_to_label.items():
                 if label < 0 or label >= self.num_classes:
                     raise ValueError(
@@ -733,6 +746,9 @@ class COCODataset(ImageCacheMixin, Dataset):
                     "dataset YAML names must be unique."
                 )
             label_to_category[label] = category_id
+        if self.single_cls:
+            collapsed_category_id = self.class_ids[0] if self.class_ids else 0
+            label_to_category = {0: collapsed_category_id}
         return category_to_label, label_to_category
 
     def _remove_useless_info(self):
@@ -829,11 +845,15 @@ class COCODataset(ImageCacheMixin, Dataset):
             if self.load_obb:
                 coco_obj, proxy, angle = obj
                 cls = self.category_id_to_label[coco_obj["category_id"]]
+                if self.single_cls:
+                    cls = 0
                 res[ix, 0:4] = proxy
                 res[ix, 4] = cls
                 res[ix, 5] = angle
             else:
                 cls = self.category_id_to_label[obj["category_id"]]
+                if self.single_cls:
+                    cls = 0
                 res[ix, 0:4] = obj["clean_bbox"]
                 res[ix, 4] = cls
 

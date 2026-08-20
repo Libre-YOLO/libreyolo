@@ -414,7 +414,10 @@ class DFINETrainer(DETREncoderCudaGraphMixin, BaseTrainer):
         load_segments = self._is_segment()
 
         if self.config.data:
-            data_cfg = load_data_config(self.config.data)
+            data_cfg = load_data_config(
+                self.config.data,
+                single_cls=self.config.single_cls,
+            )
             data_dir = data_cfg["root"]
             self.num_classes = data_cfg.get("nc", self.config.num_classes)
 
@@ -431,8 +434,9 @@ class DFINETrainer(DETREncoderCudaGraphMixin, BaseTrainer):
                     img_size=img_size,
                     preproc=preproc,
                     num_classes=int(self.num_classes),
-                    names=data_cfg.get("names"),
+                    names=data_cfg.get("_original_names", data_cfg.get("names")),
                     load_segments=load_segments,
+                    single_cls=self.config.single_cls,
                 )
             elif img_files:
                 train_dataset = YOLODataset(
@@ -441,6 +445,7 @@ class DFINETrainer(DETREncoderCudaGraphMixin, BaseTrainer):
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    single_cls=self.config.single_cls,
                 )
             elif ann_file.exists():
                 train_dataset = COCODataset(
@@ -450,8 +455,9 @@ class DFINETrainer(DETREncoderCudaGraphMixin, BaseTrainer):
                     img_size=img_size,
                     preproc=preproc,
                     num_classes=int(self.num_classes),
-                    names=data_cfg.get("names"),
+                    names=data_cfg.get("_original_names", data_cfg.get("names")),
                     load_segments=load_segments,
+                    single_cls=self.config.single_cls,
                 )
             else:
                 train_path = data_cfg.get("train", "images/train")
@@ -468,10 +474,11 @@ class DFINETrainer(DETREncoderCudaGraphMixin, BaseTrainer):
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    single_cls=self.config.single_cls,
                 )
         elif self.config.data_dir:
             data_dir = self.config.data_dir
-            self.num_classes = self.config.num_classes
+            self.num_classes = 1 if self.config.single_cls else self.config.num_classes
             if (Path(data_dir) / "annotations").exists():
                 train_dataset = COCODataset(
                     data_dir=data_dir,
@@ -481,6 +488,7 @@ class DFINETrainer(DETREncoderCudaGraphMixin, BaseTrainer):
                     preproc=preproc,
                     num_classes=int(self.num_classes),
                     load_segments=load_segments,
+                    single_cls=self.config.single_cls,
                 )
             else:
                 train_dataset = YOLODataset(
@@ -489,6 +497,7 @@ class DFINETrainer(DETREncoderCudaGraphMixin, BaseTrainer):
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    single_cls=self.config.single_cls,
                 )
         else:
             raise ValueError("Either 'data' or 'data_dir' must be specified")

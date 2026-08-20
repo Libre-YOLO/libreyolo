@@ -1,6 +1,7 @@
 """Detection validator for LibreYOLO."""
 
 import logging
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
@@ -20,6 +21,23 @@ _N_VAL_SAMPLES = 8  # maximum sample images stored for visualisation
 BEST_CONF_KEY = "metrics/best_conf"
 BEST_CONF_F1_KEY = "metrics/best_conf_f1"
 BEST_CONF_PER_CLASS_KEY = "metrics/best_conf_per_class"
+
+
+def _collapse_coco_ground_truth(coco_api, category_id: int):
+    """Return an independent COCO API with every GT category collapsed."""
+    from pycocotools.coco import COCO
+
+    dataset = deepcopy(coco_api.dataset)
+    dataset["categories"] = [
+        {"id": int(category_id), "name": "object", "supercategory": "object"}
+    ]
+    for annotation in dataset.get("annotations", []):
+        annotation["category_id"] = int(category_id)
+    collapsed = COCO()
+    collapsed.dataset = dataset
+    collapsed.createIndex()
+    return collapsed
+
 
 if TYPE_CHECKING:
     from libreyolo.models.base import BaseModel
@@ -50,6 +68,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
     # Class-level default so instances built without __init__ (a pattern the
     # test suite uses for narrow-scope validators) still resolve it.
     _gt_coco_api = None
+    _single_cls_clip_warning_emitted = False
 
     def __init__(
         self,
@@ -65,6 +84,11 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
         self.class_names: Optional[List[str]] = None
         self.iou_thresholds = torch.tensor(self.config.iou_thresholds)
         self.nc = model.nb_classes
+        checkpoint_probe = getattr(model, "_checkpoint_train_config", None)
+        checkpoint_config = checkpoint_probe() if callable(checkpoint_probe) else {}
+        self._checkpoint_single_cls = bool(checkpoint_config.get("single_cls", False))
+        if self._checkpoint_single_cls:
+            self.config = self.config.update(single_cls=True)
         self.val_preproc = None  # set in _setup_dataloader
         self._coco_annotation_file: Optional[Path] = None
         self._coco_label_to_category_id: Optional[Dict[int, int]] = None
@@ -85,6 +109,9 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
 
     def _coco_api_kwargs(self) -> Dict[str, Any]:
         return {}
+
+    def _single_cls_enabled(self) -> bool:
+        return bool(getattr(self.config, "single_cls", False))
 
     def _resolve_imgsz(self) -> int | tuple[int, int]:
         """Return the validation image size, falling back to the model native size."""
@@ -137,9 +164,32 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             data_cfg = load_data_config(
                 self.config.data,
                 allow_scripts=self.config.allow_download_scripts,
+                single_cls=self._single_cls_enabled(),
             )
             data_dir = data_cfg["root"]
+            model_nc = int(self.nc)
             self.nc = int(data_cfg.get("nc", self.nc))
+
+            original_nc = data_cfg.get("_original_nc")
+            original_names = data_cfg.get("_original_names")
+            if original_nc is None and original_names is not None:
+                original_nc = len(original_names)
+            if getattr(self, "_checkpoint_single_cls", False) and original_nc not in (
+                None,
+                1,
+            ):
+                logger.info(
+                    "Checkpoint config has single_cls=True; collapsing %s dataset "
+                    "classes to one validation class.",
+                    original_nc,
+                )
+            elif not self._single_cls_enabled() and model_nc != self.nc:
+                logger.warning(
+                    "Checkpoint/model class count (%d) differs from dataset class "
+                    "count (%d). Validation will continue, but metrics may be invalid.",
+                    model_nc,
+                    self.nc,
+                )
 
             names = data_cfg.get("names", None)
             if isinstance(names, dict):
@@ -236,7 +286,12 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 img_size=img_size,
                 preproc=self.val_preproc,
                 num_classes=int(self.nc),
-                names=data_cfg.get("names") if data_cfg is not None else None,
+                names=(
+                    data_cfg.get("_original_names", data_cfg.get("names"))
+                    if data_cfg is not None
+                    else None
+                ),
+                single_cls=self._single_cls_enabled(),
                 **dataset_kwargs,
             )
             self._coco_annotation_file = coco_annotation_file
@@ -251,6 +306,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 img_size=img_size,
                 preproc=self.val_preproc,
                 num_classes=int(self.nc),
+                single_cls=self._single_cls_enabled(),
                 **dataset_kwargs,
             )
         elif (data_path / "annotations").exists():
@@ -272,7 +328,12 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 img_size=img_size,
                 preproc=self.val_preproc,
                 num_classes=int(self.nc),
-                names=data_cfg.get("names") if data_cfg is not None else None,
+                names=(
+                    data_cfg.get("_original_names", data_cfg.get("names"))
+                    if data_cfg is not None
+                    else None
+                ),
+                single_cls=self._single_cls_enabled(),
                 **dataset_kwargs,
             )
         else:
@@ -282,6 +343,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 split=split_name,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                single_cls=self._single_cls_enabled(),
                 **dataset_kwargs,
             )
 
@@ -386,6 +448,13 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             coco_api = self._gt_coco_api
             if coco_api is None:
                 coco_api = COCO(str(self._coco_annotation_file))
+                if self._single_cls_enabled():
+                    category_id = next(
+                        iter((self._coco_label_to_category_id or {}).values()),
+                        0,
+                    )
+                    coco_api = _collapse_coco_ground_truth(coco_api, category_id)
+                    self._coco_label_to_category_id = {0: int(category_id)}
                 self._gt_coco_api = coco_api
             self.coco_evaluator = COCOEvaluator(
                 coco_api,
@@ -415,6 +484,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
         data_cfg = load_data_config(
             self.config.data,
             allow_scripts=self.config.allow_download_scripts,
+            single_cls=self._single_cls_enabled(),
         )
         split = self.config.split
         img_files = data_cfg.get(f"{split}_img_files")
@@ -457,6 +527,7 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 class_names=class_names,
                 image_files=image_files,
                 label_files=yolo_label_files,
+                single_cls=self._single_cls_enabled(),
                 **self._coco_api_kwargs(),
             )
             self._gt_coco_api = coco_api
@@ -766,7 +837,9 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 gt[:, [0, 2]] /= sx  # x1, x2
                 gt[:, [1, 3]] /= sy  # y1, y2
                 gt_boxes = gt.astype(np.float32)
-            gt_classes = np.clip(vgt_xyxy[:, 4].astype(int), 0, self.nc - 1)
+            raw_classes = vgt_xyxy[:, 4].astype(int)
+            self._warn_single_cls_nonzero_gt(raw_classes)
+            gt_classes = np.clip(raw_classes, 0, self.nc - 1)
             return gt_boxes, gt_classes
 
         # If any value in columns 1-4 exceeds 1.5 the coords must be pixels
@@ -801,7 +874,9 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
                 gt[:, [0, 2]] /= sx  # x1, x2
                 gt[:, [1, 3]] /= sy  # y1, y2
                 gt_boxes = gt.astype(np.float32)
-            gt_classes = np.clip(vgt[:, 4].astype(int), 0, self.nc - 1)
+            raw_classes = vgt[:, 4].astype(int)
+            self._warn_single_cls_nonzero_gt(raw_classes)
+            gt_classes = np.clip(raw_classes, 0, self.nc - 1)
         else:
             # YOLO [cls, cx_norm, cy_norm, w_norm, h_norm]
             valid = (arr[:, 3] > 0) & (arr[:, 4] > 0)
@@ -813,9 +888,24 @@ class DetectionValidator(ValidationLossMixin, BaseValidator):
             bw = vgt[:, 3] * orig_w
             bh = vgt[:, 4] * orig_h
             gt_boxes = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1).astype(np.float32)
-            gt_classes = np.clip(vgt[:, 0].astype(int), 0, self.nc - 1)
+            raw_classes = vgt[:, 0].astype(int)
+            self._warn_single_cls_nonzero_gt(raw_classes)
+            gt_classes = np.clip(raw_classes, 0, self.nc - 1)
 
         return gt_boxes, gt_classes
+
+    def _warn_single_cls_nonzero_gt(self, class_ids: np.ndarray) -> None:
+        """Warn once if clipping would hide a broken single-class GT remap."""
+        if (
+            getattr(getattr(self, "config", None), "single_cls", False)
+            and not getattr(self, "_single_cls_clip_warning_emitted", False)
+            and np.any(np.asarray(class_ids) != 0)
+        ):
+            logger.warning(
+                "single_cls validation received non-zero ground-truth class ids "
+                "before clipping. The dataset/evaluator remap may have regressed."
+            )
+            self._single_cls_clip_warning_emitted = True
 
     def _track_plots_data(
         self,
