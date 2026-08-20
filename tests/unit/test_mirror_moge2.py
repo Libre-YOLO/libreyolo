@@ -741,25 +741,84 @@ def test_replacement_victim_tree_is_never_deleted(mirror_moge2, monkeypatch, tmp
     (victim / "preserve.txt").write_bytes(b"do not delete")
     owned_backup = tmp_path / "owned-backup"
     replacement_path = None
+    swap_blocked = False
     real_rename = mirror_moge2._rename_create_only
 
     def replace_owned_temp(root, temporary, destination_name, expected):
-        nonlocal replacement_path
+        nonlocal replacement_path, swap_blocked
         replacement_path = temporary.path
-        temporary.path.rename(owned_backup)
+        try:
+            temporary.path.rename(owned_backup)
+        except PermissionError:
+            swap_blocked = True
+            real_rename(root, temporary, destination_name, expected)
+            return
         victim.rename(replacement_path)
         real_rename(root, temporary, destination_name, expected)
 
     monkeypatch.setattr(mirror_moge2, "_rename_create_only", replace_owned_temp)
     staging = tmp_path / "staging"
 
-    with pytest.raises(SystemExit, match="staging directory path changed"):
-        mirror_moge2.stage("b", spec, staging)
+    if os.name == "nt":
+        staged = mirror_moge2.stage("b", spec, staging)
+        assert swap_blocked
+        assert replacement_path is not None
+        assert (victim / "preserve.txt").read_bytes() == b"do not delete"
+        assert not owned_backup.exists()
+        assert staged == staging / "LibreMoGe2b-normal"
+        assert (staged / "LibreMoGe2b-normal.pt").exists()
+    else:
+        with pytest.raises(SystemExit, match="staging directory path changed"):
+            mirror_moge2.stage("b", spec, staging)
 
-    assert replacement_path is not None
-    assert (replacement_path / "preserve.txt").read_bytes() == b"do not delete"
-    assert (owned_backup / "LibreMoGe2b-normal.pt").exists()
-    assert not (staging / "LibreMoGe2b-normal").exists()
+        assert not swap_blocked
+        assert replacement_path is not None
+        assert (replacement_path / "preserve.txt").read_bytes() == b"do not delete"
+        assert (owned_backup / "LibreMoGe2b-normal.pt").exists()
+        assert not (staging / "LibreMoGe2b-normal").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows directory sharing regression")
+def test_windows_private_directory_cannot_be_swapped_before_child_write(
+    mirror_moge2, monkeypatch, tmp_path
+):
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    source = weights / mirror_moge2.SIZES["b"]["converted"]
+    torch.save(_checkpoint(), source)
+    spec = _approved_b_spec(mirror_moge2, source)
+    monkeypatch.setattr(mirror_moge2, "WEIGHTS", weights)
+
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    sentinel = victim / "preserve.txt"
+    sentinel.write_bytes(b"do not write here")
+    owned_backup = tmp_path / "owned-backup"
+    swap_attempted = False
+    real_copy = mirror_moge2._copy_exclusive_weight
+
+    def swap_before_first_child_write(directory, name, source_handle):
+        nonlocal swap_attempted
+        swap_attempted = True
+        with pytest.raises(PermissionError):
+            directory.path.rename(owned_backup)
+        return real_copy(directory, name, source_handle)
+
+    monkeypatch.setattr(
+        mirror_moge2,
+        "_copy_exclusive_weight",
+        swap_before_first_child_write,
+    )
+
+    staging = tmp_path / "staging"
+    staged = mirror_moge2.stage("b", spec, staging)
+
+    assert swap_attempted
+    assert sentinel.read_bytes() == b"do not write here"
+    assert {path.name for path in victim.iterdir()} == {"preserve.txt"}
+    assert not owned_backup.exists()
+    assert staged == staging / "LibreMoGe2b-normal"
+    assert (staged / "LibreMoGe2b-normal.pt").exists()
 
 
 def test_staging_root_swap_cannot_redirect_successful_publication(

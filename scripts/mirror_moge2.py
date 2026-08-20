@@ -337,7 +337,10 @@ def _windows_directory_handle(
     share = 0x1 | 0x2
     desired_access = 0x80
     if not prevent_rename:
-        share |= 0x4
+        # The publishing handle itself needs DELETE access for
+        # SetFileInformationByHandle, but sharing DELETE would let another
+        # process rename the temporary directory while Windows child opens
+        # are still path-based.
         desired_access |= 0x00010000
     handle = create_file(
         str(path),
