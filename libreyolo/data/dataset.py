@@ -476,11 +476,27 @@ class YOLODataset(ImageCacheMixin, Dataset):
                             if self.load_segments:
                                 segments.append(_yolo_box_to_ring(cx, cy, w, h, width, height))
 
-                        # Convert normalized xywh to pixel xyxy
-                        x1 = (cx - w / 2) * width
-                        y1 = (cy - h / 2) * height
-                        x2 = (cx + w / 2) * width
-                        y2 = (cy + h / 2) * height
+                        # Convert normalized xywh to pixel xyxy, then clamp to
+                        # the image. Labels can extend past the border: a
+                        # polygon tracing an object cut off at the frame edge,
+                        # or simply an out-of-range box row. The pixels outside
+                        # do not exist, so the visible extent is the honest
+                        # target. The COCO branch below and the validation
+                        # parser (data/yolo_coco_api.py) both already clamp and
+                        # drop empties; keeping this path consistent means
+                        # training and evaluation score the same box (#814).
+                        x1 = max(0.0, (cx - w / 2) * width)
+                        y1 = max(0.0, (cy - h / 2) * height)
+                        x2 = min(float(width), (cx + w / 2) * width)
+                        y2 = min(float(height), (cy + h / 2) * height)
+
+                        if x2 <= x1 or y2 <= y1:
+                            # Entirely outside the image, or degenerate. Drop
+                            # the paired segment too, or segments and labels
+                            # fall out of step for every later row.
+                            if self.load_segments and segments:
+                                segments.pop()
+                            continue
 
                         labels.append([x1, y1, x2, y2, cls_id])
 
