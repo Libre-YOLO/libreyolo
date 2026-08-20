@@ -23,6 +23,7 @@ from ._assets import (
     PinnedFile,
     atomic_rename_create_only,
     canonical_json_bytes,
+    cleanup_private_tree,
     copy_pinned_source,
     ensure_unlinked_directory,
     inspect_pinned_file,
@@ -414,6 +415,30 @@ def _validated_previous_revision_sources(
     return None
 
 
+def _staging_recoveries(parent: Path, pin: SAMSnapshotPin) -> tuple[Path, ...]:
+    prefix = f".{pin.revision}.staging-"
+    try:
+        entries = list(os.scandir(parent))
+    except OSError as exc:
+        raise AssetIntegrityError(
+            f"could not inspect SAM 3D Body cache directory: {parent}"
+        ) from exc
+    return tuple(
+        parent / entry.name for entry in entries if entry.name.startswith(prefix)
+    )
+
+
+def _require_no_staging_recovery(parent: Path, pin: SAMSnapshotPin) -> None:
+    recoveries = _staging_recoveries(parent, pin)
+    if recoveries:
+        paths = ", ".join(str(path) for path in recoveries)
+        raise AssetIntegrityError(
+            "A previous SAM 3D Body acquisition left private recovery data. "
+            "Inspect and remove it before retrying so multi-gigabyte staging "
+            f"copies cannot accumulate: {paths}"
+        )
+
+
 def _remote_preflight(hub, pin: SAMSnapshotPin) -> None:
     api = hub.HfApi()
     info = api.model_info(
@@ -511,15 +536,22 @@ def acquire_sam_snapshot(
 
     parent = destination.parent
     ensure_unlinked_directory(parent, label="SAM 3D Body cache directory")
+    _require_no_staging_recovery(parent, pin)
     sources = _validated_legacy_sources(parent, pin)
     if sources is None:
         sources = _validated_previous_revision_sources(parent, pin)
+    legacy_migration = sources is not None
+    legacy_paths = tuple(sources.values()) if sources is not None else ()
+    hub = None
+    offline = False
+    direct_download = False
     if sources is None:
         try:
             import huggingface_hub as hub
         except ImportError as exc:
             raise ImportError(
-                "huggingface_hub>=1.0 is required to acquire SAM 3D Body weights"
+                "huggingface_hub>=1.0 is required to acquire SAM 3D Body weights. "
+                'Install it with `pip install "libreyolo[hf]"`.'
             ) from exc
 
         offline = _offline_mode()
@@ -543,34 +575,91 @@ def acquire_sam_snapshot(
                 f"{pin.repo_id}@{pin.revision}: {exc}"
             ) from exc
 
-        sources = {}
-        try:
-            for expected in pin.runtime_files:
-                sources[expected.path] = Path(
-                    hub.hf_hub_download(
-                        repo_id=pin.repo_id,
-                        filename=expected.path,
-                        revision=pin.revision,
-                        local_files_only=offline,
+        if offline:
+            sources = {}
+            try:
+                for expected in pin.runtime_files:
+                    sources[expected.path] = Path(
+                        hub.hf_hub_download(
+                            repo_id=pin.repo_id,
+                            filename=expected.path,
+                            revision=pin.revision,
+                            local_files_only=True,
+                        )
                     )
-                )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Could not download SAM 3D Body weights from {pin.repo_id}@{pin.revision}.\n\n"
-                "These weights are redistributed under Meta's SAM License and the mirror "
-                "is gated. Accept its terms on the model page and authenticate with "
-                "`hf auth login`, or populate the exact pinned Hub cache before enabling "
-                f"offline mode.\n\nUnderlying error: {exc}"
-            ) from exc
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not load cached SAM 3D Body weights from "
+                    f"{pin.repo_id}@{pin.revision}. Populate the exact pinned Hub "
+                    f"cache before enabling offline mode.\n\nUnderlying error: {exc}"
+                ) from exc
+        else:
+            direct_download = True
 
-    stage, _ = make_private_stage(parent, prefix=f".{pin.revision}.staging-")
+    stage, stage_object = make_private_stage(
+        parent,
+        prefix=f".{pin.revision}.staging-",
+    )
+    staged_identity: SAMSnapshotIdentity | None = None
     try:
-        for expected in pin.runtime_files:
-            copy_pinned_source(
-                sources[expected.path],
-                stage / expected.path,
-                expected,
-            )
+        if direct_download:
+            assert hub is not None
+            try:
+                for expected in pin.runtime_files:
+                    expected_path = (stage / expected.path).absolute()
+                    if os.path.lexists(expected_path):
+                        raise AssetIntegrityError(
+                            f"private download destination already exists: {expected.path}"
+                        )
+                    downloaded = Path(
+                        hub.hf_hub_download(
+                            repo_id=pin.repo_id,
+                            filename=expected.path,
+                            revision=pin.revision,
+                            local_files_only=False,
+                            local_dir=stage,
+                        )
+                    ).absolute()
+                    if downloaded != expected_path:
+                        raise AssetIntegrityError(
+                            "Hugging Face returned an unexpected local download path "
+                            f"for {expected.path}: {downloaded}"
+                        )
+                    inspect_pinned_file(
+                        expected_path,
+                        expected,
+                        label=f"downloaded SAM 3D Body file {expected.path}",
+                    )
+            except Exception as exc:
+                if isinstance(exc, AssetIntegrityError):
+                    raise
+                raise RuntimeError(
+                    f"Could not download SAM 3D Body weights from "
+                    f"{pin.repo_id}@{pin.revision}.\n\nThese weights are redistributed "
+                    "under Meta's SAM License and the mirror is gated. Accept its "
+                    "terms on the model page and authenticate with `hf auth login`.\n\n"
+                    f"Underlying error: {exc}"
+                ) from exc
+
+            hub_metadata = stage / ".cache"
+            if os.path.lexists(hub_metadata):
+                metadata_seal = require_unlinked_directory(
+                    hub_metadata,
+                    label="private Hugging Face download metadata",
+                )
+                cleanup_private_tree(
+                    hub_metadata,
+                    expected_object=metadata_seal,
+                    label="private Hugging Face download metadata",
+                )
+        else:
+            assert sources is not None
+            for expected in pin.runtime_files:
+                copy_pinned_source(
+                    sources[expected.path],
+                    stage / expected.path,
+                    expected,
+                )
         write_create_only(
             stage / SNAPSHOT_MARKER,
             _marker_bytes(pin),
@@ -603,6 +692,15 @@ def acquire_sam_snapshot(
             raise AssetIntegrityError(
                 "SAM 3D Body snapshot changed during create-only publication"
             )
+        if legacy_migration:
+            logger.warning(
+                "Migrated verified SAM 3D Body runtime files to %s. The source "
+                "files remain and consume another %.1f GB; remove them only after "
+                "confirming the revision-keyed cache works: %s",
+                destination,
+                sum(file.size for file in pin.runtime_files) / 1e9,
+                ", ".join(str(path) for path in legacy_paths),
+            )
         return published
     except FileExistsError:
         try:
@@ -616,20 +714,43 @@ def acquire_sam_snapshot(
                 destination,
             )
             raise
-        logger.warning(
-            "A concurrent SAM 3D Body download won publication; conservative cleanup "
-            "left the verified staging directory at %s",
-            stage,
-        )
+        try:
+            cleanup_private_tree(
+                stage,
+                expected_object=stage_object,
+                label="losing SAM 3D Body staging directory",
+            )
+        except AssetIntegrityError:
+            logger.warning(
+                "A concurrent SAM 3D Body download won publication, but its losing "
+                "staging directory could not be cleaned safely: %s",
+                stage,
+                exc_info=True,
+            )
         return winner
     except BaseException:
-        logger.warning(
-            "SAM 3D Body staging or post-publication validation failed; recovery "
-            "may be at staging path %s or destination path %s; neither path was "
-            "deleted because either pathname may have been concurrently replaced",
-            stage,
-            destination,
-        )
+        if staged_identity is None and os.path.lexists(stage):
+            try:
+                cleanup_private_tree(
+                    stage,
+                    expected_object=stage_object,
+                    label="incomplete SAM 3D Body staging directory",
+                )
+            except AssetIntegrityError:
+                logger.warning(
+                    "SAM 3D Body staging failed and its incomplete private directory "
+                    "could not be cleaned safely: %s",
+                    stage,
+                    exc_info=True,
+                )
+        else:
+            logger.warning(
+                "SAM 3D Body publication or post-publication validation failed; "
+                "verified recovery may be at staging path %s or destination path %s. "
+                "Inspect it before retrying.",
+                stage,
+                destination,
+            )
         raise
 
 

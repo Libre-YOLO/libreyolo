@@ -21,8 +21,11 @@ from libreyolo.models.sam3dbody._assets import (
     FileSeal,
     PinnedFile,
     atomic_rename_create_only,
+    cleanup_private_file,
+    cleanup_private_tree,
     ensure_unlinked_directory,
     inspect_pinned_file,
+    make_private_stage,
     require_unlinked_directory,
 )
 from libreyolo.models.sam3dbody import snapshot
@@ -131,6 +134,60 @@ def test_mhr_invalid_concurrent_winner_reports_owned_stage(
     assert str(leaked[0]) in caplog.text
     assert str(target) in caplog.text
     assert "invalid winner" in caplog.text
+
+
+def test_mhr_valid_concurrent_winner_cleans_losing_stage(
+    tmp_path, monkeypatch, tiny_mhr
+):
+    model, archive = tiny_mhr
+    monkeypatch.setattr(
+        mhr_body.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: _Response(archive, str(len(archive))),
+    )
+    target = tmp_path / "cache" / "mhr_model.pt"
+
+    def lose_publication(_source, destination, **_kwargs):
+        destination.write_bytes(model)
+        raise FileExistsError("concurrent winner")
+
+    monkeypatch.setattr(mhr_body, "atomic_rename_create_only", lose_publication)
+    assert mhr_body.ensure_mhr_model(target) == target.absolute()
+    assert not list(target.parent.glob(f".{target.name}.staging-*.tmp"))
+
+
+def test_mhr_refuses_stale_recovery_before_network(tmp_path, monkeypatch, tiny_mhr):
+    target = tmp_path / "cache" / "mhr_model.pt"
+    target.parent.mkdir()
+    recovery = target.parent / f".{target.name}.staging-recovery.tmp"
+    recovery.write_bytes(b"partial")
+
+    def network(*_args, **_kwargs):
+        raise AssertionError("network must not run while recovery data exists")
+
+    monkeypatch.setattr(mhr_body.urllib.request, "urlopen", network)
+    with pytest.raises(AssetIntegrityError, match="recovery data.*cannot accumulate"):
+        mhr_body.ensure_mhr_model(target)
+
+
+def test_mhr_partial_stage_is_cleaned(tmp_path, tiny_mhr):
+    model, _archive = tiny_mhr
+    target = tmp_path / "mhr_model.pt"
+
+    class FailingSource(io.BytesIO):
+        def __init__(self, payload):
+            super().__init__(payload)
+            self._reads = 0
+
+        def read(self, size=-1):
+            self._reads += 1
+            if self._reads > 1:
+                raise OSError("forced staging failure")
+            return super().read(max(1, min(size, len(model) // 2)))
+
+    with pytest.raises(OSError, match="forced staging failure"):
+        mhr_body._stage_model(FailingSource(model), target)
+    assert not list(tmp_path.glob(f".{target.name}.staging-*.tmp"))
 
 
 def test_mhr_post_publication_failure_reports_both_possible_paths(
@@ -384,6 +441,63 @@ def test_descriptor_redirection_is_rejected(tmp_path, monkeypatch):
         inspect_pinned_file(source, expected, label="redirected source")
 
 
+def test_private_tree_cleanup_removes_only_owned_tree(tmp_path):
+    stage, seal = make_private_stage(tmp_path, prefix=".cleanup-")
+    nested = stage / ".cache" / "metadata"
+    nested.mkdir(parents=True)
+    (stage / "model.ckpt").write_bytes(b"model")
+    (nested / "record").write_bytes(b"metadata")
+
+    assert cleanup_private_tree(
+        stage,
+        expected_object=seal,
+        label="test private tree",
+    )
+    assert not os.path.lexists(stage)
+
+
+def test_private_tree_cleanup_rejects_replaced_root(tmp_path):
+    stage, seal = make_private_stage(tmp_path, prefix=".cleanup-")
+    displaced = tmp_path / "displaced"
+    stage.rename(displaced)
+    stage.mkdir()
+    valuable = stage / "valuable"
+    valuable.write_bytes(b"user data")
+
+    with pytest.raises(AssetIntegrityError, match="replaced"):
+        cleanup_private_tree(
+            stage,
+            expected_object=seal,
+            label="test private tree",
+        )
+    assert valuable.read_bytes() == b"user data"
+
+
+def test_private_file_cleanup_rejects_replaced_path(tmp_path):
+    stage = tmp_path / ".staging-file"
+    stage.write_bytes(b"owned")
+    before = os.lstat(stage)
+    seal = FileSeal(
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_nlink,
+    )
+    displaced = tmp_path / "displaced"
+    stage.rename(displaced)
+    stage.write_bytes(b"user data")
+
+    with pytest.raises(AssetIntegrityError, match="replaced"):
+        cleanup_private_file(
+            stage,
+            expected_object=seal,
+            label="test private file",
+        )
+    assert stage.read_bytes() == b"user data"
+
+
 def test_create_only_publication_preserves_existing_destination(tmp_path):
     ensure_unlinked_directory(tmp_path, label="test parent")
     source = tmp_path / "staged"
@@ -603,6 +717,16 @@ def _fake_hub(
                 ),
             )
         calls.append(("download", kwargs))
+        if kwargs.get("local_dir") is not None:
+            destination = Path(kwargs["local_dir"]) / kwargs["filename"]
+            destination.write_bytes((sources / kwargs["filename"]).read_bytes())
+            metadata = Path(kwargs["local_dir"]) / ".cache" / "huggingface"
+            metadata.mkdir(parents=True, exist_ok=True)
+            (metadata / f"{kwargs['filename']}.metadata").write_text(
+                "test metadata",
+                encoding="utf-8",
+            )
+            return str(destination)
         return str(sources / kwargs["filename"])
 
     return types.SimpleNamespace(HfApi=HfApi, hf_hub_download=download)
@@ -640,6 +764,10 @@ def test_acquire_uses_exact_revision_and_publishes_allowlisted_view(
     assert max(dry_run_indices) < min(download_indices)
     assert all(call["revision"] == pin.revision for call in downloads)
     assert all(call["local_files_only"] is False for call in downloads)
+    assert all(
+        Path(call["local_dir"]).parent == identity.root.parent for call in downloads
+    )
+    assert not (identity.root / ".cache").exists()
 
 
 def test_invalid_concurrent_snapshot_winner_reports_owned_stage(
@@ -673,6 +801,79 @@ def test_invalid_concurrent_snapshot_winner_reports_owned_stage(
     assert "invalid winner" in caplog.text
 
 
+def test_valid_concurrent_snapshot_winner_cleans_losing_stage(
+    tmp_path, monkeypatch, tiny_sam_pin
+):
+    pin, payloads = tiny_sam_pin
+    sources = tmp_path / "hub-cache"
+    sources.mkdir()
+    for name, payload in payloads.items():
+        (sources / name).write_bytes(payload)
+    calls = []
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hub(pin, sources, calls))
+
+    def lose_publication(source, destination, **_kwargs):
+        destination.mkdir()
+        for entry in source.iterdir():
+            (destination / entry.name).write_bytes(entry.read_bytes())
+        raise FileExistsError("concurrent winner")
+
+    monkeypatch.setattr(snapshot, "atomic_rename_create_only", lose_publication)
+    cache = tmp_path / "managed"
+    identity = snapshot.acquire_sam_snapshot("d3", cache_root=cache)
+
+    assert identity.root == cache / pin.revision
+    assert not list(cache.glob(f".{pin.revision}.staging-*"))
+
+
+def test_snapshot_refuses_stale_recovery_before_hub_import(
+    tmp_path, monkeypatch, tiny_sam_pin
+):
+    pin, _payloads = tiny_sam_pin
+    cache = tmp_path / "managed"
+    cache.mkdir()
+    recovery = cache / f".{pin.revision}.staging-recovery"
+    recovery.mkdir()
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
+
+    with pytest.raises(AssetIntegrityError, match="recovery data.*cannot accumulate"):
+        snapshot.acquire_sam_snapshot("d3", cache_root=cache)
+
+
+def test_snapshot_failed_download_cleans_private_stage(
+    tmp_path, monkeypatch, tiny_sam_pin
+):
+    pin, payloads = tiny_sam_pin
+    sources = tmp_path / "hub-cache"
+    sources.mkdir()
+    for name, payload in payloads.items():
+        (sources / name).write_bytes(payload)
+    calls = []
+    hub = _fake_hub(pin, sources, calls)
+    real_download = hub.hf_hub_download
+
+    def fail_model(**kwargs):
+        if not kwargs.get("dry_run") and kwargs["filename"] == "model.ckpt":
+            raise OSError("forced download failure")
+        return real_download(**kwargs)
+
+    hub.hf_hub_download = fail_model
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    cache = tmp_path / "managed"
+
+    with pytest.raises(RuntimeError, match="forced download failure"):
+        snapshot.acquire_sam_snapshot("d3", cache_root=cache)
+    assert not list(cache.glob(f".{pin.revision}.staging-*"))
+
+
+def test_snapshot_missing_hub_dependency_has_install_command(
+    tmp_path, monkeypatch, tiny_sam_pin
+):
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
+    with pytest.raises(ImportError, match=r'pip install "libreyolo\[hf\]"'):
+        snapshot.acquire_sam_snapshot("d3", cache_root=tmp_path / "managed")
+
+
 def test_post_publication_validation_failure_reports_both_possible_paths(
     tmp_path, monkeypatch, caplog, tiny_sam_pin
 ):
@@ -703,7 +904,7 @@ def test_post_publication_validation_failure_reports_both_possible_paths(
     assert destination.is_dir()
     assert "staging path" in caplog.text
     assert str(destination) in caplog.text
-    assert "neither path was deleted" in caplog.text
+    assert "verified recovery" in caplog.text
 
 
 def test_transport_urls_and_revisions_are_immutable():

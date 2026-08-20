@@ -146,6 +146,21 @@ three runtime objects already present in the local Hub cache. Both paths materia
 cache view and hash every local byte. An explicit local checkpoint path must
 satisfy the same byte contract.
 
+Online acquisition downloads directly into the private same-filesystem staging
+directory, removes Hugging Face's small local metadata tree after strict link
+checks, and therefore does not retain a second multi-gigabyte copy in the
+shared Hub cache. An incomplete private stage is removed when its filesystem
+identity is still the one this process created. A fully verified stage is kept
+only when publication fails or an invalid concurrent destination wins; a later
+retry refuses to create another stage until the recovery path is inspected and
+removed, so repeated failures cannot silently accumulate full checkpoints.
+
+Legacy LibreYOLO caches are the migration exception. Their runtime files are
+copied into the current revision-keyed view and retained because those paths
+predate this transport and are user-owned. The migration warning names the
+three old files and their storage cost so the user can remove them after
+validating the new cache.
+
 The upstream SAM 3D Body constructor accepts checkpoint and MHR pathnames only;
 it has no descriptor-based loading API. LibreYOLO therefore validates the full
 snapshot and MHR file immediately before construction, validates both again

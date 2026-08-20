@@ -45,6 +45,7 @@ from ._assets import (
     FileSeal,
     PinnedFile,
     atomic_rename_create_only,
+    cleanup_private_file,
     ensure_unlinked_directory,
     inspect_pinned_file,
     open_verified_file,
@@ -230,6 +231,19 @@ def inspect_mhr_model(path: str | Path) -> FileIdentity:
     return identity
 
 
+def _mhr_staging_recoveries(target: Path) -> tuple[Path, ...]:
+    prefix = f".{target.name}.staging-"
+    try:
+        entries = list(os.scandir(target.parent))
+    except OSError as exc:
+        raise AssetIntegrityError(
+            f"could not inspect MHR cache directory: {target.parent}"
+        ) from exc
+    return tuple(
+        target.parent / entry.name for entry in entries if entry.name.startswith(prefix)
+    )
+
+
 def ensure_mhr_model(path: str | Path | None = None) -> Path:
     """Return a local MHR model path, downloading the release asset if absent.
 
@@ -245,6 +259,14 @@ def ensure_mhr_model(path: str | Path | None = None) -> Path:
         target.parent,
         label="MHR cache directory",
     )
+    recoveries = _mhr_staging_recoveries(target)
+    if recoveries:
+        paths = ", ".join(str(path) for path in recoveries)
+        raise AssetIntegrityError(
+            "A previous MHR acquisition left private recovery data. Inspect and "
+            "remove it before retrying so 700 MB staging files cannot accumulate: "
+            f"{paths}"
+        )
     logger.info(
         "Downloading the pinned MHR %s body model (Apache 2.0, ~700 MB) from %s",
         MHR_RELEASE,
@@ -286,11 +308,19 @@ def ensure_mhr_model(path: str | Path | None = None) -> Path:
                 target,
             )
             raise
-        logger.warning(
-            "A concurrent MHR download won publication; conservative cleanup left "
-            "the verified staging file at %s",
-            staged,
-        )
+        try:
+            cleanup_private_file(
+                staged,
+                expected_object=staged_seal,
+                label="losing MHR staging file",
+            )
+        except AssetIntegrityError:
+            logger.warning(
+                "A concurrent MHR download won publication, but its losing staging "
+                "file could not be cleaned safely: %s",
+                staged,
+                exc_info=True,
+            )
         return target
     except BaseException:
         logger.warning(
@@ -465,6 +495,15 @@ def _stage_model(source: BinaryIO, target: Path) -> tuple[Path, FileSeal]:
         suffix=".tmp",
     )
     staged = Path(temporary_name)
+    created_identity = os.fstat(descriptor)
+    created_seal = FileSeal(
+        device=created_identity.st_dev,
+        inode=created_identity.st_ino,
+        mode=created_identity.st_mode,
+        size=created_identity.st_size,
+        mtime_ns=created_identity.st_mtime_ns,
+        links=getattr(created_identity, "st_nlink", 1),
+    )
     digest = hashlib.sha256()
     total = 0
     try:
@@ -487,19 +526,34 @@ def _stage_model(source: BinaryIO, target: Path) -> tuple[Path, FileSeal]:
             os.fsync(destination.fileno())
             staged_identity = os.fstat(destination.fileno())
     except BaseException:
-        logger.warning(
-            "MHR staging failed; the partial file was left at %s so cleanup cannot "
-            "delete a concurrently replaced path",
-            staged,
-        )
+        try:
+            cleanup_private_file(
+                staged,
+                expected_object=created_seal,
+                label="incomplete MHR staging file",
+            )
+        except AssetIntegrityError:
+            logger.warning(
+                "MHR staging failed and its partial file could not be cleaned safely: %s",
+                staged,
+                exc_info=True,
+            )
         raise
     observed = digest.hexdigest()
     if total != MHR_MODEL_FILE.size or observed != MHR_MODEL_FILE.sha256:
-        logger.warning(
-            "MHR staging verification failed; the file was left at %s so cleanup "
-            "cannot delete a concurrently replaced path",
-            staged,
-        )
+        try:
+            cleanup_private_file(
+                staged,
+                expected_object=created_seal,
+                label="invalid MHR staging file",
+            )
+        except AssetIntegrityError:
+            logger.warning(
+                "MHR staging verification failed and its private file could not be "
+                "cleaned safely: %s",
+                staged,
+                exc_info=True,
+            )
         raise AssetIntegrityError("verified MHR stream changed before publication")
     return staged, FileSeal(
         device=staged_identity.st_dev,

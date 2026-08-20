@@ -603,6 +603,146 @@ def make_private_stage(parent: Path, *, prefix: str) -> tuple[Path, FileSeal]:
     return path, require_unlinked_directory(path, label="asset staging directory")
 
 
+def cleanup_private_file(
+    path: Path,
+    *,
+    expected_object: FileSeal,
+    label: str,
+) -> bool:
+    """Remove a process-created private file if it is still the same object.
+
+    Returns ``False`` when publication already moved the pathname. Cleanup is
+    deliberately limited to unpredictable, mode-0600 staging names created by
+    this process; callers must never use it for user-supplied cache entries.
+    """
+
+    try:
+        observed = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise AssetIntegrityError(f"could not inspect {label}: {path}") from exc
+    if (
+        _is_link_or_reparse(path, observed)
+        or not stat.S_ISREG(observed.st_mode)
+        or not _same_object(expected_object, observed)
+    ):
+        raise AssetIntegrityError(
+            f"refusing to clean a replaced or non-regular {label}: {path}"
+        )
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise AssetIntegrityError(f"could not clean {label}: {path}") from exc
+    return True
+
+
+def _collect_private_tree(
+    root: Path,
+    *,
+    label: str,
+) -> tuple[list[tuple[Path, FileSeal]], list[tuple[Path, FileSeal]]]:
+    files: list[tuple[Path, FileSeal]] = []
+    directories: list[tuple[Path, FileSeal]] = []
+    try:
+        entries = list(os.scandir(root))
+    except OSError as exc:
+        raise AssetIntegrityError(f"could not inspect {label}: {root}") from exc
+    for entry in entries:
+        path = root / entry.name
+        try:
+            observed = os.lstat(path)
+        except OSError as exc:
+            raise AssetIntegrityError(f"could not inspect {label}: {path}") from exc
+        if _is_link_or_reparse(path, observed):
+            raise AssetIntegrityError(
+                f"refusing to clean linked or reparsed {label}: {path}"
+            )
+        if stat.S_ISDIR(observed.st_mode):
+            nested_files, nested_directories = _collect_private_tree(
+                path,
+                label=label,
+            )
+            files.extend(nested_files)
+            directories.extend(nested_directories)
+            directories.append((path, _seal(observed)))
+        elif stat.S_ISREG(observed.st_mode) and getattr(observed, "st_nlink", 1) == 1:
+            files.append((path, _seal(observed)))
+        else:
+            raise AssetIntegrityError(
+                f"refusing to clean non-private {label} entry: {path}"
+            )
+    return files, directories
+
+
+def cleanup_private_tree(
+    path: Path,
+    *,
+    expected_object: FileSeal,
+    label: str,
+) -> bool:
+    """Remove a process-created private tree after strict link/object checks.
+
+    The tree is scanned before deletion and every entry is revalidated at the
+    point of removal. Returns ``False`` when publication already moved the root.
+    As with asset loading, concurrent mutation by another same-user process is
+    outside the supported local-filesystem trust boundary.
+    """
+
+    try:
+        observed_root = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise AssetIntegrityError(f"could not inspect {label}: {path}") from exc
+    if (
+        _is_link_or_reparse(path, observed_root)
+        or not stat.S_ISDIR(observed_root.st_mode)
+        or not _same_object(expected_object, observed_root)
+    ):
+        raise AssetIntegrityError(
+            f"refusing to clean a replaced or non-directory {label}: {path}"
+        )
+
+    files, directories = _collect_private_tree(path, label=label)
+    try:
+        for file_path, expected in files:
+            current = os.lstat(file_path)
+            if (
+                _is_link_or_reparse(file_path, current)
+                or not stat.S_ISREG(current.st_mode)
+                or not _same_seal(expected, current)
+            ):
+                raise AssetIntegrityError(
+                    f"refusing to clean changed {label} entry: {file_path}"
+                )
+            file_path.unlink()
+        for directory, expected in directories:
+            current = os.lstat(directory)
+            if (
+                _is_link_or_reparse(directory, current)
+                or not stat.S_ISDIR(current.st_mode)
+                or not _same_object(expected, current)
+            ):
+                raise AssetIntegrityError(
+                    f"refusing to clean changed {label} directory: {directory}"
+                )
+            directory.rmdir()
+        final_root = os.lstat(path)
+        if (
+            _is_link_or_reparse(path, final_root)
+            or not stat.S_ISDIR(final_root.st_mode)
+            or not _same_object(expected_object, final_root)
+        ):
+            raise AssetIntegrityError(f"refusing to clean changed {label}: {path}")
+        path.rmdir()
+    except AssetIntegrityError:
+        raise
+    except OSError as exc:
+        raise AssetIntegrityError(f"could not clean {label}: {path}") from exc
+    return True
+
+
 __all__ = [
     "AssetIntegrityError",
     "FileIdentity",
@@ -610,6 +750,8 @@ __all__ = [
     "PinnedFile",
     "atomic_rename_create_only",
     "canonical_json_bytes",
+    "cleanup_private_file",
+    "cleanup_private_tree",
     "copy_pinned_source",
     "ensure_unlinked_directory",
     "inspect_pinned_file",

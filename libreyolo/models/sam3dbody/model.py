@@ -133,6 +133,8 @@ class LibreSAM3DBody(BaseModel):
                 f"  git -C sam-3d-body checkout --detach {UPSTREAM_REVISION}\n"
                 "  pip install roma einops yacs omegaconf braceexpand "
                 "pytorch-lightning timm\n\n"
+                "For automatic checkpoint acquisition, also install\n"
+                '  pip install "libreyolo[hf]"\n\n'
                 "Then point LibreYOLO at the clone, either with\n"
                 "  LibreSAM3DBody(..., sam_3d_body_path='/path/to/sam-3d-body')\n"
                 "or by setting the SAM_3D_BODY_PATH environment variable.\n\n"
