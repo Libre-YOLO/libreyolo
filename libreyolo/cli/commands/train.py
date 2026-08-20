@@ -503,6 +503,29 @@ def train_cmd(
 
     model_path = resolve_model_or_exit(out, model)
     family = detect_family_from_model_ref(model, model_path, inspect_checkpoint=dry_run)
+
+    if single_cls:
+        # Gate before the model is constructed: building it can fetch weights
+        # (an explicit task derives a task-suffixed checkpoint name), and a
+        # rejected combination must not pay for a download first.
+        from libreyolo.models.registry import group_of
+
+        selected_task = normalized_task
+        model_cls = get_model_class(family) if family is not None else None
+        if selected_task is None and model_cls is not None:
+            selected_task = (
+                model_cls.detect_task_from_filename(Path(model_path).name)
+                or model_cls.DEFAULT_TASK
+            )
+        group = group_of(family) if family is not None else None
+        if group not in {"g0", "g1"} or selected_task != "detect":
+            exit_with_error(
+                out,
+                "config_unsupported",
+                "single_cls=True is supported only for G0/G1 detection models; "
+                f"got family={family!r} ({group}), task={selected_task!r}.",
+            )
+
     loaded_model = None
     train_pretrained = pretrained
     if family is None and not dry_run:
@@ -658,25 +681,6 @@ def train_cmd(
                 "RT-DETR v1/v2/v4, EC, ConvNeXt) or remove --lora."
             ),
         )
-
-    if params["single_cls"]:
-        from libreyolo.models.registry import group_of
-
-        selected_task = normalized_task or getattr(loaded_model, "task", None)
-        model_cls = get_model_class(family) if family is not None else None
-        if selected_task is None and model_cls is not None:
-            selected_task = (
-                model_cls.detect_task_from_filename(Path(model_path).name)
-                or model_cls.DEFAULT_TASK
-            )
-        group = group_of(family) if family is not None else None
-        if group not in {"g0", "g1"} or selected_task != "detect":
-            exit_with_error(
-                out,
-                "config_unsupported",
-                "single_cls=True is supported only for G0/G1 detection models; "
-                f"got family={family!r} ({group}), task={selected_task!r}.",
-            )
 
     # Warn when explicitly-set params are ignored by the selected family
     # (spec-driven; see libreyolo/data/augment/spec.py).

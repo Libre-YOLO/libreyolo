@@ -216,8 +216,11 @@ def test_train_dry_run_single_cls_is_visible_for_g0_detectors(model):
 @pytest.mark.parametrize(
     "args",
     [
+        # Unsupported family (G2), detect task.
         ["model=LibreYOLOXn.pt", "single_cls=true"],
-        ["model=LibreRFDETRn-seg.pt", "single_cls=true"],
+        # Supported family, unsupported task. Uses a published checkpoint plus
+        # an explicit task so the PR gate never needs to fetch weights.
+        ["model=LibreRFDETRm.pt", "task=segment", "single_cls=true"],
     ],
 )
 def test_train_dry_run_rejects_single_cls_outside_g0_g1_detection(args):
