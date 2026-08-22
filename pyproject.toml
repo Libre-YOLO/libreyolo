@@ -30,6 +30,10 @@ dependencies = [
     "click>=8.0.0",
     "safetensors>=0.4.0",
     "scipy>=1.7.0",
+    # Ephemeral automatic-DDP job transport. Standard pickle validation still
+    # rejects lambdas/closures; cloudpickle carries transportable __main__
+    # callbacks without importing and re-running the user's training script.
+    "cloudpickle>=3.0.0",
 ]
 
 [dependency-groups]

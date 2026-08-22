@@ -67,7 +67,7 @@ class TrainConfig:
     # Single device or multi-device spec. Accepts:
     #   - "auto" / "" → auto-pick (cuda → mps → cpu)
     #   - "cpu", "mps", "0", "cuda:0", 0 → single device
-    #   - [0, 1] or "0,1" → multi-GPU, requires torchrun launch
+    #   - [0, 1] or "0,1" → automatic local multi-GPU DDP (torchrun also works)
     device: Union[str, int, List[int]] = "auto"
     # SyncBatchNorm across ranks under DDP. Off here; BatchNorm-heavy CNN
     # families (e.g. yolo9) override to True so BN statistics are computed

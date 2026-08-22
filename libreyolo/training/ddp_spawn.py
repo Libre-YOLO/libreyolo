@@ -5,12 +5,13 @@ is given and we're NOT in a torchrun environment.  spawn_for_model() handles:
 
   1. Saving model weights to a temp file.
   2. Resolving batch=-1 via autobatch (single-GPU probe, before spawning).
-  3. Spawning DDP workers via mp.spawn.
+  3. Launching the private DDP coordinator, which owns mp.spawn.
   4. Loading the best checkpoint back into the caller's model instance.
 
-The generic worker (_libreyolo_ddp_worker) re-imports the correct model class
-using module/class info packed into init_kw, rebuilds the model from saved
-weights, and calls model.train(**train_kw) — which falls through to the
+The generic worker (_libreyolo_ddp_worker) resolves the correct model class
+from module/class info packed into init_kw, or from the by-value class carried
+for a guarded script's ``__main__`` model. It rebuilds the model from saved
+weights and calls model.train(**train_kw) — which falls through to the
 single-device path because has_torchrun_env() returns True inside the spawned
 worker (RANK env var is set).
 """
@@ -59,9 +60,11 @@ def _libreyolo_ddp_worker(
         torch.cuda.set_device(rank)
 
     init_kw = dict(init_kw)  # copy — don't mutate caller's dict
+    cls = init_kw.pop("_class_object", None)
     module_path = init_kw.pop("_module")
     class_name = init_kw.pop("_class")
-    cls = getattr(importlib.import_module(module_path), class_name)
+    if cls is None:
+        cls = getattr(importlib.import_module(module_path), class_name)
 
     model = cls(weights_path, **init_kw)
     try:
@@ -155,6 +158,12 @@ def _build_init_kw(model_instance: Any) -> dict:
         "_class": cls.__name__,
         "device": "auto",
     }
+    if cls.__module__ == "__main__":
+        # Guarded scripts may define their model wrapper at top level. The
+        # coordinator deliberately does not re-import that script, so carry
+        # just this dynamic class by value while normal library classes retain
+        # the smaller and more stable import-by-name path.
+        kw["_class_object"] = cls
     for attr in (
         "size",
         "nb_classes",

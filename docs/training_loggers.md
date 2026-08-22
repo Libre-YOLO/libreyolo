@@ -38,7 +38,16 @@ model.train(data="coco8.yaml", epochs=10, callbacks=on_epoch)
 
 Callbacks fire on rank 0 only under DDP. For multi-GPU spawn
 (`device="0,1"`), callbacks must be picklable: define them as a
-module-level class, not a closure or lambda.
+module-level function or class, not a closure or lambda.
+Automatic spawn works from both guarded and ordinary unguarded top-level
+Python scripts. Guarded-script model classes and callbacks are transported to
+the ranks, but arbitrary top-level runtime side effects are not replayed there.
+Put code needed by every rank in importable model or trainer execution paths
+and key it from the rank environment variables instead of relying on a guarded
+script to run again in each rank. A rare callback that standard pickle can
+reference but cannot be transported by value (for example, one that captures a
+write-only file handle) uses the guarded-script compatibility launcher and
+emits a warning; keep that call under the `__main__` guard.
 
 ## Built-in loggers
 
