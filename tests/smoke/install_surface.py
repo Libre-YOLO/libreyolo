@@ -84,7 +84,7 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
         JOB_PROTOCOL_VERSION,
     )
 
-    if JOB_PROTOCOL != "libreyolo.ddp.local-job" or JOB_PROTOCOL_VERSION != 1:
+    if JOB_PROTOCOL != "libreyolo.ddp.local-job" or JOB_PROTOCOL_VERSION != 2:
         raise AssertionError("Automatic-DDP coordinator protocol is unavailable")
     if FaceGallery is not Gallery:
         raise AssertionError("FaceGallery did not resolve to the Gallery alias")
