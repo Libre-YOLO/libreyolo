@@ -25,7 +25,7 @@ def parse_yolo_label_line(
     line: str,
     img_w: int,
     img_h: int,
-    num_classes: int,
+    num_classes: Optional[int],
     label_path: Optional[Path] = None,
     return_segment: bool = False,
     single_cls: bool = False,
@@ -37,7 +37,8 @@ def parse_yolo_label_line(
         line: Label line from .txt file
         img_w: Image width in pixels
         img_h: Image height in pixels
-        num_classes: Total number of classes
+        num_classes: Total number of classes, or ``None`` when the caller does
+            not have the dataset class count available.
         label_path: Path to label file (for warnings)
         single_cls: Remap non-negative class ids to class 0 before validation.
 
@@ -64,8 +65,12 @@ def parse_yolo_label_line(
         if len(parts) > 5:
             # Segmentation format: derive bbox from polygon vertices.
             coords = [float(p) for p in parts[1:]]
+            if len(coords) < 6 or len(coords) % 2:
+                raise ValueError("polygon rows require at least 3 coordinate pairs")
+            if not np.isfinite(coords).all():
+                raise ValueError("label coordinates must be finite")
             cx, cy, bw, bh = polygon_to_cxcywh(coords)
-            if return_segment and len(coords) >= 6:
+            if return_segment:
                 segment = []
                 for x, y in zip(coords[0::2], coords[1::2]):
                     segment.extend(
@@ -80,6 +85,8 @@ def parse_yolo_label_line(
             cy = float(parts[2])
             bw = float(parts[3])
             bh = float(parts[4])
+            if not np.isfinite((cx, cy, bw, bh)).all():
+                raise ValueError("label coordinates must be finite")
     except ValueError as e:
         if label_path:
             warnings.warn(
@@ -91,9 +98,12 @@ def parse_yolo_label_line(
         class_id = 0
 
     # Validate class ID
-    if class_id < 0 or class_id >= num_classes:
+    if class_id < 0 or (num_classes is not None and class_id >= num_classes):
+        valid_range = (
+            f"[0, {num_classes - 1}]" if num_classes is not None else "non-negative"
+        )
         warnings.warn(
-            f"Class ID {class_id} out of range [0, {num_classes - 1}] in {label_path}. Skipping."
+            f"Class ID {class_id} out of range {valid_range} in {label_path}. Skipping."
         )
         return None
 
