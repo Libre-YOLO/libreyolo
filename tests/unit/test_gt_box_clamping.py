@@ -1,10 +1,9 @@
-"""Ground-truth boxes must be clamped identically in training and validation (#814).
+"""YOLO ground-truth geometry must match in training and validation (#814).
 
 The validation parser (``data/yolo_coco_api.py``) has always clamped boxes to
 the image and dropped the ones left with no area. The YOLO txt training parser
 did not, so a label crossing the border produced one box for training and a
-different one for scoring. The COCO training branch already clamped, which made
-the txt path the odd one out among all three.
+different one for scoring.
 """
 
 from __future__ import annotations
@@ -97,9 +96,9 @@ def test_dropping_a_row_keeps_segments_aligned_with_labels(tmp_path):
     _make_dataset(
         tmp_path,
         [
-            "0 -0.50 0.50 0.20 0.20",  # fully outside, dropped
-            "0 0.30 0.30 0.20 0.20",   # kept
-            "0 0.70 0.70 0.20 0.20",   # kept
+            "0 -0.60 0.40 -0.40 0.40 -0.40 0.60 -0.60 0.60",  # dropped
+            "0 0.30 0.30 0.20 0.20",  # kept
+            "0 0.70 0.70 1.10 0.70 1.10 1.10 0.70 1.10",  # clipped
         ],
     )
 
@@ -122,3 +121,84 @@ def test_dropping_a_row_keeps_segments_aligned_with_labels(tmp_path):
         assert ring[:, 1].min() >= box[1] - 1e-3
         assert ring[:, 0].max() <= box[2] + 1e-3
         assert ring[:, 1].max() <= box[3] + 1e-3
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        "0 nan nan 0.50 0.50",
+        "0 0.50 0.50 inf 0.50",
+        "0 nan 0.10 0.50 0.10 0.50 0.50",
+    ],
+)
+def test_non_finite_coordinates_are_dropped_by_both_paths(tmp_path, row):
+    """Corrupt numeric values must never become full-image targets."""
+    yaml_path = _make_dataset(tmp_path, [row])
+
+    with pytest.warns(UserWarning, match="coordinates must be finite"):
+        assert len(_train_boxes(tmp_path)) == 0
+    with pytest.warns(UserWarning, match="coordinates must be finite"):
+        assert len(_val_boxes(yaml_path)) == 0
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        "0 0.10 0.10 0.90 0.10 0.90",  # odd coordinate count
+        "0 0.10 0.10 0.90 0.10 0.90 0.90 0.10",  # odd coordinate count
+    ],
+)
+def test_malformed_polygons_are_dropped_by_both_paths(tmp_path, row):
+    yaml_path = _make_dataset(tmp_path, [row])
+
+    with pytest.warns(UserWarning, match="coordinate pairs"):
+        assert len(_train_boxes(tmp_path)) == 0
+    with pytest.warns(UserWarning, match="coordinate pairs"):
+        assert len(_val_boxes(yaml_path)) == 0
+
+
+def test_invalid_class_is_dropped_when_training_knows_class_count(tmp_path):
+    yaml_path = _make_dataset(tmp_path, ["1 0.50 0.50 0.20 0.20"], nc=1)
+
+    with pytest.warns(UserWarning, match="out of range"):
+        assert len(_train_boxes(tmp_path, num_classes=1)) == 0
+    with pytest.warns(UserWarning, match="out of range"):
+        assert len(_val_boxes(yaml_path)) == 0
+
+
+def test_clipped_polygon_reaches_flagship_transforms_with_visible_box(tmp_path):
+    """YOLO9 and RF-DETR must receive the same clipped object extent."""
+    from libreyolo.data.augment.rfdetr import RFDETRDetTransform
+    from libreyolo.data.augment.yolo9 import YOLO9TrainTransform
+
+    _make_dataset(
+        tmp_path,
+        ["0 -0.12 -0.05 0.30 -0.02 0.34 0.40 -0.08 0.36"],
+    )
+    targets = _train_boxes(tmp_path)
+    image = np.zeros((IMG, IMG, 3), dtype=np.uint8)
+
+    yolo9 = YOLO9TrainTransform(
+        max_labels=2,
+        flip_prob=0.0,
+        hsv_prob=0.0,
+    )
+    _, yolo9_targets = yolo9(image.copy(), targets.copy(), (IMG, IMG))
+    np.testing.assert_allclose(
+        yolo9_targets[0],
+        [0.0, 0.0, 0.0, 0.34, 0.40],
+        atol=1e-5,
+    )
+
+    rfdetr = RFDETRDetTransform(
+        max_labels=2,
+        flip_prob=0.0,
+        imgsz=IMG,
+        imagenet_norm=False,
+    )
+    _, rfdetr_targets = rfdetr(image.copy(), targets.copy(), (IMG, IMG))
+    np.testing.assert_allclose(
+        rfdetr_targets[0],
+        [0.0, 0.17 * IMG, 0.20 * IMG, 0.34 * IMG, 0.40 * IMG],
+        atol=1e-4,
+    )

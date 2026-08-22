@@ -22,7 +22,7 @@ from PIL import Image, UnidentifiedImageError
 from tqdm import tqdm
 
 from .cache import ImageCacheMixin
-from .utils import polygon_to_cxcywh
+from .yolo_coco_api import parse_yolo_label_line
 from .obb import (
     canonicalize_xywhr,
     corners_to_xywhr,
@@ -35,28 +35,12 @@ from libreyolo.utils.image_size import imgsz_to_hw
 logger = logging.getLogger(__name__)
 
 
-def _yolo_coords_to_rings(
-    coords: List[float], width: int, height: int
-) -> List[np.ndarray]:
-    """Convert one normalized YOLO polygon row to the shared ring contract."""
-    ring = np.array(coords, dtype=np.float32).reshape(-1, 2)
-    ring[:, 0] *= width
-    ring[:, 1] *= height
-    return [ring]
-
-
-def _yolo_box_to_ring(cx: float, cy: float, w: float, h: float, width: int, height: int) -> List[np.ndarray]:
-    """Convert one normalized YOLO bbox row to a rectangular ring."""
-    x1 = (cx - w / 2) * width
-    y1 = (cy - h / 2) * height
-    x2 = (cx + w / 2) * width
-    y2 = (cy + h / 2) * height
+def _xyxy_to_ring(x1: float, y1: float, x2: float, y2: float) -> List[np.ndarray]:
+    """Convert one pixel-space box to the shared ring contract."""
     ring = np.array(
         [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
         dtype=np.float32,
     )
-    ring[:, 0] = np.clip(ring[:, 0], 0.0, float(width))
-    ring[:, 1] = np.clip(ring[:, 1], 0.0, float(height))
     return [ring]
 
 
@@ -460,43 +444,36 @@ class YOLODataset(ImageCacheMixin, Dataset):
                         if self.single_cls:
                             cls_id = 0
                         labels.append([*proxy.tolist(), cls_id, float(xywhr[4])])
-                    elif len(parts) >= 5:
-                        cls_id = int(parts[0])
-                        if self.single_cls and cls_id >= 0:
-                            cls_id = 0
-
-                        if len(parts) > 5:
-                            # Segmentation format: derive bbox from polygon vertices
-                            coords = [float(p) for p in parts[1:]]
-                            cx, cy, w, h = polygon_to_cxcywh(coords)
-                            if self.load_segments:
-                                segments.append(_yolo_coords_to_rings(coords, width, height))
-                        else:
-                            cx, cy, w, h = map(float, parts[1:5])
-                            if self.load_segments:
-                                segments.append(_yolo_box_to_ring(cx, cy, w, h, width, height))
-
-                        # Convert normalized xywh to pixel xyxy, then clamp to
-                        # the image. Labels can extend past the border: a
-                        # polygon tracing an object cut off at the frame edge,
-                        # or simply an out-of-range box row. The pixels outside
-                        # do not exist, so the visible extent is the honest
-                        # target. The COCO branch below and the validation
-                        # parser (data/yolo_coco_api.py) both already clamp and
-                        # drop empties; keeping this path consistent means
-                        # training and evaluation score the same box (#814).
-                        x1 = max(0.0, (cx - w / 2) * width)
-                        y1 = max(0.0, (cy - h / 2) * height)
-                        x2 = min(float(width), (cx + w / 2) * width)
-                        y2 = min(float(height), (cy + h / 2) * height)
-
-                        if x2 <= x1 or y2 <= y1:
-                            # Entirely outside the image, or degenerate. Drop
-                            # the paired segment too, or segments and labels
-                            # fall out of step for every later row.
-                            if self.load_segments and segments:
-                                segments.pop()
+                    else:
+                        # Use the validation parser as the single source of
+                        # truth for YOLO boxes and polygons. It derives polygon
+                        # extents, rejects malformed/non-finite rows, clips both
+                        # endpoints to the image, and drops boxes with no
+                        # visible area. Training and scoring therefore consume
+                        # identical geometry (#814).
+                        parsed = parse_yolo_label_line(
+                            line,
+                            width,
+                            height,
+                            self.num_classes,
+                            label_file,
+                            return_segment=self.load_segments,
+                            single_cls=self.single_cls,
+                        )
+                        if parsed is None:
                             continue
+
+                        if self.load_segments:
+                            cls_id, x1, y1, x2, y2, _, segment = parsed
+                            if segment:
+                                ring = np.asarray(segment, dtype=np.float32).reshape(
+                                    -1, 2
+                                )
+                                segments.append([ring])
+                            else:
+                                segments.append(_xyxy_to_ring(x1, y1, x2, y2))
+                        else:
+                            cls_id, x1, y1, x2, y2, _ = parsed
 
                         labels.append([x1, y1, x2, y2, cls_id])
 
