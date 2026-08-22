@@ -55,6 +55,7 @@ def _load_json_stdout(result: subprocess.CompletedProcess[str]) -> dict[str, Any
 
 
 def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
+    import cloudpickle
     import libreyolo
     from libreyolo import (
         EdgeMap,
@@ -72,6 +73,19 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
         raise AssertionError("LibreYOLO import did not resolve to a callable")
     if Results.__name__ != "Results":
         raise AssertionError("Results import did not resolve correctly")
+    if not callable(cloudpickle.dumps):
+        raise AssertionError("cloudpickle DDP transport dependency is unavailable")
+
+    # This private file is launched by its resolved packaged path during
+    # automatic DDP, so it must be present in wheels and sdists, not only
+    # checkouts.
+    from libreyolo.training._ddp_coordinator import (
+        JOB_PROTOCOL,
+        JOB_PROTOCOL_VERSION,
+    )
+
+    if JOB_PROTOCOL != "libreyolo.ddp.local-job" or JOB_PROTOCOL_VERSION != 1:
+        raise AssertionError("Automatic-DDP coordinator protocol is unavailable")
     if FaceGallery is not Gallery:
         raise AssertionError("FaceGallery did not resolve to the Gallery alias")
     if "Gallery" not in libreyolo.__all__ or "FaceGallery" not in libreyolo.__all__:

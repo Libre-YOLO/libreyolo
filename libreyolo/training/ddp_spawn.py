@@ -5,7 +5,7 @@ is given and we're NOT in a torchrun environment.  spawn_for_model() handles:
 
   1. Saving model weights to a temp file.
   2. Resolving batch=-1 via autobatch (single-GPU probe, before spawning).
-  3. Spawning DDP workers via mp.spawn.
+  3. Launching the private DDP coordinator, which owns mp.spawn.
   4. Loading the best checkpoint back into the caller's model instance.
 
 The generic worker (_libreyolo_ddp_worker) re-imports the correct model class

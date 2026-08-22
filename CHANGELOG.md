@@ -33,6 +33,10 @@ before 1.4.0 are documented in the
 
 ### Fixed
 
+- **Guardless Python multi-GPU launch (#817).**
+  `model.train(device=[0, 1])` and `device="0,1"` now coordinate local DDP
+  ranks without re-importing and repeating an unguarded user script. Guarded
+  scripts and explicit `torchrun` launches remain compatible.
 - **QAT training-state guards (#768).** Training a quantized model now
   disables EMA and SyncBatchNorm before setup and logs the changes, preventing
   those features from interfering with fake-quant observer and scale state.
