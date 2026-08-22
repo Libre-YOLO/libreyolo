@@ -28,16 +28,19 @@ import tempfile
 import threading
 import traceback
 import uuid
+import warnings
 from pathlib import Path
 from typing import Any
 
 
 JOB_PROTOCOL = "libreyolo.ddp.local-job"
-JOB_PROTOCOL_VERSION = 1
+JOB_PROTOCOL_VERSION = 2
 MANIFEST_NAME = "manifest.json"
 PAYLOAD_NAME = "payload.pkl"
 STATUS_NAME = "status.json"
 CLEANUP_SENTINEL_NAME = ".libreyolo-ddp-cleanup.json"
+COORDINATOR_BOOTSTRAP_ENV = "LIBREYOLO_DDP_COORDINATOR_BOOTSTRAP"
+PAYLOAD_SIZE_WARNING_BYTES = 8 * 1024 * 1024
 
 
 class JobProtocolError(RuntimeError):
@@ -97,6 +100,38 @@ def _validate_protocol(data: Any, *, source: str) -> dict[str, Any]:
     return data
 
 
+def _validate_caller_identity(data: dict[str, Any], *, source: str) -> None:
+    caller_argv = data.get("caller_argv")
+    if not isinstance(caller_argv, list) or not all(
+        isinstance(item, str) for item in caller_argv
+    ):
+        raise JobProtocolError(f"DDP {source} caller_argv must be a list of strings")
+    if data.get("caller_main_file") is not None and not isinstance(
+        data["caller_main_file"], str
+    ):
+        raise JobProtocolError(
+            f"DDP {source} caller_main_file must be a string or null"
+        )
+
+
+def _capture_caller_identity() -> tuple[list[str], str | None]:
+    """Normalize caller identity values for JSON and cloudpickle transport."""
+    caller_argv = []
+    for item in sys.argv:
+        try:
+            caller_argv.append(os.fsdecode(os.fspath(item)))
+        except TypeError:
+            caller_argv.append(str(item))
+
+    caller_main_file = getattr(sys.modules.get("__main__"), "__file__", None)
+    if caller_main_file is not None:
+        try:
+            caller_main_file = os.fsdecode(os.fspath(caller_main_file))
+        except TypeError:
+            caller_main_file = None
+    return caller_argv, caller_main_file
+
+
 def _load_manifest(job_dir: str | Path) -> dict[str, Any]:
     path = Path(job_dir) / MANIFEST_NAME
     try:
@@ -120,6 +155,7 @@ def _load_manifest(job_dir: str | Path) -> dict[str, Any]:
         raise JobProtocolError(
             "DDP job import_paths must be a list of non-empty strings"
         )
+    _validate_caller_identity(data, source="job manifest")
     return data
 
 
@@ -158,6 +194,14 @@ def _load_payload(job_dir: str | Path, manifest: dict[str, Any]) -> dict[str, An
         raise JobProtocolError("DDP job worker_fn is not callable")
     if not isinstance(data.get("spawn_args"), tuple):
         raise JobProtocolError("DDP job spawn_args must be a tuple")
+    _validate_caller_identity(data, source="job payload")
+    if (
+        data["caller_argv"] != manifest["caller_argv"]
+        or data["caller_main_file"] != manifest["caller_main_file"]
+    ):
+        raise JobProtocolError(
+            "DDP job manifest and payload caller identities do not match"
+        )
     return data
 
 
@@ -198,12 +242,15 @@ def write_job(
     directory = Path(job_dir)
     directory.mkdir(parents=True, exist_ok=False)
     job_id = uuid.uuid4().hex
+    caller_argv, caller_main_file = _capture_caller_identity()
     common = {
         "protocol": JOB_PROTOCOL,
         "version": JOB_PROTOCOL_VERSION,
         "job_id": job_id,
         "nprocs": nprocs,
         "import_paths": import_paths,
+        "caller_argv": caller_argv,
+        "caller_main_file": caller_main_file,
     }
     payload = {
         **common,
@@ -220,13 +267,39 @@ def write_job(
             "DDP coordinator transport could not serialize a job that passed "
             "standard pickle validation."
         ) from exc
+    if len(serialized) > PAYLOAD_SIZE_WARNING_BYTES:
+        size_mib = len(serialized) / (1024 * 1024)
+        warnings.warn(
+            f"LibreYOLO automatic DDP payload is {size_mib:.1f} MiB. Large "
+            "callbacks, loggers, or captured globals can slow startup and are "
+            "copied into every rank; keep large state in importable modules or files.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     (directory / PAYLOAD_NAME).write_bytes(serialized)
     _atomic_json_write(directory / MANIFEST_NAME, common)
+
+
+def _restore_caller_identity(payload: dict[str, Any]) -> None:
+    """Expose the original user program identity to rank-local integrations."""
+    sys.argv[:] = payload["caller_argv"]
+    caller_main_file = payload["caller_main_file"]
+    for module_name in ("__main__", "__mp_main__"):
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        if caller_main_file is None:
+            module.__dict__.pop("__file__", None)
+        else:
+            module.__file__ = caller_main_file
 
 
 def _coordinator_worker(rank: int, job_dir: str) -> None:
     """Load the job independently in each rank and invoke its worker."""
     manifest = _load_manifest(job_dir)
+    # Restore the logger-visible program identity before cloudpickle imports or
+    # reconstructs any callback/logger objects from the payload.
+    _restore_caller_identity(manifest)
     payload = _load_payload(job_dir, manifest)
     nprocs = payload["nprocs"]
 
@@ -463,19 +536,15 @@ def launch_coordinator(
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
     listener.settimeout(15)
-    command = [
-        sys.executable,
-        str(Path(__file__).resolve()),
-        str(directory),
-        "--parent-port",
-        str(listener.getsockname()[1]),
-        "--parent-token",
-        parent_token,
-        "--cleanup-token",
-        cleanup_token,
-    ]
+    command, coordinator_env = _coordinator_launch(
+        directory,
+        env=env,
+        parent_port=listener.getsockname()[1],
+        parent_token=parent_token,
+        cleanup_token=cleanup_token,
+    )
     popen_kw: dict[str, Any] = {
-        "env": env,
+        "env": coordinator_env,
         "stdin": subprocess.DEVNULL,
     }
     if os.name == "nt":
@@ -533,24 +602,67 @@ def launch_coordinator(
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LibreYOLO private DDP coordinator")
     parser.add_argument("job_dir")
-    parser.add_argument("--parent-port", type=int, required=True)
-    parser.add_argument("--parent-token", required=True)
-    parser.add_argument("--cleanup-token", required=True)
     return parser.parse_args(argv)
+
+
+def _coordinator_launch(
+    job_dir: str | Path,
+    *,
+    env: dict[str, str],
+    parent_port: int,
+    parent_token: str,
+    cleanup_token: str,
+) -> tuple[list[str], dict[str, str]]:
+    """Build a coordinator command and its one-use private bootstrap envelope."""
+    bootstrap = {
+        "protocol": JOB_PROTOCOL,
+        "version": JOB_PROTOCOL_VERSION,
+        "parent_port": parent_port,
+        "parent_token": parent_token,
+        "cleanup_token": cleanup_token,
+    }
+    coordinator_env = dict(env)
+    coordinator_env[COORDINATOR_BOOTSTRAP_ENV] = json.dumps(bootstrap)
+    command = [sys.executable, str(Path(__file__).resolve()), str(job_dir)]
+    return command, coordinator_env
+
+
+def _pop_coordinator_bootstrap() -> dict[str, Any]:
+    """Consume bootstrap secrets before multiprocessing inherits the environment."""
+    serialized = os.environ.pop(COORDINATOR_BOOTSTRAP_ENV, None)
+    if serialized is None:
+        raise JobProtocolError("DDP coordinator bootstrap is unavailable")
+    try:
+        bootstrap = json.loads(serialized)
+    except json.JSONDecodeError as exc:
+        raise JobProtocolError("DDP coordinator bootstrap is invalid") from exc
+    bootstrap = _validate_protocol(bootstrap, source="coordinator bootstrap")
+    parent_port = bootstrap.get("parent_port")
+    if (
+        not isinstance(parent_port, int)
+        or isinstance(parent_port, bool)
+        or not 1 <= parent_port <= 65535
+    ):
+        raise JobProtocolError("DDP coordinator parent_port is invalid")
+    for field in ("parent_token", "cleanup_token"):
+        if not isinstance(bootstrap.get(field), str) or not bootstrap[field]:
+            raise JobProtocolError(f"DDP coordinator {field} is invalid")
+    return bootstrap
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    bootstrap = _pop_coordinator_bootstrap()
     with socket.create_connection(
-        ("127.0.0.1", args.parent_port), timeout=15
+        ("127.0.0.1", bootstrap["parent_port"]), timeout=15
     ) as parent:
-        parent.sendall(args.parent_token.encode("ascii"))
+        parent.sendall(bootstrap["parent_token"].encode("ascii"))
         parent.settimeout(None)
-        _write_cleanup_sentinel(Path(args.job_dir), args.cleanup_token)
+        _write_cleanup_sentinel(Path(args.job_dir), bootstrap["cleanup_token"])
         return coordinator_main(
             args.job_dir,
             parent_connection=parent,
-            cleanup_token=args.cleanup_token,
+            cleanup_token=bootstrap["cleanup_token"],
         )
 
 

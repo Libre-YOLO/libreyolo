@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -18,19 +19,24 @@ import torch.nn as nn
 
 from libreyolo.training._ddp_coordinator import (
     CLEANUP_SENTINEL_NAME,
+    COORDINATOR_BOOTSTRAP_ENV,
     JOB_PROTOCOL,
     JOB_PROTOCOL_VERSION,
     MANIFEST_NAME,
+    PAYLOAD_NAME,
+    PAYLOAD_SIZE_WARNING_BYTES,
     STATUS_NAME,
     __file__ as coordinator_file,
     _cleanup_abandoned_job,
+    _coordinator_launch,
     _load_manifest,
     _load_payload,
+    _pop_coordinator_bootstrap,
     coordinator_main,
     job_workspace,
     write_job,
 )
-from libreyolo.training.ddp_spawn import ddp_aware
+from libreyolo.training.ddp_spawn import _build_init_kw, ddp_aware
 from libreyolo.training.ddp_spawn import spawn_for_model
 from libreyolo.training.distributed import spawn_ddp_train
 from libreyolo.training.distributed import _spawn_standard_pickle_fallback
@@ -58,6 +64,9 @@ def _recording_worker(
         "cvd": os.environ.get("CUDA_VISIBLE_DEVICES"),
         "cwd": os.getcwd(),
         "token": token,
+        "argv": sys.argv,
+        "main_file": getattr(sys.modules.get("__main__"), "__file__", None),
+        "bootstrap_env": os.environ.get(COORDINATOR_BOOTSTRAP_ENV),
     }
     rank_path = Path(result_path).with_name(f"rank-{rank}.json")
     rank_path.write_text(json.dumps(record), encoding="utf-8")
@@ -96,16 +105,18 @@ def _job_dirs() -> set[Path]:
 
 def test_job_protocol_round_trip(tmp_path: Path) -> None:
     job_dir = tmp_path / "job"
-    write_job(
-        job_dir,
-        worker_fn=_recording_worker,
-        spawn_args=("protocol-token",),
-        nprocs=2,
-        result_path=str(tmp_path / "result.json"),
-        master_addr="127.0.0.1",
-        master_port=12345,
-        import_paths=[str(tmp_path)],
-    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        write_job(
+            job_dir,
+            worker_fn=_recording_worker,
+            spawn_args=("protocol-token",),
+            nprocs=2,
+            result_path=str(tmp_path / "result.json"),
+            master_addr="127.0.0.1",
+            master_port=12345,
+            import_paths=[str(tmp_path)],
+        )
 
     manifest = _load_manifest(job_dir)
     payload = _load_payload(job_dir, manifest)
@@ -114,6 +125,102 @@ def test_job_protocol_round_trip(tmp_path: Path) -> None:
     assert payload["job_id"] == manifest["job_id"]
     assert payload["spawn_args"] == ("protocol-token",)
     assert manifest["import_paths"] == [str(tmp_path)]
+    assert payload["caller_argv"] == sys.argv
+    assert manifest["caller_argv"] == sys.argv
+    assert payload["caller_main_file"] == getattr(
+        sys.modules.get("__main__"), "__file__", None
+    )
+    assert manifest["caller_main_file"] == payload["caller_main_file"]
+    assert (job_dir / PAYLOAD_NAME).stat().st_size < PAYLOAD_SIZE_WARNING_BYTES
+    assert caught == []
+
+
+@pytest.mark.parametrize("main_file", [Path("program.py"), b"program.py"])
+def test_job_identity_normalizes_pathlike_and_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    main_file,
+) -> None:
+    main_module = sys.modules["__main__"]
+    monkeypatch.setattr(sys, "argv", [Path("program.py"), b"--bytes-flag"])
+    monkeypatch.setattr(main_module, "__file__", main_file, raising=False)
+    job_dir = tmp_path / "job"
+
+    write_job(
+        job_dir,
+        worker_fn=_recording_worker,
+        spawn_args=("identity-normalization",),
+        nprocs=1,
+        result_path=str(tmp_path / "result.json"),
+        master_addr="127.0.0.1",
+        master_port=12345,
+        import_paths=[str(tmp_path)],
+    )
+
+    manifest = _load_manifest(job_dir)
+    payload = _load_payload(job_dir, manifest)
+    expected_argv = ["program.py", "--bytes-flag"]
+    expected_main_file = "program.py"
+    assert manifest["caller_argv"] == expected_argv
+    assert payload["caller_argv"] == expected_argv
+    assert manifest["caller_main_file"] == expected_main_file
+    assert payload["caller_main_file"] == expected_main_file
+
+
+def test_successful_oversized_payload_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "libreyolo.training._ddp_coordinator.PAYLOAD_SIZE_WARNING_BYTES", 1
+    )
+    job_dir = tmp_path / "job"
+
+    with pytest.warns(RuntimeWarning, match="automatic DDP payload is"):
+        write_job(
+            job_dir,
+            worker_fn=_recording_worker,
+            spawn_args=("large-enough-for-test",),
+            nprocs=1,
+            result_path=str(tmp_path / "result.json"),
+            master_addr="127.0.0.1",
+            master_port=12345,
+            import_paths=[str(tmp_path)],
+        )
+
+    assert (job_dir / PAYLOAD_NAME).is_file()
+
+
+def test_coordinator_bootstrap_stays_off_command_line_and_is_consumed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command, coordinator_env = _coordinator_launch(
+        tmp_path / "job",
+        env={"PRESERVED": "value"},
+        parent_port=23456,
+        parent_token="private-parent-token",
+        cleanup_token="private-cleanup-token",
+    )
+
+    assert command == [
+        sys.executable,
+        str(Path(coordinator_file).resolve()),
+        str(tmp_path / "job"),
+    ]
+    rendered_command = " ".join(command)
+    assert "23456" not in rendered_command
+    assert "private-parent-token" not in rendered_command
+    assert "private-cleanup-token" not in rendered_command
+    assert coordinator_env["PRESERVED"] == "value"
+
+    monkeypatch.setenv(
+        COORDINATOR_BOOTSTRAP_ENV,
+        coordinator_env[COORDINATOR_BOOTSTRAP_ENV],
+    )
+    bootstrap = _pop_coordinator_bootstrap()
+    assert bootstrap["parent_port"] == 23456
+    assert bootstrap["parent_token"] == "private-parent-token"
+    assert bootstrap["cleanup_token"] == "private-cleanup-token"
+    assert COORDINATOR_BOOTSTRAP_ENV not in os.environ
 
 
 def test_job_protocol_rejects_future_version(tmp_path: Path) -> None:
@@ -163,6 +270,8 @@ def test_coordinator_propagates_env_result_mask_and_cleans_up(
         assert record["world_env"] == "2"
         assert record["cvd"] == "2,3"
         assert record["token"] == "round-trip"
+        assert record["bootstrap_env"] is None
+        assert all("libreyolo-ddp-job-" not in arg for arg in record["argv"])
     assert json.loads(result_path.read_text())["rank"] == 0
 
 
@@ -261,19 +370,16 @@ def test_parent_liveness_socket_stops_workers_and_cleans_job(tmp_path: Path) -> 
         listener.listen(1)
         listener.settimeout(15)
         parent_token = "parent-liveness-test-token"
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                str(Path(coordinator_file).resolve()),
-                str(job_dir),
-                "--parent-port",
-                str(listener.getsockname()[1]),
-                "--parent-token",
-                parent_token,
-                "--cleanup-token",
-                cleanup_token,
-            ],
+        command, coordinator_env = _coordinator_launch(
+            job_dir,
             env=os.environ.copy(),
+            parent_port=listener.getsockname()[1],
+            parent_token=parent_token,
+            cleanup_token=cleanup_token,
+        )
+        process = subprocess.Popen(
+            command,
+            env=coordinator_env,
             stdin=subprocess.DEVNULL,
         )
         parent_connection, _ = listener.accept()
@@ -329,6 +435,14 @@ class _BatchSizeDispatchProbe:
     @ddp_aware(batch_key="batch_size")
     def train(self, *, device="auto", batch_size=4, resume=False):
         raise AssertionError("multi-device call did not dispatch")
+
+
+def test_normal_model_class_remains_imported_by_name() -> None:
+    init_kw = _build_init_kw(_DispatchProbe())
+
+    assert init_kw["_module"] == __name__
+    assert init_kw["_class"] == "_DispatchProbe"
+    assert "_class_object" not in init_kw
 
 
 @pytest.mark.parametrize("device", [None, "auto", "cpu", "mps", 0, "0", [0]])
@@ -603,6 +717,105 @@ def test_unguarded_top_level_model_train_matches_guarded_script(tmp_path: Path) 
             "logger": "mlflow",
         }
     )
+
+
+def test_guarded_main_model_class_and_program_identity_reach_model_worker(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "guarded-main-result.json"
+    side_effect_path = tmp_path / "guarded-main-side-effect.txt"
+    script = tmp_path / "guarded_main_model.py"
+    script.write_text(
+        textwrap.dedent(
+            f"""
+            import json
+            import os
+            import sys
+            from pathlib import Path
+
+            import torch
+            import torch.nn as nn
+
+            from libreyolo.training._ddp_coordinator import COORDINATOR_BOOTSTRAP_ENV
+            from libreyolo.training.ddp_spawn import spawn_for_model
+
+            OUTPUT_PATH = Path({str(output_path)!r})
+            SIDE_EFFECT_PATH = Path({str(side_effect_path)!r})
+            with SIDE_EFFECT_PATH.open("a", encoding="utf-8") as marker:
+                marker.write("parent-only\\n")
+
+            class GuardedMainModel:
+                def __init__(self, model_path=None, device="auto"):
+                    self.model = nn.Linear(2, 1)
+                    self.model_path = model_path
+                    self.device = torch.device("cpu")
+                    if model_path:
+                        state = torch.load(
+                            model_path, map_location="cpu", weights_only=True
+                        )
+                        self.model.load_state_dict(state)
+
+                def train(self, *, device="auto"):
+                    import __main__
+
+                    return {{
+                        "rank": int(os.environ["LOCAL_RANK"]),
+                        "class_name": type(self).__name__,
+                        "class_module": type(self).__module__,
+                        "argv": list(sys.argv),
+                        "main_file": getattr(__main__, "__file__", None),
+                        "bootstrap_env": os.environ.get(
+                            COORDINATOR_BOOTSTRAP_ENV
+                        ),
+                    }}
+
+            def main():
+                result = spawn_for_model(
+                    GuardedMainModel(),
+                    train_kw={{}},
+                    nprocs=2,
+                )
+                OUTPUT_PATH.write_text(json.dumps(result), encoding="utf-8")
+
+            if __name__ == "__main__":
+                main()
+            """
+        ),
+        encoding="utf-8",
+    )
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = "-1"
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(repo_root), str(tmp_path), env.get("PYTHONPATH", "")]
+    )
+    original_args = [str(script), "--user-flag", "value with spaces"]
+
+    completed = subprocess.run(
+        [sys.executable, *original_args],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+        check=False,
+    )
+
+    assert completed.returncode == 0, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert result == {
+        "rank": 0,
+        "class_name": "GuardedMainModel",
+        "class_module": "__main__",
+        "argv": original_args,
+        "main_file": str(script),
+        "bootstrap_env": None,
+    }
+    assert side_effect_path.read_text(encoding="utf-8").splitlines() == ["parent-only"]
+    assert all("libreyolo-ddp-job-" not in arg for arg in result["argv"])
 
 
 def test_guarded_standard_pickle_callback_uses_compatibility_launcher(
