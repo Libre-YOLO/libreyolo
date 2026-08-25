@@ -19,8 +19,10 @@ from typing import (
     ClassVar,
     Dict,
     Generator,
+    Iterator,
     List,
     Optional,
+    Sequence,
     Tuple,
     Type,
     Union,
@@ -1525,7 +1527,7 @@ class BaseModel(ABC):
 
     def track(
         self,
-        source: str | Path,
+        source: Union[str, Path, Sequence[ImageInput], Iterator[ImageInput]],
         *,
         track_conf: float = 0.25,
         iou: float = 0.45,
@@ -1535,13 +1537,14 @@ class BaseModel(ABC):
         save: bool = False,
         show: bool = False,
         vid_stride: int = 1,
+        fps: float = 30.0,
         output_path: Optional[str] = None,
         tracker: str = "bytetrack",
         tracker_config=None,
         augment: bool = False,
         **tracker_kwargs,
     ) -> Generator[Results, None, None]:
-        """Track objects across video frames.
+        """Track objects across video frames or an image sequence.
 
         Runs detection on each frame and associates detections across time.
         Four trackers are available via ``tracker``: ByteTrack (default) and
@@ -1553,7 +1556,13 @@ class BaseModel(ABC):
         with ``track_id`` set.
 
         Args:
-            source: Path to a video file.
+            source: A video file path, a directory of images (sorted by
+                name), a finite list/tuple of already-loaded images (paths,
+                PIL Images, NumPy arrays, or tensors), or an iterator/
+                generator yielding images one at a time for incremental,
+                unbounded tracking. In every case, items are treated as
+                consecutive frames of one logical video and tracked in
+                order.
             track_conf: Confidence threshold for the tracker's first
                 association stage — ``track_high_thresh`` for ByteTrack and
                 BoT-SORT, ``det_thresh`` for OC-SORT and Deep OC-SORT. For the
@@ -1570,8 +1579,15 @@ class BaseModel(ABC):
             save: If True, save annotated video to *output_path*.
             show: Display tracked frames in a window.
             vid_stride: Process every N-th frame.
+            fps: Frame rate to assume when *source* is an image sequence
+                (directory, list, or iterator) rather than a video file,
+                since those have no real capture rate of their own. Affects
+                the tracker's lost-track buffer timing and the fps written
+                into a saved output video. Ignored for video files, which
+                use their own detected fps.
             output_path: Path for saved video. Defaults to
-                ``runs/track/<video_stem>.mp4``.
+                ``runs/track/<video_stem>.mp4`` for a video file, or
+                ``runs/track/<name>.mp4`` for an image sequence.
             tracker: Which tracker to use: ``"bytetrack"``, ``"botsort"``,
                 ``"ocsort"`` or ``"deepocsort"``. Ignored when
                 *tracker_config* is given (the config type selects the tracker).
@@ -1652,6 +1668,8 @@ class BaseModel(ABC):
             TrackConfig,
         )
         from ...utils.drawing import draw_boxes, draw_masks
+        from ...utils.image_loader import ImageLoader
+        from ...utils.source import ImageSequenceSource, SourceKind, classify_source
         from ...utils.video import run_video_inference
 
         # A provided config picks the tracker; otherwise honour the selector.
@@ -1703,9 +1721,47 @@ class BaseModel(ABC):
                 "choose 'bytetrack', 'botsort', 'ocsort' or 'deepocsort'."
             )
 
-        source = Path(source)
-        if not source.exists():
-            raise FileNotFoundError(f"Video file not found: {source}")
+        source_spec = classify_source(source)
+        default_stem = "sequence"
+        if source_spec.kind == SourceKind.VIDEO:
+            frame_source: Union[Path, ImageSequenceSource] = Path(source_spec.source)
+            if not frame_source.exists():
+                raise FileNotFoundError(f"Video file not found: {frame_source}")
+            default_stem = frame_source.stem
+        elif source_spec.kind == SourceKind.DIRECTORY:
+            images = ImageLoader.collect_images(source_spec.source)
+            if not images:
+                return
+            default_stem = Path(source_spec.source).name
+            frame_source = ImageSequenceSource(
+                images, vid_stride=vid_stride, fps=fps, save_name=default_stem
+            )
+        elif source_spec.kind == SourceKind.IMAGE_BATCH:
+            frame_source = ImageSequenceSource(
+                list(source_spec.items),
+                vid_stride=vid_stride,
+                fps=fps,
+                save_name=default_stem,
+            )
+        elif source_spec.kind == SourceKind.IMAGE_SEQUENCE:
+            frame_source = ImageSequenceSource(
+                source_spec.source, vid_stride=vid_stride, fps=fps, save_name=default_stem
+            )
+        elif source_spec.kind == SourceKind.IMAGE:
+            # A single already-loaded image or path, treated as a one-frame
+            # sequence so predict()-style single-image inputs also work.
+            frame_source = ImageSequenceSource(
+                [source_spec.source],
+                vid_stride=vid_stride,
+                fps=fps,
+                save_name=default_stem,
+            )
+        else:
+            raise NotImplementedError(
+                f"track() does not yet support {source_spec.kind.value!r} sources. "
+                "Pass a video file, a directory or list of images, or an "
+                "image iterator."
+            )
 
         model_names = self.names
 
@@ -1751,13 +1807,13 @@ class BaseModel(ABC):
 
             track_output = str(
                 increment_path(
-                    Path("runs") / "track" / f"{source.stem}.mp4",
+                    Path("runs") / "track" / f"{default_stem}.mp4",
                     exist_ok=False,
                 )
             )
 
         yield from run_video_inference(
-            source,
+            frame_source,
             predict_and_track,
             vid_stride=vid_stride,
             save=save,

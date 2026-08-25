@@ -1,5 +1,7 @@
 """Unit tests for the ByteTrack tracking module."""
 
+from pathlib import Path
+
 import pytest
 import numpy as np
 import torch
@@ -16,6 +18,8 @@ from libreyolo.tracking.matching import (
 from libreyolo.tracking.strack import STrack, TrackState
 from libreyolo.tracking.tracker import ByteTracker
 from libreyolo.models.base.model import BaseModel
+from libreyolo.models.base.inference import InferenceRunner
+from libreyolo.utils.image_loader import ImageLoader
 from libreyolo.utils.results import Boxes, Masks, Results
 
 pytestmark = pytest.mark.unit
@@ -533,3 +537,141 @@ class TestDrawBoxesWithTrackIds:
 
         draw_boxes(img, [[10, 10, 90, 90]], [0.9], [0], track_ids=[1])
         assert np.array_equal(np.array(img), original_arr)
+
+
+# --------------------------------------------------------------------------
+# track() over image sequences, not just video files
+# --------------------------------------------------------------------------
+
+
+class _StubTrackModel:
+    """Minimal stand-in for a BaseModel driving BaseModel.track().
+
+    Always reports one fixed-position detection, which is enough for
+    ByteTrack to assign and keep a single, stable track_id across frames.
+    """
+
+    task = "detect"
+    names = {0: "thing"}
+    device = torch.device("cpu")
+
+    def __init__(self, box=(1.0, 1.0, 5.0, 5.0), score=0.9):
+        self._box = list(box)
+        self._score = score
+
+    def _get_input_size(self):
+        return 32
+
+    def _get_model_name(self):
+        return "stub"
+
+    def _preprocess(self, image, color_format="auto", input_size=None):
+        pil = ImageLoader.load(image, color_format=color_format)
+        return torch.zeros(1, 3, 32, 32), pil, pil.size, 1.0
+
+    def _forward(self, tensor):
+        return tensor
+
+    def _postprocess(
+        self,
+        output,
+        conf,
+        iou,
+        original_size,
+        max_det=300,
+        ratio=1.0,
+        classes=None,
+        **kwargs,
+    ):
+        return {
+            "boxes": [self._box],
+            "scores": [self._score],
+            "classes": [0],
+            "num_detections": 1,
+        }
+
+    @property
+    def _runner(self):
+        if getattr(self, "_runner_instance", None) is None:
+            self._runner_instance = InferenceRunner(self)
+        return self._runner_instance
+
+
+def _make_frames(n, size=(20, 16), color=(50, 50, 50)):
+    return [Image.new("RGB", size, color) for _ in range(n)]
+
+
+class TestTrackImageSequences:
+    def test_tracks_a_list_of_pil_images(self):
+        model = _StubTrackModel()
+
+        results = list(BaseModel.track(model, _make_frames(4)))
+
+        assert len(results) == 4
+        assert [r.frame_idx for r in results] == [0, 1, 2, 3]
+        # The fixed-position detection matches itself frame over frame, so
+        # ByteTrack keeps assigning it the same identity.
+        assert [int(r.track_id[0]) for r in results] == [1, 1, 1, 1]
+
+    def test_tracks_a_directory_of_images_in_sorted_order(self, tmp_path):
+        for i in range(3):
+            Image.new("RGB", (20, 16), (i * 40, 0, 0)).save(tmp_path / f"{i:03d}.png")
+        model = _StubTrackModel()
+
+        results = list(BaseModel.track(model, tmp_path))
+
+        assert len(results) == 3
+        assert [Path(r.path).name for r in results] == [
+            "000.png",
+            "001.png",
+            "002.png",
+        ]
+
+    def test_tracks_a_lazy_generator_without_materializing_it(self):
+        model = _StubTrackModel()
+        pulled = []
+
+        def frames():
+            for i in range(1000):
+                pulled.append(i)
+                yield Image.new("RGB", (20, 16))
+
+        gen = BaseModel.track(model, frames())
+        first_three = [next(gen) for _ in range(3)]
+
+        assert len(first_three) == 3
+        # Only as many source frames were pulled as were actually consumed
+        # from the tracking generator -- the iterator must stay lazy.
+        assert len(pulled) == 3
+
+    def test_tracks_a_single_image_as_a_one_frame_sequence(self):
+        model = _StubTrackModel()
+
+        results = list(BaseModel.track(model, Image.new("RGB", (20, 16))))
+
+        assert len(results) == 1
+
+    def test_empty_directory_yields_no_results(self, tmp_path):
+        model = _StubTrackModel()
+
+        assert list(BaseModel.track(model, tmp_path)) == []
+
+    def test_live_stream_sources_are_not_yet_supported(self):
+        model = _StubTrackModel()
+
+        with pytest.raises(NotImplementedError, match="stream"):
+            next(BaseModel.track(model, 0))
+
+    def test_save_writes_output_video_for_an_image_list(self, tmp_path):
+        pytest.importorskip("cv2", reason="opencv-python required for video tests")
+        model = _StubTrackModel()
+        output_path = tmp_path / "tracked.mp4"
+
+        results = list(
+            BaseModel.track(
+                model, _make_frames(3), save=True, output_path=str(output_path)
+            )
+        )
+
+        assert len(results) == 3
+        assert output_path.exists()
