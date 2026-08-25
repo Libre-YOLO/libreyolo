@@ -44,6 +44,7 @@ class SourceKind(str, Enum):
 
     IMAGE = "image"
     IMAGE_BATCH = "image_batch"
+    IMAGE_SEQUENCE = "image_sequence"
     DIRECTORY = "directory"
     VIDEO = "video"
     SCREEN = "screen"
@@ -196,6 +197,12 @@ def classify_source(source: Any) -> SourceSpec:
                 "A source list cannot mix live/video streams with image inputs"
             )
         return SourceSpec(SourceKind.IMAGE_BATCH, source, items)
+
+    if hasattr(source, "__next__"):
+        # A bare iterator/generator of already-loaded images (e.g. PIL frames
+        # produced incrementally). Unlike IMAGE_BATCH its length is unknown
+        # ahead of time, so it must stay lazy for the whole call.
+        return SourceSpec(SourceKind.IMAGE_SEQUENCE, source)
 
     if isinstance(source, (str, Path)):
         path = Path(source)
@@ -552,6 +559,83 @@ class MultiStreamSource:
     def release(self) -> None:
         for stream in self.streams:
             stream.release()
+
+
+class ImageSequenceSource:
+    """Iterate an in-memory or lazily-produced sequence of images as frames.
+
+    Wraps a finite list/tuple or a lazy iterator of already-loaded images
+    (paths, PIL Images, ndarrays, tensors) so it can drive the same
+    frame-by-frame loop (:func:`~libreyolo.utils.video.run_video_inference`)
+    used for video files and live streams. This is what lets
+    :meth:`~libreyolo.models.base.model.BaseModel.track` track across a
+    batch or stream of images instead of only video files.
+
+    Args:
+        images: A finite sequence or an iterator/generator of image inputs.
+            A finite sequence reports its length up front; an iterator's
+            length is unknown and iteration stays lazy for the whole call.
+        vid_stride: Process every N-th image (default ``1`` = every image).
+        fps: Frame rate to report for the sequence. There is no real
+            capture rate for a bag of images, so this only affects derived
+            timing (a tracker's lost-track buffer, or the fps written into
+            a saved output video).
+        save_name: Base name used to derive an output path when saving.
+
+    Note:
+        Can only be iterated once, like :class:`~libreyolo.utils.video.VideoSource`.
+    """
+
+    num_streams = 1
+
+    def __init__(
+        self,
+        images: Sequence[Any] | Iterator[Any],
+        *,
+        vid_stride: int = 1,
+        fps: float = 30.0,
+        save_name: str = "sequence",
+    ):
+        self._images = images
+        self._vid_stride = max(1, int(vid_stride))
+        self.fps = float(fps)
+        self.save_name = save_name
+        self.total_frames = len(images) if hasattr(images, "__len__") else 0
+        self.width = 0
+        self.height = 0
+        self._iterated = False
+
+    def __enter__(self) -> "ImageSequenceSource":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        pass
+
+    def __iter__(self) -> Iterator[StreamFrame]:
+        if self._iterated:
+            raise RuntimeError(
+                "ImageSequenceSource has already been consumed. "
+                "Create a new instance to iterate again."
+            )
+        self._iterated = True
+
+        import cv2
+
+        from .image_loader import ImageLoader
+
+        for frame_idx, item in enumerate(self._images):
+            if frame_idx % self._vid_stride:
+                continue
+            pil_img = ImageLoader.load(item)
+            frame_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            label = str(item) if isinstance(item, (str, Path)) else None
+            yield StreamFrame(
+                frame_bgr=frame_bgr,
+                frame_idx=frame_idx,
+                source_index=0,
+                source_label=label,
+                fps=self.fps,
+            )
 
 
 def build_stream_source(
