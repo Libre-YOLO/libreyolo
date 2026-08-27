@@ -623,6 +623,12 @@ class ImageSequenceSource:
 
         from .image_loader import ImageLoader
 
+        # Fewer frames are retained at higher strides, so the fps reported
+        # alongside them must drop proportionally -- otherwise a saved
+        # output video plays back vid_stride times too fast (mirrors how
+        # VideoSource's stride is compensated for in run_video_inference).
+        effective_fps = self.fps / self._vid_stride
+
         for frame_idx, item in enumerate(self._images):
             if frame_idx % self._vid_stride:
                 continue
@@ -634,7 +640,7 @@ class ImageSequenceSource:
                 frame_idx=frame_idx,
                 source_index=0,
                 source_label=label,
-                fps=self.fps,
+                fps=effective_fps,
             )
 
 
