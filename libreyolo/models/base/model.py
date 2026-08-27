@@ -1582,9 +1582,11 @@ class BaseModel(ABC):
             fps: Frame rate to assume when *source* is an image sequence
                 (directory, list, or iterator) rather than a video file,
                 since those have no real capture rate of their own. Affects
-                the tracker's lost-track buffer timing and the fps written
-                into a saved output video. Ignored for video files, which
-                use their own detected fps.
+                the fps written into a saved output video, and — for
+                ByteTrack/BoT-SORT only — the lost-track buffer timing
+                (OC-SORT/Deep OC-SORT count lost-track age in frames, not
+                time, so *fps* doesn't affect them). Ignored for video
+                files, which use their own detected fps.
             output_path: Path for saved video. Defaults to
                 ``runs/track/<video_stem>.mp4`` for a video file, or
                 ``runs/track/<name>.mp4`` for an image sequence.
@@ -1672,6 +1674,10 @@ class BaseModel(ABC):
         from ...utils.source import ImageSequenceSource, SourceKind, classify_source
         from ...utils.video import run_video_inference
 
+        # Classified up front (rather than after the tracker is built) so a
+        # non-video source can seed the tracker's frame_rate default below.
+        source_spec = classify_source(source)
+
         # A provided config picks the tracker; otherwise honour the selector.
         if isinstance(tracker_config, BoTSortConfig):
             # BoTSortConfig subclasses TrackConfig, so it must be checked first.
@@ -1683,6 +1689,14 @@ class BaseModel(ABC):
         elif isinstance(tracker_config, TrackConfig):
             tracker = "bytetrack"
         tracker = (tracker or "bytetrack").lower()
+
+        if tracker in ("bytetrack", "botsort") and source_spec.kind != SourceKind.VIDEO:
+            # ByteTrack/BoT-SORT scale their lost-track buffer by frame_rate;
+            # an image sequence has no real capture rate of its own, so seed
+            # it from *fps* instead of silently keeping the class default.
+            # OC-SORT/Deep OC-SORT have no frame_rate field (their buffer is
+            # a plain frame count via max_age), so they're left alone.
+            tracker_kwargs.setdefault("frame_rate", int(round(fps)))
 
         if tracker == "deepocsort":
             if tracker_config is None:
@@ -1721,7 +1735,6 @@ class BaseModel(ABC):
                 "choose 'bytetrack', 'botsort', 'ocsort' or 'deepocsort'."
             )
 
-        source_spec = classify_source(source)
         default_stem = "sequence"
         if source_spec.kind == SourceKind.VIDEO:
             frame_source: Union[Path, ImageSequenceSource] = Path(source_spec.source)
