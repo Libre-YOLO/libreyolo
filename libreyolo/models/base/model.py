@@ -11,6 +11,7 @@ import functools
 import inspect
 import logging
 import re
+import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import (
@@ -1589,6 +1590,10 @@ class BaseModel(ABC):
                 the buffer is timed against ``fps / vid_stride`` — the rate
                 at which frames are actually retained and reach the tracker.
                 Ignored for video files, which use their own detected fps.
+                Also ignored when *tracker_config* is given (same rule as
+                *track_conf*) — set ``frame_rate`` on it yourself in that
+                case, or a mismatch will emit a warning and the buffer will
+                use *tracker_config*'s frame_rate as-is.
             output_path: Path for saved video. Defaults to
                 ``runs/track/<video_stem>.mp4`` for a video file, or
                 ``runs/track/<name>.mp4`` for an image sequence.
@@ -1701,8 +1706,24 @@ class BaseModel(ABC):
             # times longer (in wall-clock terms) than the buffer intends.
             # OC-SORT/Deep OC-SORT have no frame_rate field (their buffer is
             # a plain frame count via max_age), so they're left alone.
-            retained_fps = fps / max(1, vid_stride)
-            tracker_kwargs.setdefault("frame_rate", max(1, int(round(retained_fps))))
+            retained_fps = max(1, int(round(fps / max(1, vid_stride))))
+            if tracker_config is None:
+                tracker_kwargs.setdefault("frame_rate", retained_fps)
+            elif getattr(tracker_config, "frame_rate", retained_fps) != retained_fps:
+                # An explicit tracker_config always wins it is never silently overwritten, even
+                # here. But since its frame_rate now silently controls the
+                # lost-track buffer's real-world duration for this image
+                # sequence, a mismatch is surfaced instead of staying quiet.
+                warnings.warn(
+                    f"tracker_config.frame_rate={tracker_config.frame_rate} does "
+                    f"not match this image sequence's retained-frame rate "
+                    f"(fps / vid_stride = {retained_fps}). tracker_config is "
+                    "used as-is -- fps and vid_stride are ignored once "
+                    "tracker_config is given -- so lost tracks will be kept "
+                    "recoverable for the wrong duration unless you set "
+                    f"frame_rate={retained_fps} on it yourself.",
+                    stacklevel=2,
+                )
 
         if tracker == "deepocsort":
             if tracker_config is None:

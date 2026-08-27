@@ -757,3 +757,40 @@ class TestTrackImageSequences:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             list(BaseModel.track(model, _make_frames(2), fps=12.0, tracker="ocsort"))
+
+    def test_mismatched_typed_tracker_config_frame_rate_warns(self):
+        # tracker_config is never silently overwritten (same contract as
+        # track_conf), but its frame_rate silently governs lost-track
+        # timing for this sequence, so a mismatch must not stay quiet.
+        model = _StubTrackModel()
+        config = TrackConfig()  # frame_rate=30, left at the class default
+
+        with pytest.warns(UserWarning, match="frame_rate"):
+            list(
+                BaseModel.track(
+                    model,
+                    _make_frames(6),
+                    fps=30.0,
+                    vid_stride=3,  # retained rate is 10, not config's 30
+                    tracker_config=config,
+                )
+            )
+
+        # tracker_config itself is never mutated.
+        assert config.frame_rate == 30
+
+    def test_typed_tracker_config_frame_rate_already_matching_is_quiet(self):
+        model = _StubTrackModel()
+        config = TrackConfig(frame_rate=10)  # caller already did the math
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            list(
+                BaseModel.track(
+                    model,
+                    _make_frames(6),
+                    fps=30.0,
+                    vid_stride=3,
+                    tracker_config=config,
+                )
+            )
