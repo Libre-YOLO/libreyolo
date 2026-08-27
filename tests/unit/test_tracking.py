@@ -710,6 +710,24 @@ class TestTrackImageSequences:
 
         assert captured["frame_rate"] == 10
 
+    def test_fps_is_not_pre_rounded_before_reaching_track_config(self, monkeypatch):
+        # tracker.py truncates (int()) frame_rate itself; pre-rounding here
+        # too would double-round and can shift max_time_lost by a frame at
+        # the boundary (e.g. an exact 6.6 cadence: round()->7, int()->6).
+        captured = {}
+        original = TrackConfig.from_kwargs.__func__
+
+        def spy(cls, **kwargs):
+            captured.update(kwargs)
+            return original(cls, **kwargs)
+
+        monkeypatch.setattr(TrackConfig, "from_kwargs", classmethod(spy))
+        model = _StubTrackModel()
+
+        list(BaseModel.track(model, _make_frames(6), fps=33.0, vid_stride=5))
+
+        assert captured["frame_rate"] == pytest.approx(6.6)
+
     def test_explicit_frame_rate_kwarg_overrides_fps(self, monkeypatch):
         captured = {}
         original = TrackConfig.from_kwargs.__func__

@@ -1698,32 +1698,31 @@ class BaseModel(ABC):
         tracker = (tracker or "bytetrack").lower()
 
         if tracker in ("bytetrack", "botsort") and source_spec.kind != SourceKind.VIDEO:
-            # ByteTrack/BoT-SORT scale their lost-track buffer by frame_rate,
-            # which must match the actual rate at which update() is called --
-            # one call per *retained* frame, i.e. fps / vid_stride, since
-            # strided-out frames never reach the tracker at all. Seeding it
-            # with the raw fps would let lost identities survive vid_stride
-            # times longer (in wall-clock terms) than the buffer intends.
-            # OC-SORT/Deep OC-SORT have no frame_rate field (their buffer is
-            # a plain frame count via max_age), so they're left alone.
-            retained_fps = max(1, int(round(fps / max(1, vid_stride))))
+            # update() runs once per retained frame, so frame_rate must be fps / vid_stride
+            retained_fps = fps / max(1, vid_stride)
             if tracker_config is None:
+                # Pass the exact fraction: tracker.py already truncates via
+                # int(), so pre-rounding here would double-round and can
+                # shift max_time_lost by a frame at the expiry boundary.
                 tracker_kwargs.setdefault("frame_rate", retained_fps)
-            elif getattr(tracker_config, "frame_rate", retained_fps) != retained_fps:
-                # An explicit tracker_config always wins it is never silently overwritten, even
-                # here. But since its frame_rate now silently controls the
-                # lost-track buffer's real-world duration for this image
-                # sequence, a mismatch is surfaced instead of staying quiet.
-                warnings.warn(
-                    f"tracker_config.frame_rate={tracker_config.frame_rate} does "
-                    f"not match this image sequence's retained-frame rate "
-                    f"(fps / vid_stride = {retained_fps}). tracker_config is "
-                    "used as-is -- fps and vid_stride are ignored once "
-                    "tracker_config is given -- so lost tracks will be kept "
-                    "recoverable for the wrong duration unless you set "
-                    f"frame_rate={retained_fps} on it yourself.",
-                    stacklevel=2,
-                )
+            else:
+                # frame_rate is a typed int field, so compare against the
+                # nearest achievable value rather than the exact fraction.
+                nearest_retained_fps = max(1, round(retained_fps))
+                current = getattr(tracker_config, "frame_rate", nearest_retained_fps)
+                if current != nearest_retained_fps:
+                    # tracker_config always wins and is never overwritten --
+                    # just warn so a silent mismatch doesn't linger.
+                    warnings.warn(
+                        f"tracker_config.frame_rate={tracker_config.frame_rate} does "
+                        f"not match this image sequence's retained-frame rate "
+                        f"(fps / vid_stride ≈ {nearest_retained_fps}). "
+                        "tracker_config is used as-is -- fps and vid_stride are "
+                        "ignored once tracker_config is given -- so lost tracks "
+                        "will be kept recoverable for the wrong duration unless "
+                        f"you set frame_rate={nearest_retained_fps} on it yourself.",
+                        stacklevel=2,
+                    )
 
         if tracker == "deepocsort":
             if tracker_config is None:
