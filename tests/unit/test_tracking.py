@@ -1,5 +1,6 @@
 """Unit tests for the ByteTrack tracking module."""
 
+import warnings
 from pathlib import Path
 
 import pytest
@@ -675,3 +676,66 @@ class TestTrackImageSequences:
 
         assert len(results) == 3
         assert output_path.exists()
+
+    def test_fps_seeds_bytetrack_frame_rate_for_image_sequences(self, monkeypatch):
+        captured = {}
+        original = TrackConfig.from_kwargs.__func__
+
+        def spy(cls, **kwargs):
+            captured.update(kwargs)
+            return original(cls, **kwargs)
+
+        monkeypatch.setattr(TrackConfig, "from_kwargs", classmethod(spy))
+        model = _StubTrackModel()
+
+        list(BaseModel.track(model, _make_frames(2), fps=12.0))
+
+        assert captured["frame_rate"] == 12
+
+    def test_explicit_frame_rate_kwarg_overrides_fps(self, monkeypatch):
+        captured = {}
+        original = TrackConfig.from_kwargs.__func__
+
+        def spy(cls, **kwargs):
+            captured.update(kwargs)
+            return original(cls, **kwargs)
+
+        monkeypatch.setattr(TrackConfig, "from_kwargs", classmethod(spy))
+        model = _StubTrackModel()
+
+        list(BaseModel.track(model, _make_frames(2), fps=12.0, frame_rate=5))
+
+        assert captured["frame_rate"] == 5
+
+    def test_fps_does_not_seed_frame_rate_for_video_sources(self, tmp_path, monkeypatch):
+        cv2 = pytest.importorskip("cv2", reason="opencv-python required for video tests")
+        path = str(tmp_path / "clip.mp4")
+        writer = cv2.VideoWriter(
+            path, cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (20, 16)
+        )
+        for _ in range(2):
+            writer.write(np.zeros((16, 20, 3), dtype=np.uint8))
+        writer.release()
+
+        captured = {}
+        original = TrackConfig.from_kwargs.__func__
+
+        def spy(cls, **kwargs):
+            captured.update(kwargs)
+            return original(cls, **kwargs)
+
+        monkeypatch.setattr(TrackConfig, "from_kwargs", classmethod(spy))
+        model = _StubTrackModel()
+
+        list(BaseModel.track(model, path, fps=12.0))
+
+        assert "frame_rate" not in captured
+
+    def test_fps_does_not_leak_into_ocsort_config(self):
+        # OCSortConfig has no frame_rate field; passing it through would
+        # otherwise trigger a spurious "unknown config key" warning.
+        model = _StubTrackModel()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            list(BaseModel.track(model, _make_frames(2), fps=12.0, tracker="ocsort"))

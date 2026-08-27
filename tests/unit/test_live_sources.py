@@ -320,6 +320,16 @@ class TestImageSequenceSource:
         packets = list(src)
         assert [p.frame_idx for p in packets] == [0, 2, 4]
 
+    def test_vid_stride_scales_down_reported_fps(self):
+        # Retaining half the frames must halve the reported fps, or a saved
+        # output video (written one retained frame per tick) plays back
+        # vid_stride times too fast.
+        images = [Image.new("RGB", (4, 4)) for _ in range(4)]
+        src = ImageSequenceSource(images, vid_stride=2, fps=30.0)
+
+        packets = list(src)
+        assert all(p.fps == 15.0 for p in packets)
+
     def test_path_items_are_reported_as_the_source_label(self, tmp_path):
         path = tmp_path / "frame.png"
         Image.new("RGB", (4, 4)).save(path)
