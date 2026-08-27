@@ -837,7 +837,7 @@ class BaseTrainer(ABC):
                     preproc=preproc,
                     load_segments=load_segments,
                     load_obb=load_obb,
-                    num_classes=self.num_classes if load_obb else None,
+                    num_classes=self.num_classes,
                     single_cls=self.config.single_cls,
                 )
             elif ann_file.exists():
@@ -880,7 +880,7 @@ class BaseTrainer(ABC):
                     preproc=preproc,
                     load_segments=load_segments,
                     load_obb=load_obb,
-                    num_classes=self.num_classes if load_obb else None,
+                    num_classes=self.num_classes,
                     single_cls=self.config.single_cls,
                 )
         elif self.config.data_dir:
@@ -911,7 +911,7 @@ class BaseTrainer(ABC):
                     preproc=preproc,
                     load_segments=load_segments,
                     load_obb=load_obb,
-                    num_classes=self.num_classes if load_obb else None,
+                    num_classes=self.num_classes,
                     single_cls=self.config.single_cls,
                 )
         else:
