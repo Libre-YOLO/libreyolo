@@ -1585,8 +1585,10 @@ class BaseModel(ABC):
                 the fps written into a saved output video, and — for
                 ByteTrack/BoT-SORT only — the lost-track buffer timing
                 (OC-SORT/Deep OC-SORT count lost-track age in frames, not
-                time, so *fps* doesn't affect them). Ignored for video
-                files, which use their own detected fps.
+                time, so *fps* doesn't affect them). With *vid_stride* > 1,
+                the buffer is timed against ``fps / vid_stride`` — the rate
+                at which frames are actually retained and reach the tracker.
+                Ignored for video files, which use their own detected fps.
             output_path: Path for saved video. Defaults to
                 ``runs/track/<video_stem>.mp4`` for a video file, or
                 ``runs/track/<name>.mp4`` for an image sequence.
@@ -1691,12 +1693,16 @@ class BaseModel(ABC):
         tracker = (tracker or "bytetrack").lower()
 
         if tracker in ("bytetrack", "botsort") and source_spec.kind != SourceKind.VIDEO:
-            # ByteTrack/BoT-SORT scale their lost-track buffer by frame_rate;
-            # an image sequence has no real capture rate of its own, so seed
-            # it from *fps* instead of silently keeping the class default.
+            # ByteTrack/BoT-SORT scale their lost-track buffer by frame_rate,
+            # which must match the actual rate at which update() is called --
+            # one call per *retained* frame, i.e. fps / vid_stride, since
+            # strided-out frames never reach the tracker at all. Seeding it
+            # with the raw fps would let lost identities survive vid_stride
+            # times longer (in wall-clock terms) than the buffer intends.
             # OC-SORT/Deep OC-SORT have no frame_rate field (their buffer is
             # a plain frame count via max_age), so they're left alone.
-            tracker_kwargs.setdefault("frame_rate", int(round(fps)))
+            retained_fps = fps / max(1, vid_stride)
+            tracker_kwargs.setdefault("frame_rate", max(1, int(round(retained_fps))))
 
         if tracker == "deepocsort":
             if tracker_config is None:

@@ -692,6 +692,24 @@ class TestTrackImageSequences:
 
         assert captured["frame_rate"] == 12
 
+    def test_fps_seeds_frame_rate_at_the_retained_frame_cadence(self, monkeypatch):
+        # tracker.update() only ever sees retained frames, so frame_rate
+        # must be scaled by vid_stride -- not the raw fps -- or a lost
+        # track's real-world expiry stretches out by vid_stride times.
+        captured = {}
+        original = TrackConfig.from_kwargs.__func__
+
+        def spy(cls, **kwargs):
+            captured.update(kwargs)
+            return original(cls, **kwargs)
+
+        monkeypatch.setattr(TrackConfig, "from_kwargs", classmethod(spy))
+        model = _StubTrackModel()
+
+        list(BaseModel.track(model, _make_frames(6), fps=30.0, vid_stride=3))
+
+        assert captured["frame_rate"] == 10
+
     def test_explicit_frame_rate_kwarg_overrides_fps(self, monkeypatch):
         captured = {}
         original = TrackConfig.from_kwargs.__func__
