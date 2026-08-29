@@ -7,10 +7,12 @@ from falling through to :class:`ImageLoader` as if they were file paths.
 
 from __future__ import annotations
 
+import io
 import re
 import sys
 import threading
 from collections import deque
+from collections.abc import Sized
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
@@ -72,7 +74,7 @@ class StreamFrame:
     frame_bgr: np.ndarray
     frame_idx: int
     source_index: int
-    source_label: str
+    source_label: str | None
     fps: float
 
 
@@ -197,6 +199,11 @@ def classify_source(source: Any) -> SourceSpec:
                 "A source list cannot mix live/video streams with image inputs"
             )
         return SourceSpec(SourceKind.IMAGE_BATCH, source, items)
+
+    # BytesIO is both a supported atomic ImageInput and an iterator over bytes.
+    # Keep it on the single-image path before recognizing lazy frame iterators.
+    if isinstance(source, io.BytesIO):
+        return SourceSpec(SourceKind.IMAGE, source)
 
     if hasattr(source, "__next__"):
         # A bare iterator/generator of already-loaded images (e.g. PIL frames
@@ -581,6 +588,8 @@ class ImageSequenceSource:
             timing (a tracker's lost-track buffer, or the fps written into
             a saved output video).
         save_name: Base name used to derive an output path when saving.
+        color_format: Color format hint passed to ``ImageLoader`` for NumPy
+            frames: ``"auto"``, ``"rgb"``, or ``"bgr"``.
 
     Note:
         Can only be iterated once, like :class:`~libreyolo.utils.video.VideoSource`.
@@ -595,12 +604,21 @@ class ImageSequenceSource:
         vid_stride: int = 1,
         fps: float = 30.0,
         save_name: str = "sequence",
+        color_format: str = "auto",
     ):
         self._images = images
         self._vid_stride = max(1, int(vid_stride))
         self.fps = float(fps)
+        if not np.isfinite(self.fps) or self.fps <= 0:
+            raise ValueError(f"fps must be a finite value > 0, got {fps}")
         self.save_name = save_name
-        self.total_frames = len(images) if hasattr(images, "__len__") else 0
+        raw_total = len(images) if isinstance(images, Sized) else 0
+        self.total_frames = (
+            (raw_total + self._vid_stride - 1) // self._vid_stride
+            if raw_total
+            else 0
+        )
+        self._color_format = color_format
         self.width = 0
         self.height = 0
         self._iterated = False
@@ -632,7 +650,7 @@ class ImageSequenceSource:
         for frame_idx, item in enumerate(self._images):
             if frame_idx % self._vid_stride:
                 continue
-            pil_img = ImageLoader.load(item)
+            pil_img = ImageLoader.load(item, color_format=self._color_format)
             frame_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
             label = str(item) if isinstance(item, (str, Path)) else None
             yield StreamFrame(

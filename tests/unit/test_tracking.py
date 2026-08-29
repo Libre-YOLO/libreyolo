@@ -1,13 +1,16 @@
 """Unit tests for the ByteTrack tracking module."""
 
+import io
 import warnings
 from pathlib import Path
 
-import pytest
 import numpy as np
+import pytest
 import torch
 from PIL import Image
 
+from libreyolo.models.base.inference import InferenceRunner
+from libreyolo.models.base.model import BaseModel
 from libreyolo.tracking.config import TrackConfig
 from libreyolo.tracking.kalman_filter import KalmanFilterXYAH
 from libreyolo.tracking.matching import (
@@ -18,8 +21,6 @@ from libreyolo.tracking.matching import (
 )
 from libreyolo.tracking.strack import STrack, TrackState
 from libreyolo.tracking.tracker import ByteTracker
-from libreyolo.models.base.model import BaseModel
-from libreyolo.models.base.inference import InferenceRunner
 from libreyolo.utils.image_loader import ImageLoader
 from libreyolo.utils.results import Boxes, Masks, Results
 
@@ -610,6 +611,7 @@ class TestTrackImageSequences:
 
         assert len(results) == 4
         assert [r.frame_idx for r in results] == [0, 1, 2, 3]
+        assert all(r.path is None for r in results)
         # The fixed-position detection matches itself frame over frame, so
         # ByteTrack keeps assigning it the same identity.
         assert [int(r.track_id[0]) for r in results] == [1, 1, 1, 1]
@@ -652,6 +654,35 @@ class TestTrackImageSequences:
 
         assert len(results) == 1
 
+    def test_tracks_a_single_bytesio_image(self):
+        buffer = io.BytesIO()
+        Image.new("RGB", (20, 16)).save(buffer, format="PNG")
+        buffer.seek(0)
+        model = _StubTrackModel()
+
+        results = list(BaseModel.track(model, buffer))
+
+        assert len(results) == 1
+
+    def test_bgr_numpy_frames_reach_the_model_as_rgb(self):
+        model = _StubTrackModel()
+        seen_pixels = []
+        original_preprocess = model._preprocess
+
+        def capture_preprocess(image, color_format="auto", input_size=None):
+            seen_pixels.append(np.asarray(image)[0, 0].tolist())
+            return original_preprocess(
+                image, color_format=color_format, input_size=input_size
+            )
+
+        model._preprocess = capture_preprocess
+        frame_bgr = np.zeros((16, 20, 3), dtype=np.uint8)
+        frame_bgr[:] = [0, 0, 255]
+
+        list(BaseModel.track(model, [frame_bgr], color_format="bgr"))
+
+        assert seen_pixels == [[255, 0, 0]]
+
     def test_empty_directory_yields_no_results(self, tmp_path):
         model = _StubTrackModel()
 
@@ -676,6 +707,29 @@ class TestTrackImageSequences:
 
         assert len(results) == 3
         assert output_path.exists()
+
+    def test_save_rejects_images_with_changed_dimensions(self, tmp_path):
+        pytest.importorskip("cv2", reason="opencv-python required for video tests")
+        model = _StubTrackModel()
+        output_path = tmp_path / "tracked.mp4"
+        frames = [
+            Image.new("RGB", (20, 16)),
+            Image.new("RGB", (30, 24)),
+        ]
+
+        with pytest.raises(ValueError, match="frame size changed"):
+            list(
+                BaseModel.track(
+                    model, frames, save=True, output_path=str(output_path)
+                )
+            )
+
+    @pytest.mark.parametrize("fps", [0, -1, np.nan, np.inf])
+    def test_rejects_invalid_image_sequence_fps(self, fps):
+        model = _StubTrackModel()
+
+        with pytest.raises(ValueError, match="fps must be a finite value > 0"):
+            list(BaseModel.track(model, _make_frames(1), fps=fps))
 
     def test_fps_seeds_bytetrack_frame_rate_for_image_sequences(self, monkeypatch):
         captured = {}

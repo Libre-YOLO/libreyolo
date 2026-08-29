@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ import torch
 from PIL import Image
 
 from libreyolo.utils import source as source_module
+from libreyolo.utils.results import Probs, Results
 from libreyolo.utils.source import (
     ImageSequenceSource,
     MultiStreamSource,
@@ -22,7 +24,6 @@ from libreyolo.utils.source import (
     redact_source,
     resolve_youtube_stream,
 )
-from libreyolo.utils.results import Probs, Results
 from libreyolo.utils.video import run_video_inference
 
 pytestmark = pytest.mark.unit
@@ -288,6 +289,10 @@ def test_ndarray_is_not_mistaken_for_an_image_sequence():
     assert classify_source(np.zeros((4, 4, 3), dtype=np.uint8)).kind == SourceKind.IMAGE
 
 
+def test_bytesio_is_not_mistaken_for_an_image_sequence():
+    assert classify_source(io.BytesIO(b"image bytes")).kind == SourceKind.IMAGE
+
+
 class TestImageSequenceSource:
     def test_iterates_a_finite_list_reporting_its_length(self):
         images = [Image.new("RGB", (4, 4)) for _ in range(3)]
@@ -319,6 +324,7 @@ class TestImageSequenceSource:
 
         packets = list(src)
         assert [p.frame_idx for p in packets] == [0, 2, 4]
+        assert src.total_frames == 3
 
     def test_vid_stride_scales_down_reported_fps(self):
         # Retaining half the frames must halve the reported fps, or a saved
@@ -329,6 +335,19 @@ class TestImageSequenceSource:
 
         packets = list(src)
         assert all(p.fps == 15.0 for p in packets)
+
+    def test_bgr_numpy_frames_preserve_their_color_format(self):
+        frame_bgr = np.zeros((4, 4, 3), dtype=np.uint8)
+        frame_bgr[:] = [0, 0, 255]
+        src = ImageSequenceSource([frame_bgr], color_format="bgr")
+
+        (packet,) = list(src)
+        assert packet.frame_bgr[0, 0].tolist() == [0, 0, 255]
+
+    @pytest.mark.parametrize("fps", [0, -1, np.nan, np.inf])
+    def test_rejects_invalid_fps(self, fps):
+        with pytest.raises(ValueError, match="fps must be a finite value > 0"):
+            ImageSequenceSource([Image.new("RGB", (4, 4))], fps=fps)
 
     def test_path_items_are_reported_as_the_source_label(self, tmp_path):
         path = tmp_path / "frame.png"

@@ -10,6 +10,7 @@ import contextlib
 import functools
 import inspect
 import logging
+import math
 import re
 import warnings
 from abc import ABC, abstractmethod
@@ -23,7 +24,6 @@ from typing import (
     Iterator,
     List,
     Optional,
-    Sequence,
     Tuple,
     Type,
     Union,
@@ -1528,7 +1528,12 @@ class BaseModel(ABC):
 
     def track(
         self,
-        source: Union[str, Path, Sequence[ImageInput], Iterator[ImageInput]],
+        source: Union[
+            ImageInput,
+            List[ImageInput],
+            Tuple[ImageInput, ...],
+            Iterator[ImageInput],
+        ],
         *,
         track_conf: float = 0.25,
         iou: float = 0.45,
@@ -1539,6 +1544,7 @@ class BaseModel(ABC):
         show: bool = False,
         vid_stride: int = 1,
         fps: float = 30.0,
+        color_format: str = "auto",
         output_path: Optional[str] = None,
         tracker: str = "bytetrack",
         tracker_config=None,
@@ -1590,10 +1596,14 @@ class BaseModel(ABC):
                 the buffer is timed against ``fps / vid_stride`` — the rate
                 at which frames are actually retained and reach the tracker.
                 Ignored for video files, which use their own detected fps.
-                Also ignored when *tracker_config* is given (same rule as
-                *track_conf*) — set ``frame_rate`` on it yourself in that
-                case, or a mismatch will emit a warning and the buffer will
-                use *tracker_config*'s frame_rate as-is.
+                A typed *tracker_config* keeps its explicit ``frame_rate`` for
+                tracker timing, while *fps* and *vid_stride* still control
+                image-sequence sampling and saved-video playback. A mismatch
+                emits a warning rather than overwriting the explicit config.
+            color_format: Color format for NumPy image-sequence items:
+                ``"rgb"``, ``"bgr"``, or ``"auto"``. Other image input
+                types are normalized to RGB by ``ImageLoader``. Ignored for
+                video files.
             output_path: Path for saved video. Defaults to
                 ``runs/track/<video_stem>.mp4`` for a video file, or
                 ``runs/track/<name>.mp4`` for an image sequence.
@@ -1684,6 +1694,21 @@ class BaseModel(ABC):
         # Classified up front (rather than after the tracker is built) so a
         # non-video source can seed the tracker's frame_rate default below.
         source_spec = classify_source(source)
+        image_sequence_kinds = {
+            SourceKind.IMAGE,
+            SourceKind.IMAGE_BATCH,
+            SourceKind.IMAGE_SEQUENCE,
+            SourceKind.DIRECTORY,
+        }
+        if source_spec.kind in image_sequence_kinds:
+            try:
+                fps = float(fps)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"fps must be a finite value > 0, got {fps!r}"
+                ) from exc
+            if not math.isfinite(fps) or fps <= 0:
+                raise ValueError(f"fps must be a finite value > 0, got {fps!r}")
 
         # A provided config picks the tracker; otherwise honour the selector.
         if isinstance(tracker_config, BoTSortConfig):
@@ -1697,8 +1722,12 @@ class BaseModel(ABC):
             tracker = "bytetrack"
         tracker = (tracker or "bytetrack").lower()
 
-        if tracker in ("bytetrack", "botsort") and source_spec.kind != SourceKind.VIDEO:
-            # update() runs once per retained frame, so frame_rate must be fps / vid_stride
+        if (
+            tracker in ("bytetrack", "botsort")
+            and source_spec.kind in image_sequence_kinds
+        ):
+            # update() runs once per retained frame, so frame_rate must be
+            # fps / vid_stride.
             retained_fps = fps / max(1, vid_stride)
             if tracker_config is None:
                 # Pass the exact fraction: tracker.py already truncates via
@@ -1717,9 +1746,9 @@ class BaseModel(ABC):
                         f"tracker_config.frame_rate={tracker_config.frame_rate} does "
                         f"not match this image sequence's retained-frame rate "
                         f"(fps / vid_stride ≈ {nearest_retained_fps}). "
-                        "tracker_config is used as-is -- fps and vid_stride are "
-                        "ignored once tracker_config is given -- so lost tracks "
-                        "will be kept recoverable for the wrong duration unless "
+                        "tracker_config is used as-is for tracker timing, so lost "
+                        "tracks will be kept recoverable for the wrong duration "
+                        "unless "
                         f"you set frame_rate={nearest_retained_fps} on it yourself.",
                         stacklevel=2,
                     )
@@ -1773,7 +1802,11 @@ class BaseModel(ABC):
                 return
             default_stem = Path(source_spec.source).name
             frame_source = ImageSequenceSource(
-                images, vid_stride=vid_stride, fps=fps, save_name=default_stem
+                images,
+                vid_stride=vid_stride,
+                fps=fps,
+                save_name=default_stem,
+                color_format=color_format,
             )
         elif source_spec.kind == SourceKind.IMAGE_BATCH:
             frame_source = ImageSequenceSource(
@@ -1781,10 +1814,15 @@ class BaseModel(ABC):
                 vid_stride=vid_stride,
                 fps=fps,
                 save_name=default_stem,
+                color_format=color_format,
             )
         elif source_spec.kind == SourceKind.IMAGE_SEQUENCE:
             frame_source = ImageSequenceSource(
-                source_spec.source, vid_stride=vid_stride, fps=fps, save_name=default_stem
+                source_spec.source,
+                vid_stride=vid_stride,
+                fps=fps,
+                save_name=default_stem,
+                color_format=color_format,
             )
         elif source_spec.kind == SourceKind.IMAGE:
             # A single already-loaded image or path, treated as a one-frame
@@ -1794,6 +1832,7 @@ class BaseModel(ABC):
                 vid_stride=vid_stride,
                 fps=fps,
                 save_name=default_stem,
+                color_format=color_format,
             )
         else:
             raise NotImplementedError(
