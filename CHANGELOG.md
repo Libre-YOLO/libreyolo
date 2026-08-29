@@ -9,6 +9,11 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **LeVJEPA** (`levjepa`) inference-only video encoder with normalized clip
+  embeddings and spatiotemporal patch embeddings. The native implementation
+  loads the released 16-frame ViT-L/16 checkpoint; redistributed weights remain
+  under CC BY-NC 4.0.
+
 - **LibreGround** sibling factory: screenshot + instruction →
   `Results.points`. Shipped adapters are Florence-2-base (MIT), ShowUI-2B
   (MIT weights; Apache-2.0 code/base), and Qwen3-VL-2B (Apache-2.0).
