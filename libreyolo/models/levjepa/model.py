@@ -204,8 +204,18 @@ class LibreLeVJEPA(BaseModel):
                 target_fps=TARGET_FPS,
             )
             wanted = set(indices)
+            decode_start = min(wanted)
+            if decode_start:
+                seeked = capture.set(cv2.CAP_PROP_POS_FRAMES, decode_start)
+                reported = int(round(capture.get(cv2.CAP_PROP_POS_FRAMES)))
+                if not seeked or abs(reported - decode_start) > 1:
+                    capture.release()
+                    capture = cv2.VideoCapture(str(source))
+                    if not capture.isOpened():
+                        raise ValueError(f"Could not reopen video: {source}")
+                    decode_start = 0
             decoded = {}
-            for position in range(max(wanted) + 1):
+            for position in range(decode_start, max(wanted) + 1):
                 ok, frame = capture.read()
                 if not ok:
                     break

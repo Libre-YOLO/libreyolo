@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 import torch
 
@@ -98,6 +99,52 @@ def test_short_clip_holds_last_real_frame():
     indices = clip_frame_indices(5, source_fps=15.0)
     assert indices[:3] == [0, 2, 4]
     assert indices[3:] == [4] * 13
+
+
+def test_video_sampling_seeks_to_centered_window(monkeypatch):
+    import cv2
+
+    class FakeCapture:
+        def __init__(self):
+            self.position = 0
+            self.reads = 0
+            self.seek_targets = []
+
+        def isOpened(self):
+            return True
+
+        def get(self, prop):
+            if prop == cv2.CAP_PROP_FRAME_COUNT:
+                return 300
+            if prop == cv2.CAP_PROP_FPS:
+                return 30.0
+            if prop == cv2.CAP_PROP_POS_FRAMES:
+                return self.position
+            raise AssertionError(f"unexpected property: {prop}")
+
+        def set(self, prop, value):
+            assert prop == cv2.CAP_PROP_POS_FRAMES
+            self.position = int(value)
+            self.seek_targets.append(self.position)
+            return True
+
+        def read(self):
+            frame = np.zeros((8, 8, 3), dtype=np.uint8)
+            self.position += 1
+            self.reads += 1
+            return True, frame
+
+        def release(self):
+            pass
+
+    capture = FakeCapture()
+    monkeypatch.setattr(cv2, "VideoCapture", lambda source: capture)
+
+    frames = LibreLeVJEPA.sample_clip_frames(None, "long.mp4", 16)
+
+    assert len(frames) == 16
+    assert capture.seek_targets == [119]
+    assert capture.reads == 61
 
 
 def test_download_notice_is_explicitly_noncommercial():
