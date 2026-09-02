@@ -68,7 +68,7 @@ def test_rfdetr_train_prefers_canonical_batch_and_lr0(monkeypatch, tmp_path):
     assert captured["kwargs"]["lr0"] == pytest.approx(0.001)
     assert captured["kwargs"]["project"] == str(tmp_path)
     assert captured["kwargs"]["name"] == "canonical"
-    assert captured["kwargs"]["exist_ok"] is True
+    assert captured["kwargs"]["exist_ok"] is False
 
 
 def test_rfdetr_train_accepts_legacy_aliases(monkeypatch, tmp_path):
