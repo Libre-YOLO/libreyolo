@@ -64,7 +64,7 @@ class VLMTrainConfig:
     output_dir: str = "runs/vlm/train"
     project: Optional[str] = None
     name: Optional[str] = None
-    exist_ok: bool = True
+    exist_ok: bool = False
     workers: int = 0
     seed: int = 0
     device: Optional[str] = None

@@ -42,10 +42,12 @@ from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.serialization import load_trusted_torch_file
 from ..base.model import BaseModel
-from ..rfdetr.config import RFDETRConfig
+from .config import DINOv2Config
 from libreyolo.training.ddp_spawn import ddp_aware
 
 logger = logging.getLogger(__name__)
+
+_TRAIN_DEFAULTS = DINOv2Config()
 
 
 class _DINOv2ModelWrapper(nn.Module):
@@ -268,7 +270,7 @@ class LibreDINOv2(BaseModel):
     WEIGHT_TASKS: ClassVar[Tuple[str, ...]] = ("semantic", "classify")
     DEFAULT_TASK: ClassVar[str] = "semantic"
 
-    TRAIN_CONFIG: ClassVar[type] = RFDETRConfig
+    TRAIN_CONFIG: ClassVar[type] = DINOv2Config
 
     # Stretch-resize and DINOv2 patch divisibility.
     semantic_resize_mode: ClassVar[str] = "stretch"
@@ -751,7 +753,7 @@ class LibreDINOv2(BaseModel):
         epochs: int = 100,
         batch_size: int | None = None,
         lr: float | None = None,
-        output_dir: str = "runs/train",
+        output_dir: str | None = None,
         resume=None,
         callbacks: TrainCallbacks = None,
         **kwargs,
@@ -760,6 +762,10 @@ class LibreDINOv2(BaseModel):
 
         Task is taken from ``self.task``; ``DINOv2Trainer`` (via ``RFDETRTrainer``)
         routes the classify vs semantic data/loss branches accordingly.
+
+        ``output_dir``, when given, splits into ``project`` (parent) and
+        ``name`` (leaf); ``project=`` / ``name=`` kwargs take precedence.
+        Defaults to ``<DINOv2Config.project>/<DINOv2Config.name>`` when omitted.
         """
         if self.task == "embed":
             raise NotImplementedError(
@@ -770,17 +776,23 @@ class LibreDINOv2(BaseModel):
 
         from .trainer import DINOv2Trainer
 
-        output_path = _Path(output_dir)
         train_kwargs = dict(kwargs)
         project = train_kwargs.pop("project", None)
         name = train_kwargs.pop("name", None)
-        exist_ok = train_kwargs.pop("exist_ok", True)
+        exist_ok = train_kwargs.pop("exist_ok", _TRAIN_DEFAULTS.exist_ok)
         batch = train_kwargs.pop("batch", None)
         lr0 = train_kwargs.pop("lr0", None)
-        if project is None:
-            project = output_path.parent
-        if name is None:
-            name = output_path.name
+        if output_dir is not None:
+            output_path = _Path(output_dir)
+            if project is None:
+                project = output_path.parent
+            if name is None:
+                name = output_path.name
+        else:
+            if project is None:
+                project = _TRAIN_DEFAULTS.project
+            if name is None:
+                name = _TRAIN_DEFAULTS.name
 
         if batch is not None and batch_size is not None and batch != batch_size:
             raise ValueError(
