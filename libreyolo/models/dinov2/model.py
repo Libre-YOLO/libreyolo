@@ -754,7 +754,7 @@ class LibreDINOv2(BaseModel):
         batch_size: int | None = None,
         lr: float | None = None,
         output_dir: str | None = None,
-        resume=None,
+        resume: str | Path | bool | None = None,
         callbacks: TrainCallbacks = None,
         **kwargs,
     ) -> Dict:
@@ -766,6 +766,9 @@ class LibreDINOv2(BaseModel):
         ``output_dir``, when given, splits into ``project`` (parent) and
         ``name`` (leaf); ``project=`` / ``name=`` kwargs take precedence.
         Defaults to ``<DINOv2Config.project>/<DINOv2Config.name>`` when omitted.
+
+        ``resume``: checkpoint path, or True to resume from this run's own
+        ``weights/last.pt``.
         """
         if self.task == "embed":
             raise NotImplementedError(
@@ -793,6 +796,11 @@ class LibreDINOv2(BaseModel):
                 project = _TRAIN_DEFAULTS.project
             if name is None:
                 name = _TRAIN_DEFAULTS.name
+        run_dir = _Path(project) / str(name)
+        if resume is True:
+            # resume=True reads weights/last.pt from this exact run_dir below;
+            # never let _get_save_dir() increment away from it mid-resume.
+            exist_ok = True
 
         if batch is not None and batch_size is not None and batch != batch_size:
             raise ValueError(
@@ -814,6 +822,10 @@ class LibreDINOv2(BaseModel):
         if resolved_device is None:
             resolved_device = str(self.device)
 
+        resume_path = None
+        if resume:
+            resume_path = run_dir / "weights" / "last.pt" if resume is True else resume
+
         trainer = DINOv2Trainer(
             model=self.model,
             wrapper_model=self,
@@ -832,6 +844,9 @@ class LibreDINOv2(BaseModel):
             callbacks=callbacks,
             **train_kwargs,
         )
+        if resume:
+            trainer.setup()
+            trainer.resume(str(resume_path))
 
         result = trainer.train()
         self._restore_after_training(result)
