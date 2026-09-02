@@ -123,6 +123,11 @@ def test_rfdetr_train_resolves_resume_paths(monkeypatch, tmp_path, resume_arg):
 
     assert captured["setup"] is True
     assert captured["resume"] == str(expected)
+    # resume=True continues in the same run_dir that weights/last.pt was read
+    # from, so exist_ok must be forced True regardless of the new exist_ok=False
+    # default -- otherwise _get_save_dir() would increment away from it and
+    # split resumed state from newly written artifacts.
+    assert captured["kwargs"]["exist_ok"] is (resume is True)
 
 
 def test_rfdetr_train_rejects_conflicting_lr_aliases(tmp_path):

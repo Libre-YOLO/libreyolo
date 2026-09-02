@@ -1241,6 +1241,10 @@ class LibreRFDETR(BaseModel):
             if name is None:
                 name = _TRAIN_DEFAULTS.name
         run_dir = Path(project) / str(name)
+        if resume is True:
+            # resume=True reads weights/last.pt from this exact run_dir below;
+            # never let _get_save_dir() increment away from it mid-resume.
+            exist_ok = True
 
         if batch is not None and batch_size is not None and batch != batch_size:
             raise ValueError(

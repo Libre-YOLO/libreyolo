@@ -111,6 +111,11 @@ class VLMDetectionTrainer:
         self.callbacks = TrainCallbackList(callbacks)
         for logger_cb in resolve_loggers(loggers):
             self.callbacks.append(logger_cb)
+        if self.config.resume is True:
+            # resume=True reads weights/last from this exact save_dir (see
+            # _resolve_resume_dir); never let _resolve_save_dir() increment
+            # away from it mid-resume.
+            self.config.exist_ok = True
         self.save_dir = self._resolve_save_dir()
 
     # ------------------------------------------------------------------
