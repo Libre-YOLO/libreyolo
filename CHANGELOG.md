@@ -9,6 +9,16 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- **TFLite INT8 export.** `export(format="tflite", int8=True, data=...)` now
+  runs post-training quantization instead of rejecting the request, and
+  returns the fully integer artifact (int8 input and output tensors, which is
+  what EdgeTPU and int8-only MCU runtimes require). `TFLiteBackend` already
+  quantized inputs and dequantized outputs from the tensor scales, so
+  `predict()` on the artifact takes float images as before. Calibration data
+  is mandatory: there is no eight-image default for this format. Accuracy is
+  not parity-validated per family yet, so measure with `val()` before
+  deploying.
+
 - **LibreGround** sibling factory: screenshot + instruction →
   `Results.points`. Shipped adapters are Florence-2-base (MIT), ShowUI-2B
   (MIT weights; Apache-2.0 code/base), and Qwen3-VL-2B (Apache-2.0).
