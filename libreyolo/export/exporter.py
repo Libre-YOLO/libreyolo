@@ -28,7 +28,7 @@ from .onnx import (
     export_onnx,
     quantize_onnx_int8,
 )
-from .support import get_support, validated_alternatives
+from .support import INT8_EXPORTS, get_support, validated_alternatives
 from .torchscript import export_torchscript
 
 logger = logging.getLogger(__name__)
@@ -1837,7 +1837,7 @@ class OnnxExporter(BaseExporter):
             task = getattr(self.model, "task", "detect")
             if not isinstance(task, str):
                 task = "detect"
-            if self.model._get_model_name() != "yolo9" or task != "detect":
+            if (self.model._get_model_name(), task) not in INT8_EXPORTS["onnx"]:
                 raise NotImplementedError(
                     "ONNX INT8 export currently supports YOLO9 detection models only."
                 )

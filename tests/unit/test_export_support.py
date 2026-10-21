@@ -920,3 +920,14 @@ def test_shipping_rows_never_claim_a_future_since_version():
     assert not offenders, (
         f"Rows claim since > {'.'.join(map(str, floor))}: {sorted(offenders.items())}"
     )
+
+
+def test_gtr_export_rejects_half_like_precision_support():
+    from libreyolo.export.support import FP32_ONLY_FAMILIES
+    from libreyolo.models.gtr.model import LibreGTR
+
+    assert "gtr" in FP32_ONLY_FAMILIES
+    model = LibreGTR.__new__(LibreGTR)
+    model._quant_manifest = None
+    with pytest.raises(ValueError, match="requires FP32"):
+        model.export(format="onnx", half=True)

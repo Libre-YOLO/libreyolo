@@ -46,6 +46,9 @@ before 1.4.0 are documented in the
 
 ### Fixed
 
+- **`libreyolo formats --family` reports only the precisions `export()` accepts. (#951)**
+  The FP16 and INT8 fields described the format alone, so blocked rows, FP32-only GTR rows and non-YOLO9 ONNX INT8 rows still printed `True` and the matching `export()` call raised. With `--family`, each row now also applies the combination's tier, FP32-only families and the per-format INT8 allowlists, which `export()` reads from the same table. Without `--family` the fields still describe the format.
+
 - **YOLO9 label assignment no longer scales with `max_labels`. (#935)**
   The task-aligned matcher of YOLO9, YOLO9-E2E and YOLO9-P2 built dense batch × `max_labels` × anchors tensors over the padded label rows, so a high `max_labels` ran out of GPU memory even on sparse data (about 40 GiB at batch 16, 800 px and `max_labels=3000`). Each image is now matched on its own boxes, as YOLOX and MMDetection assign labels, so memory follows the densest image in the batch. Assignments and losses are unchanged, and matching is faster on typical data. Boxes beyond `max_labels` are still dropped, now with a warning.
 
