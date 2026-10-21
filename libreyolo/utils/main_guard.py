@@ -10,6 +10,7 @@ worker is stopped here instead, with one line that says what to change.
 from __future__ import annotations
 
 import functools
+import inspect
 import multiprocessing
 import sys
 from typing import Callable
@@ -21,13 +22,19 @@ MESSAGE = (
 )
 
 
-def exit_if_reimporting_main(action: str) -> None:
+def exit_if_reimporting_main(action: str, workers=None) -> None:
     """Stop a worker process that is re-running the user's ``__main__`` script.
 
     ``_inheriting`` is the flag multiprocessing itself sets while a spawned or
     forkserver child imports ``__main__``; it is never set in the main process
-    or in a worker that is already running its target.
+    or in a worker that is already running its target. A call that starts no
+    DataLoader workers (``workers=0``) does not fail there, so it is let through.
     """
+    try:
+        if workers is not None and int(workers) <= 0:
+            return
+    except (TypeError, ValueError):
+        pass
     if getattr(multiprocessing.current_process(), "_inheriting", False):
         # Printed before exiting: a forkserver's preload of ``__main__`` drops
         # the SystemExit message.
@@ -42,9 +49,18 @@ def guard_main_reimport(action: str) -> Callable[[Callable], Callable]:
         if getattr(fn, "_libreyolo_main_guarded", False):
             return fn
 
+        signature = inspect.signature(fn)
+
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            exit_if_reimporting_main(action)
+            if getattr(multiprocessing.current_process(), "_inheriting", False):
+                try:
+                    bound = signature.bind_partial(*args, **kwargs)
+                    bound.apply_defaults()
+                    workers = bound.arguments.get("workers")
+                except TypeError:
+                    workers = None
+                exit_if_reimporting_main(action, workers)
             return fn(*args, **kwargs)
 
         wrapper._libreyolo_main_guarded = True

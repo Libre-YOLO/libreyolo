@@ -104,6 +104,22 @@ def _drop_disabled_eval_interval(saved: dict[str, Any], requested_val: Any) -> N
         saved.pop("eval_interval", None)
 
 
+def _requested_workers(model, sig, pos_names, args, merged):
+    """The DataLoader worker count a ``train()`` call asks for, or None if unknown."""
+    if "workers" in merged:
+        return merged["workers"]
+    if "workers" in pos_names[: len(args)]:
+        return args[pos_names.index("workers")]
+    param = sig.parameters.get("workers")
+    if param is not None and param.default is not inspect.Parameter.empty:
+        return param.default
+    config_cls = getattr(model, "TRAIN_CONFIG", None) or TrainConfig
+    return next(
+        (f.default for f in dataclasses.fields(config_cls) if f.name == "workers"),
+        None,
+    )
+
+
 def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
     """Add shared config-file and scratch-initialization handling to ``train()``.
 
@@ -123,7 +139,6 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
 
     @functools.wraps(train_fn)
     def wrapper(self, *args, cfg=None, **user_kwargs):
-        exit_if_reimporting_main("train()")
         # CLI/ecosystem spellings (mosaic, fliplr, mixup on detection) name
         # their fields per source, before cfg= and resume merge, so a call's
         # mosaic=0 overrides a saved mosaic_prob instead of conflicting with it.
@@ -135,6 +150,9 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
             consumed = set(pos_names[: len(args)]) | _WRAPPER_OWNED_CFG_KEYS
             merged = {k: v for k, v in cfg_kwargs.items() if k not in consumed}
             merged.update(user_kwargs)
+        exit_if_reimporting_main(
+            "train()", _requested_workers(self, sig, pos_names, args, merged)
+        )
 
         resume = merged.get("resume", False)
         if isinstance(resume, (str, Path)) and not isinstance(resume, bool):
