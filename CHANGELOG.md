@@ -46,6 +46,9 @@ before 1.4.0 are documented in the
 
 ### Fixed
 
+- **RTMDet-Ins respects `max_det` above 100. (#950)**
+  The instance-segmentation postprocess capped detections at `min(max_det, 100)`, so `predict(max_det=1000)` still returned at most 100 masks and dense scenes silently lost objects. MMDetection's `max_per_img=100` is a test-config default, not a ceiling, so `max_det` is now applied as given, like the other families and RTMDet detection.
+
 - **`libreyolo formats --family` reports only the precisions `export()` accepts. (#951)**
   The FP16 and INT8 fields described the format alone, so blocked rows, FP32-only GTR rows and non-YOLO9 ONNX INT8 rows still printed `True` and the matching `export()` call raised. With `--family`, each row now also applies the combination's tier, FP32-only families and the per-format INT8 allowlists, which `export()` reads from the same table. Without `--family` the fields still describe the format.
 
