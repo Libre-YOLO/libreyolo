@@ -48,6 +48,7 @@ from ...training.config import TrainConfig, apply_train_aliases, load_train_cfg
 from ...utils.general import COCO_CLASSES
 from ...utils.image_loader import ImageInput
 from ...utils.logging import ensure_default_logging
+from ...utils.main_guard import exit_if_reimporting_main, guard_main_reimport
 from ...utils.model_info import build_model_info, format_model_info
 from ...utils.results import Results
 from ...utils.serialization import (
@@ -103,6 +104,22 @@ def _drop_disabled_eval_interval(saved: dict[str, Any], requested_val: Any) -> N
         saved.pop("eval_interval", None)
 
 
+def _requested_workers(model, sig, pos_names, args, merged):
+    """The DataLoader worker count a ``train()`` call asks for, or None if unknown."""
+    if "workers" in merged:
+        return merged["workers"]
+    if "workers" in pos_names[: len(args)]:
+        return args[pos_names.index("workers")]
+    param = sig.parameters.get("workers")
+    if param is not None and param.default is not inspect.Parameter.empty:
+        return param.default
+    config_cls = getattr(model, "TRAIN_CONFIG", None) or TrainConfig
+    return next(
+        (f.default for f in dataclasses.fields(config_cls) if f.name == "workers"),
+        None,
+    )
+
+
 def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
     """Add shared config-file and scratch-initialization handling to ``train()``.
 
@@ -133,6 +150,9 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
             consumed = set(pos_names[: len(args)]) | _WRAPPER_OWNED_CFG_KEYS
             merged = {k: v for k, v in cfg_kwargs.items() if k not in consumed}
             merged.update(user_kwargs)
+        exit_if_reimporting_main(
+            "train()", _requested_workers(self, sig, pos_names, args, merged)
+        )
 
         resume = merged.get("resume", False)
         if isinstance(resume, (str, Path)) and not isinstance(resume, bool):
@@ -333,6 +353,8 @@ class BaseModel(ABC):
             cls.train, "_libreyolo_cfg_wrapped", False
         ):
             cls.train = _wrap_train_with_cfg(cls.train)
+        if "val" in cls.__dict__:
+            cls.val = guard_main_reimport("val()")(cls.val)
 
     # =========================================================================
     # Initialization
@@ -2639,6 +2661,7 @@ class BaseModel(ABC):
 
         return BaseExporter.create(format, self)(**kwargs)
 
+    @guard_main_reimport("val()")
     def val(
         self,
         data: str | None = None,
