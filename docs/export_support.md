@@ -74,6 +74,10 @@ in preflight.
 | lama | restore |  |  |  |  |  |  |  |  |  |  |  |  |
 | levjepa | embed | available | ✓ | available | available | available |  |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |  |  |  |  |  |
+| libremodus | detect |  |  |  |  |  |  |  |  |  |  |  |  |
+| libremodus | depth |  |  |  |  |  |  |  |  |  |  |  |  |
+| libremodus | normal |  |  |  |  |  |  |  |  |  |  |  |  |
+| libremodus | edge |  |  |  |  |  |  |  |  |  |  |  |  |
 | lingbotvision | semantic | ✓ | ✓ | ✓ | available | ✓ |  |  |  |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |  |  |  |  |
@@ -124,6 +128,13 @@ in preflight.
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |  |  |  |  |
 | sana_sprint | generate |  |  |  |  |  |  |  |  |  |  |  |  |
 | segformer | semantic | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |
+| sensenovavision | detect |  |  |  |  |  |  |  |  |  |  |  |  |
+| sensenovavision | segment |  |  |  |  |  |  |  |  |  |  |  |  |
+| sensenovavision | panoptic |  |  |  |  |  |  |  |  |  |  |  |  |
+| sensenovavision | pose |  |  |  |  |  |  |  |  |  |  |  |  |
+| sensenovavision | point |  |  |  |  |  |  |  |  |  |  |  |  |
+| sensenovavision | depth |  |  |  |  |  |  |  |  |  |  |  |  |
+| sensenovavision | ocr |  |  |  |  |  |  |  |  |  |  |  |  |
 | showui | point |  |  |  |  |  |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  | ✓ |  | ✓ |
 | siglip2 | embed | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |  |  | ✓ |  |  |
@@ -1215,6 +1226,54 @@ These converter paths are callable with the recorded validation context.
 - `lfm2vl` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `paddle`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
+- `libremodus` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `onnx`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `torchscript`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `executorch`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `openvino`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `paddle`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `mnn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `rknn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `ncnn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `tflite`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `coreml`: Generative VLM export is out of scope for v1.
+- `libremodus` / `depth` / `coreai`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `onnx`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `torchscript`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `executorch`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `openvino`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `paddle`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `mnn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `rknn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `ncnn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `tflite`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `coreml`: Generative VLM export is out of scope for v1.
+- `libremodus` / `normal` / `coreai`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `onnx`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `torchscript`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `executorch`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `openvino`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `paddle`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `mnn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `rknn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `ncnn`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `tflite`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `coreml`: Generative VLM export is out of scope for v1.
+- `libremodus` / `edge` / `coreai`: Generative VLM export is out of scope for v1.
 - `lingbotvision` / `semantic` / `paddle`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `lingbotvision` / `semantic` / `mnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `lingbotvision` / `semantic` / `rknn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
@@ -1653,6 +1712,90 @@ These converter paths are callable with the recorded validation context.
 - `segformer` / `semantic` / `tflite`: onnx2tf 2.6.7 emits a flatbuffer, but LiteRT 2.1.2 cannot prepare its attention reshape (1024 input elements versus 256 output elements).
 - `segformer` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `coreai`: The SegFormer Core AI capture path has not been assessed. Its published weights are non-commercial regardless of export format.
+- `sensenovavision` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `executorch`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `paddle`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `mnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `rknn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `onnx`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `torchscript`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `executorch`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `openvino`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `paddle`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `mnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `rknn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `ncnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `tflite`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `coreml`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `segment` / `coreai`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `onnx`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `torchscript`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `executorch`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `openvino`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `paddle`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `mnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `rknn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `ncnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `tflite`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `coreml`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `panoptic` / `coreai`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `onnx`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `torchscript`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `executorch`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `openvino`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `paddle`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `mnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `rknn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `ncnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `tflite`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `coreml`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `pose` / `coreai`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `onnx`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `torchscript`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `executorch`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `openvino`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `paddle`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `mnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `rknn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `ncnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `tflite`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `coreml`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `point` / `coreai`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `onnx`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `torchscript`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `executorch`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `openvino`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `paddle`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `mnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `rknn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `ncnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `tflite`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `coreml`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `depth` / `coreai`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `onnx`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `torchscript`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `executorch`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `tensorrt`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `openvino`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `paddle`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `mnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `rknn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `ncnn`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `tflite`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `coreml`: Generative VLM export is out of scope for v1.
+- `sensenovavision` / `ocr` / `coreai`: Generative VLM export is out of scope for v1.
 - `showui` / `point` / `onnx`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `showui` / `point` / `torchscript`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.
 - `showui` / `point` / `executorch`: This family is not wired to the shared point heatmap and backend peak-decoding export contract.

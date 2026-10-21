@@ -3812,6 +3812,8 @@ _FAMILY_BLOCKS = {
     "northmicrovision": "Generative VLM export is out of scope for v1.",
     "gemma4": "Generative VLM export is out of scope for v1.",
     "moondream": "Generative VLM export is out of scope for v1.",
+    "sensenovavision": "Generative VLM export is out of scope for v1.",
+    "libremodus": "Generative VLM export is out of scope for v1.",
 }
 
 _NCNN_BLOCKS = {

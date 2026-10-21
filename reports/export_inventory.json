@@ -1278,6 +1278,27 @@
     "available": true,
     "group": "s"
   },
+  "libremodus": {
+    "class": "libreyolo.models.modus.model.LibreMODUS",
+    "tasks": [
+      "detect",
+      "depth",
+      "normal",
+      "edge"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "14b-a7b": 1024
+    },
+    "default_imgsz": {
+      "14b-a7b": 1024
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "modus",
+    "available": true,
+    "group": "s"
+  },
   "lingbotvision": {
     "class": "libreyolo.models.lingbotvision.model.LibreLingBotVision",
     "tasks": [
@@ -2229,6 +2250,30 @@
     "optional_extra": null,
     "available": true,
     "group": "g2"
+  },
+  "sensenovavision": {
+    "class": "libreyolo.models.sensenova.model.LibreSenseNovaVision",
+    "tasks": [
+      "detect",
+      "segment",
+      "panoptic",
+      "pose",
+      "point",
+      "depth",
+      "ocr"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "7b": 1024
+    },
+    "default_imgsz": {
+      "7b": 1024
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "sensenova",
+    "available": true,
+    "group": "s"
   },
   "showui": {
     "class": "libreyolo.models.ground.showui.LibreShowUI",
