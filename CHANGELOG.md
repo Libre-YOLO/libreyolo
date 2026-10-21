@@ -46,6 +46,9 @@ before 1.4.0 are documented in the
 
 ### Fixed
 
+- **Unguarded `train()` / `val()` scripts stop with one clear line. (#925)**
+  On macOS, Windows, and with the `spawn` or `forkserver` start method, DataLoader workers re-run the user's script, so a `train()` or `val()` call outside `if __name__ == "__main__":` failed with hundreds of lines of multiprocessing tracebacks. Each worker now stops first and prints `LibreYOLO: val() was called at the top level of your script...`, which names the fix (the main guard, or `workers=0`). Guarded scripts, `workers=0`, Linux `fork` and multi-GPU DDP are unchanged.
+
 - **RTMDet-Ins respects `max_det` above 100. (#950)**
   The instance-segmentation postprocess capped detections at `min(max_det, 100)`, so `predict(max_det=1000)` still returned at most 100 masks and dense scenes silently lost objects. MMDetection's `max_per_img=100` is a test-config default, not a ceiling, so `max_det` is now applied as given, like the other families and RTMDet detection.
 

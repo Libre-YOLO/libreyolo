@@ -48,6 +48,7 @@ from ...training.config import TrainConfig, apply_train_aliases, load_train_cfg
 from ...utils.general import COCO_CLASSES
 from ...utils.image_loader import ImageInput
 from ...utils.logging import ensure_default_logging
+from ...utils.main_guard import exit_if_reimporting_main, guard_main_reimport
 from ...utils.model_info import build_model_info, format_model_info
 from ...utils.results import Results
 from ...utils.serialization import (
@@ -122,6 +123,7 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
 
     @functools.wraps(train_fn)
     def wrapper(self, *args, cfg=None, **user_kwargs):
+        exit_if_reimporting_main("train()")
         # CLI/ecosystem spellings (mosaic, fliplr, mixup on detection) name
         # their fields per source, before cfg= and resume merge, so a call's
         # mosaic=0 overrides a saved mosaic_prob instead of conflicting with it.
@@ -333,6 +335,8 @@ class BaseModel(ABC):
             cls.train, "_libreyolo_cfg_wrapped", False
         ):
             cls.train = _wrap_train_with_cfg(cls.train)
+        if "val" in cls.__dict__:
+            cls.val = guard_main_reimport("val()")(cls.val)
 
     # =========================================================================
     # Initialization
@@ -2639,6 +2643,7 @@ class BaseModel(ABC):
 
         return BaseExporter.create(format, self)(**kwargs)
 
+    @guard_main_reimport("val()")
     def val(
         self,
         data: str | None = None,

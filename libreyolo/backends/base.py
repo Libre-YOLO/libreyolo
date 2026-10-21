@@ -18,6 +18,7 @@ from typing import Any, Dict, Generator, List, Optional, Sequence, Tuple, Union
 import cv2
 import numpy as np
 from ..utils.lazy import lazy_module, module_available
+from ..utils.main_guard import guard_main_reimport
 
 from PIL import Image
 
@@ -4571,6 +4572,7 @@ class BaseBackend(ABC):
             det["obb"] = result.obb.data
         return det
 
+    @guard_main_reimport("val()")
     def val(
         self,
         data: str | None = None,
