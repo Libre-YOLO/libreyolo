@@ -6,6 +6,8 @@ from dataclasses import fields as dc_fields
 
 import libreyolo.cli.config as cli_config
 from libreyolo.cli.config import (
+    apply_family_defaults,
+    build_family_train_kwargs,
     build_train_kwargs,
     detect_family_from_name,
     detect_family_from_model_ref,
@@ -16,7 +18,15 @@ from libreyolo.cli.config import (
     is_known_weight_filename,
     resolve_model_name,
 )
-from libreyolo.training.config import TrainConfig, YOLOXConfig, YOLO9Config
+from libreyolo.training.config import (
+    DFINEConfig,
+    ECConfig,
+    LingBotVisionConfig,
+    SegformerConfig,
+    TrainConfig,
+    YOLOXConfig,
+    YOLO9Config,
+)
 from libreyolo.models.rtdetr.config import RTDETRConfig
 
 pytestmark = pytest.mark.unit
@@ -258,6 +268,39 @@ class TestGetFamilyDefaults:
         assert diffs["mosaic_prob"] == 0.0
         assert diffs["hsv_prob"] == 0.5
         assert "lr_backbone" not in diffs
+
+
+class TestFamilyTrainKwargsRunName:
+    """The CLI forwards a run name only when the user set --name."""
+
+    FAMILY_RUN_NAMES = (
+        ("dfine", DFINEConfig, "dfine_exp"),
+        ("ec", ECConfig, "ec_exp"),
+        ("segformer", SegformerConfig, "segformer_exp"),
+        ("lingbotvision", LingBotVisionConfig, "lingbotvision_exp"),
+        ("yolo9", YOLO9Config, "yolo9_exp"),
+    )
+
+    @staticmethod
+    def _train_kwargs(family, name, user_provided):
+        params = apply_family_defaults(
+            {"name": name, "epochs": 3}, family, "train", user_provided=user_provided
+        )
+        return build_family_train_kwargs(params, family, user_provided=user_provided)
+
+    @pytest.mark.parametrize(("family", "config_cls", "run_name"), FAMILY_RUN_NAMES)
+    def test_default_name_is_left_to_the_family(self, family, config_cls, run_name):
+        kwargs = self._train_kwargs(family, "exp", user_provided=set())
+
+        assert "name" not in kwargs
+        assert config_cls.from_kwargs(**kwargs).name == run_name
+
+    @pytest.mark.parametrize(("family", "config_cls", "run_name"), FAMILY_RUN_NAMES)
+    def test_explicit_name_is_forwarded(self, family, config_cls, run_name):
+        kwargs = self._train_kwargs(family, "myrun", user_provided={"name"})
+
+        assert kwargs["name"] == "myrun"
+        assert config_cls.from_kwargs(**kwargs).name == "myrun"
 
 
 class TestBuildTrainKwargs:
