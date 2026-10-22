@@ -1955,16 +1955,22 @@ class _StubRFDETR:
 
 
 def _stub_rfdetr(monkeypatch, captured):
+    """Replace LibreRFDETR's constructor, keeping its real filename parsing.
+
+    The stub has to reuse the real ``detect_task_from_filename`` and
+    ``detect_size_from_filename``: a published detection filename carries no
+    task suffix, so a stub that invents its own parsing hides the case where
+    the CLI hands a detection checkpoint to the segment architecture.
+    """
     from libreyolo.models.rfdetr import model as rfdetr_model
 
-    class _Stub(_StubRFDETR):
-        @classmethod
-        def detect_task_from_filename(cls, filename):
-            return "segment" if "-seg" in filename else "detect"
+    real = rfdetr_model.LibreRFDETR
 
-        @classmethod
-        def detect_size_from_filename(cls, filename):
-            return "n"
+    class _Stub(_StubRFDETR):
+        FILENAME_PREFIX = real.FILENAME_PREFIX
+        WEIGHT_EXT = real.WEIGHT_EXT
+        detect_task_from_filename = real.detect_task_from_filename
+        detect_size_from_filename = real.detect_size_from_filename
 
         def __init__(
             self, model_path=None, size=None, task=None, device=None, **kwargs
@@ -2028,3 +2034,18 @@ def test_train_rfdetr_segment_uses_the_segment_weights_of_a_detect_checkpoint(
 
     assert captured["model_path"] == str(segment_checkpoint)
     assert captured["task"] == "segment"
+
+
+def test_published_rfdetr_detection_filename_has_no_task_suffix():
+    """A published detection filename carries no task suffix.
+
+    The CLI reads the task off the filename, so a detection checkpoint must
+    not be taken for a segment one (or the other way round).
+    """
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+
+    assert LibreRFDETR.detect_task_from_filename("LibreRFDETRn.pt") is None
+    assert LibreRFDETR.detect_task_from_filename("LibreRFDETRn-seg.pt") == "segment"
+    assert LibreRFDETR.detect_size_from_filename("LibreRFDETRn.pt") == "n"
+    # A run checkpoint carries no family prefix, so it has no size either.
+    assert LibreRFDETR.detect_size_from_filename("best.pt") is None

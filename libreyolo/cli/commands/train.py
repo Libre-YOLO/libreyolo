@@ -159,13 +159,13 @@ def _create_explicit_task_train_model(
             )
     if family == "rfdetr" and train_task == "segment":
         # RF-DETR has no detect->segment transfer, so segment training starts
-        # from a segment checkpoint. A --model naming a detect checkpoint
-        # resolves to the published segment weights of the same size; falling
-        # through to the scratch path would silently train an untrained mask
-        # head instead of the released one. A checkpoint whose task is not in
-        # its filename (a run checkpoint) is left alone and the constructor
-        # decides on the task it holds.
-        if filename_task == "detect":
+        # from a segment checkpoint. A --model naming a published detection
+        # checkpoint (no task suffix in the filename) resolves to the segment
+        # weights of the same size; falling through to the scratch path would
+        # silently train an untrained mask head instead of the released one.
+        # Only published filenames reach this point: a run checkpoint has no
+        # size in its name and returned above.
+        if filename_task != "segment":
             seg_name = f"{model_cls.FILENAME_PREFIX}{size}-seg{model_cls.WEIGHT_EXT}"
             model_path = str(Path(model_path).parent / seg_name)
         if not _model_ref_exists(model_path):
