@@ -1937,3 +1937,94 @@ def test_multi_gpu_device_builds_the_model_on_one_device(monkeypatch, tmp_path, 
     from libreyolo.training.distributed import parse_device_arg
 
     assert parse_device_arg(captured['device']) == [0, 1]
+
+
+class _StubRFDETR:
+    """Stand-in for LibreRFDETR that records how the CLI built it."""
+
+    FILENAME_PREFIX = "LibreRFDETR"
+    WEIGHT_EXT = ".pt"
+
+    def __init__(
+        self, model_path=None, size=None, task=None, device=None, **kwargs
+    ):
+        self.model_path = model_path
+        self.size = size
+        self.task = task
+        self.kwargs = kwargs
+
+
+def _stub_rfdetr(monkeypatch, captured):
+    from libreyolo.models.rfdetr import model as rfdetr_model
+
+    class _Stub(_StubRFDETR):
+        @classmethod
+        def detect_task_from_filename(cls, filename):
+            return "segment" if "-seg" in filename else "detect"
+
+        @classmethod
+        def detect_size_from_filename(cls, filename):
+            return "n"
+
+        def __init__(
+            self, model_path=None, size=None, task=None, device=None, **kwargs
+        ):
+            super().__init__(model_path, size, task, device, **kwargs)
+            captured["model_path"] = model_path
+            captured["size"] = size
+            captured["task"] = task
+
+    monkeypatch.setattr(rfdetr_model, "LibreRFDETR", _Stub)
+
+
+def test_train_rfdetr_segment_loads_the_segment_checkpoint(monkeypatch, tmp_path):
+    """RF-DETR segment training loads the segment checkpoint, not a fresh model."""
+    from libreyolo.cli.commands import train as train_mod
+
+    captured = {}
+    _stub_rfdetr(monkeypatch, captured)
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    checkpoint = weights / "LibreRFDETRn-seg.pt"
+    checkpoint.write_bytes(b"stub")
+
+    train_mod._create_explicit_task_train_model(
+        family="rfdetr",
+        model_path=str(checkpoint),
+        task="segment",
+        resume=False,
+        device="cpu",
+    )
+
+    assert captured["model_path"] == str(checkpoint)
+    assert captured["task"] == "segment"
+    assert captured["size"] == "n"
+
+
+def test_train_rfdetr_segment_uses_the_segment_weights_of_a_detect_checkpoint(
+    monkeypatch, tmp_path
+):
+    """A detect checkpoint cannot start RF-DETR segment training, so the segment
+    checkpoint of the same size is used instead."""
+    from libreyolo.cli.commands import train as train_mod
+
+    captured = {}
+    _stub_rfdetr(monkeypatch, captured)
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    (weights / "LibreRFDETRn.pt").write_bytes(b"stub")
+    segment_checkpoint = weights / "LibreRFDETRn-seg.pt"
+    segment_checkpoint.write_bytes(b"stub")
+
+    train_mod._create_explicit_task_train_model(
+        family="rfdetr",
+        model_path=str(weights / "LibreRFDETRn.pt"),
+        task="segment",
+        resume=False,
+        device="cpu",
+    )
+
+    assert captured["model_path"] == str(segment_checkpoint)
+    assert captured["task"] == "segment"

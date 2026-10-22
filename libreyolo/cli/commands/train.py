@@ -157,6 +157,34 @@ def _create_explicit_task_train_model(
                 device=device,
                 allow_detect_to_segment_transfer=True,
             )
+    if family == "rfdetr" and train_task == "segment":
+        # RF-DETR has no detect->segment transfer, so segment training starts
+        # from a segment checkpoint. A --model naming a detect checkpoint
+        # resolves to the published segment weights of the same size; falling
+        # through to the scratch path would silently train an untrained mask
+        # head instead of the released one. A checkpoint whose task is not in
+        # its filename (a run checkpoint) is left alone and the constructor
+        # decides on the task it holds.
+        if filename_task == "detect":
+            seg_name = f"{model_cls.FILENAME_PREFIX}{size}-seg{model_cls.WEIGHT_EXT}"
+            model_path = str(Path(model_path).parent / seg_name)
+        if not _model_ref_exists(model_path):
+            url = model_cls.get_download_url(Path(model_path).name)
+            if url:
+                from libreyolo.utils.download import download_weights
+
+                dl_path = Path(model_path)
+                if dl_path.parent == Path("."):
+                    dl_path = Path("weights") / dl_path.name
+                download_weights(str(dl_path), size)
+                model_path = str(dl_path)
+        if _model_ref_exists(model_path):
+            return model_cls(
+                model_path,
+                size=size,
+                task=train_task,
+                device=device,
+            )
     if family == "rfdetr" and train_task == "obb" and _model_ref_exists(model_path):
         return model_cls(
             model_path,
