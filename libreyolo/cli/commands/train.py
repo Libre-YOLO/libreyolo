@@ -159,15 +159,15 @@ def _create_explicit_task_train_model(
             )
     if family == "rfdetr" and train_task == "segment":
         # RF-DETR has no detect->segment transfer, so segment training starts
-        # from a segment checkpoint. A --model naming a published detection
-        # checkpoint (no task suffix in the filename) resolves to the segment
-        # weights of the same size; falling through to the scratch path would
-        # silently train an untrained mask head instead of the released one.
-        # Only published filenames reach this point: a run checkpoint has no
-        # size in its name and returned above.
+        # from a segment checkpoint. A detection checkpoint is a cross-task
+        # load and fails, as it does in the Python API; falling through to the
+        # scratch path would silently train an untrained mask head.
         if filename_task != "segment":
-            seg_name = f"{model_cls.FILENAME_PREFIX}{size}-seg{model_cls.WEIGHT_EXT}"
-            model_path = str(Path(model_path).parent / seg_name)
+            raise ValueError(
+                "RF-DETR has no detect-to-segment transfer. Pass a segment "
+                f"checkpoint such as {model_cls.FILENAME_PREFIX}{size}-seg"
+                f"{model_cls.WEIGHT_EXT} to train --task segment."
+            )
         if not _model_ref_exists(model_path):
             url = model_cls.get_download_url(Path(model_path).name)
             if url:
@@ -726,15 +726,18 @@ def train_cmd(
                 "pretrained=false cannot be combined with resume.",
             )
     if loaded_model is None:
-        loaded_model = _create_explicit_task_train_model(
-            family=family,
-            model_path=model_path,
-            task=normalized_task,
-            resume=resume_val,
-            device=model_device,
-            pretrained=train_pretrained,
-            seed=seed,
-        )
+        try:
+            loaded_model = _create_explicit_task_train_model(
+                family=family,
+                model_path=model_path,
+                task=normalized_task,
+                resume=resume_val,
+                device=model_device,
+                pretrained=train_pretrained,
+                seed=seed,
+            )
+        except ValueError as exc:
+            exit_with_error(out, "config_unsupported", str(exc))
         if loaded_model is not None and train_pretrained is False:
             # The architecture was seeded and built through _from_scratch().
             # Do not rebuild it a second time in the public train wrapper.

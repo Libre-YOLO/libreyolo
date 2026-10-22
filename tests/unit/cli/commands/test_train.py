@@ -2008,11 +2008,10 @@ def test_train_rfdetr_segment_loads_the_segment_checkpoint(monkeypatch, tmp_path
     assert captured["size"] == "n"
 
 
-def test_train_rfdetr_segment_uses_the_segment_weights_of_a_detect_checkpoint(
-    monkeypatch, tmp_path
-):
-    """A detect checkpoint cannot start RF-DETR segment training, so the segment
-    checkpoint of the same size is used instead."""
+def test_train_rfdetr_segment_rejects_a_detect_checkpoint(monkeypatch, tmp_path):
+    """RF-DETR has no detect->segment transfer: a detect checkpoint fails as a
+    cross-task load instead of being swapped for other weights or trained
+    with an untrained mask head."""
     from libreyolo.cli.commands import train as train_mod
 
     captured = {}
@@ -2021,19 +2020,18 @@ def test_train_rfdetr_segment_uses_the_segment_weights_of_a_detect_checkpoint(
     weights = tmp_path / "weights"
     weights.mkdir()
     (weights / "LibreRFDETRn.pt").write_bytes(b"stub")
-    segment_checkpoint = weights / "LibreRFDETRn-seg.pt"
-    segment_checkpoint.write_bytes(b"stub")
+    (weights / "LibreRFDETRn-seg.pt").write_bytes(b"stub")
 
-    train_mod._create_explicit_task_train_model(
-        family="rfdetr",
-        model_path=str(weights / "LibreRFDETRn.pt"),
-        task="segment",
-        resume=False,
-        device="cpu",
-    )
+    with pytest.raises(ValueError, match="LibreRFDETRn-seg.pt"):
+        train_mod._create_explicit_task_train_model(
+            family="rfdetr",
+            model_path=str(weights / "LibreRFDETRn.pt"),
+            task="segment",
+            resume=False,
+            device="cpu",
+        )
 
-    assert captured["model_path"] == str(segment_checkpoint)
-    assert captured["task"] == "segment"
+    assert captured == {}
 
 
 def test_published_rfdetr_detection_filename_has_no_task_suffix():
