@@ -159,10 +159,12 @@ def _create_explicit_task_train_model(
             )
     if family == "rfdetr" and train_task == "segment":
         # RF-DETR has no detect->segment transfer, so segment training starts
-        # from a segment checkpoint. A detection checkpoint is a cross-task
-        # load and fails, as it does in the Python API; falling through to the
-        # scratch path would silently train an untrained mask head.
-        if filename_task != "segment":
+        # from a segment checkpoint; falling through to the scratch path would
+        # silently train an untrained mask head. An existing file goes to the
+        # loader, whose metadata check rejects a detection checkpoint as a
+        # cross-task load. A missing detection name fails before downloading
+        # weights that could not be used.
+        if not _model_ref_exists(model_path) and filename_task != "segment":
             raise ValueError(
                 "RF-DETR has no detect-to-segment transfer. Pass a segment "
                 f"checkpoint such as {model_cls.FILENAME_PREFIX}{size}-seg"

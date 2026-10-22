@@ -2008,30 +2008,58 @@ def test_train_rfdetr_segment_loads_the_segment_checkpoint(monkeypatch, tmp_path
     assert captured["size"] == "n"
 
 
-def test_train_rfdetr_segment_rejects_a_detect_checkpoint(monkeypatch, tmp_path):
-    """RF-DETR has no detect->segment transfer: a detect checkpoint fails as a
-    cross-task load instead of being swapped for other weights or trained
-    with an untrained mask head."""
+def test_train_rfdetr_segment_rejects_a_missing_detect_checkpoint(
+    monkeypatch, tmp_path
+):
+    """RF-DETR has no detect->segment transfer: a missing detection name fails
+    before downloading weights that could not be used, instead of being
+    swapped for other weights or trained with an untrained mask head."""
     from libreyolo.cli.commands import train as train_mod
 
     captured = {}
     _stub_rfdetr(monkeypatch, captured)
 
-    weights = tmp_path / "weights"
-    weights.mkdir()
-    (weights / "LibreRFDETRn.pt").write_bytes(b"stub")
-    (weights / "LibreRFDETRn-seg.pt").write_bytes(b"stub")
+    def _no_download(*args, **kwargs):
+        raise AssertionError("must not download")
+
+    monkeypatch.setattr("libreyolo.utils.download.download_weights", _no_download)
 
     with pytest.raises(ValueError, match="LibreRFDETRn-seg.pt"):
         train_mod._create_explicit_task_train_model(
             family="rfdetr",
-            model_path=str(weights / "LibreRFDETRn.pt"),
+            model_path=str(tmp_path / "LibreRFDETRn.pt"),
             task="segment",
             resume=False,
             device="cpu",
         )
 
     assert captured == {}
+
+
+def test_train_rfdetr_segment_lets_metadata_decide_for_an_existing_file(
+    monkeypatch, tmp_path
+):
+    """An existing checkpoint goes to the loader whatever its filename: the
+    metadata decides the task, so a renamed segment checkpoint still trains
+    and a detection checkpoint is rejected by the loader."""
+    from libreyolo.cli.commands import train as train_mod
+
+    captured = {}
+    _stub_rfdetr(monkeypatch, captured)
+
+    checkpoint = tmp_path / "LibreRFDETRn.pt"
+    checkpoint.write_bytes(b"stub")
+
+    train_mod._create_explicit_task_train_model(
+        family="rfdetr",
+        model_path=str(checkpoint),
+        task="segment",
+        resume=False,
+        device="cpu",
+    )
+
+    assert captured["model_path"] == str(checkpoint)
+    assert captured["task"] == "segment"
 
 
 def test_published_rfdetr_detection_filename_has_no_task_suffix():
