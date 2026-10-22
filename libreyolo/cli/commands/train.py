@@ -157,6 +157,36 @@ def _create_explicit_task_train_model(
                 device=device,
                 allow_detect_to_segment_transfer=True,
             )
+    if family == "rfdetr" and train_task == "segment":
+        # RF-DETR has no detect->segment transfer, so segment training starts
+        # from a segment checkpoint; falling through to the scratch path would
+        # silently train an untrained mask head. An existing file goes to the
+        # loader, whose metadata check rejects a detection checkpoint as a
+        # cross-task load. A missing detection name fails before downloading
+        # weights that could not be used.
+        if not _model_ref_exists(model_path) and filename_task != "segment":
+            raise ValueError(
+                "RF-DETR has no detect-to-segment transfer. Pass a segment "
+                f"checkpoint such as {model_cls.FILENAME_PREFIX}{size}-seg"
+                f"{model_cls.WEIGHT_EXT} to train --task segment."
+            )
+        if not _model_ref_exists(model_path):
+            url = model_cls.get_download_url(Path(model_path).name)
+            if url:
+                from libreyolo.utils.download import download_weights
+
+                dl_path = Path(model_path)
+                if dl_path.parent == Path("."):
+                    dl_path = Path("weights") / dl_path.name
+                download_weights(str(dl_path), size)
+                model_path = str(dl_path)
+        if _model_ref_exists(model_path):
+            return model_cls(
+                model_path,
+                size=size,
+                task=train_task,
+                device=device,
+            )
     if family == "rfdetr" and train_task == "obb" and _model_ref_exists(model_path):
         return model_cls(
             model_path,
@@ -698,15 +728,18 @@ def train_cmd(
                 "pretrained=false cannot be combined with resume.",
             )
     if loaded_model is None:
-        loaded_model = _create_explicit_task_train_model(
-            family=family,
-            model_path=model_path,
-            task=normalized_task,
-            resume=resume_val,
-            device=model_device,
-            pretrained=train_pretrained,
-            seed=seed,
-        )
+        try:
+            loaded_model = _create_explicit_task_train_model(
+                family=family,
+                model_path=model_path,
+                task=normalized_task,
+                resume=resume_val,
+                device=model_device,
+                pretrained=train_pretrained,
+                seed=seed,
+            )
+        except ValueError as exc:
+            exit_with_error(out, "config_unsupported", str(exc))
         if loaded_model is not None and train_pretrained is False:
             # The architecture was seeded and built through _from_scratch().
             # Do not rebuild it a second time in the public train wrapper.

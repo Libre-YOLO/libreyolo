@@ -1937,3 +1937,141 @@ def test_multi_gpu_device_builds_the_model_on_one_device(monkeypatch, tmp_path, 
     from libreyolo.training.distributed import parse_device_arg
 
     assert parse_device_arg(captured['device']) == [0, 1]
+
+
+class _StubRFDETR:
+    """Stand-in for LibreRFDETR that records how the CLI built it."""
+
+    FILENAME_PREFIX = "LibreRFDETR"
+    WEIGHT_EXT = ".pt"
+
+    def __init__(
+        self, model_path=None, size=None, task=None, device=None, **kwargs
+    ):
+        self.model_path = model_path
+        self.size = size
+        self.task = task
+        self.kwargs = kwargs
+
+
+def _stub_rfdetr(monkeypatch, captured):
+    """Replace LibreRFDETR's constructor, keeping its real filename parsing.
+
+    The stub has to reuse the real ``detect_task_from_filename`` and
+    ``detect_size_from_filename``: a published detection filename carries no
+    task suffix, so a stub that invents its own parsing hides the case where
+    the CLI hands a detection checkpoint to the segment architecture.
+    """
+    from libreyolo.models.rfdetr import model as rfdetr_model
+
+    real = rfdetr_model.LibreRFDETR
+
+    class _Stub(_StubRFDETR):
+        FILENAME_PREFIX = real.FILENAME_PREFIX
+        WEIGHT_EXT = real.WEIGHT_EXT
+        detect_task_from_filename = real.detect_task_from_filename
+        detect_size_from_filename = real.detect_size_from_filename
+
+        def __init__(
+            self, model_path=None, size=None, task=None, device=None, **kwargs
+        ):
+            super().__init__(model_path, size, task, device, **kwargs)
+            captured["model_path"] = model_path
+            captured["size"] = size
+            captured["task"] = task
+
+    monkeypatch.setattr(rfdetr_model, "LibreRFDETR", _Stub)
+
+
+def test_train_rfdetr_segment_loads_the_segment_checkpoint(monkeypatch, tmp_path):
+    """RF-DETR segment training loads the segment checkpoint, not a fresh model."""
+    from libreyolo.cli.commands import train as train_mod
+
+    captured = {}
+    _stub_rfdetr(monkeypatch, captured)
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    checkpoint = weights / "LibreRFDETRn-seg.pt"
+    checkpoint.write_bytes(b"stub")
+
+    train_mod._create_explicit_task_train_model(
+        family="rfdetr",
+        model_path=str(checkpoint),
+        task="segment",
+        resume=False,
+        device="cpu",
+    )
+
+    assert captured["model_path"] == str(checkpoint)
+    assert captured["task"] == "segment"
+    assert captured["size"] == "n"
+
+
+def test_train_rfdetr_segment_rejects_a_missing_detect_checkpoint(
+    monkeypatch, tmp_path
+):
+    """RF-DETR has no detect->segment transfer: a missing detection name fails
+    before downloading weights that could not be used, instead of being
+    swapped for other weights or trained with an untrained mask head."""
+    from libreyolo.cli.commands import train as train_mod
+
+    captured = {}
+    _stub_rfdetr(monkeypatch, captured)
+
+    def _no_download(*args, **kwargs):
+        raise AssertionError("must not download")
+
+    monkeypatch.setattr("libreyolo.utils.download.download_weights", _no_download)
+
+    with pytest.raises(ValueError, match="LibreRFDETRn-seg.pt"):
+        train_mod._create_explicit_task_train_model(
+            family="rfdetr",
+            model_path=str(tmp_path / "LibreRFDETRn.pt"),
+            task="segment",
+            resume=False,
+            device="cpu",
+        )
+
+    assert captured == {}
+
+
+def test_train_rfdetr_segment_lets_metadata_decide_for_an_existing_file(
+    monkeypatch, tmp_path
+):
+    """An existing checkpoint goes to the loader whatever its filename: the
+    metadata decides the task, so a renamed segment checkpoint still trains
+    and a detection checkpoint is rejected by the loader."""
+    from libreyolo.cli.commands import train as train_mod
+
+    captured = {}
+    _stub_rfdetr(monkeypatch, captured)
+
+    checkpoint = tmp_path / "LibreRFDETRn.pt"
+    checkpoint.write_bytes(b"stub")
+
+    train_mod._create_explicit_task_train_model(
+        family="rfdetr",
+        model_path=str(checkpoint),
+        task="segment",
+        resume=False,
+        device="cpu",
+    )
+
+    assert captured["model_path"] == str(checkpoint)
+    assert captured["task"] == "segment"
+
+
+def test_published_rfdetr_detection_filename_has_no_task_suffix():
+    """A published detection filename carries no task suffix.
+
+    The CLI reads the task off the filename, so a detection checkpoint must
+    not be taken for a segment one (or the other way round).
+    """
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+
+    assert LibreRFDETR.detect_task_from_filename("LibreRFDETRn.pt") is None
+    assert LibreRFDETR.detect_task_from_filename("LibreRFDETRn-seg.pt") == "segment"
+    assert LibreRFDETR.detect_size_from_filename("LibreRFDETRn.pt") == "n"
+    # A run checkpoint carries no family prefix, so it has no size either.
+    assert LibreRFDETR.detect_size_from_filename("best.pt") is None
