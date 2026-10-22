@@ -548,3 +548,67 @@ class TestGetCfgDefaults:
         assert "size" not in cfg["train_defaults"]
         assert "num_classes" not in cfg["train_defaults"]
         assert "device" not in cfg["train_defaults"]
+
+
+class TestSegmentationFamilyDefaults:
+    """Segmentation families train with their own recipe, not the detection CLI defaults.
+
+    The CLI's global defaults (sgd / 0.01 / 5e-4 / yoloxwarmcos) are tuned for
+    detection. A segmentation family that does not publish its TrainConfig
+    would inherit them, and its trainer would then either reject the
+    scheduler or train with the wrong optimizer and learning rate.
+    """
+
+    FAMILIES = (
+        ("segformer", SegformerConfig),
+        ("lingbotvision", LingBotVisionConfig),
+        ("dfine", DFINEConfig),
+    )
+
+    CLI_DEFAULTS = {
+        "optimizer": "sgd",
+        "lr0": 0.01,
+        "weight_decay": 5e-4,
+        "scheduler": "yoloxwarmcos",
+        "imgsz": 640,
+        "batch": 16,
+        "epochs": 300,
+    }
+
+    @pytest.mark.parametrize(("family", "config_cls"), FAMILIES)
+    def test_config_class_is_discovered(self, family, config_cls):
+        assert get_train_config_class(family) is config_cls
+
+    @pytest.mark.parametrize(("family", "config_cls"), FAMILIES)
+    def test_cli_defaults_do_not_reach_the_family_config(self, family, config_cls):
+        params = apply_family_defaults(
+            dict(self.CLI_DEFAULTS), family, "train", user_provided=set()
+        )
+        kwargs = build_family_train_kwargs(params, family, user_provided=set())
+        config = config_cls.from_kwargs(**kwargs)
+        expected = config_cls()
+
+        assert config.optimizer == expected.optimizer
+        assert config.lr0 == expected.lr0
+        assert config.weight_decay == expected.weight_decay
+        assert config.scheduler == expected.scheduler
+        assert config.imgsz == expected.imgsz
+        assert config.batch == expected.batch
+        assert config.epochs == expected.epochs
+
+    @pytest.mark.parametrize(("family", "config_cls"), FAMILIES)
+    def test_explicit_cli_values_win(self, family, config_cls):
+        params = apply_family_defaults(
+            dict(self.CLI_DEFAULTS),
+            family,
+            "train",
+            user_provided={"optimizer", "lr0", "scheduler"},
+        )
+        kwargs = build_family_train_kwargs(
+            params, family, user_provided={"optimizer", "lr0", "scheduler"}
+        )
+        config = config_cls.from_kwargs(**kwargs)
+
+        assert config.optimizer == "sgd"
+        assert config.lr0 == 0.01
+        assert config.scheduler == "yoloxwarmcos"
